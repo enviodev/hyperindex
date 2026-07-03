@@ -491,7 +491,16 @@ let pruneBuffer = (cs: t, ~targetBlockNumber) => {
     cs.fetchState->FetchState.rollback(~indexingAddresses=cs.indexingAddresses, ~targetBlockNumber)
   cs.transactionStore->TransactionStore.rollback(targetBlockNumber)
   cs.pendingBudget = cs.fetchState->FetchState.pendingBudgetSize
-  cs.lastPruneTarget = Some(targetBlockNumber)
+
+  // A later prune in the same above-target episode may land on a higher block
+  // while ranges parked at the earlier target are still held back; keep the
+  // lower target, or releasing them would refetch what the first prune dropped.
+  cs.lastPruneTarget = Some(
+    switch cs.lastPruneTarget {
+    | Some(prev) => Pervasives.min(prev, targetBlockNumber)
+    | None => targetBlockNumber
+    },
+  )
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch

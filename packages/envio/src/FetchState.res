@@ -142,19 +142,17 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
+// Seed range for a merged partition, under the same trust policy as chunking
+// itself: each partition contributes its getMinHistoryRange, so a lone small
+// sample stays floored instead of turning into a trusted two-sample history
+// through the merge.
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
   for i in 0 to partitions->Array.length - 1 {
     let p = partitions->Array.getUnsafe(i)
-
-    // Even if it's fetching, set dynamicContract field
-    let a = p.prevQueryRange
-    let b = p.prevPrevQueryRange
-    if a > 0 && (min.contents == 0 || a < min.contents) {
-      min := a
-    }
-    if b > 0 && (min.contents == 0 || b < min.contents) {
-      min := b
+    switch getMinHistoryRange(p) {
+    | Some(range) if min.contents == 0 || range < min.contents => min := range
+    | _ => ()
     }
   }
   min.contents
@@ -439,24 +437,30 @@ module OptimizedPartitions = {
     latestFetchedBlock.contents
   }
 
-  let getPendingQueryOrThrow = (p: partition, ~fromBlock) => {
+  // Matching on both range ends keeps a query's identity exact: a dropped
+  // query's late response must not land on a differently-shaped re-issued
+  // query that happens to start at the same block.
+  let getPendingQuery = (p: partition, ~fromBlock, ~toBlock) => {
     let idxRef = ref(0)
     let pendingQueryRef = ref(None)
     while idxRef.contents < p.mutPendingQueries->Array.length && pendingQueryRef.contents === None {
       let pq = p.mutPendingQueries->Array.getUnsafe(idxRef.contents)
-      if pq.fromBlock === fromBlock {
+      if pq.fromBlock === fromBlock && pq.toBlock == toBlock {
         pendingQueryRef := Some(pq)
       }
       idxRef := idxRef.contents + 1
     }
-    switch pendingQueryRef.contents {
+    pendingQueryRef.contents
+  }
+
+  let getPendingQueryOrThrow = (p: partition, ~fromBlock, ~toBlock) =>
+    switch getPendingQuery(p, ~fromBlock, ~toBlock) {
     | Some(pq) => pq
     | None =>
       JsError.throwWithMessage(
         `Pending query not found for partition ${p.id} fromBlock ${fromBlock->Int.toString}`,
       )
     }
-  }
 
   let handleQueryResponse = (
     optimizedPartitions: t,
@@ -469,7 +473,7 @@ module OptimizedPartitions = {
     let mutEntities = optimizedPartitions.entities->Utils.Dict.shallowCopy
 
     // Mark query as fetched
-    let pendingQuery = getPendingQueryOrThrow(p, ~fromBlock=query.fromBlock)
+    let pendingQuery = getPendingQueryOrThrow(p, ~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
     pendingQuery.fetchedBlock = Some(latestFetchedBlock)
 
     let blockRange = latestFetchedBlock.blockNumber - query.fromBlock + 1
@@ -1466,7 +1470,9 @@ let getNextQuery = (
     WaitingForNewBlock
   } else if !hasBudget {
     // No room left in the shared buffer pool for this chain; wait for processing
-    // to drain before fetching more.
+    // to drain before fetching more. Checked after the head gate on purpose: a
+    // chain that hasn't learned its height must keep returning WaitingForNewBlock
+    // even when the pool is full, so don't hoist this check into the caller.
     NothingToQuery
   } else {
     let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
@@ -2003,16 +2009,20 @@ let pendingBudgetSize = (fetchState: t) => {
 
 // A response may only be applied while its query is still tracked in flight:
 // the partition exists (deleted partition ids are never reused) and holds an
-// in-flight pending query at the response's fromBlock. A query dropped by a
+// in-flight pending query with the response's exact range. A query dropped by a
 // buffer prune fails the lookup, and a slot already satisfied by an equivalent
 // re-issued query's response has fetchedBlock set — both mean the response must
 // be discarded, which is what keeps a range from being applied twice.
 let isQueryStillPending = (fetchState: t, ~query: query) =>
   switch fetchState.optimizedPartitions.entities->Dict.get(query.partitionId) {
   | Some(p) =>
-    p.mutPendingQueries->Array.some(pq =>
-      pq.fromBlock === query.fromBlock && pq.fetchedBlock === None
-    )
+    switch p->OptimizedPartitions.getPendingQuery(
+      ~fromBlock=query.fromBlock,
+      ~toBlock=query.toBlock,
+    ) {
+    | Some(pq) => pq.fetchedBlock === None
+    | None => false
+    }
   | None => false
   }
 

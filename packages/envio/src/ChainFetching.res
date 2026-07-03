@@ -105,17 +105,17 @@ let rec onQueryResponse = async (
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
-) =>
+) => {
+  let chainState = state->IndexerState.getChainState(~chain)
+
   // Stale epoch (reorg / realtime transition) invalidates every in-flight
   // response; a buffer prune invalidates only the queries it rolled back, whose
   // responses are recognized here by no longer being tracked as pending.
   if (
-    state->IndexerState.isStale(~stateId) ||
-      !(state->IndexerState.getChainState(~chain)->ChainState.isQueryStillPending(~query))
+    state->IndexerState.isStale(~stateId) || !(chainState->ChainState.isQueryStillPending(~query))
   ) {
     ()
   } else {
-    let chainState = state->IndexerState.getChainState(~chain)
     let {
       parsedQueueItems,
       transactionStore,
@@ -210,31 +210,24 @@ let rec onQueryResponse = async (
         newItems->Array.push(item)
       }
 
-      // Re-check validity: contract registration is async, so the chain state
-      // may have rolled back or pruned this query by the time we apply the
-      // fetched items.
-      let proceed = (~newItemsWithDcs) =>
-        if (
-          !(state->IndexerState.isStale(~stateId)) &&
-          chainState->ChainState.isQueryStillPending(~query)
-        ) {
-          applyQueryResponse(
-            state,
-            ~chain,
-            ~newItems,
-            ~newItemsWithDcs,
-            ~knownHeight,
-            ~latestFetchedBlock={
-              FetchState.blockNumber: latestFetchedBlockNumber,
-              blockTimestamp: latestFetchedBlockTimestamp,
-            },
-            ~query,
-            ~transactionStore,
-          )
-          ChainMetadata.stage(state)
-          scheduleFetch()
-          scheduleProcessing()
-        }
+      let proceed = (~newItemsWithDcs) => {
+        applyQueryResponse(
+          state,
+          ~chain,
+          ~newItems,
+          ~newItemsWithDcs,
+          ~knownHeight,
+          ~latestFetchedBlock={
+            FetchState.blockNumber: latestFetchedBlockNumber,
+            blockTimestamp: latestFetchedBlockTimestamp,
+          },
+          ~query,
+          ~transactionStore,
+        )
+        ChainMetadata.stage(state)
+        scheduleFetch()
+        scheduleProcessing()
+      }
 
       switch itemsWithContractRegister {
       | [] => proceed(~newItemsWithDcs=[])
@@ -245,11 +238,20 @@ let rec onQueryResponse = async (
           ~page=transactionStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-        | newItemsWithDcs => proceed(~newItemsWithDcs)
+        | newItemsWithDcs =>
+          // Re-check validity: contract registration is async, so the chain
+          // state may have rolled back or pruned this query during the await.
+          if (
+            !(state->IndexerState.isStale(~stateId)) &&
+            chainState->ChainState.isQueryStillPending(~query)
+          ) {
+            proceed(~newItemsWithDcs)
+          }
         }
       }
     }
   }
+}
 
 and applyQueryResponse = (
   state: IndexerState.t,

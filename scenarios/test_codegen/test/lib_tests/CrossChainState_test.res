@@ -411,6 +411,22 @@ describe("CrossChainState buffer prune", () => {
     })
   })
 
+  it("keeps the lower prune target when pruned again with a higher one", t => {
+    // A second prune in the same above-target episode must not release the
+    // range parked at the first, lower target.
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=10000,
+      ~latestFetchedBlock=100,
+      ~partitionFetchedBlock=8039,
+      ~bufferBlocks=Array.fromInitializer(~length=40, i => 8000 + i),
+    )
+    cs->ChainState.pruneBuffer(~targetBlockNumber=5000)
+    cs->ChainState.pruneBuffer(~targetBlockNumber=8000)
+
+    t.expect(cs->ChainState.lastPruneTarget).toEqual(Some(5000))
+  })
+
   Async.it("clears the prune target and refetches once the buffer drains", async t => {
     // Same shape, but pruned directly and with the buffer already drained below
     // targetBufferSize: the tick clears the target and re-admits the range.

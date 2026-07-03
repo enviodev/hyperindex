@@ -4190,16 +4190,29 @@ describe("FetchState.rollback with in-flight queries", () => {
 
     let result = fetchState->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=300)
 
-    let mkQuery = fromBlock => {...defaultQuery, partitionId: "0", fromBlock}
+    let mkQuery = (fromBlock, ~toBlock=None) => {
+      ...defaultQuery,
+      partitionId: "0",
+      fromBlock,
+      toBlock,
+    }
     t.expect({
       "pendingQueries": (result.optimizedPartitions.entities->Dict.getUnsafe("0")).mutPendingQueries,
       "buffer": result.buffer->Array.map(Internal.getItemBlockNumber),
-      // Only the surviving in-flight query still counts as pending: the dropped
-      // one's late response must be discarded and the completed slots must not
-      // accept a second response for the same range.
+      // Only the surviving in-flight query still counts as pending, and only
+      // with its exact range: the dropped one's late response must be discarded,
+      // a differently-shaped query at the same fromBlock must not alias, and the
+      // completed slots must not accept a second response for the same range.
       "crossingStillPending": result->FetchState.isQueryStillPending(~query=mkQuery(280)),
-      "droppedStillPending": result->FetchState.isQueryStillPending(~query=mkQuery(401)),
-      "completedStillPending": result->FetchState.isQueryStillPending(~query=mkQuery(201)),
+      "differentToBlockStillPending": result->FetchState.isQueryStillPending(
+        ~query=mkQuery(280, ~toBlock=Some(999)),
+      ),
+      "droppedStillPending": result->FetchState.isQueryStillPending(
+        ~query=mkQuery(401, ~toBlock=Some(600)),
+      ),
+      "completedStillPending": result->FetchState.isQueryStillPending(
+        ~query=mkQuery(201, ~toBlock=Some(400)),
+      ),
       "pendingBudgetSize": result->FetchState.pendingBudgetSize,
     }).toEqual({
       "pendingQueries": [
@@ -4209,6 +4222,7 @@ describe("FetchState.rollback with in-flight queries", () => {
       ],
       "buffer": [250],
       "crossingStillPending": true,
+      "differentToBlockStillPending": false,
       "droppedStillPending": false,
       "completedStillPending": false,
       "pendingBudgetSize": 30.,

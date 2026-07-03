@@ -207,96 +207,107 @@ let totalReservedSize = (crossChainState: t) => {
 let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
   Float.compare(a.progress, b.progress)
 
+// One hysteresis band governs the prune/hold-back cycle, always measured
+// against the whole buffer (ready and stuck): prune once it exceeds the
+// high-water mark, drop down to the low-water mark, and hold pruned ranges
+// back until it drains to targetBufferSize. The cycle is only correct while
+// targetBufferSize < low-water < high-water — releasing pruned ranges any
+// earlier would refetch what the prune just dropped.
+let pruneHighWaterMark = (crossChainState: t) => crossChainState.targetBufferSize * 3
+let pruneLowWaterMark = (crossChainState: t) => crossChainState.targetBufferSize * 3 / 2
+
 // Removing the up-front block cap lets queries run to the head, so fetched-ahead
 // items accumulate as stuck buffer while a lagging partition holds the frontier.
-// This reclaims that memory reactively: once the indexer-wide buffer crosses 3x
-// targetBufferSize, drop the highest-progress% (closest-to-head) items across all
-// chains back down to 1.5x and roll back the partitions that fetched them. Prune
-// only during backfill — near the head blockLag keeps the buffer below the reorg
-// window and there is nothing far-ahead to reclaim.
-let maybePrune = (crossChainState: t) => {
-  if !crossChainState.isInReorgThreshold {
+// This reclaims that memory reactively: once the indexer-wide buffer crosses the
+// high-water mark, drop the highest-progress% (closest-to-head) items across all
+// chains back down to the low-water mark and roll back the partitions that
+// fetched them. Prune only during backfill — near the head blockLag keeps the
+// buffer below the reorg window and there is nothing far-ahead to reclaim.
+// Returns how many items were freed.
+let maybePrune = (crossChainState: t, ~totalBufferSize) =>
+  if (
+    !crossChainState.isInReorgThreshold &&
+    totalBufferSize > crossChainState->pruneHighWaterMark
+  ) {
     let chainIds = crossChainState.chainIds
+    let need = totalBufferSize - crossChainState->pruneLowWaterMark
 
-    let total = crossChainState->totalBufferSize
-    let highWater = crossChainState.targetBufferSize * 3
-    if total > highWater {
-      let lowWater = crossChainState.targetBufferSize * 3 / 2
-      let need = total - lowWater
-
-      // Per-chain (target, freed) at the given progress threshold, in chainIds
-      // order, plus the summed freed count. The sum is non-increasing in the
-      // threshold (higher threshold = higher per-chain target = fewer items
-      // dropped).
-      let pruneTargetsAt = progressThreshold => {
-        let freed = ref(0)
-        let targets = []
-        for i in 0 to chainIds->Array.length - 1 {
-          let chainTarget =
-            crossChainState
-            ->getChainState(chainIds->Array.getUnsafe(i))
-            ->ChainState.getPruneTarget(~progressThreshold)
-          targets->Array.push(chainTarget)
-          let (_, chainFreed) = chainTarget
-          freed := freed.contents + chainFreed
-        }
-        (targets, freed.contents)
+    // Per-chain (target, freed) at the given progress threshold, in chainIds
+    // order, plus the summed freed count. The sum is non-increasing in the
+    // threshold (higher threshold = higher per-chain target = fewer items
+    // dropped).
+    let pruneTargetsAt = progressThreshold => {
+      let freed = ref(0)
+      let targets = []
+      for i in 0 to chainIds->Array.length - 1 {
+        let chainTarget =
+          crossChainState
+          ->getChainState(chainIds->Array.getUnsafe(i))
+          ->ChainState.getPruneTarget(~progressThreshold)
+        targets->Array.push(chainTarget)
+        let (_, chainFreed) = chainTarget
+        freed := freed.contents + chainFreed
       }
-
-      // Threshold 0 drops every stuck item — the most any prune can free. When
-      // even that is nothing (e.g. the buffer is over the mark but full of ready
-      // items), skip: quiescing in-flight fetches here would discard them every
-      // tick without making room, stalling progress.
-      let (targetsAtZero, freedAtZero) = pruneTargetsAt(0.)
-      if freedAtZero > 0 {
-        // Largest progress threshold that still frees `need` items, so we drop
-        // only the closest-to-head items across all chains; the per-chain targets
-        // from the winning evaluation are reused for the prune below. If even
-        // threshold 0 can't reach `need`, settle there and free what we can.
-        // 30 bisections resolve the threshold to 2^-30 — below one block even on
-        // a billion-block chain.
-        let best = ref((targetsAtZero, freedAtZero))
-        if freedAtZero >= need {
-          let lo = ref(0.)
-          let hi = ref(1.)
-          for _ in 0 to 29 {
-            let mid = (lo.contents +. hi.contents) /. 2.
-            let (targets, freed) = pruneTargetsAt(mid)
-            if freed >= need {
-              lo := mid
-              best := (targets, freed)
-            } else {
-              hi := mid
-            }
-          }
-        }
-        let (targets, _) = best.contents
-
-        // Only the chains that actually free something are touched: pruneBuffer's
-        // rollback drops their in-flight queries above the target (late responses
-        // are discarded by the still-pending check), while every other chain's
-        // in-flight work — including the lagging frontier query the prune is
-        // waiting on — keeps running.
-        let totalFreed = ref(0)
-        for i in 0 to chainIds->Array.length - 1 {
-          let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
-          let (target, freed) = targets->Array.getUnsafe(i)
-          if freed > 0 {
-            cs->ChainState.pruneBuffer(~targetBlockNumber=target)
-            totalFreed := totalFreed.contents + freed
-          }
-        }
-
-        Logging.trace({
-          "msg": "Pruned stale fetch buffer above the processing frontier",
-          "bufferSize": total,
-          "freed": totalFreed.contents,
-        })
-        Prometheus.IndexingBufferPrune.increment(~freed=totalFreed.contents)
-      }
+      (targets, freed.contents)
     }
+
+    // Threshold 0 drops every stuck item — the most any prune can free. When
+    // even that is nothing (e.g. the buffer is over the mark but full of ready
+    // items), skip: quiescing in-flight fetches here would discard them every
+    // tick without making room, stalling progress.
+    let (targetsAtZero, freedAtZero) = pruneTargetsAt(0.)
+    if freedAtZero > 0 {
+      // Largest progress threshold that still frees `need` items, so we drop
+      // only the closest-to-head items across all chains; the per-chain targets
+      // from the winning evaluation are reused for the prune below. If even
+      // threshold 0 can't reach `need`, settle there and free what we can.
+      // 30 bisections resolve the threshold to 2^-30 — below one block even on
+      // a billion-block chain.
+      let best = ref((targetsAtZero, freedAtZero))
+      if freedAtZero >= need {
+        let lo = ref(0.)
+        let hi = ref(1.)
+        for _ in 0 to 29 {
+          let mid = (lo.contents +. hi.contents) /. 2.
+          let (targets, freed) = pruneTargetsAt(mid)
+          if freed >= need {
+            lo := mid
+            best := (targets, freed)
+          } else {
+            hi := mid
+          }
+        }
+      }
+      let (targets, _) = best.contents
+
+      // Only the chains that actually free something are touched: pruneBuffer's
+      // rollback drops their in-flight queries above the target (late responses
+      // are discarded by the still-pending check), while every other chain's
+      // in-flight work — including the lagging frontier query the prune is
+      // waiting on — keeps running.
+      let totalFreed = ref(0)
+      for i in 0 to chainIds->Array.length - 1 {
+        let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
+        let (target, freed) = targets->Array.getUnsafe(i)
+        if freed > 0 {
+          cs->ChainState.pruneBuffer(~targetBlockNumber=target)
+          totalFreed := totalFreed.contents + freed
+        }
+      }
+
+      Logging.trace({
+        "msg": "Pruned stale fetch buffer above the processing frontier",
+        "bufferSize": totalBufferSize,
+        "freed": totalFreed.contents,
+      })
+      Prometheus.IndexingBufferPrune.increment(~freed=totalFreed.contents)
+      totalFreed.contents
+    } else {
+      0
+    }
+  } else {
+    0
   }
-}
 
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events. Every chain proposes its candidate queries
@@ -309,7 +320,8 @@ let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
-  crossChainState->maybePrune
+  let totalBufferSize = crossChainState->totalBufferSize
+  let freed = crossChainState->maybePrune(~totalBufferSize)
 
   let remaining = Pervasives.max(
     0,
@@ -323,14 +335,9 @@ let checkAndFetch = async (
   // refetch exactly what it dropped, since stuck items count toward the prune
   // trigger but not toward `remaining`. Once the buffer drains back to the
   // target, processing has caught up and the prune targets are cleared.
-  let bufferAboveTarget = crossChainState->totalBufferSize > crossChainState.targetBufferSize
+  let bufferAboveTarget = totalBufferSize - freed > crossChainState.targetBufferSize
 
   let chainIds = crossChainState.chainIds
-  if !bufferAboveTarget {
-    for i in 0 to chainIds->Array.length - 1 {
-      crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.clearPruneTarget
-    }
-  }
   let actionByChain = Dict.make()
   // Candidate queries from every chain. Each query carries its chain id and the
   // chain progress % at its fromBlock (the admission sort key), set here so the
@@ -339,13 +346,16 @@ let checkAndFetch = async (
   for i in 0 to chainIds->Array.length - 1 {
     let chainId = chainIds->Array.getUnsafe(i)
     let cs = crossChainState->getChainState(chainId)
+    if !bufferAboveTarget {
+      cs->ChainState.clearPruneTarget
+    }
     switch cs->ChainState.getNextQuery(~hasBudget=remaining > 0) {
     | (WaitingForNewBlock | NothingToQuery) as action =>
       actionByChain->Utils.Dict.setByInt(chainId, action)
     | Ready(queries) =>
       // Default to NothingToQuery; replaced below if any candidate is admitted.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
-      let pruneCeiling = bufferAboveTarget ? cs->ChainState.lastPruneTarget : None
+      let pruneCeiling = cs->ChainState.lastPruneTarget
       queries->Array.forEach(query => {
         let isHeldBackPrunedRange = switch pruneCeiling {
         | Some(ceiling) => query.fromBlock > ceiling

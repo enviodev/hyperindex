@@ -359,7 +359,15 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 
 // Invalidate in-flight fetches/waiters without starting a rollback, eg on the
 // realtime transition where the parked waiter is bound to the pre-realtime source.
-let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
+// The epoch bump makes every in-flight response stale, so their pending-query
+// slots and reservations must be dropped with it — otherwise the abandoned
+// ranges are treated as still fetching and never re-proposed.
+let invalidateInflight = (state: t) => {
+  state.epoch = state.epoch + 1
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Utils.Dict.forEach(cs => cs->ChainState.resetPendingQueries)
+}
 
 let applyBatchProgress = (state: t, ~batch: Batch.t) =>
   state.crossChainState->CrossChainState.applyBatchProgress(~batch)
