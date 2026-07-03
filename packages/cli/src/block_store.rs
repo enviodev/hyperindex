@@ -447,7 +447,7 @@ impl BlockStore {
             .iter()
             .map(|&n| u64::try_from(n).ok())
             .collect();
-        self.inner.lock().unwrap().gather_scratch(&keys, &masks)
+        self.inner.lock().unwrap().gather_scratch(&keys, masks)
     }
 
     /// Add one response's EVM blocks as a chunk (called by the HyperSync source

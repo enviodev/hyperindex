@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Once};
+use std::sync::Once;
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
@@ -329,10 +329,11 @@ fn process_response(
     let mut missing: Vec<String> = Vec::new();
 
     // Accumulate transactions into the store keyed by (blockNumber, txIndex).
-    // Many logs share a transaction, so a per-log insert would redundantly
-    // re-store it; inserting each transaction once deduplicates by key.
+    // Many logs share a transaction, and the server returns each one once, so
+    // the page's transactions go in as one chunk.
     let mut transaction_keys: HashSet<(u64, u32)> = HashSet::new();
     if !requested_transaction_fields.is_empty() {
+        let mut kept: Vec<simple_types::Transaction> = Vec::new();
         for tx in transactions.into_iter().flatten() {
             for &field in requested_transaction_fields {
                 if let Some(name) = transaction_field_missing(&tx, field) {
@@ -342,12 +343,12 @@ fn process_response(
             if let (Some(block_number), Some(transaction_index)) =
                 (tx.block_number, tx.transaction_index)
             {
-                let block_number = u64::from(block_number);
-                let transaction_index = u64::from(transaction_index) as u32;
-                transaction_keys.insert((block_number, transaction_index));
-                transaction_store.insert_evm_raw(block_number, transaction_index, Arc::new(tx));
+                transaction_keys
+                    .insert((u64::from(block_number), u64::from(transaction_index) as u32));
+                kept.push(tx);
             }
         }
+        transaction_store.insert_evm_txs(kept);
     }
 
     // Validate every block field we requested — the user's selection plus the

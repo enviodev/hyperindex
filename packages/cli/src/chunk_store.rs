@@ -24,7 +24,7 @@ impl BitVec {
     }
 
     fn push(&mut self, v: bool) {
-        if self.len % 64 == 0 {
+        if self.len.is_multiple_of(64) {
             self.words.push(0);
         }
         if v {
@@ -43,7 +43,7 @@ impl BitVec {
             return;
         }
         self.words.truncate(len.div_ceil(64));
-        if len % 64 != 0 {
+        if !len.is_multiple_of(64) {
             let w = self.words.last_mut().unwrap();
             *w &= (1u64 << (len % 64)) - 1;
         }
@@ -844,7 +844,9 @@ pub(crate) fn utf8(b: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    fn u64_chunk(rows: &[(u64, Option<u64>, Option<&[u8]>)]) -> Chunk<u64> {
+    type TestRow<'a> = (u64, Option<u64>, Option<&'a [u8]>);
+
+    fn u64_chunk(rows: &[TestRow]) -> Chunk<u64> {
         let mut num = NumCol::new();
         let mut var = VarCol::new();
         for &(_, n, v) in rows {
@@ -971,7 +973,7 @@ mod tests {
     fn coalesce_merges_small_runs_and_dedups_newest_wins() {
         let mut store = ChunkStore::new(2, true);
         // One large chunk keeps the median meaningful.
-        let large: Vec<(u64, Option<u64>, Option<&[u8]>)> =
+        let large: Vec<TestRow> =
             (1000..1200).map(|k| (k, Some(k), None)).collect();
         store.push_chunk(u64_chunk(&large));
         for i in 0..COALESCE_CHUNK_COUNT {

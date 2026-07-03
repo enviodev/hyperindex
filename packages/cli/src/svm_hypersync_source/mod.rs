@@ -45,48 +45,19 @@ use types::QueryResponse;
 /// store gate compares against is a single discoverable constant.
 const REQUIRED_SVM_BLOCK_QUERY_FIELDS: &[&str] = &["slot", "blockhash", "block_time"];
 
-/// Move the raw transactions and token balances of a response into a
-/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept raw in Rust so
+/// Move the response's transactions and token balances into a
+/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
 /// only the config-selected fields are materialised at batch prep; many
-/// instructions in one transaction collapse to a single stored record.
+/// instructions in one transaction collapse to a single stored row, and token
+/// balances land in the store's companion table joined back by key at
+/// materialisation.
 fn build_svm_store(
     transactions: Vec<simple::Transaction>,
     token_balances: Vec<simple::TokenBalance>,
 ) -> TransactionStore {
     let store = TransactionStore::new_svm();
-
-    let mut tx_by_key: HashMap<(u64, u32), simple::Transaction> = HashMap::new();
-    for tx in transactions {
-        tx_by_key.insert((tx.slot, tx.transaction_index), tx);
-    }
-    let mut tb_by_key: HashMap<(u64, u32), Vec<simple::TokenBalance>> = HashMap::new();
-    for tb in token_balances {
-        if let Some(ti) = tb.transaction_index {
-            tb_by_key.entry((tb.slot, ti)).or_default().push(tb);
-        }
-    }
-
-    // Union of keys: a transaction may have token balances but no selected
-    // transaction fields, or vice versa.
-    let mut keys: Vec<(u64, u32)> = tx_by_key.keys().copied().collect();
-    for key in tb_by_key.keys() {
-        if !tx_by_key.contains_key(key) {
-            keys.push(*key);
-        }
-    }
-    for key in keys {
-        // A token-balance-only key has no transaction row; the defaulted struct
-        // is fine because `transactionIndex` materialises from the store key, not
-        // this record (no other field is read for such keys).
-        let tx = tx_by_key.remove(&key).unwrap_or_default();
-        let token_balances = tb_by_key.remove(&key).unwrap_or_default();
-        store.insert_svm_raw(
-            key.0,
-            key.1,
-            Arc::new(TransactionStore::make_svm_stored(tx, token_balances)),
-        );
-    }
-
+    store.insert_svm_txs(transactions);
+    store.insert_svm_token_balances(token_balances);
     store
 }
 

@@ -134,35 +134,9 @@ impl ToNapiValue for Columns {
     }
 }
 
-/// Build one column by extracting a field from each record, but only for rows
-/// whose per-row `mask` has `bit` set; every other row (or a key missing from
-/// the store) yields a `None` cell. This is what lets a field be materialised on
-/// exactly the rows that selected it, rather than on every row in the batch —
-/// and it skips `extract` (e.g. hex-encoding a large field) on unselected rows.
-pub fn fill_masked<R, T>(
-    records: &[Option<std::sync::Arc<R>>],
-    masks: &[u64],
-    bit: u64,
-    extract: impl Fn(&R) -> Result<Option<T>>,
-) -> Result<Vec<Option<T>>> {
-    records
-        .iter()
-        .zip(masks)
-        .map(|(rec, &m)| {
-            if m & bit == 0 {
-                return Ok(None);
-            }
-            match rec {
-                Some(r) => extract(r.as_ref()),
-                None => Ok(None),
-            }
-        })
-        .collect()
-}
-
 /// Iterate an ecosystem's field variants and decode each whose bit is set in the
-/// union of `masks` (a column is built when any row selects it; `decode`, via
-/// `fill_masked`, still applies each row's own mask within it). Shared by every
+/// union of `masks` (a column is built when any row selects it; the gathered
+/// scratch already applies each row's own mask within it). Shared by every
 /// store; only the per-field `decode` table differs. A decode error names the
 /// field so one bad row aborts the batch's materialisation with an actionable
 /// message.
