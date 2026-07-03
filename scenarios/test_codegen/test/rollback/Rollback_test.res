@@ -3006,7 +3006,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // threshold: fetched-ahead items get pruned while the lagging
       // dynamic-contract partition's in-flight work keeps running, a reorg is
       // then detected and resolved, and the indexer still processes every event
-      // exactly once. targetBufferSize 10 -> prune above 30 items, down to 15.
+      // exactly once. targetBufferSize 10 -> prune above 30 items, down to 20.
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#1337,
@@ -3094,9 +3094,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       // The dynamic-contract query returns a partial response: its response tick
       // is the first one after the batch set firstEventBlock, so the prune fires
-      // now — 36 items minus the one that became ready at block 1000, minus 21
-      // pruned (down to the 15-item low-water mark). The partition's rolled-back
-      // range (90_014+) is held back while the buffer is above targetBufferSize,
+      // now — 36 items minus the one that became ready at block 1000, minus 16
+      // pruned (down to the 20-item low-water mark). The partition's rolled-back
+      // range (90_019+) is held back while the buffer is above targetBufferSize,
       // so the only new query is the dynamic-contract continuation chunk.
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=5000)
       await indexerMock.getBatchWritePromise()
@@ -3107,12 +3107,12 @@ This might be wrong after we start exposing a block hash for progress block.`,
           await indexerMock.metric("envio_indexing_buffer_prune_items_total"),
           sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
         ),
-        ~message=`The prune drops the 21 closest-to-head items and the
+        ~message=`The prune drops the 16 closest-to-head items and the
         rolled-back partition is not refetched while the buffer stays above
         target`,
       ).toEqual((
         ["500-0", "1000-0"],
-        [{value: "21", labels: Dict.make()}],
+        [{value: "16", labels: Dict.make()}],
         [{"fromBlock": 5001, "toBlock": Some(41_000), "retry": 0, "p": "2"}],
       ))
 
@@ -3140,7 +3140,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         the pruned range stays held back`,
       ).toEqual((
         [{"fromBlock": 5001, "toBlock": Some(41_000), "retry": 0, "p": "2"}],
-        [{value: "14", labels: Dict.fromArray([("chainId", "1337")])}],
+        [{value: "19", labels: Dict.fromArray([("chainId", "1337")])}],
       ))
 
       // Drive the dynamic-contract partition forward chunk by chunk with empty
@@ -3150,7 +3150,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       let seenQueries = []
       let guard = ref(0)
       while (
-        !(seenQueries->Array.some(payload => payload["fromBlock"] == 90_014)) &&
+        !(seenQueries->Array.some(payload => payload["fromBlock"] == 90_019)) &&
         guard.contents < 15
       ) {
         guard := guard.contents + 1
@@ -3164,7 +3164,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       t.expect(
         (
           calls->Utils.Array.copy,
-          seenQueries->Array.filter(payload => payload["fromBlock"] == 90_014),
+          seenQueries->Array.filter(payload => payload["fromBlock"] == 90_019),
           await indexerMock.query(SimpleEntity),
         ),
         ~message=`Every buffered event processes exactly once, and the pruned
@@ -3172,12 +3172,12 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual((
         Array.concat(
           ["500-0", "1000-0"],
-          Array.fromInitializer(~length=14, i => (90_000 + i)->Int.toString ++ "-0"),
+          Array.fromInitializer(~length=19, i => (90_000 + i)->Int.toString ++ "-0"),
         ),
         // The dynamic-contract partition merged with the pruned one as it
         // caught up, so the released range is requested by the merged partition.
-        [{"fromBlock": 90_014, "toBlock": Some(99_800), "retry": 0, "p": "3"}],
-        [{Indexer.Entities.SimpleEntity.id: "1", value: "90013-0"}],
+        [{"fromBlock": 90_019, "toBlock": Some(99_800), "retry": 0, "p": "3"}],
+        [{Indexer.Entities.SimpleEntity.id: "1", value: "90018-0"}],
       ))
     },
   )

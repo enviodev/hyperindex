@@ -162,12 +162,17 @@ let emptyBatch: Batch.t = {
   checkpointEventsProcessed: [],
 }
 
-let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSize=100) => {
+let makeCrossChainState = (
+  ~chainStatesList,
+  ~isRealtime=false,
+  ~isInReorgThreshold=false,
+  ~targetBufferSize=100,
+) => {
   let chainStates = Dict.make()
   chainStatesList->Array.forEach(cs =>
     chainStates->Utils.Dict.setByInt((cs->ChainState.chainConfig).id, cs)
   )
-  CrossChainState.make(~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
+  CrossChainState.make(~chainStates, ~isInReorgThreshold, ~isRealtime, ~targetBufferSize)
 }
 
 describe("CrossChainState fetch control", () => {
@@ -327,9 +332,10 @@ describe("CrossChainState buffer prune", () => {
     )
 
   Async.it("prunes the closest-to-head items across chains down to the low-water mark", async t => {
-    // targetBufferSize 20 → prune when the buffer exceeds 3x (60), down to 1.5x
-    // (30). Chain 1's items sit at ~0.8 progress, chain 2's at ~0.2, so the
-    // head-closest chain 1 is dropped entirely before chain 2 is touched.
+    // targetBufferSize 20 → prune when the buffer exceeds 3x (60), down to 2x
+    // (40). Chain 1's items sit at ~0.8 progress, chain 2's at ~0.2, so dropping
+    // the head-closest chain 1 entirely frees exactly the 40 items needed and
+    // chain 2 is untouched — only the pruned chain records a hold-back target.
     let cs1 = makeStuck(~chainId=1, ~fromBlock=8000)
     let cs2 = makeStuck(~chainId=2, ~fromBlock=2000)
     let cm = makeCrossChainState(~chainStatesList=[cs1, cs2], ~targetBufferSize=20)
@@ -341,16 +347,13 @@ describe("CrossChainState buffer prune", () => {
     t.expect({
       "chain1Buffer": cs1->ChainState.bufferSize,
       "chain2Buffer": cs2->ChainState.bufferSize,
-      // The threshold lands one block below chain 2's 10th-from-last item
-      // (freeing exactly the 10 items needed on top of chain 1's 40), and both
-      // chains record it so admission holds back the pruned ranges.
       "chain1PruneTarget": cs1->ChainState.lastPruneTarget,
       "chain2PruneTarget": cs2->ChainState.lastPruneTarget,
     }).toEqual({
       "chain1Buffer": 0,
-      "chain2Buffer": 30,
-      "chain1PruneTarget": Some(2029),
-      "chain2PruneTarget": Some(2029),
+      "chain2Buffer": 40,
+      "chain1PruneTarget": Some(7999),
+      "chain2PruneTarget": None,
     })
   })
 
@@ -380,8 +383,8 @@ describe("CrossChainState buffer prune", () => {
   Async.it("holds back the pruned range instead of refetching it in the same tick", async t => {
     // One partition fetched ahead to 8039 while the chain frontier sits at 100,
     // so all 40 buffered items are stuck. targetBufferSize 10 → prune at 3x (30)
-    // down to 1.5x (15): target lands at 8014. The rolled-back partition
-    // immediately re-proposes 8015+, but the buffer (15) is still above the
+    // down to 2x (20): target lands at 8019. The rolled-back partition
+    // immediately re-proposes 8020+, but the buffer (20) is still above the
     // target (10), so admission holds the range back and nothing is dispatched.
     let cs = makeFetchingChainState(
       ~chainId=1,
@@ -405,9 +408,39 @@ describe("CrossChainState buffer prune", () => {
       "pruneTarget": cs->ChainState.lastPruneTarget,
       "dispatched": dispatched,
     }).toEqual({
-      "buffer": 15,
-      "pruneTarget": Some(8014),
+      "buffer": 20,
+      "pruneTarget": Some(8019),
       "dispatched": [],
+    })
+  })
+
+  Async.it("prunes inside the reorg threshold too", async t => {
+    // The indexer-wide threshold flag is sticky and set on restart if any chain
+    // resumed near its head, so a far-behind chain must still get its buffer
+    // bounded while the flag is on.
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=10000,
+      ~latestFetchedBlock=100,
+      ~partitionFetchedBlock=8039,
+      ~bufferBlocks=Array.fromInitializer(~length=40, i => 8000 + i),
+    )
+    let cm = makeCrossChainState(
+      ~chainStatesList=[cs],
+      ~targetBufferSize=10,
+      ~isInReorgThreshold=true,
+    )
+
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chain as _, ~action as _) => Promise.resolve(),
+    )
+
+    t.expect({
+      "buffer": cs->ChainState.bufferSize,
+      "pruneTarget": cs->ChainState.lastPruneTarget,
+    }).toEqual({
+      "buffer": 20,
+      "pruneTarget": Some(8019),
     })
   })
 

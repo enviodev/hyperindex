@@ -111,6 +111,8 @@ let rec onQueryResponse = async (
   // Stale epoch (reorg / realtime transition) invalidates every in-flight
   // response; a buffer prune invalidates only the queries it rolled back, whose
   // responses are recognized here by no longer being tracked as pending.
+  // TODO: Move the still-pending gate into ChainState.handleQueryResult so a
+  // future response entry point can't bypass it.
   if (
     state->IndexerState.isStale(~stateId) || !(chainState->ChainState.isQueryStillPending(~query))
   ) {

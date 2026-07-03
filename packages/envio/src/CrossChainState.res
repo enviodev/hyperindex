@@ -214,21 +214,20 @@ let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
 // targetBufferSize < low-water < high-water — releasing pruned ranges any
 // earlier would refetch what the prune just dropped.
 let pruneHighWaterMark = (crossChainState: t) => crossChainState.targetBufferSize * 3
-let pruneLowWaterMark = (crossChainState: t) => crossChainState.targetBufferSize * 3 / 2
+let pruneLowWaterMark = (crossChainState: t) => crossChainState.targetBufferSize * 2
 
 // Removing the up-front block cap lets queries run to the head, so fetched-ahead
 // items accumulate as stuck buffer while a lagging partition holds the frontier.
 // This reclaims that memory reactively: once the indexer-wide buffer crosses the
 // high-water mark, drop the highest-progress% (closest-to-head) items across all
 // chains back down to the low-water mark and roll back the partitions that
-// fetched them. Prune only during backfill — near the head blockLag keeps the
-// buffer below the reorg window and there is nothing far-ahead to reclaim.
+// fetched them. Runs in the reorg threshold too: the indexer-wide flag is sticky
+// and set on restart if any single chain resumed near its head, so a chain
+// backfilling from far behind still needs the buffer bound; chains genuinely at
+// their head hold little above the frontier and are naturally rarely pruned.
 // Returns how many items were freed.
 let maybePrune = (crossChainState: t, ~totalBufferSize) =>
-  if (
-    !crossChainState.isInReorgThreshold &&
-    totalBufferSize > crossChainState->pruneHighWaterMark
-  ) {
+  if totalBufferSize > crossChainState->pruneHighWaterMark {
     let chainIds = crossChainState.chainIds
     let need = totalBufferSize - crossChainState->pruneLowWaterMark
 
@@ -255,6 +254,9 @@ let maybePrune = (crossChainState: t, ~totalBufferSize) =>
     // even that is nothing (e.g. the buffer is over the mark but full of ready
     // items), skip: quiescing in-flight fetches here would discard them every
     // tick without making room, stalling progress.
+    // TODO: When 0 < freedAtZero < need (ready items dominate the excess), this
+    // settles at threshold 0 and drops every stuck item even though that frees
+    // far less than `need`; consider pruning proportionally instead.
     let (targetsAtZero, freedAtZero) = pruneTargetsAt(0.)
     if freedAtZero > 0 {
       // Largest progress threshold that still frees `need` items, so we drop

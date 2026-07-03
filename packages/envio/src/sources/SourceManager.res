@@ -628,6 +628,9 @@ let executeQuery = async (
   let responseRef = ref(None)
   let retryRef = ref(0)
 
+  // TODO: Stop retrying once the query is invalidated (buffer prune / epoch
+  // bump) — the loop keeps burning source capacity on a response that will be
+  // discarded on arrival.
   while responseRef.contents->Option.isNone {
     // Select the best source at the start of every iteration
     let sourceState = switch sourceManager->getNextSource(

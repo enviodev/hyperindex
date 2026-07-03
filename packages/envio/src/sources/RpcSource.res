@@ -886,6 +886,8 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
+  // TODO: Evict entries for deleted partition ids — ids are never reused, so
+  // the dict grows for the process lifetime (a few bytes per dead partition).
   let mutSuggestedBlockIntervals = Dict.make()
 
   let client = Rpc.makeClient(url, ~headers?)

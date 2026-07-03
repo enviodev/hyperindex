@@ -1629,9 +1629,12 @@ let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
 // For a cross-chain progress threshold in [0.,1.], returns the block to prune
 // above (buffer items with a higher block number get dropped and their
 // partitions rolled back) together with how many items that frees. Clamped so we
-// never drop ready items (target >= the ready frontier) nor roll a partition back
-// into the reorg window (target <= knownHeight - maxReorgDepth), keeping restart
-// points on confirmed blocks. Higher progress% = closer to head = pruned first.
+// never drop ready items (target >= the ready frontier) and prefer restart
+// points on confirmed blocks (target <= knownHeight - maxReorgDepth). Inside the
+// reorg threshold the frontier itself may sit past the reorg floor, putting the
+// target on an unconfirmed block — safe, because reorg detection state survives
+// a prune: refetching a reorged range re-reports mismatching hashes and triggers
+// the normal rollback. Higher progress% = closer to head = pruned first.
 let getPruneTarget = (fetchState: t, ~progressThreshold: float, ~maxReorgDepth: int) => {
   let frontier = fetchState->bufferBlockNumber
   let reorgFloor = fetchState.knownHeight - maxReorgDepth
