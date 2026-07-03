@@ -1,4 +1,5 @@
 mod block_store;
+mod chunk_store;
 mod cli_args;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
