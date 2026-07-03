@@ -212,15 +212,13 @@ impl SvmHypersyncClient {
             .context("mapping solana block headers")
             .map_err(map_err)?;
 
-        // Retain raw blocks in Rust keyed by slot so the block store can
+        // Retain blocks in Rust keyed by slot so the block store can
         // materialise the selected block fields onto each instruction's
         // `event.block` at batch prep. Skipped when only slot/blockhash/blockTime
         // were requested — those reach ReScript via the response's block table.
         let block_store = BlockStore::new_svm();
         if has_extra_block_fields {
-            for b in raw_blocks {
-                block_store.insert_svm_raw(b.slot, Arc::new(b));
-            }
+            block_store.insert_svm_blocks(raw_blocks);
         }
 
         let mut out = QueryResponse::try_from(resp)

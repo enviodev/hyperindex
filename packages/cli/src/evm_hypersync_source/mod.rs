@@ -413,11 +413,7 @@ fn process_response(
     // the trio: number/timestamp/hash decode from the store like any other
     // field (see `decode_evm_block_field`), so the store needs an entry for
     // every block the config's always-included trio selection touches.
-    for block in response_blocks {
-        if let Some(number) = block.number {
-            block_store.insert_evm_raw(number, Arc::new(block));
-        }
-    }
+    block_store.insert_evm_blocks(response_blocks);
 
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
     for log in logs.into_iter().flatten() {

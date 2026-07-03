@@ -609,6 +609,235 @@ impl<K: Ord + Copy> ChunkStore<K> {
 
         Chunk::new(keys, cols)
     }
+
+    /// The per-field scratch a `materialize` call decodes from: one gathered
+    /// column per field whose bit is set in any row's mask, each already
+    /// respecting the per-row masks. Built under the store lock; decoding then
+    /// runs on the caller's own copy.
+    pub(crate) fn gather_scratch(&self, keys: &[Option<K>], masks: &[u64]) -> Vec<Option<AnyCol>> {
+        let hits = self.hit_lists(keys);
+        let union = masks.iter().fold(0u64, |acc, &m| acc | m);
+        (0..self.n_fields)
+            .map(|f| {
+                let bit = 1u64 << f;
+                if union & bit == 0 {
+                    None
+                } else {
+                    self.gather(&hits, f, |i| masks[i] & bit != 0)
+                }
+            })
+            .collect()
+    }
+}
+
+// ---- Fill: build one column from a response's rows. `None` when no row has a
+// value, so absent fields cost nothing. ----
+
+fn built(col: AnyCol) -> Option<AnyCol> {
+    col.any_valid().then_some(col)
+}
+
+pub(crate) fn var_from<R>(rows: &[R], f: impl Fn(&R) -> Option<&[u8]>) -> Option<AnyCol> {
+    let mut col = VarCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::Var(col))
+}
+
+pub(crate) fn fixed_from<R>(
+    rows: &[R],
+    width: usize,
+    f: impl Fn(&R) -> Option<&[u8]>,
+) -> Option<AnyCol> {
+    let mut col = FixedCol::new(width);
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::Fixed(col))
+}
+
+pub(crate) fn u64_from<R>(rows: &[R], f: impl Fn(&R) -> Option<u64>) -> Option<AnyCol> {
+    let mut col = NumCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::U64(col))
+}
+
+pub(crate) fn i64_from<R>(rows: &[R], f: impl Fn(&R) -> Option<i64>) -> Option<AnyCol> {
+    let mut col = NumCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::I64(col))
+}
+
+pub(crate) fn f64_from<R>(rows: &[R], f: impl Fn(&R) -> Option<f64>) -> Option<AnyCol> {
+    let mut col = NumCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::F64(col))
+}
+
+pub(crate) fn bool_from<R>(rows: &[R], f: impl Fn(&R) -> Option<bool>) -> Option<AnyCol> {
+    let mut col = NumCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::Bool(col))
+}
+
+pub(crate) fn str_list_from<R>(
+    rows: &[R],
+    f: impl Fn(&R) -> Option<Vec<String>>,
+) -> Option<AnyCol> {
+    let mut col = ListCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::StrList(col))
+}
+
+pub(crate) fn hash_list_from<R>(
+    rows: &[R],
+    f: impl Fn(&R) -> Option<Vec<[u8; 32]>>,
+) -> Option<AnyCol> {
+    let mut col = ListCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::HashList(col))
+}
+
+pub(crate) fn access_lists_from<R>(
+    rows: &[R],
+    f: impl Fn(&R) -> Option<Vec<format::AccessList>>,
+) -> Option<AnyCol> {
+    let mut col = ListCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::AccessLists(col))
+}
+
+pub(crate) fn auth_lists_from<R>(
+    rows: &[R],
+    f: impl Fn(&R) -> Option<Vec<format::Authorization>>,
+) -> Option<AnyCol> {
+    let mut col = ListCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::AuthLists(col))
+}
+
+// ---- Decode: turn a gathered scratch column into per-row cells. A `None`
+// column (field absent from every chunk) yields all-missing rows. The variant
+// checks panic on mismatch since fill and decode for a field are written
+// together. ----
+
+pub(crate) fn bytes_cells<T>(
+    col: Option<&AnyCol>,
+    len: usize,
+    f: impl Fn(&[u8]) -> anyhow::Result<Option<T>>,
+) -> anyhow::Result<Vec<Option<T>>> {
+    match col {
+        None => Ok((0..len).map(|_| None).collect()),
+        Some(AnyCol::Var(c)) => (0..len).map(|i| c.get(i).map_or(Ok(None), &f)).collect(),
+        Some(AnyCol::Fixed(c)) => (0..len).map(|i| c.get(i).map_or(Ok(None), &f)).collect(),
+        Some(_) => panic!("expected a byte column"),
+    }
+}
+
+pub(crate) fn u64_cells<T>(
+    col: Option<&AnyCol>,
+    len: usize,
+    f: impl Fn(u64) -> anyhow::Result<Option<T>>,
+) -> anyhow::Result<Vec<Option<T>>> {
+    match col {
+        None => Ok((0..len).map(|_| None).collect()),
+        Some(AnyCol::U64(c)) => (0..len).map(|i| c.get(i).map_or(Ok(None), &f)).collect(),
+        Some(_) => panic!("expected a u64 column"),
+    }
+}
+
+pub(crate) fn i64_cells(col: Option<&AnyCol>, len: usize) -> Vec<Option<i64>> {
+    match col {
+        None => vec![None; len],
+        Some(AnyCol::I64(c)) => (0..len).map(|i| c.get(i)).collect(),
+        Some(_) => panic!("expected an i64 column"),
+    }
+}
+
+pub(crate) fn f64_cells(col: Option<&AnyCol>, len: usize) -> Vec<Option<f64>> {
+    match col {
+        None => vec![None; len],
+        Some(AnyCol::F64(c)) => (0..len).map(|i| c.get(i)).collect(),
+        Some(_) => panic!("expected an f64 column"),
+    }
+}
+
+pub(crate) fn bool_cells(col: Option<&AnyCol>, len: usize) -> Vec<Option<bool>> {
+    match col {
+        None => vec![None; len],
+        Some(AnyCol::Bool(c)) => (0..len).map(|i| c.get(i)).collect(),
+        Some(_) => panic!("expected a bool column"),
+    }
+}
+
+pub(crate) fn str_list_cells(col: Option<&AnyCol>, len: usize) -> Vec<Option<Vec<String>>> {
+    match col {
+        None => vec![None; len],
+        Some(AnyCol::StrList(c)) => (0..len).map(|i| c.get(i).cloned()).collect(),
+        Some(_) => panic!("expected a string-list column"),
+    }
+}
+
+pub(crate) fn hash_list_cells<T>(
+    col: Option<&AnyCol>,
+    len: usize,
+    f: impl Fn(&[u8; 32]) -> T,
+) -> Vec<Option<Vec<T>>> {
+    match col {
+        None => (0..len).map(|_| None).collect(),
+        Some(AnyCol::HashList(c)) => (0..len)
+            .map(|i| c.get(i).map(|v| v.iter().map(&f).collect()))
+            .collect(),
+        Some(_) => panic!("expected a hash-list column"),
+    }
+}
+
+pub(crate) fn access_lists_cells<T>(
+    col: Option<&AnyCol>,
+    len: usize,
+    f: impl Fn(&format::AccessList) -> T,
+) -> Vec<Option<Vec<T>>> {
+    match col {
+        None => (0..len).map(|_| None).collect(),
+        Some(AnyCol::AccessLists(c)) => (0..len)
+            .map(|i| c.get(i).map(|v| v.iter().map(&f).collect()))
+            .collect(),
+        Some(_) => panic!("expected an access-list column"),
+    }
+}
+
+pub(crate) fn auth_lists_cells<T>(
+    col: Option<&AnyCol>,
+    len: usize,
+    f: impl Fn(&format::Authorization) -> anyhow::Result<T>,
+) -> anyhow::Result<Vec<Option<Vec<T>>>> {
+    match col {
+        None => Ok((0..len).map(|_| None).collect()),
+        Some(AnyCol::AuthLists(c)) => (0..len)
+            .map(|i| c.get(i).map(|v| v.iter().map(&f).collect()).transpose())
+            .collect(),
+        Some(_) => panic!("expected an authorization-list column"),
+    }
+}
+
+/// Full-bytes hex, matching `Data`/`FixedSizeData::encode_hex` ("0x" when empty).
+pub(crate) fn hex_full(b: &[u8]) -> String {
+    if b.is_empty() {
+        return "0x".into();
+    }
+    format!("0x{}", faster_hex::hex_string(b))
+}
+
+/// Quantity hex, matching `Quantity::encode_hex`: leading zeros trimmed, zero
+/// itself is "0x0".
+pub(crate) fn hex_quantity(b: &[u8]) -> String {
+    let hex = faster_hex::hex_string(b);
+    match hex.find(|c| c != '0') {
+        Some(idx) => format!("0x{}", &hex[idx..]),
+        None => "0x0".into(),
+    }
+}
+
+/// UTF-8 cell back to the `String` it was stored from.
+pub(crate) fn utf8(b: &[u8]) -> String {
+    String::from_utf8_lossy(b).into_owned()
 }
 
 #[cfg(test)]
