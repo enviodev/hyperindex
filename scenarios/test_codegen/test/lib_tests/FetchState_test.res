@@ -3,6 +3,7 @@ open Vitest
 let chainId = 0
 let targetBufferSize = 5000
 let knownHeight = 0
+let tooFarBlockRange = FetchState.OptimizedPartitions.tooFarBlockRange
 
 // Spread into expected query literals so the cross-chain scheduler fields
 // (chainId/progress, both 0 outside of CrossChainState) don't have to be
@@ -622,7 +623,7 @@ describe("FetchState.make", () => {
     let farContractBEventConfig = (MockIndexer.evmEventConfig(
       ~id="0",
       ~contractName="ContractB",
-      ~startBlock=20_002,
+      ~startBlock=tooFarBlockRange + 2,
     ) :> Internal.eventConfig)
     let (farFetchState, _indexingAddresses) = makeFs(
       ~eventConfigs=[contractAEventConfig, farContractBEventConfig],
@@ -646,7 +647,7 @@ describe("FetchState.make", () => {
       ~knownHeight,
     )
 
-    // Phase 1: ContractA partition (block -1), ContractB partition (block 20_001)
+    // Phase 1: ContractA partition (block -1), ContractB partition (block tooFarBlockRange + 1)
     // Phase 2: too far -> mergeBlock on earlier, merge addresses into later
     let farPartitions = farFetchState.optimizedPartitions
     t.expect(
@@ -656,7 +657,7 @@ describe("FetchState.make", () => {
     t.expect(
       (farPartitions.entities->Dict.getUnsafe("0")).mergeBlock,
       ~message="Far startBlocks: earlier partition has mergeBlock",
-    ).toEqual(Some(20_001))
+    ).toEqual(Some(tooFarBlockRange + 1))
     t.expect(
       (farPartitions.entities->Dict.getUnsafe("1")).addressesByContractName,
       ~message="Far startBlocks: later partition has merged addresses from both contracts",
@@ -717,7 +718,7 @@ describe("FetchState.make", () => {
       let farContractBEventConfig = (MockIndexer.evmEventConfig(
         ~id="0",
         ~contractName="ContractB",
-        ~startBlock=20_002,
+        ~startBlock=tooFarBlockRange + 2,
       ) :> Internal.eventConfig)
       let (farFetchState, _indexingAddresses) = makeFs(
         ~eventConfigs=[contractAEventConfig, farContractBEventConfig],
@@ -741,7 +742,7 @@ describe("FetchState.make", () => {
         ~knownHeight,
       )
 
-      // Phase 1: ContractA partition (block -1), ContractB partition (block 20_001)
+      // Phase 1: ContractA partition (block -1), ContractB partition (block tooFarBlockRange + 1)
       // Phase 2: too far -> mergeBlock on earlier, merge addresses into later
       let farPartitions = farFetchState.optimizedPartitions
       t.expect(
@@ -755,7 +756,7 @@ describe("FetchState.make", () => {
       t.expect(
         (farPartitions.entities->Dict.getUnsafe("0")).mergeBlock,
         ~message="Far startBlocks: earlier partition has mergeBlock matching later partition's block",
-      ).toEqual(Some(20_001))
+      ).toEqual(Some(tooFarBlockRange + 1))
       t.expect(
         (farPartitions.entities->Dict.getUnsafe("1")).addressesByContractName,
         ~message="Far startBlocks: later partition has merged addresses",
