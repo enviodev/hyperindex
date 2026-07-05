@@ -253,6 +253,11 @@ module Indexer = {
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
+    // Test-only escape hatch to inspect the live orchestrator state.
+    dangerouslyGetState: unit => GlobalState.t,
+    // Fatal errors the orchestrator reported. In production these call
+    // process.exit; here they are captured so tests can assert on a crash.
+    getErrors: unit => array<string>,
   }
 
   type chainConfig = {
@@ -362,7 +367,16 @@ module Indexer = {
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
     )
-    let gsManager = globalState->GlobalStateManager.make
+    let capturedErrors = []
+    let errorMessage: exn => string = %raw(`(exn) =>
+      (exn && exn.message) ||
+      (exn && exn._1 && exn._1.message) ||
+      (exn && exn.RE_EXN_ID) ||
+      (() => { try { return JSON.stringify(exn, Object.getOwnPropertyNames(exn || {})) } catch (_) { return String(exn) } })()`)
+    let gsManager =
+      globalState->GlobalStateManager.make(~onError=exn =>
+        capturedErrors->Array.push(errorMessage(exn))->ignore
+      )
     gsManagerRef := Some(gsManager)
     gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
     /*
@@ -514,6 +528,8 @@ module Indexer = {
         ->Rest.fetch(query, ~client=graphqlClient)
         ->(Utils.magic: promise<unknown> => promise<graphqlResponse<{..}>>)
       },
+      dangerouslyGetState: () => gsManager->GlobalStateManager.getState,
+      getErrors: () => capturedErrors,
     }
   }
 }
