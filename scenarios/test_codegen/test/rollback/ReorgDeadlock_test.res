@@ -203,33 +203,245 @@ describe("Reorg rollback stall (v3.0.0)", () => {
         ~message="the parked rollback ran once the batch drained",
       ).toEqual(true)
 
-      // --- How this limbo becomes the permanent, restart-only per-chain stall ---
+      // --- Hypothesized mechanism for the permanent, restart-only per-chain stall ---
       //
-      // The parked-rollback path above is where the production indexer wedges the
-      // reorged chain, matching "no getHeight, no queries, no items processed until
-      // the pod is restarted" while the other chains keep progressing.
+      // The parked-rollback path above is the best candidate for where the
+      // production indexer wedges a chain, matching "no getHeight, no queries, no
+      // items processed until the pod is restarted" while other chains progress.
       //
-      // The reorg that re-fires here bumps the state epoch (GlobalState.id) and
-      // resets in-flight queries. Any query whose response comes back at the old
-      // epoch is routed to `invalidatedActionReducer` and discarded ("Invalidated
-      // action discarded"), so `FetchState.handleQueryResult` never runs for it. In
-      // v3.0.0 `FetchState.getNextQuery` decides a partition is busy purely from
-      // `mutPendingQueries->Utils.Array.notEmpty`, with no notion of which epoch
-      // launched the query — so a partition left holding such a discarded query is
-      // treated as permanently fetching: it returns NothingToQuery on every tick
-      // and never queries or checks the head again.
-      //
+      // The mechanism (PROVEN reachable as a code path, NOT proven to cause a
+      // permanent stall — see the caveat below): a reorg bumps the state epoch
+      // (GlobalState.id) and resets in-flight queries. A query whose response
+      // comes back at the old epoch is routed to `invalidatedActionReducer` and
+      // discarded ("Invalidated action discarded"), so `FetchState.handleQueryResult`
+      // never runs for it. v3.0.0's `FetchState.getNextQuery` decides a partition is
+      // busy purely from `mutPendingQueries->Utils.Array.notEmpty`, with no notion
+      // of which epoch launched the query — so IF a partition were left holding
+      // such a discarded query, it would be treated as permanently fetching:
+      // NothingToQuery on every tick, never querying or checking the head again.
       // With a second fetch partition on the chain (dynamic contracts or chunked
-      // queries) the sibling keeps fetching ahead, but `getReadyItemsCount` is
-      // bounded by `bufferBlockNumber` (the min partition frontier), so its buffered
-      // items — the reported "~50 items in buffer" — can never be processed past the
-      // wedged partition's frontier. FetchState_test.res reproduces exactly this
-      // stalled fetch state deterministically.
+      // queries), the sibling would keep fetching ahead while `getReadyItemsCount`
+      // (bounded by `bufferBlockNumber`, the min partition frontier) leaves its
+      // buffered items — the reported "~50 items in buffer" — stuck behind the
+      // wedged partition. FetchState_test.res ("Reorg-stranded pending query
+      // wedges a partition") reproduces that consequence deterministically, GIVEN
+      // such an orphan.
       //
-      // The fix (dz/find-reorg-depth-concurrently) makes getNextQuery epoch-aware:
-      // partitions carry `status.fetchingStateId` and `checkIsFetchingPartition`
-      // counts a partition as busy only while `stateId <= fetchingStateId`, so a
-      // query left over from an older epoch no longer blocks re-querying.
+      // CAVEAT: the experiment below ("does a bystander chain's in-flight query
+      // survive a concurrent reorg?") drives this exact epoch-race through the
+      // real orchestration and confirms the discard happens as described, but
+      // finds the affected chain does NOT stay stranded — the rollback's shared,
+      // cross-chain re-fetch re-dispatches a fresh query for it as a side effect,
+      // and it recovers immediately once answered. So the orphaning step is real,
+      // but whether it can survive long enough to actually wedge a partition in
+      // production remains unconfirmed; every interleaving constructed so far
+      // self-heals. The fix (dz/find-reorg-depth-concurrently) closes the
+      // mechanism regardless, by making getNextQuery epoch-aware: partitions
+      // carry `status.fetchingStateId`, and `checkIsFetchingPartition` counts a
+      // partition as busy only while `stateId <= fetchingStateId`.
+    },
+  )
+})
+
+// EXPERIMENT (negative result): tries to force the epoch-race described above
+// through the *real* GlobalState orchestration (not by hand-constructing
+// FetchState), to check whether it produces a permanent per-chain stall or
+// whether v3.0.0's defenses — `resetPendingQueries` (wipes every in-flight query
+// on every chain, the instant any reorg is detected), the `isPreparingRollback`
+// dispatch gate, and the shared cross-chain rollback re-fetch — heal it.
+//
+// The race: chain B's query response is validated (no reorg) in the same
+// microtask-drain window as chain A's reorg-detecting response. At that instant
+// chain B's pendingQuery entry is still untouched (fetchedBlock: None) —
+// FetchState.handleQueryResult for it hasn't run yet, that only happens later via
+// the ProcessPartitionQueryResponse -> SubmitPartitionQueryResponse task chain.
+// resetPendingQueries's sweep (triggered by chain A's reorg) does strip chain B's
+// entry before that task chain completes, and chain B's own completion later
+// dispatches with a stale epoch and is silently discarded by
+// invalidatedActionReducer, exactly as hypothesized.
+//
+// But this does NOT strand chain B: the rollback rolls every chain's fetchState
+// back in lockstep (to stay timestamp-consistent across chains, not just the
+// reorged one), which re-dispatches a fresh query for chain B as a side effect.
+// Once that query is answered, chain B resumes normal progress. An earlier
+// version of this test concluded chain B was permanently stuck — that was a bug
+// in the test itself (it waited for the call *count* to grow instead of
+// resolving the live pending call the rollback had already created), not a real
+// indexer stall. Left in as a regression test: this specific race is safe.
+describe("Experiment: does a bystander chain's in-flight query survive a concurrent reorg?", () => {
+  let rollbackStateTag = (indexerMock: MockIndexer.Indexer.t) =>
+    switch indexerMock.dangerouslyGetState().rollbackState {
+    | NoRollback => "NoRollback"
+    | ReorgDetected(_) => "ReorgDetected"
+    | FindingReorgDepth => "FindingReorgDepth"
+    | FoundReorgDepth(_) => "FoundReorgDepth"
+    | RollbackReady(_) => "RollbackReady"
+    }
+
+  Async.it(
+    "races a chain's normal query response against another chain's reorg-detecting response",
+    async t => {
+      let sourceMock1 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let sourceMock2 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {chain: #1337, sourceConfig: Config.CustomSources([sourceMock1.source])},
+          {chain: #100, sourceConfig: Config.CustomSources([sourceMock2.source])},
+        ],
+      )
+      await Utils.delay(0)
+
+      let _ = await Promise.all2((
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock1),
+        MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
+      ))
+
+      // Commit progress on both chains at block 102 (records block 102's hash in
+      // ReorgDetection for chain 1337, so a later mismatched response at the same
+      // block number is what will reveal the reorg).
+      sourceMock1.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=102,
+        ~resolveAt=#first,
+      )
+      sourceMock2.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=102,
+        ~resolveAt=#first,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Both chains have now dispatched their next query (fromBlock=103). Grab
+      // chain 100's pending call — this is the "innocent bystander" query whose
+      // response we will land in the exact same microtask-drain window as chain
+      // 1337's reorg-detecting response.
+      let chain100Call =
+        sourceMock2.getItemsOrThrowCalls
+        ->Array.find(c => c.payload["fromBlock"] == 103)
+        ->Option.getOrThrow(~message="chain 100 should have a fromBlock=103 query pending")
+
+      let chain100 = ChainMap.Chain.makeUnsafe(~chainId=100)
+      let getChain100PendingQueries = () =>
+        (
+          (
+            indexerMock.dangerouslyGetState().chainManager.chainFetchers->ChainMap.get(chain100)
+          ).fetchState.optimizedPartitions.entities->Dict.getUnsafe("0")
+        ).mutPendingQueries
+
+      t.expect(
+        getChain100PendingQueries()->Array.length,
+        ~message="chain 100's fromBlock=103 query is genuinely in flight before the race",
+      ).toEqual(1)
+
+      // THE RACE: resolve chain 100's normal response and chain 1337's
+      // reorg-detecting response back-to-back, with NO await between them, so
+      // both continuations run in the same microtask-drain window — before
+      // either one's ProcessPartitionQueryResponse (setImmediate-scheduled) task
+      // has a chance to run.
+      chain100Call.resolve([], ~latestFetchedBlockNumber=103)
+      sourceMock1.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+        ~resolveAt=#first,
+      )
+
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Did chain 1337's reorg-triggered resetPendingQueries strip chain 100's
+      // still-unfinalized pendingQuery entry? (v3.0.0's resetPendingQueries sweeps
+      // every chain unconditionally, so this is expected to be stripped.)
+      t.expect(
+        getChain100PendingQueries()->Array.length,
+        ~message="chain 100's in-flight entry is wiped by the reorg's resetPendingQueries sweep",
+      ).toEqual(0)
+
+      // Let rollback #1 settle fully.
+      t.expect(
+        sourceMock1.getBlockHashesCalls,
+        ~message="reorg looks for the rollback depth",
+      ).toEqual([[100]])
+      sourceMock1.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+      await indexerMock.getRollbackReadyPromise()
+
+      // Drain chain 1337's post-rollback re-fetch so the indexer is fully settled.
+      let drained = ref(0)
+      while (
+        drained.contents < 200 &&
+        !(sourceMock1.getItemsOrThrowCalls->Array.some(c => c.payload["fromBlock"] == 101))
+      ) {
+        await Utils.delay(1)
+        drained := drained.contents + 1
+      }
+      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101, ~resolveAt=#first)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Diagnostics: confirm the indexer as a whole is NOT still preparing a
+      // rollback (i.e. this isn't just "chain 100 correctly waiting its turn") —
+      // and inspect chain 100's own fetchState directly.
+      t.expect(
+        (
+          indexerMock.dangerouslyGetState()->GlobalState.isPreparingRollback,
+          rollbackStateTag(indexerMock),
+        ),
+        ~message="the indexer is fully settled (not preparing a rollback) by the time we check on chain 100",
+      ).toEqual((false, "RollbackReady"))
+
+      let chain100FetchStateSnapshot = () => {
+        let cf = indexerMock.dangerouslyGetState().chainManager.chainFetchers->ChainMap.get(chain100)
+        let p = cf.fetchState.optimizedPartitions.entities->Dict.getUnsafe("0")
+        (p.mutPendingQueries->Array.length, p.latestFetchedBlock.blockNumber, cf.fetchState.knownHeight)
+      }
+      // Chain 100 never reorged itself, but the shared rollback rolled every
+      // chain's fetchState back in lockstep (to stay timestamp-consistent across
+      // chains) — its latestFetchedBlock moved from 102 down to 101, and it has
+      // ONE pending query outstanding (the rollback-driven re-fetch). This is a
+      // real, live, unresolved getItemsOrThrow call sitting in sourceMock2 that
+      // the test must actually resolve to find out if chain 100 recovers — merely
+      // waiting for the call *count* to grow (as the first version of this
+      // experiment did) is a false negative: the count never grows because
+      // nothing ever answers the pending call.
+      t.expect(
+        chain100FetchStateSnapshot(),
+        ~message="chain 100's partition after the shared rollback: one pending re-fetch query, rolled back to block 101",
+      ).toEqual((1, 101, 300))
+
+      // THE VERDICT: drive chain 100 forward for several more rounds by actually
+      // answering its pending calls (both getItemsOrThrow and getHeightOrThrow),
+      // and confirm its latestFetchedBlock keeps advancing — i.e. it behaves like
+      // a perfectly healthy chain once given responses, meaning the earlier
+      // "stall" was this test failing to drive it, not the indexer being wedged.
+      let advanced = ref(false)
+      let round = ref(0)
+      while (!advanced.contents && round.contents < 50) {
+        switch sourceMock2.getItemsOrThrowCalls->Array.get(0) {
+        | Some(call) =>
+          let fromBlock = call.payload["fromBlock"]
+          call.resolve([], ~latestFetchedBlockNumber=fromBlock + 5)
+        | None => ()
+        }
+        if sourceMock2.getHeightOrThrowCalls->Array.length > 0 {
+          sourceMock2.resolveGetHeightOrThrow(300)
+        }
+        await Utils.delay(1)
+        let (_, latestFetchedBlockNumber, _) = chain100FetchStateSnapshot()
+        if latestFetchedBlockNumber > 101 {
+          advanced := true
+        }
+        round := round.contents + 1
+      }
+
+      t.expect(
+        advanced.contents,
+        ~message="once its pending call is actually answered, chain 100 advances normally — the earlier stuck-looking state was a live, resolvable in-flight query, not a permanent orphan",
+      ).toEqual(true)
     },
   )
 })

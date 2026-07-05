@@ -3769,25 +3769,33 @@ describe("Stale query response should not overwrite block range", () => {
   })
 })
 
-// Deterministic, mechanism-level reproduction of the per-chain stall that follows
-// the "reorg -> rollback -> reorg while a batch is processing" sequence (the full
-// orchestration path is in test/rollback/ReorgDeadlock_test.res).
+// Deterministic, mechanism-level reproduction of the per-chain stall hypothesized
+// to follow the "reorg -> rollback -> reorg while a batch is processing" sequence
+// (the full orchestration path is in test/rollback/ReorgDeadlock_test.res).
 //
-// v3.0.0 `getNextQuery` decides a partition is busy purely from
-// `mutPendingQueries->Utils.Array.notEmpty` — it has no notion of which state
-// epoch launched the query. When a reorg bumps the epoch, the response to an
-// in-flight query is routed to `GlobalState.invalidatedActionReducer` and
-// discarded ("Invalidated action discarded"), so `handleQueryResult` never runs
-// and the pending query is never cleared. The partition is then permanently
-// "busy": no further query, no getHeight, no progress — until the pod restarts.
-// With a second partition fetched ahead, its buffered items sit above the wedged
+// This test assumes a partition ends up holding an orphaned pending query and
+// shows what happens next: v3.0.0 `getNextQuery` decides a partition is busy
+// purely from `mutPendingQueries->Utils.Array.notEmpty` — it has no notion of
+// which state epoch launched the query — so the partition is permanently "busy":
+// no further query, no getHeight, no progress — until the pod restarts. With a
+// second partition fetched ahead, its buffered items sit above the wedged
 // partition's frontier (which pins `bufferBlockNumber`), so they can never be
 // processed either — matching production's "~50 items in buffer, chain stops".
 //
-// The fix (dz/find-reorg-depth-concurrently) makes this epoch-aware: partitions
-// carry `status.fetchingStateId` and `checkIsFetchingPartition` counts a
-// partition as busy only while `stateId <= fetchingStateId`, so a query left over
-// from an older epoch no longer blocks re-querying.
+// The orphaning mechanism itself — a reorg bumping the epoch while another
+// query's response is mid-pipeline, so it later dispatches with a stale epoch
+// and is discarded by `GlobalState.invalidatedActionReducer` — is real and does
+// happen (see ReorgDeadlock_test.res's bystander-chain experiment). But that same
+// experiment found the affected chain recovers via the rollback's shared,
+// cross-chain re-fetch rather than staying orphaned, so whether a partition can
+// actually end up in the stuck state assumed here is NOT confirmed in production;
+// this test starts from that state directly rather than deriving it.
+//
+// The fix (dz/find-reorg-depth-concurrently) closes the mechanism regardless: it
+// makes getNextQuery epoch-aware — partitions carry `status.fetchingStateId` and
+// `checkIsFetchingPartition` counts a partition as busy only while
+// `stateId <= fetchingStateId`, so a query left over from an older epoch no
+// longer blocks re-querying.
 describe("Reorg-stranded pending query wedges a partition (v3.0.0)", () => {
   let dcAhead1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
   let dcAhead2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
