@@ -21,7 +21,9 @@ open Vitest
 // orchestrator reaches the parked-rollback state (rollbackState = FoundReorgDepth
 // while currentlyProcessingBatch = true) — the "Waiting for batch to finish
 // processing before executing rollback" limbo. See the block comment at the end
-// for the two ways this limbo turns into the permanent, restart-only stall.
+// for how this limbo turns into the permanent, restart-only per-chain stall, and
+// FetchState_test.res ("Reorg-stranded pending query wedges a partition") for a
+// deterministic reproduction of the stalled fetch state itself.
 
 describe("Reorg rollback stall (v3.0.0)", () => {
   let rollbackStateTag = (indexerMock: MockIndexer.Indexer.t) =>
@@ -195,44 +197,39 @@ describe("Reorg rollback stall (v3.0.0)", () => {
       }
 
       // Once the batch drains, the parked rollback runs (it is no longer stuck at
-      // FoundReorgDepth). On this clean, single-partition, fully-driven path the
-      // second rollback's progress diff stays non-negative so the indexer recovers;
-      // getErrors() therefore holds the fatal counter error only in the timing
-      // windows where that diff goes negative (see note 1 below).
+      // FoundReorgDepth).
       t.expect(
         rollbackStateTag(indexerMock) != "FoundReorgDepth",
         ~message="the parked rollback ran once the batch drained",
       ).toEqual(true)
 
-      // --- How this limbo becomes the permanent, restart-only stall ---
+      // --- How this limbo becomes the permanent, restart-only per-chain stall ---
       //
-      // The parked-rollback path above is where the production indexer wedges. Two
-      // failure modes were observed downstream of this exact state, both matching
-      // "no getHeight, no queries, no items processed until the pod is restarted":
+      // The parked-rollback path above is where the production indexer wedges the
+      // reorged chain, matching "no getHeight, no queries, no items processed until
+      // the pod is restarted" while the other chains keep progressing.
       //
-      // 1) Fatal Prometheus error (crash). When the second rollback runs, its
-      //    `getRollbackProgressDiff` can return a NEGATIVE events-processed diff
-      //    (the non-reorg chain's events are subtracted a second time — the same
-      //    family as the "negative counter" regression, but here reached via the
-      //    reorg-detected-while-a-batch-is-processing path that the existing
-      //    regression tests do not cover). That negative flows into
-      //    `Prometheus.RollbackSuccess.increment` ->
-      //    `envio_rollback_events.incMany(<negative>)`, and prom-client throws
-      //    "It is not possible to decrease a counter". The throw happens right
-      //    AFTER "Finished rollback on reorg" is logged (Prometheus.RollbackSuccess
-      //    is incremented at the very end of the rollback), which is exactly where
-      //    the production log goes silent. The exception reaches the
-      //    GlobalStateManager error boundary, which calls process.exit(Failure) ->
-      //    the crash requiring a pod restart.
+      // The reorg that re-fires here bumps the state epoch (GlobalState.id) and
+      // resets in-flight queries. Any query whose response comes back at the old
+      // epoch is routed to `invalidatedActionReducer` and discarded ("Invalidated
+      // action discarded"), so `FetchState.handleQueryResult` never runs for it. In
+      // v3.0.0 `FetchState.getNextQuery` decides a partition is busy purely from
+      // `mutPendingQueries->Utils.Array.notEmpty`, with no notion of which epoch
+      // launched the query — so a partition left holding such a discarded query is
+      // treated as permanently fetching: it returns NothingToQuery on every tick
+      // and never queries or checks the head again.
       //
-      // 2) Fetch-state hole (deadlock). With more than one fetch partition on the
-      //    chain (dynamic contracts) or chunked queries, the double rollback can
-      //    leave one partition's fetch frontier behind the buffered items of
-      //    another. `getReadyItemsCount` is bounded by `bufferBlockNumber` (the min
-      //    partition frontier), so those buffered items (the reported "50 items in
-      //    buffer") can never be processed and the lagging partition returns
-      //    NothingToQuery — no getHeight, no getItems — on that one chain while the
-      //    others keep going.
+      // With a second fetch partition on the chain (dynamic contracts or chunked
+      // queries) the sibling keeps fetching ahead, but `getReadyItemsCount` is
+      // bounded by `bufferBlockNumber` (the min partition frontier), so its buffered
+      // items — the reported "~50 items in buffer" — can never be processed past the
+      // wedged partition's frontier. FetchState_test.res reproduces exactly this
+      // stalled fetch state deterministically.
+      //
+      // The fix (dz/find-reorg-depth-concurrently) makes getNextQuery epoch-aware:
+      // partitions carry `status.fetchingStateId` and `checkIsFetchingPartition`
+      // counts a partition as busy only while `stateId <= fetchingStateId`, so a
+      // query left over from an older epoch no longer blocks re-querying.
     },
   )
 })

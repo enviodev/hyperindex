@@ -3768,3 +3768,148 @@ describe("Stale query response should not overwrite block range", () => {
     ).toBe(2500)
   })
 })
+
+// Deterministic, mechanism-level reproduction of the per-chain stall that follows
+// the "reorg -> rollback -> reorg while a batch is processing" sequence (the full
+// orchestration path is in test/rollback/ReorgDeadlock_test.res).
+//
+// v3.0.0 `getNextQuery` decides a partition is busy purely from
+// `mutPendingQueries->Utils.Array.notEmpty` — it has no notion of which state
+// epoch launched the query. When a reorg bumps the epoch, the response to an
+// in-flight query is routed to `GlobalState.invalidatedActionReducer` and
+// discarded ("Invalidated action discarded"), so `handleQueryResult` never runs
+// and the pending query is never cleared. The partition is then permanently
+// "busy": no further query, no getHeight, no progress — until the pod restarts.
+// With a second partition fetched ahead, its buffered items sit above the wedged
+// partition's frontier (which pins `bufferBlockNumber`), so they can never be
+// processed either — matching production's "~50 items in buffer, chain stops".
+//
+// The fix (dz/find-reorg-depth-concurrently) makes this epoch-aware: partitions
+// carry `status.fetchingStateId` and `checkIsFetchingPartition` counts a
+// partition as busy only while `stateId <= fetchingStateId`, so a query left over
+// from an older epoch no longer blocks re-querying.
+describe("Reorg-stranded pending query wedges a partition (v3.0.0)", () => {
+  let dcAhead1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
+  let dcAhead2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
+  let dcBehind = makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress3)
+
+  // One chain, two partitions. Partition "ahead" already reached the head (300)
+  // and buffered 50 events at blocks 101..150. Partition "behind" lags at block
+  // 100 — this is the partition whose post-rollback re-fetch gets stranded.
+  let makeStalledChain = (): FetchState.t => {
+    let normalSelection = makeInitial().normalSelection
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: {blockNumber: 300, blockTimestamp: 300},
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: normalSelection,
+            addressesByContractName: Dict.fromArray([
+              ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
+            ]),
+            mergeBlock: None,
+          },
+          {
+            id: "2",
+            latestFetchedBlock: {blockNumber: 100, blockTimestamp: 100},
+            dynamicContract: Some("Gravatar"),
+            mutPendingQueries: [],
+            prevQueryRange: 0,
+            prevPrevQueryRange: 0,
+            latestBlockRangeUpdateBlock: 0,
+            selection: normalSelection,
+            addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
+            mergeBlock: None,
+          },
+        ],
+        ~nextPartitionIndex=3,
+        ~maxAddrInPartition=3,
+        ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+      ),
+      latestOnBlockBlockNumber: 300,
+      targetBufferSize,
+      buffer: Belt.Array.makeBy(50, i => mockEvent(~blockNumber=101 + i)),
+      startBlock: 0,
+      endBlock: None,
+      normalSelection,
+      chainId,
+      indexingAddresses: makeIndexingContractsWithDynamics(
+        [dcBehind, dcAhead2, dcAhead1],
+        ~static=[mockAddress0],
+      ),
+      contractConfigs: makeInitial().contractConfigs,
+      blockLag: 0,
+      onBlockConfigs: [],
+      knownHeight: 300,
+      firstEventBlock: None,
+    }
+  }
+
+  let getBehindQuery = (fs: FetchState.t) =>
+    switch fs->FetchState.getNextQuery(~concurrencyLimit=10) {
+    | Ready(queries) =>
+      queries
+      ->Array.find(q => q.partitionId == "2")
+      ->Option.getOrThrow(~message="no query for the lagging partition")
+    | _ => JsError.throwWithMessage("Expected a query for the lagging partition")
+    }
+
+  it("the lagging partition wants to query 101..head while its query slot is free", t => {
+    let fs = makeStalledChain()
+    let query = fs->getBehindQuery
+    t.expect((query.partitionId, query.fromBlock, query.toBlock)).toEqual(("2", 101, None))
+  })
+
+  it(
+    "a stranded in-flight query wedges the partition forever and strands its sibling's buffered items",
+    t => {
+      let fs = makeStalledChain()
+
+      // The 50 buffered events sit above the min partition frontier (100), so none
+      // are ready to process while the lagging partition stays behind.
+      t.expect(
+        (
+          fs->FetchState.bufferBlockNumber,
+          fs->FetchState.getReadyItemsCount(~targetSize=1000, ~fromItem=0),
+        ),
+        ~message="50 items buffered above block 100, none processable",
+      ).toEqual((100, 0))
+
+      // Dispatch the lagging partition's re-fetch and mark it in flight — the query
+      // the chain issues right after the rollback settles.
+      let query = fs->getBehindQuery
+      fs->FetchState.startFetchingQueries(~queries=[query])
+
+      // In production the reorg has already bumped the epoch, so this query's
+      // response is discarded by invalidatedActionReducer and handleQueryResult
+      // never runs. The pending query is never cleared, so getNextQuery keeps
+      // reporting the partition as busy on every subsequent scheduler tick.
+      for _tick in 0 to 4 {
+        t.expect(
+          fs->FetchState.getNextQuery(~concurrencyLimit=10),
+          ~message="wedged: no query, no getHeight, no progress on any tick",
+        ).toEqual(NothingToQuery)
+      }
+
+      // ...and the sibling's 50 buffered items are still stuck behind block 100.
+      t.expect(
+        fs->FetchState.getReadyItemsCount(~targetSize=1000, ~fromItem=0),
+        ~message="buffered items remain unprocessable while the partition is wedged",
+      ).toEqual(0)
+
+      // The stranded state is what wedges it: dropping the leftover-epoch pending
+      // query (what the fix's `fetchingStateId` awareness does by skipping it) lets
+      // the partition re-issue the query and recover.
+      let stranded = (fs.optimizedPartitions.entities->Dict.getUnsafe("2")).mutPendingQueries
+      stranded->Array.splice(~start=0, ~remove=stranded->Array.length, ~insert=[])->ignore
+      let recovered = fs->getBehindQuery
+      t.expect((recovered.partitionId, recovered.fromBlock)).toEqual(("2", 101))
+    },
+  )
+})
