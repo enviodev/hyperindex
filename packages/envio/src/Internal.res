@@ -597,7 +597,7 @@ type onBlockArgs = {
   context: handlerContext,
 }
 
-type onBlockConfig = {
+type onBlockRegistration = {
   // When there are multiple onBlock handlers per chain,
   // we want to use the order they are defined for sorting
   index: int,
@@ -622,7 +622,7 @@ type item =
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
+  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int, logIndex: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
@@ -634,7 +634,7 @@ external getItemLogIndex: item => int = "logIndex"
 let getItemChainId = item =>
   switch item {
   | Event({chain}) => chain->ChainMap.Chain.toChainId
-  | Block({onBlockConfig: {chainId}}) => chainId
+  | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
 @get

@@ -90,7 +90,7 @@ let runHandlerOrThrow = async (
   ~chains: Internal.chains,
 ) => {
   switch item {
-  | Block({onBlockConfig: {handler}, blockNumber}) =>
+  | Block({onBlockRegistration: {handler}, blockNumber}) =>
     try {
       let contextParams: UserContext.contextParams = {
         item,
@@ -200,7 +200,7 @@ let preloadBatchOrThrow = async (
           | _ => ()
           }
         }
-      | Block({onBlockConfig: {handler}, blockNumber}) =>
+      | Block({onBlockRegistration: {handler}, blockNumber}) =>
         try {
           promises->Array.push(
             handler({

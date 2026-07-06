@@ -685,7 +685,7 @@ let start = async (
   ~reset=false,
   ~isTest=false,
   ~exitAfterFirstEventBlock=false,
-  ~patchConfig: option<(Config.t, HandlerRegister.registrations) => Config.t>=?,
+  ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
 ) => {
   let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
   let explicitTui = switch mainArgs.tuiOff {
@@ -721,7 +721,7 @@ let start = async (
   // `Config.loadWithoutRegistrations` never sees registration state; handler,
   // contractRegister, and eventFilters are baked into each event config only
   // by the returned value here.
-  let (config, registrations) = await HandlerLoader.registerAllHandlers(
+  let (config, registrationsByChainId) = await HandlerLoader.registerAllHandlers(
     ~config=configWithoutRegistrations,
   )
   let config = if isTest {
@@ -731,7 +731,7 @@ let start = async (
   }
 
   let config = switch patchConfig {
-  | Some(patchConfig) => patchConfig(config, registrations)
+  | Some(patchConfig) => patchConfig(config, registrationsByChainId)
   | None => config
   }
   // The single fatal-error handler, invoked once via IndexerState.errorExit.
@@ -778,7 +778,7 @@ let start = async (
     ~config,
     ~persistence,
     ~initialState=persistence->Persistence.getInitializedState,
-    ~registrations,
+    ~registrationsByChainId,
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,

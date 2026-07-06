@@ -551,7 +551,7 @@ type t = {
   // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
   // chain's per-tick slice of the indexer-wide pool.
   maxOnBlockBufferSize: int,
-  onBlockConfigs: array<Internal.onBlockConfig>,
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
 }
@@ -608,7 +608,7 @@ let blockItemLogIndex = 16777216
 // are generated at once to prevent OOM.
 let appendOnBlockItems = (
   ~mutItems: array<Internal.item>,
-  ~onBlockConfigs: array<Internal.onBlockConfig>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>,
   ~indexerStartBlock,
   ~fromBlock,
   ~maxBlockNumber,
@@ -628,27 +628,27 @@ let appendOnBlockItems = (
     let blockNumber = latestOnBlockBlockNumber.contents + 1
     latestOnBlockBlockNumber := blockNumber
 
-    for configIdx in 0 to onBlockConfigs->Array.length - 1 {
-      let onBlockConfig = onBlockConfigs->Array.getUnsafe(configIdx)
+    for configIdx in 0 to onBlockRegistrations->Array.length - 1 {
+      let onBlockRegistration = onBlockRegistrations->Array.getUnsafe(configIdx)
 
-      let handlerStartBlock = switch onBlockConfig.startBlock {
+      let handlerStartBlock = switch onBlockRegistration.startBlock {
       | Some(startBlock) => startBlock
       | None => indexerStartBlock
       }
 
       if (
         blockNumber >= handlerStartBlock &&
-        switch onBlockConfig.endBlock {
+        switch onBlockRegistration.endBlock {
         | Some(endBlock) => blockNumber <= endBlock
         | None => true
         } &&
-        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0
+        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockRegistration.interval) === 0
       ) {
         mutItems->Array.push(
           Block({
-            onBlockConfig,
+            onBlockRegistration,
             blockNumber,
-            logIndex: blockItemLogIndex + onBlockConfig.index,
+            logIndex: blockItemLogIndex + onBlockRegistration.index,
           }),
         )
         newItemsCounter := newItemsCounter.contents + 1
@@ -672,9 +672,9 @@ let updateInternal = (
 ): t => {
   let mutItemsRef = ref(mutItems)
 
-  let latestOnBlockBlockNumber = switch fetchState.onBlockConfigs {
+  let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
   | [] => knownHeight
-  | onBlockConfigs => {
+  | onBlockRegistrations => {
       // Calculate the max block number we are going to create items for
       // Use maxOnBlockBufferSize to get the last target item in the buffer
       //
@@ -702,7 +702,7 @@ let updateInternal = (
 
       appendOnBlockItems(
         ~mutItems,
-        ~onBlockConfigs,
+        ~onBlockRegistrations,
         ~indexerStartBlock=fetchState.startBlock,
         ~fromBlock=fetchState.latestOnBlockBlockNumber,
         ~maxBlockNumber,
@@ -717,7 +717,7 @@ let updateInternal = (
     contractConfigs: fetchState.contractConfigs,
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
-    onBlockConfigs: fetchState.onBlockConfigs,
+    onBlockRegistrations: fetchState.onBlockRegistrations,
     maxOnBlockBufferSize: fetchState.maxOnBlockBufferSize,
     optimizedPartitions,
     latestOnBlockBlockNumber,
@@ -1613,7 +1613,7 @@ let make = (
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
-  ~onBlockConfigs=[],
+  ~onBlockRegistrations=[],
   ~blockLag=0,
   ~firstEventBlock=None,
 ): t => {
@@ -1694,7 +1694,10 @@ let make = (
     ~progressBlockNumber,
   )
 
-  if optimizedPartitions->OptimizedPartitions.count === 0 && onBlockConfigs->Utils.Array.isEmpty {
+  if (
+    optimizedPartitions->OptimizedPartitions.count === 0 &&
+      onBlockRegistrations->Utils.Array.isEmpty
+  ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->Int.toString}. ` ++
       `addresses=${addresses->Array.length->Int.toString}, ` ++
@@ -1710,14 +1713,14 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
-  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockConfigs->Utils.Array.notEmpty {
+  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
     }
     appendOnBlockItems(
       ~mutItems=buffer,
-      ~onBlockConfigs,
+      ~onBlockRegistrations,
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
       ~maxBlockNumber,
@@ -1736,7 +1739,7 @@ let make = (
     latestOnBlockBlockNumber,
     normalSelection,
     blockLag,
-    onBlockConfigs,
+    onBlockRegistrations,
     maxOnBlockBufferSize,
     knownHeight,
     buffer,

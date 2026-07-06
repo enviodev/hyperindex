@@ -73,9 +73,9 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 }
 
 // `Config` holds only event definitions; handler + per-chain `where`
-// registration state is layered on as `onEventRegistration`s in
-// `ChainState.makeInternal`. This loads the user handler files and returns the
-// (unchanged) definitions config plus the raw registrations bag.
+// registration state is layered on as `onEventRegistration`s by
+// `HandlerRegister.finishRegistration`. This loads the user handler files and
+// returns the (unchanged) definitions config plus the per-chain registrations.
 let registerAllHandlers = async (~config: Config.t) => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem)
 
@@ -89,6 +89,6 @@ let registerAllHandlers = async (~config: Config.t) => {
   })
   ->Promise.all
 
-  let registrations = HandlerRegister.finishRegistration(~config)
-  (config, registrations)
+  let registrationsByChainId = HandlerRegister.finishRegistration(~config)
+  (config, registrationsByChainId)
 }

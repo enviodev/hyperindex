@@ -23,7 +23,7 @@ let make: (
 let makeFromConfig: (
   Config.chain,
   ~config: Config.t,
-  ~registrations: HandlerRegister.registrations,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~knownHeight: int,
 ) => t
 
@@ -34,7 +34,7 @@ let makeFromDbState: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~config: Config.t,
-  ~registrations: HandlerRegister.registrations,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
 ) => t
 

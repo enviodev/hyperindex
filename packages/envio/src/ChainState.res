@@ -95,7 +95,7 @@ let makeInternal = (
   ~firstEventBlock=None,
   ~progressBlockNumber,
   ~config: Config.t,
-  ~registrations: HandlerRegister.registrations,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
@@ -106,13 +106,13 @@ let makeInternal = (
   ~knownHeight=0,
   ~reducedPollingInterval=?,
 ): t => {
-  // Handler binding + `where`-derived fetch state are already layered onto
-  // the event definitions by `HandlerRegister.finishRegistration`, keyed by
+  // Handler binding + `where`-derived fetch state, and onBlock registrations,
+  // are already collected by `HandlerRegister.finishRegistration`, keyed by
   // chain - this just looks up this chain's slice.
-  let onEventRegistrations =
-    registrations.registrationsByChainId
+  let {onEventRegistrations, onBlockRegistrations} =
+    registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
-    ->Option.getOr([])
+    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
@@ -124,30 +124,24 @@ let makeInternal = (
     }
   })
 
-  let onBlockConfigs =
-    registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
-  switch onBlockConfigs {
-  | Some(onBlockConfigs) =>
-    // TODO: Move it to the HandlerRegister module
-    // so the error is thrown with better stack trace
-    onBlockConfigs->Array.forEach(onBlockConfig => {
-      if onBlockConfig.startBlock->Option.getOr(startBlock) < startBlock {
+  // TODO: Move it to the HandlerRegister module
+  // so the error is thrown with better stack trace
+  onBlockRegistrations->Array.forEach(onBlockRegistration => {
+    if onBlockRegistration.startBlock->Option.getOr(startBlock) < startBlock {
+      JsError.throwWithMessage(
+        `The start block for onBlock handler "${onBlockRegistration.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
+      )
+    }
+    switch endBlock {
+    | Some(chainEndBlock) =>
+      if onBlockRegistration.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
         JsError.throwWithMessage(
-          `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
+          `The end block for onBlock handler "${onBlockRegistration.name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
         )
       }
-      switch endBlock {
-      | Some(chainEndBlock) =>
-        if onBlockConfig.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
-          JsError.throwWithMessage(
-            `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
-          )
-        }
-      | None => ()
-      }
-    })
-  | None => ()
-  }
+    | None => ()
+    }
+  })
 
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
@@ -168,7 +162,7 @@ let makeInternal = (
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       chainConfig.blockLag,
     ),
-    ~onBlockConfigs?,
+    ~onBlockRegistrations,
     ~firstEventBlock,
   )
 
@@ -258,13 +252,18 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~knownHeight) => {
+let makeFromConfig = (
+  chainConfig: Config.chain,
+  ~config,
+  ~registrationsByChainId,
+  ~knownHeight,
+) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   makeInternal(
     ~chainConfig,
     ~config,
-    ~registrations,
+    ~registrationsByChainId,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~reorgCheckpoints=[],
@@ -290,7 +289,7 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config,
-  ~registrations,
+  ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
@@ -310,7 +309,7 @@ let makeFromDbState = (
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
     ~config,
-    ~registrations,
+    ~registrationsByChainId,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,

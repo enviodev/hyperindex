@@ -158,7 +158,7 @@ let makeFs = (
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=?,
-  ~onBlockConfigs=?,
+  ~onBlockRegistrations=?,
   ~blockLag=?,
   ~firstEventBlock=?,
 ) => {
@@ -175,7 +175,7 @@ let makeFs = (
     ~maxOnBlockBufferSize,
     ~knownHeight,
     ~progressBlockNumber=?progressBlockNumber,
-    ~onBlockConfigs=?onBlockConfigs,
+    ~onBlockRegistrations=?onBlockRegistrations,
     ~blockLag=?blockLag,
     ~firstEventBlock=?firstEventBlock,
   )
@@ -255,7 +255,7 @@ describe("FetchState.make", () => {
       chainId: 0,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     })
@@ -370,7 +370,7 @@ describe("FetchState.make", () => {
       chainId,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     })
@@ -443,7 +443,7 @@ describe("FetchState.make", () => {
         chainId,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
-        onBlockConfigs: [],
+        onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
       })
@@ -561,7 +561,7 @@ describe("FetchState.make", () => {
         chainId,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
-        onBlockConfigs: [],
+        onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
       })
@@ -1716,7 +1716,7 @@ describe("FetchState.registerDynamicContracts", () => {
         chainId,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
-        onBlockConfigs: [],
+        onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
       })
@@ -1777,7 +1777,7 @@ describe("FetchState.getNextQuery & integration", () => {
       normalSelection,
       chainId,
       contractConfigs: makeInitialFs().contractConfigs,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     }
@@ -1836,7 +1836,7 @@ describe("FetchState.getNextQuery & integration", () => {
       chainId,
       contractConfigs: makeInitialFs().contractConfigs,
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     }
@@ -3765,14 +3765,14 @@ describe("FetchState buffer overflow prevention", () => {
   )
 })
 
-describe("FetchState with onBlockConfig only (no events)", () => {
-  let makeOnBlockConfig = (
+describe("FetchState with onBlockRegistration only (no events)", () => {
+  let makeOnBlockRegistration = (
     ~name="testOnBlock",
     ~index=0,
     ~startBlock=None,
     ~endBlock=None,
     ~interval=1,
-  ): Internal.onBlockConfig => {
+  ): Internal.onBlockRegistration => {
     index,
     name,
     chainId,
@@ -3785,9 +3785,9 @@ describe("FetchState with onBlockConfig only (no events)", () => {
   it(
     "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
     t => {
-      let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(0))
+      let onBlockRegistration = makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))
 
-      // Create FetchState with no event configs but with onBlockConfig
+      // Create FetchState with no event configs but with onBlockRegistration
       let (fetchState, _indexingAddresses) = makeFs(
         ~onEventRegistrations=[],
         ~addresses=[],
@@ -3797,7 +3797,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         ~maxOnBlockBufferSize=10,
         ~chainId,
         ~knownHeight=0,
-        ~onBlockConfigs=[onBlockConfig],
+        ~onBlockRegistrations=[onBlockRegistration],
       )
 
       // Verify initial state
@@ -3807,9 +3807,10 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ).toEqual([])
       t.expect(fetchState.buffer, ~message="Buffer should be empty initially").toEqual([])
       t.expect(fetchState.knownHeight, ~message="knownHeight should be 0 initially").toBe(0)
-      t.expect(fetchState.onBlockConfigs, ~message="onBlockConfigs should be set").toEqual([
-        onBlockConfig,
-      ])
+      t.expect(
+        fetchState.onBlockRegistrations,
+        ~message="onBlockRegistrations should be set",
+      ).toEqual([onBlockRegistration])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
       let nextQuery =

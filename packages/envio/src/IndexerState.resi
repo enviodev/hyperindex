@@ -44,7 +44,7 @@ let makeFromDbState: (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
-  ~registrations: HandlerRegister.registrations,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,

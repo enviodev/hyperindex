@@ -319,7 +319,7 @@ module Indexer = {
       }
     }
 
-    let (config, registrations) = await HandlerLoader.registerAllHandlers(~config)
+    let (config, registrationsByChainId) = await HandlerLoader.registerAllHandlers(~config)
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
@@ -353,7 +353,7 @@ module Indexer = {
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,
-      ~registrations,
+      ~registrationsByChainId,
       ~reducedPollingInterval?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
