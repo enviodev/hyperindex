@@ -520,10 +520,8 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         ->Array.push(
           Internal.Event({
             eventConfig: (eventConfig :> Internal.eventConfig),
-            timestamp: blockTime->Option.getOr(0),
             chain,
             blockNumber: instr.slot,
-            blockHash: "",
             logIndex: synthLogIndex(instr),
             // The parent transaction is materialised from the store at batch prep.
             transactionIndex: instr.transactionIndex,

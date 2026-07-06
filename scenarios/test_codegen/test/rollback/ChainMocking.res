@@ -175,9 +175,7 @@ module Make = () => {
         eventConfig: (eventConfig :> Internal.eventConfig),
         payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
-        timestamp: blockTimestamp,
         blockNumber,
-        blockHash,
         logIndex,
         transactionIndex,
       })

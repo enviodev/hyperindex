@@ -134,47 +134,24 @@ impl ToNapiValue for Columns {
     }
 }
 
-/// Build one column by extracting a field from each record, but only for rows
-/// whose per-row `mask` has `bit` set; every other row (or a key missing from
-/// the store) yields a `None` cell. This is what lets a field be materialised on
-/// exactly the rows that selected it, rather than on every row in the batch —
-/// and it skips `extract` (e.g. hex-encoding a large field) on unselected rows.
-pub fn fill_masked<R, T>(
-    records: &[Option<std::sync::Arc<R>>],
-    masks: &[u64],
-    bit: u64,
-    extract: impl Fn(&R) -> Result<Option<T>>,
-) -> Result<Vec<Option<T>>> {
-    records
-        .iter()
-        .zip(masks)
-        .map(|(rec, &m)| {
-            if m & bit == 0 {
-                return Ok(None);
-            }
-            match rec {
-                Some(r) => extract(r.as_ref()),
-                None => Ok(None),
-            }
-        })
-        .collect()
-}
-
-/// Iterate an ecosystem's field variants and decode each whose mask bit is set,
-/// collecting them into columns. Shared by every store; only the per-field
-/// `decode` table differs. A decode error names the field so one bad row aborts
-/// the batch's materialisation with an actionable message.
+/// Iterate an ecosystem's field variants and decode each whose bit is set in the
+/// union of `masks` (a column is built when any row selects it; the gathered
+/// scratch already applies each row's own mask within it). Shared by every
+/// store; only the per-field `decode` table differs. A decode error names the
+/// field so one bad row aborts the batch's materialisation with an actionable
+/// message.
 pub fn build_columns<F: Copy>(
     variants: &'static [F],
-    mask: u64,
+    masks: &[u64],
     len: usize,
     ordinal: impl Fn(F) -> u32,
     name: impl Fn(F) -> &'static str,
     decode: impl Fn(F) -> Result<Column>,
 ) -> Result<Columns> {
+    let union = masks.iter().fold(0u64, |acc, &m| acc | m);
     let mut columns: Vec<(&'static str, Column)> = Vec::new();
     for &field in variants {
-        if mask & (1u64 << ordinal(field)) == 0 {
+        if union & (1u64 << ordinal(field)) == 0 {
             continue;
         }
         let field_name = name(field);

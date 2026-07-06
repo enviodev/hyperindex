@@ -1153,9 +1153,7 @@ let make = (
 
                 Internal.Event({
                   eventConfig: (eventConfig :> Internal.eventConfig),
-                  timestamp: block->getBlockTimestamp,
                   blockNumber: block->getBlockNumber,
-                  blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
                   transactionIndex: log.transactionIndex,

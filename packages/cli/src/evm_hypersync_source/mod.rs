@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Once};
+use std::sync::Once;
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
@@ -329,10 +329,11 @@ fn process_response(
     let mut missing: Vec<String> = Vec::new();
 
     // Accumulate transactions into the store keyed by (blockNumber, txIndex).
-    // Many logs share a transaction, so a per-log insert would redundantly
-    // re-store it; inserting each transaction once deduplicates by key.
+    // Many logs share a transaction, and the server returns each one once, so
+    // the page's transactions go in as one chunk.
     let mut transaction_keys: HashSet<(u64, u32)> = HashSet::new();
     if !requested_transaction_fields.is_empty() {
+        let mut kept: Vec<simple_types::Transaction> = Vec::new();
         for tx in transactions.into_iter().flatten() {
             for &field in requested_transaction_fields {
                 if let Some(name) = transaction_field_missing(&tx, field) {
@@ -342,12 +343,12 @@ fn process_response(
             if let (Some(block_number), Some(transaction_index)) =
                 (tx.block_number, tx.transaction_index)
             {
-                let block_number = u64::from(block_number);
-                let transaction_index = u64::from(transaction_index) as u32;
-                transaction_keys.insert((block_number, transaction_index));
-                transaction_store.insert_evm_raw(block_number, transaction_index, Arc::new(tx));
+                transaction_keys
+                    .insert((u64::from(block_number), u64::from(transaction_index) as u32));
+                kept.push(tx);
             }
         }
+        transaction_store.insert_evm_txs(kept);
     }
 
     // Validate every block field we requested — the user's selection plus the
@@ -409,20 +410,11 @@ fn process_response(
         .collect::<Result<Vec<_>>>()
         .context("mapping block headers")?;
 
-    // Retain raw blocks in the store only when an event selected a block field
-    // beyond the always-required trio (number/timestamp/hash, which the headers
-    // already carry). Otherwise the store stays empty and the consumer builds
-    // `event.block` from the header alone — no materialisation needed.
-    let has_extra_block_fields = validated_block_fields
-        .iter()
-        .any(|f| !REQUIRED_BLOCK_FIELDS.contains(f));
-    if has_extra_block_fields {
-        for block in response_blocks {
-            if let Some(number) = block.number {
-                block_store.insert_evm_raw(number, Arc::new(block));
-            }
-        }
-    }
+    // Retained for every block, not just when an event selected a field beyond
+    // the trio: number/timestamp/hash decode from the store like any other
+    // field (see `decode_evm_block_field`), so the store needs an entry for
+    // every block the config's always-included trio selection touches.
+    block_store.insert_evm_blocks(response_blocks);
 
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
     for log in logs.into_iter().flatten() {

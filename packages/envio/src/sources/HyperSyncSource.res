@@ -197,7 +197,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
   let makeEventBatchQueueItem = (
     item: HyperSyncClient.EventItems.item,
-    ~block: HyperSyncClient.EventItems.blockHeader,
     ~params: Internal.eventParams,
     ~eventConfig: Internal.evmEventConfig,
   ): Internal.item => {
@@ -206,10 +205,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     Internal.Event({
       eventConfig: (eventConfig :> Internal.eventConfig),
-      timestamp: block.timestamp,
       chain,
       blockNumber: item.blockNumber,
-      blockHash: block.hash,
       logIndex,
       transactionIndex,
       // `block` and `transaction` are omitted; they're materialised from the
@@ -372,9 +369,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
         | Some(params) =>
           parsedQueueItems
-          ->Array.push(
-            makeEventBatchQueueItem(item, ~block=getBlock(item.blockNumber), ~params, ~eventConfig),
-          )
+          ->Array.push(makeEventBatchQueueItem(item, ~params, ~eventConfig))
           ->ignore
         | None =>
           handleDecodeFailure(

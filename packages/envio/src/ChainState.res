@@ -710,8 +710,9 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
 // Commit a processed batch's progress for this chain (progress block, events
 // processed, head/safe-checkpoint tracking, first event block). Emits the
 // per-chain progress metrics. Readiness is decided by CrossChainState once every
-// chain is caught up (see markReady).
-let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
+// chain is caught up (see markReady). `blockTimestampName` is the ecosystem's
+// block-timestamp field, read off the payload block for the latency metric.
+let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainId = cs.chainConfig.id
 
   switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
@@ -729,15 +730,27 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
         )
       }
 
-      // Calculate and set latency metrics
-      switch batch->Batch.findLastEventItem(~chainId) {
-      | Some(eventItem) => {
-          let blockTimestampMs = eventItem.timestamp * 1000
-          Prometheus.ProgressLatency.set(
-            ~latencyMs=Date.now()->Float.toInt - blockTimestampMs,
-            ~chainId,
-          )
-        }
+      // Calculate and set latency metrics. The payload block is materialised or
+      // inline by processing time; its timestamp may still be absent (e.g. an
+      // SVM slot with no block row) — the metric is skipped then.
+      switch batch
+      ->Batch.findLastEventItem(~chainId)
+      ->Option.flatMap(eventItem =>
+        eventItem.payload
+        ->Internal.getPayloadBlock
+        ->Nullable.toOption
+      )
+      ->Option.flatMap(block =>
+        block
+        ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+        ->Utils.Dict.dangerouslyGetNonOption(blockTimestampName)
+      ) {
+      | Some(blockTimestamp) =>
+        let blockTimestampMs = blockTimestamp->(Utils.magic: unknown => int) * 1000
+        Prometheus.ProgressLatency.set(
+          ~latencyMs=Date.now()->Float.toInt - blockTimestampMs,
+          ~chainId,
+        )
       | None => ()
       }
 

@@ -129,14 +129,24 @@ fn u32_to_i64(v: u32) -> i64 {
     v as i64
 }
 
+impl Block {
+    /// Build the lean header from a borrowed raw block, without taking
+    /// ownership — used when the raw block is also retained (owned) in the
+    /// `BlockStore` for on-demand field materialisation, so only the header's
+    /// own fields are cloned rather than the whole raw struct.
+    pub(crate) fn from_raw(b: &simple::Block) -> Result<Self> {
+        Ok(Self {
+            slot: u64_to_i64(b.slot, "block.slot")?,
+            blockhash: b.blockhash.clone(),
+            block_time: b.block_time,
+        })
+    }
+}
+
 impl TryFrom<simple::Block> for Block {
     type Error = anyhow::Error;
     fn try_from(b: simple::Block) -> Result<Self> {
-        Ok(Self {
-            slot: u64_to_i64(b.slot, "block.slot")?,
-            blockhash: b.blockhash,
-            block_time: b.block_time,
-        })
+        Self::from_raw(&b)
     }
 }
 

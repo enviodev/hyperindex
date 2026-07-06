@@ -843,10 +843,8 @@ module Source = {
                             topicCount: 1,
                             paramsMetadata: [],
                           }: Internal.evmEventConfig :> Internal.eventConfig),
-                          timestamp: item.blockNumber,
                           chain,
                           blockNumber: item.blockNumber,
-                          blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
                           transactionIndex: 0,
                           payload: {

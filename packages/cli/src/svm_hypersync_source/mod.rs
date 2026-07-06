@@ -38,48 +38,26 @@ use config::SvmClientConfig;
 use query::SvmQuery;
 use types::QueryResponse;
 
-/// Move the raw transactions and token balances of a response into a
-/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept raw in Rust so
+/// Query column names HyperSync always returns for a block row — see
+/// `SvmHyperSyncSource.res`'s `blockQueryFields`, which always requests
+/// `[Slot, Blockhash, BlockTime]`. Named here (mirroring the EVM side's
+/// `REQUIRED_BLOCK_FIELDS`) rather than inlined, so the trio the raw-block
+/// store gate compares against is a single discoverable constant.
+const REQUIRED_SVM_BLOCK_QUERY_FIELDS: &[&str] = &["slot", "blockhash", "block_time"];
+
+/// Move the response's transactions and token balances into a
+/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
 /// only the config-selected fields are materialised at batch prep; many
-/// instructions in one transaction collapse to a single stored record.
+/// instructions in one transaction collapse to a single stored row, and token
+/// balances land in the store's companion table joined back by key at
+/// materialisation.
 fn build_svm_store(
     transactions: Vec<simple::Transaction>,
     token_balances: Vec<simple::TokenBalance>,
 ) -> TransactionStore {
     let store = TransactionStore::new_svm();
-
-    let mut tx_by_key: HashMap<(u64, u32), simple::Transaction> = HashMap::new();
-    for tx in transactions {
-        tx_by_key.insert((tx.slot, tx.transaction_index), tx);
-    }
-    let mut tb_by_key: HashMap<(u64, u32), Vec<simple::TokenBalance>> = HashMap::new();
-    for tb in token_balances {
-        if let Some(ti) = tb.transaction_index {
-            tb_by_key.entry((tb.slot, ti)).or_default().push(tb);
-        }
-    }
-
-    // Union of keys: a transaction may have token balances but no selected
-    // transaction fields, or vice versa.
-    let mut keys: Vec<(u64, u32)> = tx_by_key.keys().copied().collect();
-    for key in tb_by_key.keys() {
-        if !tx_by_key.contains_key(key) {
-            keys.push(*key);
-        }
-    }
-    for key in keys {
-        // A token-balance-only key has no transaction row; the defaulted struct
-        // is fine because `transactionIndex` materialises from the store key, not
-        // this record (no other field is read for such keys).
-        let tx = tx_by_key.remove(&key).unwrap_or_default();
-        let token_balances = tb_by_key.remove(&key).unwrap_or_default();
-        store.insert_svm_raw(
-            key.0,
-            key.1,
-            Arc::new(TransactionStore::make_svm_stored(tx, token_balances)),
-        );
-    }
-
+    store.insert_svm_txs(transactions);
+    store.insert_svm_token_balances(token_balances);
     store
 }
 
@@ -149,7 +127,7 @@ impl SvmHypersyncClient {
             .is_some_and(|block| {
                 block
                     .iter()
-                    .any(|f| !matches!(f.as_str(), "slot" | "blockhash" | "block_time"))
+                    .any(|f| !REQUIRED_SVM_BLOCK_QUERY_FIELDS.contains(&f.as_str()))
             });
 
         let q: hypersync_solana_net_types::query::SolanaQuery = query
@@ -193,20 +171,31 @@ impl SvmHypersyncClient {
             std::mem::take(&mut resp.token_balances),
         );
 
-        // Retain raw blocks in Rust keyed by slot so the block store can
+        // Take the raw blocks out before the response conversion consumes them,
+        // build the lean per-slot header from a borrow, then move the owned raw
+        // blocks into the store — avoiding a full raw-`Block` clone per block
+        // (mirrors the EVM source's borrow-then-move header pattern).
+        let raw_blocks = std::mem::take(&mut resp.blocks);
+        let block_headers: Vec<types::Block> = raw_blocks
+            .iter()
+            .map(types::Block::from_raw)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("mapping solana block headers")
+            .map_err(map_err)?;
+
+        // Retain blocks in Rust keyed by slot so the block store can
         // materialise the selected block fields onto each instruction's
         // `event.block` at batch prep. Skipped when only slot/blockhash/blockTime
         // were requested — those reach ReScript via the response's block table.
         let block_store = BlockStore::new_svm();
         if has_extra_block_fields {
-            for b in &resp.blocks {
-                block_store.insert_svm_raw(b.slot, Arc::new(b.clone()));
-            }
+            block_store.insert_svm_blocks(raw_blocks);
         }
 
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
             .map_err(map_err)?;
+        out.data.blocks = block_headers;
         for (instr, d) in out.data.instructions.iter_mut().zip(decoded) {
             instr.decoded = d;
         }

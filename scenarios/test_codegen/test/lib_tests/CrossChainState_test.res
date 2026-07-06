@@ -4,10 +4,8 @@ let baseChainConfig = Config.loadWithoutRegistrations().chainMap->ChainMap.value
 
 let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({
-    timestamp: blockNumber * 15,
     chain: ChainMap.Chain.makeUnsafe(~chainId=1),
     blockNumber,
-    blockHash: `0x${blockNumber->Int.toString}`,
     eventConfig: "Mock eventConfig in CrossChainState test"->(Utils.magic: string => Internal.eventConfig),
     logIndex: 0,
     transactionIndex: 0,
@@ -266,7 +264,7 @@ describe("CrossChainState readiness", () => {
     )
     let cm = makeCrossChainState(~chainStatesList=[atHead, backfilling])
 
-    cm->CrossChainState.applyBatchProgress(~batch=emptyBatch)
+    cm->CrossChainState.applyBatchProgress(~batch=emptyBatch, ~blockTimestampName="timestamp")
 
     t.expect({
       "atHeadReady": atHead->ChainState.isReady,
@@ -292,7 +290,7 @@ describe("CrossChainState readiness", () => {
     )
     let cm = makeCrossChainState(~chainStatesList=[a, b])
 
-    cm->CrossChainState.applyBatchProgress(~batch=emptyBatch)
+    cm->CrossChainState.applyBatchProgress(~batch=emptyBatch, ~blockTimestampName="timestamp")
 
     t.expect({
       "aReady": a->ChainState.isReady,

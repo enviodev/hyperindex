@@ -408,10 +408,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
       Internal.Event({
         eventConfig: (eventConfig :> Internal.eventConfig),
-        timestamp: block.time,
         chain,
         blockNumber: block.height,
-        blockHash: block.id,
         logIndex: receiptIndex,
         // Fuel carries the transaction inline on the payload; the store key is
         // unused (Fuel identifies transactions by hash, kept on the payload).
