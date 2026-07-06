@@ -516,7 +516,7 @@
       ]
     },
     "SvmBlockField": {
-      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. `slot`/`time`/`hash` are always included\n(mirroring the EVM side's always-included number/timestamp/hash), so\neverything here is opt-in on top of that trio.",
+      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. `slot`/`time`/`hash` are always included,\nso everything here is opt-in on top of that trio.",
       "type": "string",
       "enum": [
         "height",
