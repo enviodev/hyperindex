@@ -144,6 +144,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~contractNameByAddress,
       ~knownHeight=slot + 1000,
       ~partitionId="0",
+      ~itemsTarget=5000,
       ~selection={
         onEventRegistrations: [reg],
         dependsOnAddresses: true,
@@ -180,6 +181,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           // Inclusive `toBlock` becomes exclusive `toSlot` on the wire (+1).
           toSlot: slot + 11,
           instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
+          maxNumInstructions: 5000,
           fields: {
             block: [Slot, Blockhash, BlockTime],
             transaction: [
@@ -223,6 +225,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           onEventRegistrations: [reg],
           dependsOnAddresses: true,
         },
+        ~itemsTarget=5000,
         ~retry=0,
         ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )

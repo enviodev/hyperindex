@@ -352,6 +352,7 @@ let make = (
     ~knownHeight,
     ~partitionId as _,
     ~selection as _,
+    ~itemsTarget,
     ~retry,
     ~logger,
   ) => {
@@ -380,6 +381,7 @@ let make = (
       toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
       instructions: instructionSelections,
       fields,
+      maxNumInstructions: itemsTarget,
     }
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")

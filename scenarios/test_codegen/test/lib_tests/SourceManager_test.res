@@ -183,7 +183,7 @@ describe("SourceManager source priority with Live sources", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 10000.,
+    estResponseSize: 5000.,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
@@ -372,17 +372,16 @@ describe("SourceManager fetchNext", () => {
 
   // Selection (getNextQuery) now happens in CrossChainState; SourceManager only
   // dispatches the chosen action. This shim keeps the per-chain tests focused on
-  // dispatch by computing the action from the chain's own budget.
+  // dispatch by computing the action from the chain's own fetch state.
   let fetchNext = (
     sourceManager,
     ~fetchState,
     ~executeQuery,
     ~waitForNewBlock,
     ~onNewBlock,
-    ~budget=5000,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+    let action = fetchState->FetchState.getNextQuery
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -487,7 +486,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fetchedBlock: None,
     }
     // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
@@ -509,11 +508,9 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.),
+      "atCap": withPending(10)->FetchState.getNextQuery,
       // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
-      "oneSlotLeft": withPending(9)
-      ->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.)
-      ->newQueryCount,
+      "oneSlotLeft": withPending(9)->FetchState.getNextQuery->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
 
@@ -536,7 +533,6 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
-          ~budget=5000,
           ~stateId=0,
         )
 
@@ -547,7 +543,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -557,7 +553,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -567,7 +563,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
@@ -605,7 +601,6 @@ describe("SourceManager fetchNext", () => {
           ~executeQuery=executeQueryMock.fn,
           ~waitForNewBlock=neverWaitForNewBlock,
           ~onNewBlock=neverOnNewBlock,
-          ~budget=5000,
           ~stateId=0,
         )
 
@@ -637,7 +632,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -658,7 +652,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -686,7 +679,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -713,7 +705,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -725,7 +716,6 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
-      ~budget=5000,
       ~stateId=0,
     )
 
@@ -755,7 +745,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=neverOnNewBlock,
-        ~budget=5000,
         ~stateId=0,
       )
 
@@ -767,7 +756,6 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=neverExecutePartitionQuery,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
-      ~budget=5000,
       ~stateId=0,
     )
     t.expect(
@@ -781,7 +769,6 @@ describe("SourceManager fetchNext", () => {
         ~executeQuery=neverExecutePartitionQuery,
         ~waitForNewBlock=waitForNewBlockMock.fn,
         ~onNewBlock=onNewBlockMock.fn,
-        ~budget=5000,
         ~stateId=1,
       )
     t.expect(waitForNewBlockMock.calls, ~message=`Should add a new call after a rollback`).toEqual([
@@ -822,7 +809,6 @@ describe("SourceManager fetchNext", () => {
       ~executeQuery=executeQueryMock.fn,
       ~waitForNewBlock=neverWaitForNewBlock,
       ~onNewBlock=neverOnNewBlock,
-      ~budget=5000,
       ~stateId=0,
     )
 
@@ -1444,7 +1430,7 @@ describe("SourceManager.executeQuery", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 10000.,
+    estResponseSize: 5000.,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,

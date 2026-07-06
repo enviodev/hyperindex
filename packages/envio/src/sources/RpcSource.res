@@ -97,17 +97,16 @@ let getErrorMessage = (exn: exn): option<string> =>
 // never helps — the same range always re-trips the same cap. The reaction is to
 // shrink the range and retry immediately, ratcheting the max range down.
 let isResponseTooLargeError = {
+  // Provider-specific "too many logs" messages, matched loosely since each names
+  // it differently: HyperRPC ("More than 50000 logs returned"), ZkEVM ("query
+  // returned more than N results"), LlamaRPC ("query exceeds max results"),
+  // 1RPC ("response size should not..."), Optimism ("(backend) response too
+  // large"), Arbitrum ("logs matched by query exceeds limit"), Ankr ("block
+  // range is too wide"). Kept as one block rather than per-line comments — the
+  // ReScript formatter doesn't preserve comments attached to regex literals in
+  // an array.
   let patterns = [
     /more than \d+ logs/i,
-
-    // HyperRPC: "More than 50000 logs returned"
-
-    // ZkEVM
-    // LlamaRPC
-    // 1RPC
-    // Optimism
-    // Arbitrum
-    // Ankr
     /\d+ logs returned/i,
     /too many logs/i,
     /query returned more than \d+ results/i,
@@ -1160,6 +1159,7 @@ let make = (
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
+    ~itemsTarget as _,
     ~retry,
     ~logger as _,
   ) => {

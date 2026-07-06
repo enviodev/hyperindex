@@ -230,6 +230,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~knownHeight,
     ~partitionId as _,
     ~selection,
+    ~itemsTarget,
     ~retry,
     ~logger,
   ) => {
@@ -256,6 +257,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~logSelections,
       ~fieldSelection=selectionConfig.fieldSelection,
+      ~maxNumLogs=itemsTarget,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(
