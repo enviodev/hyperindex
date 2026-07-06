@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3489
 expression: project_template.envio_types_dts
 ---
 /**
@@ -134,24 +135,10 @@ declare module "envio" {
           }; readonly block: {
             /** The slot field. */
             readonly slot: number;
-            /**
-             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-             * ```yaml
-             * field_selection:
-             *   block_fields:
-             *     - time
-             * ```
-             */
-            readonly time: FieldNotSelected<"Field 'time' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.block_fields in config.yaml.">;
-            /**
-             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-             * ```yaml
-             * field_selection:
-             *   block_fields:
-             *     - hash
-             * ```
-             */
-            readonly hash: FieldNotSelected<"Field 'hash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.block_fields in config.yaml.">;
+            /** The time field. */
+            readonly time: number | undefined;
+            /** The hash field. */
+            readonly hash: string | undefined;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
@@ -275,24 +262,10 @@ declare module "envio" {
           }; readonly block: {
             /** The slot field. */
             readonly slot: number;
-            /**
-             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-             * ```yaml
-             * field_selection:
-             *   block_fields:
-             *     - time
-             * ```
-             */
-            readonly time: FieldNotSelected<"Field 'time' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.block_fields in config.yaml.">;
-            /**
-             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-             * ```yaml
-             * field_selection:
-             *   block_fields:
-             *     - hash
-             * ```
-             */
-            readonly hash: FieldNotSelected<"Field 'hash' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.block_fields in config.yaml.">;
+            /** The time field. */
+            readonly time: number | undefined;
+            /** The hash field. */
+            readonly hash: string | undefined;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml

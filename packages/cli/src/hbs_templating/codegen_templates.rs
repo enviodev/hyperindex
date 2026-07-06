@@ -2745,10 +2745,6 @@ fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
     SvmBlockField::iter()
         .map(|field| {
             let (ts_type, optional) = match field {
-                SvmBlockField::Time => ("number", true),
-                // A slot can lack a block row (skipped slot), so `hash` may be
-                // absent even when selected — matching `svmInstructionBlock.hash?`.
-                SvmBlockField::Hash => ("string", true),
                 SvmBlockField::Height => ("number", true),
                 SvmBlockField::ParentSlot => ("number", true),
                 SvmBlockField::ParentHash => ("string", true),
@@ -2762,8 +2758,12 @@ fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
         .collect()
 }
 
-/// Per-instruction SVM block TS type for the generated program table. `slot` is
-/// always present; selected fields get their real type (nullable ones as
+/// Per-instruction SVM block TS type for the generated program table.
+/// `slot`/`time`/`hash` are always present (mirroring EVM's always-included
+/// number/timestamp/hash), so they're seeded rather than run through the
+/// selected/unselected mechanism; `time`/`hash` still render as `T | undefined`
+/// since a slot can lack a block row regardless of selection. The remaining
+/// selectable fields get their real type when selected (nullable ones as
 /// `T | undefined`); unselected fields get an `@deprecated` hint plus
 /// `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
 fn svm_block_ts_type(
@@ -2773,8 +2773,11 @@ fn svm_block_ts_type(
     indent: &str,
 ) -> String {
     let selected: std::collections::HashSet<&str> = selected.iter().map(String::as_str).collect();
-    // `slot` is always present (the store key), so it's seeded, not selectable.
-    let mut fields: Vec<String> = vec![ts_selected_field("slot", "number", indent)];
+    let mut fields: Vec<String> = vec![
+        ts_selected_field("slot", "number", indent),
+        ts_selected_field("time", "number | undefined", indent),
+        ts_selected_field("hash", "string | undefined", indent),
+    ];
     for spec in specs {
         fields.push(svm_field_line(
             &spec.name,
@@ -3389,8 +3392,9 @@ mod test {
     fn svm_block_field_specs_match_runtime() {
         // The codegen block specs (selectable fields) must match the public
         // `svmInstructionBlock` shape — name and optionality — excluding the
-        // always-present `slot`. Optionality parity guards the generated TS type
-        // from narrowing a nullable field (e.g. `hash`) to non-optional.
+        // always-present `slot`/`time`/`hash`. Optionality parity guards the
+        // generated TS type from narrowing a nullable field (e.g. `parentHash`)
+        // to non-optional.
         let res = std::fs::read_to_string(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/src/Envio.res"),
         )
@@ -3398,7 +3402,7 @@ mod test {
         let res_fields: Vec<(String, bool)> =
             parse_type_fields(&res, "type svmInstructionBlock = {", "")
                 .into_iter()
-                .filter(|(name, _optional)| name != "slot")
+                .filter(|(name, _optional)| name != "slot" && name != "time" && name != "hash")
                 .collect();
         let spec_fields: Vec<(String, bool)> = svm_block_field_specs()
             .into_iter()
@@ -3409,12 +3413,14 @@ mod test {
 
     #[test]
     fn svm_block_ts_type_renders_optionality_and_unselected() {
-        // `slot` is always present (no `| undefined`); selected nullable fields
-        // (`hash`, `height`) render as `T | undefined`; unselected fields get the
-        // `@deprecated` hint + `FieldNotSelected`.
+        // `slot` is always present with no `| undefined`; `time`/`hash` are also
+        // always present but still render as `T | undefined` (a slot can lack a
+        // block row regardless of selection); selected nullable field (`height`)
+        // renders as `T | undefined`; unselected fields get the `@deprecated`
+        // hint + `FieldNotSelected`.
         let generated = svm_block_ts_type(
             &svm_block_field_specs(),
-            &["hash".to_string(), "height".to_string()],
+            &["height".to_string()],
             "Swap",
             "  ",
         );

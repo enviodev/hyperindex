@@ -473,7 +473,7 @@
           }
         },
         "block_fields": {
-          "description": "Block fields to include on each matched instruction's `block`, as a list of field names. Only `slot` is always included; this adds `time`/`hash`/`height`/`parentSlot`/`parentHash`.",
+          "description": "Block fields to include on each matched instruction's `block`, as a list of field names. `slot`/`time`/`hash` are always included; this adds `height`/`parentSlot`/`parentHash`.",
           "type": [
             "array",
             "null"
@@ -516,11 +516,9 @@
       ]
     },
     "SvmBlockField": {
-      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. Only `slot` is always included (the key), so\neverything else is opt-in.",
+      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. `slot`/`time`/`hash` are always included\n(mirroring the EVM side's always-included number/timestamp/hash), so\neverything here is opt-in on top of that trio.",
       "type": "string",
       "enum": [
-        "time",
-        "hash",
         "height",
         "parentSlot",
         "parentHash"

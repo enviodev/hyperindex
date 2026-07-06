@@ -46,19 +46,13 @@ external materialize: (
 // Drop blocks above the given block (rolled back).
 @send external rollback: (t, int) => unit = "rollback"
 
-// Merge a materialised field bag onto an existing block object in place. Used by
-// the SVM path, where the source already attached a minimal inline block.
-let enrichBlock: (Internal.eventBlock, Internal.eventBlock) => unit = %raw(`(block, fields) => {
-    Object.assign(block, fields)
-  }`)
-
-// Group adjacent store-backed items into runs sharing a block number, OR-ing
-// their block-field masks. Items arrive in (block, logIndex) order, so events
-// sharing a block are adjacent; extending the current run avoids hashing a key
-// per item. `owns` selects which items this pass materialises (EVM: those with no
-// inline block; SVM: those carrying one). Each run's event items are returned for
-// the caller to apply the materialised block onto.
-let groupByBlock = (items: array<Internal.item>, ~owns: Internal.eventItem => bool): (
+// Group adjacent store-backed items (those whose payload has no block yet) into
+// runs sharing a block number, OR-ing their block-field masks. Items arrive in
+// (block, logIndex) order, so events sharing a block are adjacent; extending
+// the current run avoids hashing a key per item. Items that already carry an
+// inline block (RPC/simulate/Fuel) are skipped — the caller writes the
+// materialised block onto each run's event items.
+let groupByBlock = (items: array<Internal.item>): (
   array<int>,
   array<float>,
   array<array<Internal.eventItem>>,
@@ -70,7 +64,7 @@ let groupByBlock = (items: array<Internal.item>, ~owns: Internal.eventItem => bo
     switch item {
     | Internal.Event(_) =>
       let eventItem = item->Internal.castUnsafeEventItem
-      if owns(eventItem) {
+      if eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone {
         let {blockNumber} = eventItem
         let mask = eventItem.eventConfig.blockFieldMask
         let last = groups->Array.length - 1
@@ -89,47 +83,19 @@ let groupByBlock = (items: array<Internal.item>, ~owns: Internal.eventItem => bo
   (blockNumbers, masks, groups)
 }
 
-// EVM: materialise each store-backed item's selected block fields and write the
+// Materialise each store-backed item's selected block fields and write the
 // resulting block onto its payload. Items that already carry an inline block
-// (RPC/simulate/Fuel) are skipped. The config's field selection always includes
-// number/timestamp/hash, so every mask has bits set and every store-backed item
-// gets a block carrying at least the trio. Deduped per block number.
-let materializeEvmItems = async (store: t, ~items: array<Internal.item>) => {
-  let (blockNumbers, masks, groups) =
-    items->groupByBlock(~owns=eventItem =>
-      eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone
-    )
+// (RPC/simulate/Fuel) are skipped. Every ecosystem's field selection always
+// includes its always-included trio (see `EventConfigBuilder.res`), so every
+// mask has bits set and every store-backed item gets a block carrying at least
+// that trio. Deduped per block number.
+let materializeItems = async (store: t, ~items: array<Internal.item>) => {
+  let (blockNumbers, masks, groups) = items->groupByBlock
   if groups->Utils.Array.notEmpty {
     let blocks = await store->materialize(~blockNumbers, ~masks)
     groups->Array.forEachWithIndex((group, i) => {
       let block = blocks->Array.getUnsafe(i)
       group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
-    })
-  }
-}
-
-// SVM: the source stamps the always-available `slot`/`time`/`hash` inline on
-// each item. Enrich each item's block in place with its selected fields from the
-// store — a slot missing from the store (no block row, or only inline fields
-// selected) yields an empty bag and the inline block stands. Grouped per slot so
-// the store is consulted once per slot.
-let materializeSvmItems = async (store: t, ~items: array<Internal.item>) => {
-  let (blockNumbers, masks, groups) =
-    items->groupByBlock(~owns=eventItem =>
-      eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome
-    )
-
-  // Skip the store call when no instruction selected a block field at all.
-  if masks->Array.some(mask => mask !== 0.) {
-    let materialized = await store->materialize(~blockNumbers, ~masks)
-    groups->Array.forEachWithIndex((group, i) => {
-      let fields = materialized->Array.getUnsafe(i)
-      group->Array.forEach(eventItem =>
-        switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
-        | Some(block) => block->enrichBlock(fields)
-        | None => ()
-        }
-      )
     })
   }
 }

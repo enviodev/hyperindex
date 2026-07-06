@@ -1,19 +1,13 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3427
 expression: generated
 ---
 {
   /** The slot field. */
   readonly slot: number;
-  /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   block_fields:
-   *     - time
-   * ```
-   */
-  readonly time: FieldNotSelected<"Field 'time' is not selected for the 'Swap' instruction. Add it under field_selection.block_fields in config.yaml.">;
+  /** The time field. */
+  readonly time: number | undefined;
   /** The hash field. */
   readonly hash: string | undefined;
   /** The height field. */

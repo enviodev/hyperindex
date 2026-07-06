@@ -66,10 +66,11 @@ type svmLog = {
   message: string,
 }
 
-/** Block context for a matched instruction. `slot` is always present (the key);
- every other field is opt-in via `field_selection.block_fields` and materialised
- from the per-chain block store at batch prep — absent when not selected, or when
- HyperSync returned no block row for the slot. */
+/** Block context for a matched instruction. `slot`/`time`/`hash` are always
+ present (mirroring the EVM event block's number/timestamp/hash); `time`/`hash`
+ can still be absent when HyperSync returned no block row for the slot. Every
+ other field is opt-in via `field_selection.block_fields`, materialised from the
+ per-chain block store at batch prep. */
 type svmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   slot: int,
@@ -114,7 +115,10 @@ type svmInstruction = {
   /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */
   logs?: array<svmLog>,
-  block: svmInstructionBlock,
+  // Omitted on construction; always materialised from the per-chain block
+  // store onto the payload at batch prep before a handler ever reads it
+  // (mirroring how EVM's event payload omits `block` until batch prep).
+  block?: svmInstructionBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
