@@ -3785,11 +3785,13 @@ describe("Stale query response should not overwrite block range", () => {
 // The orphaning mechanism itself — a reorg bumping the epoch while another
 // query's response is mid-pipeline, so it later dispatches with a stale epoch
 // and is discarded by `GlobalState.invalidatedActionReducer` — is real and does
-// happen (see ReorgDeadlock_test.res's bystander-chain experiment). But that same
-// experiment found the affected chain recovers via the rollback's shared,
-// cross-chain re-fetch rather than staying orphaned, so whether a partition can
-// actually end up in the stuck state assumed here is NOT confirmed in production;
-// this test starts from that state directly rather than deriving it.
+// happen (see ReorgDeadlock_test.res's two race experiments: cross-chain, then
+// same-chain with a dynamic-contract second partition — the topology that
+// actually matches this test's "second partition fetched ahead" setup). Both
+// experiments found the affected partition recovers via the rollback's re-fetch
+// rather than staying orphaned, so whether a partition can actually end up
+// wedged in the stuck state assumed here is NOT confirmed in production; this
+// test starts from that state directly rather than deriving it.
 //
 // The fix (dz/find-reorg-depth-concurrently) closes the mechanism regardless: it
 // makes getNextQuery epoch-aware — partitions carry `status.fetchingStateId` and

@@ -227,18 +227,26 @@ describe("Reorg rollback stall (v3.0.0)", () => {
       // wedges a partition") reproduces that consequence deterministically, GIVEN
       // such an orphan.
       //
-      // CAVEAT: the experiment below ("does a bystander chain's in-flight query
-      // survive a concurrent reorg?") drives this exact epoch-race through the
-      // real orchestration and confirms the discard happens as described, but
-      // finds the affected chain does NOT stay stranded — the rollback's shared,
-      // cross-chain re-fetch re-dispatches a fresh query for it as a side effect,
-      // and it recovers immediately once answered. So the orphaning step is real,
-      // but whether it can survive long enough to actually wedge a partition in
-      // production remains unconfirmed; every interleaving constructed so far
-      // self-heals. The fix (dz/find-reorg-depth-concurrently) closes the
-      // mechanism regardless, by making getNextQuery epoch-aware: partitions
-      // carry `status.fetchingStateId`, and `checkIsFetchingPartition` counts a
-      // partition as busy only while `stateId <= fetchingStateId`.
+      // CAVEAT: the two experiments below drive this exact epoch-race through the
+      // real orchestration — first cross-chain (a reorg on chain A racing an
+      // in-flight response on bystander chain B), then same-chain (a reorg on one
+      // partition racing an in-flight response on a second, dynamic-contract
+      // partition of the SAME chain — the topology that actually matches the
+      // "~50 items in buffer" symptom). Both confirm the discard happens exactly
+      // as described (pending entry wiped, response later silently dropped,
+      // latestFetchedBlock never advances for the discarded response). In BOTH
+      // cases the affected partition does NOT stay stranded — the rollback's
+      // re-fetch (cross-chain: every chain rolls back in lockstep; same-chain:
+      // FetchState.rollback recreates/adjusts every partition on the chain)
+      // re-dispatches a fresh query as a side effect, and it recovers immediately
+      // once answered. So the orphaning step is real and reachable in the exact
+      // topology of the production symptom, but every interleaving constructed so
+      // far — cross-chain and same-chain alike — self-heals; whether a partition
+      // can actually stay wedged in production remains unconfirmed. The fix
+      // (dz/find-reorg-depth-concurrently) closes the mechanism regardless, by
+      // making getNextQuery epoch-aware: partitions carry `status.fetchingStateId`,
+      // and `checkIsFetchingPartition` counts a partition as busy only while
+      // `stateId <= fetchingStateId`.
     },
   )
 })
@@ -441,6 +449,194 @@ describe("Experiment: does a bystander chain's in-flight query survive a concurr
       t.expect(
         advanced.contents,
         ~message="once its pending call is actually answered, chain 100 advances normally — the earlier stuck-looking state was a live, resolvable in-flight query, not a permanent orphan",
+      ).toEqual(true)
+    },
+  )
+})
+
+// EXPERIMENT 2: same-chain, two-partition version of the race above. This is the
+// topology that actually matches the production symptom (one reorging chain,
+// buffered items behind a wedged partition) — the cross-chain experiment above
+// only ruled out one chain stranding a *different* chain, not a chain stranding
+// itself via a second fetch partition (dynamic contracts).
+//
+// Registers a dynamic contract early (registrationBlock=50, well inside the
+// reorg threshold) so the resulting partition SURVIVES the rollback (kept +
+// pending queries adjusted) instead of being deleted as "didn't exist yet at the
+// rollback target" — deletion would trivially "fix" a stranded entry by throwing
+// the whole partition away, which would hide the bug rather than test it.
+describe("Experiment 2: does a chain strand its own second partition via a concurrent reorg?", () => {
+  let rollbackStateTag = (indexerMock: MockIndexer.Indexer.t) =>
+    switch indexerMock.dangerouslyGetState().rollbackState {
+    | NoRollback => "NoRollback"
+    | ReorgDetected(_) => "ReorgDetected"
+    | FindingReorgDepth => "FindingReorgDepth"
+    | FoundReorgDepth(_) => "FoundReorgDepth"
+    | RollbackReady(_) => "RollbackReady"
+    }
+
+  Async.it(
+    "races partition 2's normal response against partition 0's reorg-detecting response on the same chain",
+    async t => {
+      let sourceMock1 = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock1.source])}],
+      )
+      await Utils.delay(0)
+
+      t.expect(
+        sourceMock1.getHeightOrThrowCalls->Array.length,
+        ~message="initial height check",
+      ).toEqual(1)
+      sourceMock1.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      t.expect(
+        sourceMock1.getItemsOrThrowCalls->Array.map(c => c.payload),
+        ~message="requests items until reorg threshold",
+      ).toEqual([{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}])
+
+      // Register a dynamic contract at block 50 (well inside the threshold) while
+      // committing partition "0" through block 100 — creates partition "2".
+      sourceMock1.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 50,
+            logIndex: 0,
+            contractRegister: async ({context}) => {
+              context.chain.\"SimpleNft".add(Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0))
+            },
+            handler: async ({context}) => context.\"SimpleEntity".set({id: "dc", value: "registered"}),
+          },
+        ],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Both partitions now have their own pending query. Bring partition "2"
+      // (starts from its registration block, 50) up to the same point as
+      // partition "0" (which continues from 101).
+      let findPartitionCall = partitionId =>
+        sourceMock1.getItemsOrThrowCalls
+        ->Array.find(c => c.payload["p"] == partitionId)
+        ->Option.getOrThrow(~message=`no pending call for partition ${partitionId}`)
+
+      findPartitionCall("2").resolve([], ~latestFetchedBlockNumber=100)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Commit both partitions through block 102 so there is recorded reorg
+      // checkpoint data at 102 for the race to reveal a mismatch against.
+      findPartitionCall("0").resolve([], ~latestFetchedBlockNumber=102)
+      await Utils.delay(0)
+      await Utils.delay(0)
+      findPartitionCall("2").resolve([], ~latestFetchedBlockNumber=102)
+      await indexerMock.getBatchWritePromise()
+
+      let getPartitionState = partitionId => {
+        let cf =
+          (indexerMock.dangerouslyGetState().chainManager.chainFetchers->ChainMap.get(
+            ChainMap.Chain.makeUnsafe(~chainId=1337),
+          )).fetchState
+        let p = cf.optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+        (p.mutPendingQueries->Array.length, p.latestFetchedBlock.blockNumber, cf.knownHeight)
+      }
+
+      t.expect(
+        getPartitionState("2")->(((n, _, _)) => n),
+        ~message="partition 2's fromBlock=103 query is genuinely in flight before the race",
+      ).toEqual(1)
+
+      // THE RACE: resolve partition 2's normal response and partition 0's
+      // reorg-detecting response back-to-back, no await between — same
+      // microtask-drain-window technique as experiment 1, but now both
+      // partitions live on the SAME chainFetcher.fetchState.
+      findPartitionCall("2").resolve([], ~latestFetchedBlockNumber=103)
+      findPartitionCall("0").resolve(
+        [],
+        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+      )
+
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Confirm this is a genuine strip-and-discard, not "just hasn't re-dispatched
+      // yet": pending count is 0 AND latestFetchedBlock is still 102 (not 103) —
+      // proving handleQueryResult never ran for partition 2's fromBlock=103
+      // response (it was truly discarded), rather than partition 2 having
+      // legitimately finished and simply not yet issued its next query.
+      t.expect(
+        getPartitionState("2")->(((n, lfb, _)) => (n, lfb)),
+        ~message="partition 2's in-flight entry is wiped by the reorg's resetPendingQueries sweep, and its response was discarded (latestFetchedBlock never advanced to 103)",
+      ).toEqual((0, 102))
+
+      // Let the rollback settle fully.
+      t.expect(
+        sourceMock1.getBlockHashesCalls,
+        ~message="reorg looks for the rollback depth",
+      ).toEqual([[100]])
+      sourceMock1.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+      await indexerMock.getRollbackReadyPromise()
+
+      t.expect(
+        (indexerMock.dangerouslyGetState()->GlobalState.isPreparingRollback, rollbackStateTag(indexerMock)),
+        ~message="the indexer is fully settled (not preparing a rollback) after the rollback",
+      ).toEqual((false, "RollbackReady"))
+
+      // Does partition 2 still exist (kept, since registrationBlock=50 <=
+      // rollback target=100), and if so what state is it in?
+      let partition2Exists =
+        (indexerMock.dangerouslyGetState().chainManager.chainFetchers->ChainMap.get(
+          ChainMap.Chain.makeUnsafe(~chainId=1337),
+        )).fetchState.optimizedPartitions.entities
+        ->Dict.get("2")
+        ->Option.isSome
+      t.expect(
+        partition2Exists,
+        ~message="partition 2 survives the rollback (registrationBlock=50 is within the rolled-back range)",
+      ).toEqual(true)
+
+      // THE VERDICT: drive every outstanding call on this chain (both partitions,
+      // both getItemsOrThrow and getHeightOrThrow) for many rounds, and confirm
+      // BOTH partitions' latestFetchedBlock keeps advancing — i.e. nothing on
+      // this chain is permanently wedged.
+      let round = ref(0)
+      let bothAdvanced = ref(false)
+      while (!bothAdvanced.contents && round.contents < 50) {
+        sourceMock1.getItemsOrThrowCalls
+        ->Utils.Array.copy
+        ->Array.forEach(call => {
+          let fromBlock = call.payload["fromBlock"]
+          try call.resolve([], ~latestFetchedBlockNumber=fromBlock + 5) catch {
+          | _ => ()
+          }
+        })
+        if sourceMock1.getHeightOrThrowCalls->Array.length > 0 {
+          try sourceMock1.resolveGetHeightOrThrow(300) catch {
+          | _ => ()
+          }
+        }
+        await Utils.delay(1)
+        let (_, p0Block, _) = getPartitionState("0")
+        let p2BlockOpt =
+          (indexerMock.dangerouslyGetState().chainManager.chainFetchers->ChainMap.get(
+            ChainMap.Chain.makeUnsafe(~chainId=1337),
+          )).fetchState.optimizedPartitions.entities
+          ->Dict.get("2")
+          ->Option.map(p => p.latestFetchedBlock.blockNumber)
+        if p0Block > 102 && p2BlockOpt->Option.getOr(0) > 103 {
+          bothAdvanced := true
+        }
+        round := round.contents + 1
+      }
+
+      t.expect(
+        bothAdvanced.contents,
+        ~message="both partitions on the reorging chain keep advancing once answered — neither is permanently wedged by the same-chain race",
       ).toEqual(true)
     },
   )
