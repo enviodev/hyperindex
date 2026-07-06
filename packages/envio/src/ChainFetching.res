@@ -140,6 +140,20 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
     )
 
+    let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
+      let eventItem = item->Internal.castUnsafeEventItem
+      eventItem.eventConfig.contractRegister !== None ? count + 1 : count
+    })
+    Logging.trace({
+      "msg": "Finished querying",
+      "chainId": chain->ChainMap.Chain.toChainId,
+      "partitionId": query.partitionId,
+      "fromBlock": fromBlockQueried,
+      "toBlock": latestFetchedBlockNumber,
+      "numEvents": parsedQueueItems->Array.length,
+      "numContractRegisterEvents": numContractRegisterEvents,
+    })
+
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
@@ -203,16 +217,6 @@ let rec onQueryResponse = async (
         // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
         newItems->Array.push(item)
       }
-
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
-        "partitionId": query.partitionId,
-        "fromBlock": fromBlockQueried,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-        "numContractRegisterEvents": itemsWithContractRegister->Array.length,
-      })
 
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
