@@ -239,7 +239,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
-    ~maxNumItems as _,
+    ~itemsTarget as _,
     ~retry,
     ~logger,
   ) => {

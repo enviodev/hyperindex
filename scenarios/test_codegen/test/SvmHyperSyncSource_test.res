@@ -142,7 +142,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~contractNameByAddress,
       ~knownHeight=slot + 1000,
       ~partitionId="0",
-      ~maxNumItems=5000,
+      ~itemsTarget=5000,
       ~selection={
         eventConfigs: [(eventConfig :> Internal.eventConfig)],
         dependsOnAddresses: true,
@@ -223,7 +223,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           eventConfigs: [(eventConfig :> Internal.eventConfig)],
           dependsOnAddresses: true,
         },
-        ~maxNumItems=5000,
+        ~itemsTarget=5000,
         ~retry=0,
         ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )

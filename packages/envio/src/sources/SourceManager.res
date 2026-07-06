@@ -683,7 +683,7 @@ let executeQuery = async (
         // Ceil (not truncate) so a sub-1 estimate from a sparse partition over a
         // small range doesn't round down to 0 and ask the backend to cap the
         // response at nothing — 0 items is indistinguishable from "no signal".
-        ~maxNumItems={
+        ~itemsTarget={
           let est = query.estResponseSize->Math.ceil->Float.toInt
           est > 0 ? est : FetchState.defaultEstResponseSize->Float.toInt
         },

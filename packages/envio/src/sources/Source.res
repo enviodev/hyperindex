@@ -69,7 +69,7 @@ type t = {
     // A HyperSync-backed source enforces it server-side, so a wrong estimate
     // truncates the response instead of overshooting the shared buffer. Sources
     // without an equivalent lever (RPC, Fuel, Simulate) ignore it.
-    ~maxNumItems: int,
+    ~itemsTarget: int,
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,

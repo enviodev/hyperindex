@@ -101,7 +101,7 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
-      ~maxNumItems as _,
+      ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
     ) => JsError.throwWithMessage("Svm does not support getting items"),
