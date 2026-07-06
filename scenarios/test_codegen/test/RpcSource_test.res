@@ -1252,6 +1252,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
               dependsOnAddresses: true,
               eventConfigs: [(eventConfig :> Internal.eventConfig)],
             },
+            ~itemsTarget=5000,
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource response too large"}),
           )
@@ -1389,6 +1390,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
               dependsOnAddresses: true,
               eventConfigs: [(eventConfig :> Internal.eventConfig)],
             },
+            ~itemsTarget=5000,
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
           )
@@ -1512,6 +1514,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
                 dependsOnAddresses: true,
                 eventConfigs: [(eventConfig :> Internal.eventConfig)],
               },
+              ~itemsTarget=5000,
               ~retry,
               ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
             )
@@ -1652,6 +1655,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
             dependsOnAddresses: true,
             eventConfigs: [(eventConfig :> Internal.eventConfig)],
           },
+          ~itemsTarget=5000,
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource fan-out"}),
         )
@@ -1737,6 +1741,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
             dependsOnAddresses: false,
             eventConfigs: [(eventConfig :> Internal.eventConfig)],
           },
+          ~itemsTarget=5000,
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource skip-all"}),
         )
@@ -1897,6 +1902,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
             dependsOnAddresses: true,
             eventConfigs: [(eventA :> Internal.eventConfig), (eventB :> Internal.eventConfig)],
           },
+          ~itemsTarget=5000,
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource pooled leak"}),
         )

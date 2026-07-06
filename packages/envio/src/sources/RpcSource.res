@@ -97,16 +97,24 @@ let getErrorMessage = (exn: exn): option<string> =>
 // never helps — the same range always re-trips the same cap. The reaction is to
 // shrink the range and retry immediately, ratcheting the max range down.
 let isResponseTooLargeError = {
+  // Provider-specific "too many logs" messages, matched loosely since each names
+  // it differently: HyperRPC ("More than 50000 logs returned"), ZkEVM ("query
+  // returned more than N results"), LlamaRPC ("query exceeds max results"),
+  // 1RPC ("response size should not..."), Optimism ("(backend) response too
+  // large"), Arbitrum ("logs matched by query exceeds limit"), Ankr ("block
+  // range is too wide"). Kept as one block rather than per-line comments — the
+  // ReScript formatter doesn't preserve comments attached to regex literals in
+  // an array.
   let patterns = [
-    /more than \d+ logs/i, // HyperRPC: "More than 50000 logs returned"
+    /more than \d+ logs/i,
     /\d+ logs returned/i,
     /too many logs/i,
-    /query returned more than \d+ results/i, // ZkEVM
-    /query exceeds max results/i, // LlamaRPC
-    /response size should not/i, // 1RPC
-    /(backend )?response too large/i, // Optimism
-    /logs matched by query exceeds limit/i, // Arbitrum
-    /block range is too wide/i, // Ankr
+    /query returned more than \d+ results/i,
+    /query exceeds max results/i,
+    /response size should not/i,
+    /(backend )?response too large/i,
+    /logs matched by query exceeds limit/i,
+    /block range is too wide/i,
   ]
   (exn: exn) =>
     switch exn->getErrorMessage {
@@ -353,8 +361,10 @@ let getNextPage = (
   ->Promise.race
   ->Promise.catch(err => {
     let executedBlockInterval = toBlock - fromBlock + 1
-    let shrunkBlockInterval =
-      Pervasives.max(1, (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt)
+    let shrunkBlockInterval = Pervasives.max(
+      1,
+      (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt,
+    )
 
     let throwFailedGettingItems = retry =>
       throw(Source.GetItemsError(FailedGettingItems({exn: err, attemptedToBlock: toBlock, retry})))
@@ -1152,13 +1162,16 @@ let make = (
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
+    ~itemsTarget as _,
     ~retry,
     ~logger as _,
   ) => {
     let startFetchingBatchTimeRef = Performance.now()
 
     let sourceMaxBlockInterval =
-      mutSuggestedBlockIntervals->getSourceMaxBlockInterval(~intervalCeiling=syncConfig.intervalCeiling)
+      mutSuggestedBlockIntervals->getSourceMaxBlockInterval(
+        ~intervalCeiling=syncConfig.intervalCeiling,
+      )
     let suggestedBlockInterval = Pervasives.min(
       mutSuggestedBlockIntervals
       ->Utils.Dict.dangerouslyGetNonOption(partitionId)

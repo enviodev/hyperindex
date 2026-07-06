@@ -457,10 +457,10 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
-// Propose the chain's candidate queries against the shared buffer budget,
-// accounting for this chain's own in-flight reservations.
-let getNextQuery = (cs: t, ~budget) =>
-  cs.fetchState->FetchState.getNextQuery(~budget, ~chainPendingBudget=cs.pendingBudget)
+// Propose the chain's candidate queries against their natural ceiling
+// (head/endBlock/mergeBlock). CrossChainState admits them against the shared
+// buffer budget afterwards.
+let getNextQuery = (cs: t) => cs.fetchState->FetchState.getNextQuery
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
 // frontier to the source manager.
