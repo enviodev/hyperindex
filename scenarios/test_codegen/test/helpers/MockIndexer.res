@@ -284,12 +284,13 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let (postRegistrationConfig, registrations) = await HandlerLoader.registerAllHandlers(
-      ~config=Config.loadWithoutRegistrations(),
-    )
-
+    // Build the final per-test config (chain overrides, enableRawEvents, ...)
+    // before registering handlers: `HandlerRegister.finishRegistration` now
+    // builds each chain's onEventRegistrations (gated by `enableRawEvents`)
+    // from the config it's given, so registration must see the resolved
+    // config rather than the raw generated one.
     let config = {
-      let config = postRegistrationConfig
+      let config = Config.loadWithoutRegistrations()
 
       let chainMap =
         chains
@@ -317,6 +318,8 @@ module Indexer = {
         batchSize: batchSize->Option.getOr(config.batchSize),
       }
     }
+
+    let (config, registrations) = await HandlerLoader.registerAllHandlers(~config)
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema

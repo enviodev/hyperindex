@@ -89,6 +89,6 @@ let registerAllHandlers = async (~config: Config.t) => {
   })
   ->Promise.all
 
-  let registrations = HandlerRegister.finishRegistration()
+  let registrations = HandlerRegister.finishRegistration(~config)
   (config, registrations)
 }
