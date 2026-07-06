@@ -980,17 +980,17 @@ export type SvmInstructionParams = {
 };
 
 /** Permissive fallback shape for an instruction's `block`. The generated
- * per-instruction type narrows this to `slot`/`time`/`hash` (always present)
- * plus the selected `field_selection.block_fields`. */
+ * per-instruction type narrows this to `slot`/`hash` (always present) and
+ * `time` (always present but possibly `undefined`), plus the selected
+ * `field_selection.block_fields`. */
 export type SvmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   readonly slot: number;
-  /** Unix block time (seconds). Absent only when HyperSync returned no block
-   * row for this slot (rare; usually a skipped slot). */
+  /** Unix block time (seconds). Absent when HyperSync/Solana doesn't report a
+   * block time for this slot. */
   readonly time?: number;
-  /** Block hash. Absent only when HyperSync returned no block row for this
-   * slot (rare; usually a skipped slot). */
-  readonly hash?: string;
+  /** Block hash. */
+  readonly hash: string;
   /** Block height. Select via `field_selection.block_fields`. */
   readonly height?: number;
   /** Parent slot. Select via `field_selection.block_fields`. */
@@ -1053,8 +1053,9 @@ export type SvmInstruction<
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
-  /** The block this instruction's slot belongs to. Carries `slot`/`time`/`hash`
-   * (always present) plus the fields selected via this instruction's
+  /** The block this instruction's slot belongs to. Carries `slot`/`hash`
+   * (always present) and `time` (always present but possibly `undefined`),
+   * plus the fields selected via this instruction's
    * `field_selection.block_fields`; unselected fields are typed as
    * `FieldNotSelected<...>`. */
   readonly block: Block;

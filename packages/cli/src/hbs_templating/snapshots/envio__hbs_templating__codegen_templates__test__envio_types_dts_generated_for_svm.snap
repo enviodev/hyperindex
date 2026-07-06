@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3489
+assertion_line: 3481
 expression: project_template.envio_types_dts
 ---
 /**
@@ -138,7 +138,7 @@ declare module "envio" {
             /** The time field. */
             readonly time: number | undefined;
             /** The hash field. */
-            readonly hash: string | undefined;
+            readonly hash: string;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
@@ -265,7 +265,7 @@ declare module "envio" {
             /** The time field. */
             readonly time: number | undefined;
             /** The hash field. */
-            readonly hash: string | undefined;
+            readonly hash: string;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml

@@ -66,16 +66,16 @@ type svmLog = {
   message: string,
 }
 
-/** Block context for a matched instruction. `slot`/`time`/`hash` are always
- present; `time`/`hash` can still be absent when HyperSync returned no block
- row for the slot. Every other field is opt-in via `field_selection.block_fields`,
+/** Block context for a matched instruction. `slot`/`hash` are always present;
+ `time` can still be absent — HyperSync/Solana may not report a block time for
+ every slot. Every other field is opt-in via `field_selection.block_fields`,
  materialised from the per-chain block store at batch prep. */
 type svmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   slot: int,
   /** Unix block time (seconds). */
   time?: int,
-  hash?: string,
+  hash: string,
   /** Block height (distinct from slot). Absent when HyperSync didn't return a
    block for this slot, or the upstream omitted it. */
   height?: int,

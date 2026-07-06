@@ -2759,10 +2759,11 @@ fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
 }
 
 /// Per-instruction SVM block TS type for the generated program table.
-/// `time`/`hash` render as `T | undefined` despite always being present,
-/// since a slot can lack a block row. Selected fields get their real type
-/// (nullable ones as `T | undefined`); unselected fields get an `@deprecated`
-/// hint plus `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
+/// `slot`/`hash` always render as present; `time` still renders as
+/// `T | undefined` since HyperSync/Solana may not report a block time for
+/// every slot. Selected fields get their real type (nullable ones as
+/// `T | undefined`); unselected fields get an `@deprecated` hint plus
+/// `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
 fn svm_block_ts_type(
     specs: &[SvmBlockFieldSpec],
     selected: &[String],
@@ -2773,7 +2774,7 @@ fn svm_block_ts_type(
     let mut fields: Vec<String> = vec![
         ts_selected_field("slot", "number", indent),
         ts_selected_field("time", "number | undefined", indent),
-        ts_selected_field("hash", "string | undefined", indent),
+        ts_selected_field("hash", "string", indent),
     ];
     for spec in specs {
         fields.push(svm_field_line(
@@ -3407,8 +3408,8 @@ mod test {
 
     #[test]
     fn svm_block_ts_type_renders_optionality_and_unselected() {
-        // `time`/`hash` render as `T | undefined` despite being always
-        // present; unselected fields get `FieldNotSelected`.
+        // `time` renders as `T | undefined` despite being always present;
+        // `hash` doesn't; unselected fields get `FieldNotSelected`.
         let generated = svm_block_ts_type(
             &svm_block_field_specs(),
             &["height".to_string()],
