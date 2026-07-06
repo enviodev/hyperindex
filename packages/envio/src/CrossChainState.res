@@ -262,6 +262,7 @@ let checkAndFetch = async (
         {
           "fromBlock": query.fromBlock,
           "targetBlock": query.toBlock,
+          "targetEvents": query.estResponseSize->Math.round->Float.toInt,
         },
       )
     )
