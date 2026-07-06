@@ -21,7 +21,6 @@ let runContractRegistersOrThrow = async (
     ~items=itemsWithContractRegister,
     ~transactionStore,
     ~blockStore,
-    ~ecosystem=config.ecosystem.name,
   )
 
   let itemsWithDcs = []

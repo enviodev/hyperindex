@@ -37,3 +37,45 @@ let makeMaskFn = (fields: array<string>): (Utils.Set.t<string> => float) => {
 // `>>> 0` recovers the unsigned value that a plain `|` renders negative once bit
 // 31 is set.
 let orMask: (float, float) => float = %raw(`(a, b) => (a | b) >>> 0`)
+
+// Group store-backed items sharing a key, in arrival order, by extending the
+// current run when the key repeats adjacently rather than hashing a key per
+// item — safe because store-backed items arrive already sorted by their group
+// key, so equal keys are adjacent; a key recurring non-adjacently just splits
+// into two groups (one redundant decode later), never incorrect. Items whose
+// payload already carries an inline value (`hasInline`, e.g. RPC/simulate/Fuel)
+// are skipped. Each group's mask is the OR of its items' individual masks.
+// `sameKey` is taken explicitly (rather than relying on `==` over `'key`)
+// so callers with a tuple key compare its components, not the tuple itself.
+let groupAdjacent = (
+  items: array<Internal.item>,
+  ~hasInline: Internal.eventPayload => bool,
+  ~key: Internal.eventItem => 'key,
+  ~sameKey: ('key, 'key) => bool,
+  ~mask: Internal.eventItem => float,
+): (array<'key>, array<float>, array<array<Internal.eventItem>>) => {
+  let keys = []
+  let masks = []
+  let groups = []
+  items->Array.forEach(item =>
+    switch item {
+    | Internal.Event(_) =>
+      let eventItem = item->Internal.castUnsafeEventItem
+      if !(eventItem.payload->hasInline) {
+        let k = eventItem->key
+        let m = eventItem->mask
+        let last = groups->Array.length - 1
+        if last >= 0 && keys->Array.getUnsafe(last)->sameKey(k) {
+          groups->Array.getUnsafe(last)->Array.push(eventItem)
+          masks->Array.setUnsafe(last, orMask(masks->Array.getUnsafe(last), m))
+        } else {
+          keys->Array.push(k)
+          masks->Array.push(m)
+          groups->Array.push([eventItem])
+        }
+      }
+    | Internal.Block(_) => ()
+    }
+  )
+  (keys, masks, groups)
+}

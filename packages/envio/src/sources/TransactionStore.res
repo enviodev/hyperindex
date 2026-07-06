@@ -61,59 +61,33 @@ external materialize: (
 let materializeItems = async (store: t, ~items: array<Internal.item>) => {
   // Store-backed items arrive in (block, logIndex) order, and a transaction's
   // logs are contiguous within a block, so events sharing a (blockNumber,
-  // transactionIndex) are adjacent regardless of event. Group them by extending
-  // the current run rather than hashing a string key per item. A key recurring
-  // non-adjacently just splits into two groups (one redundant decode) — never
-  // incorrect.
-  let blockNumbers = []
-  let transactionIndices = []
-  let masks = []
-  let payloadGroups = []
-  let anySelected = ref(false)
+  // transactionIndex) are adjacent regardless of event.
+  let (keys, masks, groups) =
+    items->FieldMask.groupAdjacent(
+      ~hasInline=payload =>
+        payload->Internal.getPayloadTransaction->Nullable.toOption->Option.isSome,
+      ~key=eventItem => (eventItem.blockNumber, eventItem.transactionIndex),
+      ~sameKey=((blockNumber1, transactionIndex1), (blockNumber2, transactionIndex2)) =>
+        blockNumber1 == blockNumber2 && transactionIndex1 == transactionIndex2,
+      ~mask=eventItem => eventItem.eventConfig.transactionFieldMask,
+    )
 
-  items->Array.forEach(item =>
-    switch item {
-    | Internal.Event(_) =>
-      let eventItem = item->Internal.castUnsafeEventItem
-      switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
-      | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
-      | None =>
-        let {blockNumber, transactionIndex} = eventItem
-        let mask = eventItem.eventConfig.transactionFieldMask
-        if mask != 0. {
-          anySelected := true
-        }
-        let last = payloadGroups->Array.length - 1
-        if (
-          last >= 0 &&
-          blockNumbers->Array.getUnsafe(last) == blockNumber &&
-          transactionIndices->Array.getUnsafe(last) == transactionIndex
-        ) {
-          payloadGroups->Array.getUnsafe(last)->Array.push(eventItem.payload)
-          masks->Array.setUnsafe(last, orMask(masks->Array.getUnsafe(last), mask))
-        } else {
-          blockNumbers->Array.push(blockNumber)
-          transactionIndices->Array.push(transactionIndex)
-          masks->Array.push(mask)
-          payloadGroups->Array.push([eventItem.payload])
-        }
-      }
-    | Internal.Block(_) => ()
-    }
-  )
-
-  if payloadGroups->Utils.Array.notEmpty {
-    if anySelected.contents {
+  if groups->Utils.Array.notEmpty {
+    if masks->Array.some(mask => mask != 0.) {
+      let blockNumbers = keys->Array.map(((blockNumber, _)) => blockNumber)
+      let transactionIndices = keys->Array.map(((_, transactionIndex)) => transactionIndex)
       let txs = await store->materialize(~blockNumbers, ~transactionIndices, ~masks)
-      payloadGroups->Array.forEachWithIndex((payloads, i) => {
+      groups->Array.forEachWithIndex((group, i) => {
         let tx = txs->Array.getUnsafe(i)
-        payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+        group->Array.forEach(eventItem => eventItem.payload->Internal.setPayloadTransaction(tx))
       })
     } else {
       // No event selected any field: stamp an empty transaction object so
       // `event.transaction` is never undefined, without a materialize call.
-      payloadGroups->Array.forEach(payloads =>
-        payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(%raw(`{}`)))
+      groups->Array.forEach(group =>
+        group->Array.forEach(eventItem =>
+          eventItem.payload->Internal.setPayloadTransaction(%raw(`{}`))
+        )
       )
     }
   }

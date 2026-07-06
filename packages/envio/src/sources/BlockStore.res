@@ -25,7 +25,6 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool): t => {
 // ecosystem's ordered field-name array (the bit index is the field code shared
 // with the Rust store, `EvmBlockField`).
 let makeMaskFn = FieldMask.makeMaskFn
-let orMask = FieldMask.orMask
 
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
@@ -53,32 +52,13 @@ let groupByBlock = (items: array<Internal.item>): (
   array<int>,
   array<float>,
   array<array<Internal.eventItem>>,
-) => {
-  let blockNumbers = []
-  let masks = []
-  let groups = []
-  items->Array.forEach(item =>
-    switch item {
-    | Internal.Event(_) =>
-      let eventItem = item->Internal.castUnsafeEventItem
-      if eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone {
-        let {blockNumber} = eventItem
-        let mask = eventItem.eventConfig.blockFieldMask
-        let last = groups->Array.length - 1
-        if last >= 0 && blockNumbers->Array.getUnsafe(last) == blockNumber {
-          groups->Array.getUnsafe(last)->Array.push(eventItem)
-          masks->Array.setUnsafe(last, orMask(masks->Array.getUnsafe(last), mask))
-        } else {
-          blockNumbers->Array.push(blockNumber)
-          masks->Array.push(mask)
-          groups->Array.push([eventItem])
-        }
-      }
-    | Internal.Block(_) => ()
-    }
+) =>
+  items->FieldMask.groupAdjacent(
+    ~hasInline=payload => payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome,
+    ~key=eventItem => eventItem.blockNumber,
+    ~sameKey=(a, b) => a == b,
+    ~mask=eventItem => eventItem.eventConfig.blockFieldMask,
   )
-  (blockNumbers, masks, groups)
-}
 
 // Every ecosystem's field selection always includes its always-included trio,
 // so every mask has bits set and every materialised block carries at least

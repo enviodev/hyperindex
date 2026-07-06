@@ -2640,7 +2640,10 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
                 SvmTransactionField::Success => ("boolean", false),
                 SvmTransactionField::Err => ("string", true),
                 SvmTransactionField::Fee => ("bigint", false),
-                SvmTransactionField::ComputeUnitsConsumed => ("bigint", false),
+                // Solana's own RPC docs describe this as "reported when available":
+                // compute-unit metering post-dates mainnet launch, so older/legacy
+                // transactions can lack it even when selected.
+                SvmTransactionField::ComputeUnitsConsumed => ("bigint", true),
                 SvmTransactionField::AccountKeys => ("readonly string[]", false),
                 SvmTransactionField::RecentBlockhash => ("string", false),
                 SvmTransactionField::Version => ("string", true),

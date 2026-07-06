@@ -25,8 +25,9 @@ type t = {
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
-  // prune / rollback lifecycle as the transaction store.
-  blockStore: BlockStore.t,
+  // prune / rollback lifecycle as the transaction store. `None` for Fuel, which
+  // keeps the block inline and never needs one.
+  blockStore: option<BlockStore.t>,
 }
 
 // Per-chain shape returned by the status API.
@@ -73,7 +74,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
   ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~blockStore=Some(BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)),
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -346,10 +347,12 @@ let makeInternal = (
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     ),
-    ~blockStore=BlockStore.make(
-      ~ecosystem=config.ecosystem.name,
-      ~shouldChecksum=!lowercaseAddresses,
-    ),
+    // Fuel keeps the block inline, so it never needs a store.
+    ~blockStore=switch config.ecosystem.name {
+    | Fuel => None
+    | Evm | Svm =>
+      Some(BlockStore.make(~ecosystem=config.ecosystem.name, ~shouldChecksum=!lowercaseAddresses))
+    },
     ~logger,
   )
 }
@@ -522,19 +525,19 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 
 // Apply a fetch response: register any new dynamic contracts, append the items
 // to the buffer and advance the known head.
-// Fuel carries the block inline and has no store, so it's a no-op.
-let materializeBlockItems = (store: BlockStore.t, ~items, ~ecosystem: Ecosystem.name) =>
-  switch ecosystem {
-  | Evm | Svm => store->BlockStore.materializeItems(~items)
-  | Fuel => Promise.resolve()
+// `None` (Fuel, which carries the block inline and has no store) is a no-op.
+let materializeBlockItems = (store: option<BlockStore.t>, ~items) =>
+  switch store {
+  | Some(store) => store->BlockStore.materializeItems(~items)
+  | None => Promise.resolve()
   }
 
 // Materialise the chain stores' selected transaction and block fields onto a
 // batch's items at batch prep (the persistent-store path).
-let materializeBatchItems = async (cs: t, ~items: array<Internal.item>, ~ecosystem) => {
+let materializeBatchItems = async (cs: t, ~items: array<Internal.item>) => {
   let _ = await Promise.all2((
     cs.transactionStore->TransactionStore.materializeItems(~items),
-    cs.blockStore->materializeBlockItems(~items, ~ecosystem),
+    cs.blockStore->materializeBlockItems(~items),
   ))
 }
 
@@ -545,17 +548,13 @@ let materializePageItems = async (
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
   ~blockStore: option<BlockStore.t>,
-  ~ecosystem,
 ) => {
   let _ = await Promise.all2((
     switch transactionStore {
     | Some(store) => store->TransactionStore.materializeItems(~items)
     | None => Promise.resolve()
     },
-    switch blockStore {
-    | Some(store) => store->materializeBlockItems(~items, ~ecosystem)
-    | None => Promise.resolve()
-    },
+    blockStore->materializeBlockItems(~items),
   ))
 }
 
@@ -575,9 +574,9 @@ let handleQueryResult = (
   | Some(page) => cs.transactionStore->TransactionStore.merge(page)
   | None => ()
   }
-  switch blockPage {
-  | Some(page) => cs.blockStore->BlockStore.merge(page)
-  | None => ()
+  switch (cs.blockStore, blockPage) {
+  | (Some(store), Some(page)) => store->BlockStore.merge(page)
+  | _ => ()
   }
 
   let fs = switch newItemsWithDcs {
@@ -766,7 +765,10 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
       // Processed blocks' transactions and blocks are no longer needed.
       cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
-      cs.blockStore->BlockStore.prune(chainAfterBatch.progressBlockNumber)
+      switch cs.blockStore {
+      | Some(store) => store->BlockStore.prune(chainAfterBatch.progressBlockNumber)
+      | None => ()
+      }
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
       | Some(safeCheckpointTracking) =>
@@ -845,7 +847,10 @@ let rollback = (
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
-    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
+    switch cs.blockStore {
+    | Some(store) => store->BlockStore.rollback(newProgressBlockNumber)
+    | None => ()
+    }
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -860,7 +865,10 @@ let rollback = (
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
+      switch cs.blockStore {
+      | Some(store) => store->BlockStore.rollback(rollbackTargetBlockNumber)
+      | None => ()
+      }
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

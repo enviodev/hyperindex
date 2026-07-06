@@ -293,15 +293,11 @@ type logPartitionInfo = {
 // batch's store-backed (HyperSync) items and write them onto the payloads, so
 // handlers read plain objects. A batch can span chains, each with its own store
 // and field mask, so group items by chain before materialising.
-let materializeBatchTransactions = async (
-  batch: Batch.t,
-  ~chainStates: dict<ChainState.t>,
-  ~ecosystem,
-) => {
+let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<ChainState.t>) => {
   switch chainStates->Dict.valuesToArray {
   // Single-chain indexers (the common case): every item belongs to the one
   // chain, so skip the per-chain grouping and its allocations.
-  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items, ~ecosystem)
+  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items)
   | _ =>
     let itemsByChain: dict<array<Internal.item>> = Dict.make()
     batch.items->Array.forEach(item => {
@@ -316,7 +312,7 @@ let materializeBatchTransactions = async (
     ->Dict.toArray
     ->Array.map(async ((chainId, items)) => {
       let cs = chainStates->Dict.getUnsafe(chainId)
-      await cs->ChainState.materializeBatchItems(~items, ~ecosystem)
+      await cs->ChainState.materializeBatchItems(~items)
     })
     ->Promise.all
   }
@@ -352,7 +348,7 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
-      await materializeBatchTransactions(batch, ~chainStates, ~ecosystem=config.ecosystem.name)
+      await materializeBatchTransactions(batch, ~chainStates)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
