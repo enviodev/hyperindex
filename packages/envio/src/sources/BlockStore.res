@@ -46,12 +46,9 @@ external materialize: (
 // Drop blocks above the given block (rolled back).
 @send external rollback: (t, int) => unit = "rollback"
 
-// Group adjacent store-backed items (those whose payload has no block yet) into
-// runs sharing a block number, OR-ing their block-field masks. Items arrive in
-// (block, logIndex) order, so events sharing a block are adjacent; extending
-// the current run avoids hashing a key per item. Items that already carry an
-// inline block (RPC/simulate/Fuel) are skipped — the caller writes the
-// materialised block onto each run's event items.
+// Items arrive in (block, logIndex) order, so events sharing a block are
+// adjacent; extending the current run avoids hashing a key per item. Items
+// that already carry an inline block (RPC/simulate/Fuel) are skipped.
 let groupByBlock = (items: array<Internal.item>): (
   array<int>,
   array<float>,
@@ -83,12 +80,9 @@ let groupByBlock = (items: array<Internal.item>): (
   (blockNumbers, masks, groups)
 }
 
-// Materialise each store-backed item's selected block fields and write the
-// resulting block onto its payload. Items that already carry an inline block
-// (RPC/simulate/Fuel) are skipped. Every ecosystem's field selection always
-// includes its always-included trio (see `EventConfigBuilder.res`), so every
-// mask has bits set and every store-backed item gets a block carrying at least
-// that trio. Deduped per block number.
+// Every ecosystem's field selection always includes its always-included trio,
+// so every mask has bits set and every materialised block carries at least
+// that trio.
 let materializeItems = async (store: t, ~items: array<Internal.item>) => {
   let (blockNumbers, masks, groups) = items->groupByBlock
   if groups->Utils.Array.notEmpty {

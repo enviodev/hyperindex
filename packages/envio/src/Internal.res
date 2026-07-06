@@ -166,11 +166,8 @@ let allSvmTransactionFields: array<svmTransactionField> = [
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
-// All SVM block fields, including `slot`/`time`/`hash` (always-included,
-// mirroring `evmBlockField`'s number/timestamp/hash — see
-// `EventConfigBuilder.res`'s `alwaysIncludedSvmBlockFields`). Only
-// height/parentSlot/parentHash are selectable via `field_selection.block_fields`
-// (see `allSvmBlockFields` below).
+// All SVM block fields. `slot`/`time`/`hash` are always included; the rest are
+// selectable via `field_selection.block_fields` (see `allSvmBlockFields`).
 type svmBlockField =
   | @as("slot") Slot
   | @as("time") Time
@@ -179,8 +176,6 @@ type svmBlockField =
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
 
-// Fields selectable via `field_selection.block_fields` (excludes the
-// always-included slot/time/hash, matching the Rust `SvmBlockField` config enum).
 let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
 let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 

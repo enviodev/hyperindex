@@ -53,10 +53,8 @@ describe("BlockStore materializeItems", () => {
       let b = makeStoreBackedItem(~blockNumber=2, ~mask)
       let c = makeStoreBackedItem(~blockNumber=3, ~mask)
 
-      // The store is empty (only Rust sources feed it), so of the trio only
-      // `number` — resolved from the requested key rather than a stored block —
-      // comes back. This exercises the group/dedup/assign path; full field
-      // decoding is covered by the Rust unit tests.
+      // The store is empty, so of the trio only `number` — resolved from the
+      // requested key rather than a stored block — comes back.
       await store->BlockStore.materializeItems(~items=[inline, a, b, c])
 
       t.expect({
@@ -75,9 +73,6 @@ describe("BlockStore materializeItems", () => {
     },
   )
 
-  // Same mechanism as EVM (`materializeItems` doesn't branch by ecosystem):
-  // SVM's always-included slot/time/hash trio (mask bits 0-2) takes the exact
-  // same group/dedup/assign path as EVM's number/timestamp/hash.
   Async.it(
     "SVM: skips inline blocks, sets a store block on store-backed items, and dedupes by slot",
     async t => {

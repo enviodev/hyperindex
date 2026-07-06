@@ -162,11 +162,8 @@ impl SvmHypersyncClient {
             .context("mapping solana block headers")
             .map_err(map_err)?;
 
-        // Retain every response block in Rust keyed by slot: slot/time/hash
-        // decode from the store like any other field (mirroring the EVM
-        // source), so the store needs an entry for every block the config's
-        // always-included trio touches, not just ones with extra fields
-        // selected.
+        // slot/time/hash decode from the store like any other field, so every
+        // response block needs a store entry.
         let block_store = BlockStore::new_svm();
         block_store.insert_svm_blocks(raw_blocks);
 

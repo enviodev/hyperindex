@@ -457,8 +457,7 @@ let buildEvmEventConfig = (
 // ============== Build SVM instruction event config ==============
 
 // Always-included block fields (slot, time, hash) are prepended at runtime so
-// they're always present regardless of config, mirroring EVM's
-// `alwaysIncludedBlockFields`.
+// they're always present regardless of config.
 let alwaysIncludedSvmBlockFields: array<Internal.svmBlockField> = [Slot, Time, Hash]
 
 let buildSvmInstructionEventConfig = (

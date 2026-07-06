@@ -184,8 +184,7 @@ let parseDecoded = (
   }
 }
 
-// `block` is omitted; it's always materialised from the block store onto the
-// payload at batch prep, mirroring EVM's HyperSync source.
+// `block` is omitted; it's materialised from the block store at batch prep.
 let toSvmInstruction = (
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   ~programName,

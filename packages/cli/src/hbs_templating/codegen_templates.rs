@@ -2759,13 +2759,10 @@ fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
 }
 
 /// Per-instruction SVM block TS type for the generated program table.
-/// `slot`/`time`/`hash` are always present (mirroring EVM's always-included
-/// number/timestamp/hash), so they're seeded rather than run through the
-/// selected/unselected mechanism; `time`/`hash` still render as `T | undefined`
-/// since a slot can lack a block row regardless of selection. The remaining
-/// selectable fields get their real type when selected (nullable ones as
-/// `T | undefined`); unselected fields get an `@deprecated` hint plus
-/// `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
+/// `time`/`hash` render as `T | undefined` despite always being present,
+/// since a slot can lack a block row. Selected fields get their real type
+/// (nullable ones as `T | undefined`); unselected fields get an `@deprecated`
+/// hint plus `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
 fn svm_block_ts_type(
     specs: &[SvmBlockFieldSpec],
     selected: &[String],
@@ -3390,11 +3387,8 @@ mod test {
 
     #[test]
     fn svm_block_field_specs_match_runtime() {
-        // The codegen block specs (selectable fields) must match the public
-        // `svmInstructionBlock` shape — name and optionality — excluding the
-        // always-present `slot`/`time`/`hash`. Optionality parity guards the
-        // generated TS type from narrowing a nullable field (e.g. `parentHash`)
-        // to non-optional.
+        // Must match the public `svmInstructionBlock` shape (name +
+        // optionality), excluding the always-present `slot`/`time`/`hash`.
         let res = std::fs::read_to_string(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/src/Envio.res"),
         )
@@ -3413,11 +3407,8 @@ mod test {
 
     #[test]
     fn svm_block_ts_type_renders_optionality_and_unselected() {
-        // `slot` is always present with no `| undefined`; `time`/`hash` are also
-        // always present but still render as `T | undefined` (a slot can lack a
-        // block row regardless of selection); selected nullable field (`height`)
-        // renders as `T | undefined`; unselected fields get the `@deprecated`
-        // hint + `FieldNotSelected`.
+        // `time`/`hash` render as `T | undefined` despite being always
+        // present; unselected fields get `FieldNotSelected`.
         let generated = svm_block_ts_type(
             &svm_block_field_specs(),
             &["height".to_string()],

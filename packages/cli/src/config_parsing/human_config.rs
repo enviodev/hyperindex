@@ -1275,9 +1275,8 @@ pub mod svm {
     }
 
     /// Selectable block field names (camelCase), matching the public
-    /// `instruction.block` shape. `slot`/`time`/`hash` are always included
-    /// (mirroring the EVM side's always-included number/timestamp/hash), so
-    /// everything here is opt-in on top of that trio.
+    /// `instruction.block` shape. `slot`/`time`/`hash` are always included,
+    /// so everything here is opt-in on top of that trio.
     #[derive(
         Debug,
         Serialize,

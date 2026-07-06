@@ -2,9 +2,9 @@ open Vitest
 
 // Regression coverage for SvmHyperSyncSource.getItemsOrThrow response
 // parsing, driven through a mocked napi client (no network):
-//   1. `instruction.block` is omitted on the item; it's always materialised
-//      from the block store onto the payload at batch prep (mirroring EVM),
-//      which this test doesn't exercise — see BlockStore_test.res.
+//   1. `instruction.block` is omitted on the item; it's materialised from the
+//      block store at batch prep, which this test doesn't exercise — see
+//      BlockStore_test.res.
 //   2. The query must spell out transaction/log columns when an event config
 //      opts in — the server returns no rows for a table whose field list is
 //      empty, so omitting them silently drops `instruction.transaction`.
