@@ -137,12 +137,13 @@ let startRegistration = (~ecosystem) => {
 // registration finishes, so a bad `where`/duplicate event throws during
 // startup with a stack trace pointing here instead of surfacing later from
 // inside ChainState's construction. Events without a handler/contractRegister
-// get added to `notRegisteredEvents` (as "ContractName.EventName") so the
-// caller can report them once for the whole indexer instead of per chain.
+// get added to `notRegisteredEventsByContract` (event names grouped by
+// contract name) so the caller can report them once for the whole indexer
+// instead of per chain.
 let buildOnEventRegistrations = (
   ~chainConfig: Config.chain,
   ~config: Config.t,
-  ~notRegisteredEvents: Utils.Set.t<string>,
+  ~notRegisteredEventsByContract: dict<Utils.Set.t<string>>,
 ): array<Internal.onEventRegistration> => {
   // We don't need the router itself, but only validation logic,
   // since now event router is created for selection of events
@@ -211,7 +212,17 @@ let buildOnEventRegistrations = (
       } else {
         let isRegistered = contractRegister->Option.isSome || handler->Option.isSome
         if !isRegistered {
-          notRegisteredEvents->Utils.Set.add(`${contractName}.${eventName}`)->ignore
+          let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
+            contractName,
+          ) {
+          | Some(set) => set
+          | None => {
+              let set = Utils.Set.make()
+              notRegisteredEventsByContract->Dict.set(contractName, set)
+              set
+            }
+          }
+          eventNames->Utils.Set.add(eventName)->ignore
         }
         isRegistered
       }
@@ -256,7 +267,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch activeRegistration.contents {
   | Some(r) => {
       r.finished = true
-      let notRegisteredEvents = Utils.Set.make()
+      let notRegisteredEventsByContract: dict<Utils.Set.t<string>> = Dict.make()
       let registrationsByChainId: registrationsByChainId = Dict.make()
       config.chainMap
       ->ChainMap.values
@@ -268,7 +279,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             onEventRegistrations: buildOnEventRegistrations(
               ~chainConfig,
               ~config,
-              ~notRegisteredEvents,
+              ~notRegisteredEventsByContract,
             ),
             onBlockRegistrations: r.registrations.onBlockByChainId
             ->Utils.Dict.dangerouslyGetNonOption(key)
@@ -279,16 +290,16 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
 
       // Reported once for the whole indexer (a shared contract on multiple
       // chains would otherwise repeat the same message per chain).
-      if notRegisteredEvents->Utils.Set.size > 0 {
-        let names = notRegisteredEvents->Utils.Set.toArray
+      let notRegisteredEntries = notRegisteredEventsByContract->Dict.toArray
+      if notRegisteredEntries->Utils.Array.notEmpty {
+        let groups =
+          notRegisteredEntries
+          ->Array.map(((contractName, eventNames)) =>
+            `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
+          )
+          ->Array.joinUnsafe(", ")
         Logging.getLogger()->Logging.childInfo(
-          `The event${if names->Array.length > 1 {
-              "s"
-            } else {
-              ""
-            }} ${names->Array.joinUnsafe(
-              ", ",
-            )} don't have an event handler and skipped for indexing.`,
+          `Events without a handler, skipped for indexing: ${groups}`,
         )
       }
 
