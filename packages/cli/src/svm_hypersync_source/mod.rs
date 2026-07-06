@@ -38,13 +38,6 @@ use config::SvmClientConfig;
 use query::SvmQuery;
 use types::QueryResponse;
 
-/// Query column names HyperSync always returns for a block row — see
-/// `SvmHyperSyncSource.res`'s `blockQueryFields`, which always requests
-/// `[Slot, Blockhash, BlockTime]`. Named here (mirroring the EVM side's
-/// `REQUIRED_BLOCK_FIELDS`) rather than inlined, so the trio the raw-block
-/// store gate compares against is a single discoverable constant.
-const REQUIRED_SVM_BLOCK_QUERY_FIELDS: &[&str] = &["slot", "blockhash", "block_time"];
-
 /// Move the response's transactions and token balances into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
 /// only the config-selected fields are materialised at batch prep; many
@@ -116,20 +109,6 @@ impl SvmHypersyncClient {
         &self,
         query: SvmQuery,
     ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
-        // Whether any instruction selected a block field beyond the always-fetched
-        // slot/blockhash/blockTime (needed for reorg detection and each item's
-        // slot/time). Only then is the raw-block store worth populating — mirrors
-        // the EVM source's `has_extra_block_fields` gate.
-        let has_extra_block_fields = query
-            .fields
-            .as_ref()
-            .and_then(|f| f.block.as_ref())
-            .is_some_and(|block| {
-                block
-                    .iter()
-                    .any(|f| !REQUIRED_SVM_BLOCK_QUERY_FIELDS.contains(&f.as_str()))
-            });
-
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
@@ -183,14 +162,10 @@ impl SvmHypersyncClient {
             .context("mapping solana block headers")
             .map_err(map_err)?;
 
-        // Retain blocks in Rust keyed by slot so the block store can
-        // materialise the selected block fields onto each instruction's
-        // `event.block` at batch prep. Skipped when only slot/blockhash/blockTime
-        // were requested — those reach ReScript via the response's block table.
+        // slot/time/hash decode from the store like any other field, so every
+        // response block needs a store entry.
         let block_store = BlockStore::new_svm();
-        if has_extra_block_fields {
-            block_store.insert_svm_blocks(raw_blocks);
-        }
+        block_store.insert_svm_blocks(raw_blocks);
 
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")

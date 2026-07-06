@@ -2,8 +2,9 @@ open Vitest
 
 // Regression coverage for SvmHyperSyncSource.getItemsOrThrow response
 // parsing, driven through a mocked napi client (no network):
-//   1. `instruction.block.time` must carry the slot's blockTime from the
-//      response's blocks table (reported as arriving `undefined` downstream).
+//   1. `instruction.block` is omitted on the item; it's materialised from the
+//      block store at batch prep, which this test doesn't exercise — see
+//      BlockStore_test.res.
 //   2. The query must spell out transaction/log columns when an event config
 //      opts in — the server returns no rows for a table whose field list is
 //      empty, so omitting them silently drops `instruction.transaction`.
@@ -141,7 +142,7 @@ let makeSource = (~eventConfigs=[makeEventConfig()]) => {
 let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
-  Async.it("joins blockTime onto items and requests opted-in table columns", async t => {
+  Async.it("omits block on the item and requests opted-in table columns", async t => {
     let source = makeSource()
     let eventConfig = makeEventConfig()
 
@@ -178,9 +179,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     }).toEqual({
       "item": Some({
         "blockNumber": slot,
-        // slot/time/hash are stamped inline from the response's block row;
-        // height/parentSlot/parentHash would be materialised from the store.
-        "block": ({slot, time: blockTime, hash: blockHash}: Envio.svmInstructionBlock),
+        // `block` is omitted here; it's materialised from the store at batch
+        // prep, which this test doesn't run.
+        "block": None,
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.

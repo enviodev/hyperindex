@@ -184,12 +184,12 @@ let parseDecoded = (
   }
 }
 
+// `block` is omitted; it's materialised from the block store at batch prep.
 let toSvmInstruction = (
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   ~programName,
   ~instructionName,
   ~logs,
-  ~block,
 ): Envio.svmInstruction => {
   programName,
   instructionName,
@@ -204,7 +204,6 @@ let toSvmInstruction = (
   d8: ?instr.d8,
   params: ?(instr.decoded->Option.map(parseDecoded)),
   ?logs,
-  block,
 }
 
 // Probe the discriminator byte-length ordering longest-first. Stops at the
@@ -270,12 +269,12 @@ let toQueryTxField = (field: Internal.svmTransactionField): option<
 
 // Map a selected block field to its HyperSync query column. Slot/Blockhash/
 // BlockTime are requested unconditionally (needed for reorg detection and the
-// item's slot/timestamp), so selecting `time`/`hash` adds no extra column.
+// item's slot/timestamp), so selecting `slot`/`time`/`hash` adds no extra column.
 let toQueryBlockField = (field: Internal.svmBlockField): option<
   SvmHyperSyncClient.QueryTypes.blockField,
 > =>
   switch field {
-  | Time | Hash => None
+  | Slot | Time | Hash => None
   | Height => Some(BlockHeight)
   | ParentSlot => Some(ParentSlot)
   | ParentHash => Some(ParentBlockhash)
@@ -425,17 +424,15 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
     let parsingRef = Performance.now()
 
-    // Per-slot lookups from the response's `blocks` table for the always-fetched
-    // trio (time/hash). Slots without a block row (rare; usually skipped slots)
-    // fall back to `None`.
+    // Per-slot blockTime lookup from the response's `blocks` table, for the
+    // batch's `latestFetchedBlockTimestamp`. Slots without a block row (rare;
+    // usually skipped slots) fall back to `None`.
     let blockTimeBySlot = Dict.make()
-    let blockHashBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b => {
       switch b.blockTime {
       | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
       | None => ()
       }
-      blockHashBySlot->Dict.set(b.slot->Int.toString, b.blockhash)
     })
 
     // Per (slot, transaction_index, instruction_address) lookup for logs
@@ -498,22 +495,11 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
             )
           )
 
-        let slotKey = instr.slot->Int.toString
-        let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
-        let blockHash = blockHashBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload = toSvmInstruction(
           instr,
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
-          // The always-fetched trio (slot/time/hash) is stamped inline from the
-          // response; height/parentSlot/parentHash are materialised from the store
-          // at batch prep.
-          ~block={
-            slot: instr.slot,
-            time: ?blockTime,
-            hash: ?blockHash,
-          },
         )
 
         parsedQueueItems
@@ -556,8 +542,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
-      // Raw blocks kept in Rust; the inline block is enriched with the selected
-      // fields at batch prep.
+      // Raw blocks kept in Rust; materialised onto the payload at batch prep.
       blockStore: Some(blockStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},

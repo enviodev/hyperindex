@@ -522,13 +522,10 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 
 // Apply a fetch response: register any new dynamic contracts, append the items
 // to the buffer and advance the known head.
-// The block store's materialisation differs by ecosystem: EVM writes the block
-// onto payloads that omit it; SVM enriches the minimal inline block the source
-// attached. Fuel carries the block inline and has no store.
+// Fuel carries the block inline and has no store, so it's a no-op.
 let materializeBlockItems = (store: BlockStore.t, ~items, ~ecosystem: Ecosystem.name) =>
   switch ecosystem {
-  | Evm => store->BlockStore.materializeEvmItems(~items)
-  | Svm => store->BlockStore.materializeSvmItems(~items)
+  | Evm | Svm => store->BlockStore.materializeItems(~items)
   | Fuel => Promise.resolve()
   }
 

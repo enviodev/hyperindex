@@ -2,9 +2,9 @@ open Vitest
 
 // Build an `Internal.item` Event for a store-backed block. The payload is a bare
 // object so getPayloadBlock/setPayloadBlock (which read/write its `block`
-// property) behave like a real store-backed EVM payload. `mask` mirrors the
-// per-event `eventConfig.blockFieldMask` — for EVM it always carries the
-// number/timestamp/hash bits, added to the selection at config build.
+// property) behave like a real store-backed payload. `mask` mirrors the
+// per-event `eventConfig.blockFieldMask` — every ecosystem's mask always
+// carries its always-included trio, added to the selection at config build.
 let makeStoreBackedItem = (~blockNumber, ~mask): Internal.item =>
   {
     "kind": 0,
@@ -21,21 +21,6 @@ let makeInlineItem = (~blockNumber, ~block): Internal.item => {
     "kind": 0,
     "blockNumber": blockNumber,
     "transactionIndex": 0,
-    "payload": payload,
-  }->(Utils.magic: {..} => Internal.item)
-}
-
-// SVM items carry the always-available trio (`slot`/`time`/`hash`) inline; the
-// selected fields are enriched onto the block in place from the store.
-let makeSvmItem = (~slot, ~time, ~hash, ~mask): Internal.item => {
-  let block = {"slot": slot, "time": time, "hash": hash}->(Utils.magic: {..} => Internal.eventBlock)
-  let payload: dict<Internal.eventBlock> = Dict.make()
-  payload->Dict.set("block", block)
-  {
-    "kind": 0,
-    "blockNumber": slot,
-    "transactionIndex": 0,
-    "eventConfig": {"blockFieldMask": mask},
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)
 }
@@ -58,7 +43,7 @@ describe("BlockStore field-code contract", () => {
 
 describe("BlockStore materializeItems", () => {
   Async.it(
-    "skips inline blocks, sets a store block on store-backed items, and dedupes by block",
+    "EVM: skips inline blocks, sets a store block on store-backed items, and dedupes by block",
     async t => {
       let store = BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
       let inlineBlock = {"number": 1}->(Utils.magic: {..} => Internal.eventBlock)
@@ -68,11 +53,9 @@ describe("BlockStore materializeItems", () => {
       let b = makeStoreBackedItem(~blockNumber=2, ~mask)
       let c = makeStoreBackedItem(~blockNumber=3, ~mask)
 
-      // The store is empty (only Rust sources feed it), so of the trio only
-      // `number` — resolved from the requested key rather than a stored block —
-      // comes back. This exercises the group/dedup/assign path; full field
-      // decoding is covered by the Rust unit tests.
-      await store->BlockStore.materializeEvmItems(~items=[inline, a, b, c])
+      // The store is empty, so of the trio only `number` — resolved from the
+      // requested key rather than a stored block — comes back.
+      await store->BlockStore.materializeItems(~items=[inline, a, b, c])
 
       t.expect({
         "inlineUntouched": rawBlock(inline) === inlineBlock->Nullable.make,
@@ -90,50 +73,34 @@ describe("BlockStore materializeItems", () => {
     },
   )
 
-  Async.it("enriches each slot's inline block in place and dedupes by slot", async t => {
-    let store = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
-    let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(Svm.blockFields))
-    let a = makeSvmItem(~slot=5, ~time=50, ~hash="0x5", ~mask)
-    let b = makeSvmItem(~slot=5, ~time=50, ~hash="0x5", ~mask)
-    let c = makeSvmItem(~slot=6, ~time=60, ~hash="0x6", ~mask)
+  Async.it(
+    "SVM: skips inline blocks, sets a store block on store-backed items, and dedupes by slot",
+    async t => {
+      let store = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
+      let inlineBlock = {"slot": 1}->(Utils.magic: {..} => Internal.eventBlock)
+      let inline = makeInlineItem(~blockNumber=1, ~block=inlineBlock)
+      let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(["slot", "time", "hash"]))
+      let a = makeStoreBackedItem(~blockNumber=5, ~mask)
+      let b = makeStoreBackedItem(~blockNumber=5, ~mask)
+      let c = makeStoreBackedItem(~blockNumber=6, ~mask)
 
-    // The store is empty here, so the selected fields don't materialise; each
-    // item's own inline block is enriched in place, keeping its slot/time/hash.
-    // This exercises the enrich/dedup path — field decoding itself is covered by
-    // the Rust unit tests.
-    await store->BlockStore.materializeSvmItems(~items=[a, b, c])
+      // The store is empty, so of the trio only `slot` — resolved from the
+      // requested key rather than a stored block — comes back.
+      await store->BlockStore.materializeItems(~items=[inline, a, b, c])
 
-    t.expect({
-      "aBlock": rawBlock(a),
-      "bBlock": rawBlock(b),
-      "cBlock": rawBlock(c),
-    }).toEqual({
-      "aBlock": {"slot": 5, "time": 50, "hash": "0x5"}
-      ->(Utils.magic: {..} => Internal.eventBlock)
-      ->Nullable.make,
-      "bBlock": {"slot": 5, "time": 50, "hash": "0x5"}
-      ->(Utils.magic: {..} => Internal.eventBlock)
-      ->Nullable.make,
-      "cBlock": {"slot": 6, "time": 60, "hash": "0x6"}
-      ->(Utils.magic: {..} => Internal.eventBlock)
-      ->Nullable.make,
-    })
-  })
-
-  // Selecting only inline-stamped fields (`time`/`hash`) must leave the inline
-  // block intact: the SVM source doesn't populate the store for them, so the
-  // materialise call yields empty bags and the enrich is a no-op.
-  Async.it("keeps the inline trio when only time/hash are selected", async t => {
-    let store = BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)
-    let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(["time", "hash"]))
-    let item = makeSvmItem(~slot=7, ~time=70, ~hash="0x7", ~mask)
-
-    await store->BlockStore.materializeSvmItems(~items=[item])
-
-    t.expect(rawBlock(item)).toEqual(
-      {"slot": 7, "time": 70, "hash": "0x7"}
-      ->(Utils.magic: {..} => Internal.eventBlock)
-      ->Nullable.make,
-    )
-  })
+      t.expect({
+        "inlineUntouched": rawBlock(inline) === inlineBlock->Nullable.make,
+        "storeBackedBlockSet": rawBlock(a),
+        "adjacentSameSlotShared": rawBlock(a) === rawBlock(b),
+        "differentSlotSeparate": rawBlock(a) !== rawBlock(c),
+      }).toEqual({
+        "inlineUntouched": true,
+        "storeBackedBlockSet": {"slot": 5}
+        ->(Utils.magic: {..} => Internal.eventBlock)
+        ->Nullable.make,
+        "adjacentSameSlotShared": true,
+        "differentSlotSeparate": true,
+      })
+    },
+  )
 })

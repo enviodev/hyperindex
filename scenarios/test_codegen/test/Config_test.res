@@ -185,11 +185,11 @@ describe("svmEventDescriptorSchema", () => {
       "discriminator": "0x21",
       "discriminatorByteLen": 1,
       "transactionFields": [],
-      "blockFields": ["time", "hash", "height"],
+      "blockFields": ["height", "parentSlot", "parentHash"],
       "includeLogs": false
     }`)
     let parsed = json->S.parseOrThrow(Config.svmEventDescriptorSchema)
-    let expected: option<array<Internal.svmBlockField>> = Some([Time, Hash, Height])
+    let expected: option<array<Internal.svmBlockField>> = Some([Height, ParentSlot, ParentHash])
     t.expect(parsed["blockFields"]).toEqual(expected)
   })
 })

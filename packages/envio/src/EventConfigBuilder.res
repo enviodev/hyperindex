@@ -454,7 +454,11 @@ let buildEvmEventConfig = (
   }
 }
 
-// ============== Build Fuel event config ==============
+// ============== Build SVM instruction event config ==============
+
+// Always-included block fields (slot, time, hash) are prepended at runtime so
+// they're always present regardless of config.
+let alwaysIncludedSvmBlockFields: array<Internal.svmBlockField> = [Slot, Time, Hash]
 
 let buildSvmInstructionEventConfig = (
   ~contractName: string,
@@ -486,10 +490,11 @@ let buildSvmInstructionEventConfig = (
     Utils.Set.fromArray(transactionFields)->(
       Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
     )
-  // `slot` is stamped on the inline block by the source; only the selected
-  // fields are decoded from the store, so the mask is the selection alone.
+  let selectedBlockFields = Utils.Set.fromArray(
+    Array.concat(alwaysIncludedSvmBlockFields, blockFields),
+  )
   let blockFieldMask = Svm.eventBlockFieldMask(
-    Utils.Set.fromArray(blockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>)),
+    selectedBlockFields->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>),
   )
   {
     id: switch discriminator {
@@ -513,7 +518,7 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
-    selectedBlockFields: Utils.Set.fromArray(blockFields),
+    selectedBlockFields,
     blockFieldMask,
     accountFilters,
     isInner,
