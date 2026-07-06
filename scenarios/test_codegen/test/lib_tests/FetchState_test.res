@@ -1843,27 +1843,15 @@ describe("FetchState.getNextQuery & integration", () => {
   }
 
   // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so the block window isn't constrained
-  // (the small test heights stay below the buffer-position cap) and query sizing
-  // falls back to FetchState.defaultEstResponseSize (10000).
-  let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10, ~budget=10) =>
+  // Partitions here have no response yet, so query sizing falls back to
+  // FetchState.defaultEstResponseSize (10000).
+  let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
     | None => fs
     }
     ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
-
-  it("Returns NothingToQuery when the buffer budget is exhausted", t => {
-    // Same state queries Ready with a positive budget (see the test below), so a
-    // non-positive budget is the only reason nothing is queried here.
-    let (fetchState, _indexingAddresses) = makeInitial()
-
-    t.expect(
-      (fetchState->getNextQuery(~budget=0), fetchState->getNextQuery(~budget=-5)),
-      ~message="Should skip fetching when there's no room left in the shared buffer pool",
-    ).toEqual((NothingToQuery, NothingToQuery))
-  })
+    ->FetchState.getNextQuery
 
   it("Emulate first indexer queries with a static event", t => {
     let (fetchState, indexingAddresses) = makeInitial()
@@ -1946,14 +1934,12 @@ describe("FetchState.getNextQuery & integration", () => {
       when block height exceeded the end block`,
     ).toEqual(NothingToQuery)
     t.expect(
-      updatedFetchState->getNextQuery(~budget=2),
+      updatedFetchState->getNextQuery,
       ~message=`Should wait for new block even if partitions have nothing to query`,
     ).toEqual(WaitingForNewBlock)
     t.expect(
-      updatedFetchState->getNextQuery(~budget=2, ~knownHeight=11),
-      ~message=`Should fetch the head block once the partition is behind the head:
-      budget is measured past the ready frontier, so the 2 already-ready items
-      don't eat the budget and pin the target block below the frontier`,
+      updatedFetchState->getNextQuery(~knownHeight=11),
+      ~message=`Should fetch the head block once the partition is behind the head`,
     ).toEqual(
       Ready([
         {
@@ -2321,13 +2307,6 @@ describe("FetchState.getNextQuery & integration", () => {
       4,
     ))
 
-    t.expect(
-      fetchStateWithResponse1->getNextQuery(~budget=1),
-      ~message=`Buffer has no items past the ready frontier, so a tight budget no
-      longer caps the proposal here (the shared budget is enforced by cross-chain
-      admission); the merge continuation is proposed the same as with a full budget`,
-    ).toEqual(fetchStateWithResponse1->getNextQuery)
-
     let queries = switch fetchStateWithResponse1->getNextQuery {
     | Ready(queries) => queries
     | _ =>
@@ -2413,11 +2392,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count).toEqual(3)
 
-    let nextQuery =
-      {...fetchState, knownHeight: 10}->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      )
+    let nextQuery = {...fetchState, knownHeight: 10}->FetchState.getNextQuery
 
     t.expect(
       nextQuery,
@@ -2875,10 +2850,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
     t.expect(
-      {...fetchState, knownHeight: 2}->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ),
+      {...fetchState, knownHeight: 2}->FetchState.getNextQuery,
       ~message=`Should be possible to query wildcard partition,
       if it didn't reach max queue size limit`,
     ).toEqual(
@@ -2898,15 +2870,6 @@ describe("FetchState unit tests for specific cases", () => {
         },
       ]),
     )
-    t.expect(
-      {
-        ...fetchState,
-        knownHeight: 2,
-      }->FetchState.getNextQuery(~budget=1, ~chainPendingBudget=0.),
-      ~message=`Budget is measured past the ready frontier; the item already
-      buffered past it consumes the single-item budget, so the behind partition
-      stays capped and nothing new is fetched until the queue drains`,
-    ).toEqual(NothingToQuery)
   })
 
   it("Allows to get event one block earlier than the dc registring event", t => {
@@ -3220,10 +3183,7 @@ describe("FetchState unit tests for specific cases", () => {
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
       let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
 
-      let queries = switch fetchStateWithDcA->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      let queries = switch fetchStateWithDcA->FetchState.getNextQuery {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3253,10 +3213,7 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
 
-      let queries = switch fetchStateWithDcB->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      let queries = switch fetchStateWithDcB->FetchState.getNextQuery {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3268,10 +3225,7 @@ describe("FetchState unit tests for specific cases", () => {
         fromBlock: 200,
       }
       t.expect(
-        fetchStateWithDcB->FetchState.getNextQuery(
-          ~budget=targetBufferSize,
-          ~chainPendingBudget=0.,
-        ),
+        fetchStateWithDcB->FetchState.getNextQuery,
         ~message=`Create a new partition for the newly registered contract`,
       ).toEqual(Ready([partition2Query, queries->Array.getUnsafe(1)]))
 
@@ -3285,10 +3239,7 @@ describe("FetchState unit tests for specific cases", () => {
         )
 
       t.expect(
-        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
-          ~budget=targetBufferSize,
-          ~chainPendingBudget=0.,
-        ),
+        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery,
         ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
       ).toEqual(
         Ready([
@@ -3685,20 +3636,21 @@ describe("FetchState progress tracking", () => {
   })
 })
 
-describe("FetchState buffer overflow prevention", () => {
+describe("FetchState proposes queries against the natural ceiling", () => {
   it(
-    "Should limit endBlock when maxQueryBlockNumber < knownHeight to prevent buffer overflow",
+    "Should not cap a query below endBlock/knownHeight just because the buffer is already large",
     t => {
       let (fetchState, indexingAddresses) = makeInitial(~maxAddrInPartition=1, ~targetBufferSize=10)
 
-      // Create a second partition to ensure buffer limiting logic is exercised across partitions
-      // Register at a later block, so partition "0" remains the earliest and is selected
+      // Create a second partition to make sure a large buffer elsewhere doesn't
+      // affect this partition's own proposal.
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
       let fetchStateWithTwoPartitions =
         fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dc->dcToItem])
 
-      // Buffer 15 items (blocks 6..20). With budget 10 the cap is the block at
-      // buffer index 10-1=9, i.e. block 15 — below both knownHeight and endBlock.
+      // Buffer 15 items (blocks 6..20), far more than targetBufferSize=10. Admission
+      // against the shared budget happens in CrossChainState, not here — getNextQuery
+      // proposes against the natural ceiling regardless of how full the buffer is.
       let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=20 - i))
 
       let query0 = {
@@ -3721,34 +3673,34 @@ describe("FetchState buffer overflow prevention", () => {
           ~newItems=largeQueueEvents,
         )
 
-      // Test case 1: With endBlock set, should be limited by maxQueryBlockNumber
+      // Test case 1: With endBlock set, should propose all the way to endBlock
       let fetchStateWithEndBlock = {
         ...fetchStateWithLargeQueue,
         endBlock: Some(25),
         knownHeight: 30,
       }
 
-      switch fetchStateWithEndBlock->FetchState.getNextQuery(~budget=10, ~chainPendingBudget=0.) {
+      switch fetchStateWithEndBlock->FetchState.getNextQuery {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
-        ).toBe(Some(15))
-      | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
+          ~message="Should propose up to endBlock, unconstrained by the buffer's current size",
+        ).toBe(Some(25))
+      | _ => JsError.throwWithMessage("Expected Ready query")
       }
 
-      // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
+      // Test case 2: endBlock=None -> Should use the open-ended head target
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
-      switch fetchStateNoEndBlock->FetchState.getNextQuery(~budget=10, ~chainPendingBudget=0.) {
+      switch fetchStateNoEndBlock->FetchState.getNextQuery {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
-        ).toBe(Some(15))
-      | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
+          ~message="Should use None (fetch to head), unconstrained by the buffer's current size",
+        ).toBe(None)
+      | _ => JsError.throwWithMessage("Expected Ready query")
       }
 
-      // Test case 3: Small queue, no buffer limiting -> Should use Head target
+      // Test case 3: Small queue -> Should also use the open-ended head target
       let query3 = {
         ...defaultQuery,
         FetchState.partitionId: "0",
@@ -3770,12 +3722,8 @@ describe("FetchState buffer overflow prevention", () => {
         )
         ->FetchState.updateKnownHeight(~knownHeight=30)
 
-      switch fetchStateSmallQueue->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
-      | Ready([q]) =>
-        t.expect(q.toBlock, ~message="Should use None when buffer is not limited").toBe(None)
+      switch fetchStateSmallQueue->FetchState.getNextQuery {
+      | Ready([q]) => t.expect(q.toBlock, ~message="Should use None (fetch to head)").toBe(None)
       | _ => JsError.throwWithMessage("Expected Ready query")
       }
     },
@@ -3829,8 +3777,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
-      let nextQuery =
-        fetchState->FetchState.getNextQuery(~budget=targetBufferSize, ~chainPendingBudget=0.)
+      let nextQuery = fetchState->FetchState.getNextQuery
       t.expect(
         nextQuery,
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
@@ -3872,8 +3819,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
-      let nextQuery2 =
-        updatedFetchState->FetchState.getNextQuery(~budget=targetBufferSize, ~chainPendingBudget=0.)
+      let nextQuery2 = updatedFetchState->FetchState.getNextQuery
       t.expect(
         nextQuery2,
         ~message="Should return NothingToQuery when there are no partitions to query",
@@ -3884,10 +3830,8 @@ describe("FetchState with onBlockConfig only (no events)", () => {
 
 describe("Stale query response should not overwrite block range", () => {
   // The default configuration with ability to overwrite some values
-  let getNextQuery = (fs, ~knownHeight=100000, ~budget=targetBufferSize) =>
-    fs
-    ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+  let getNextQuery = (fs, ~knownHeight=100000) =>
+    fs->FetchState.updateKnownHeight(~knownHeight)->FetchState.getNextQuery
 
   it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
     let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100000)

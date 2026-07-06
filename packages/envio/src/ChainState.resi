@@ -62,7 +62,7 @@ let hasReadyItem: t => bool
 let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
-let getNextQuery: (t, ~budget: int) => FetchState.nextQuery
+let getNextQuery: t => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

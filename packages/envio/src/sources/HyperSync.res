@@ -64,6 +64,7 @@ module GetLogs = {
     ~toBlockInclusive,
     ~addressesWithTopics,
     ~fieldSelection,
+    ~maxNumLogs,
   ): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: ?switch toBlockInclusive {
@@ -72,6 +73,7 @@ module GetLogs = {
     },
     logs: addressesWithTopics,
     fieldSelection,
+    maxNumLogs,
   }
 
   // Rust encodes structured failures as a JSON payload in the napi error's
@@ -105,6 +107,7 @@ module GetLogs = {
     ~toBlock,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
+    ~maxNumLogs,
   ): logsQueryPage => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -123,6 +126,7 @@ module GetLogs = {
       ~toBlockInclusive=toBlock,
       ~addressesWithTopics,
       ~fieldSelection,
+      ~maxNumLogs,
     )
 
     let (res, transactionStore) = switch await client.getEventItems(~query) {

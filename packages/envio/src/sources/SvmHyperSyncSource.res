@@ -340,6 +340,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     ~knownHeight,
     ~partitionId as _,
     ~selection as _,
+    ~maxNumItems,
     ~retry,
     ~logger,
   ) => {
@@ -368,6 +369,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
       instructions: instructionSelections,
       fields,
+      maxNumInstructions: maxNumItems,
     }
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")

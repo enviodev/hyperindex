@@ -198,7 +198,8 @@ let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
 
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events. Every chain proposes its candidate queries
-// (each carrying an estimated response size) against the full free budget; the
+// (each carrying an estimated response size) up to its own natural ceiling
+// (head/endBlock/mergeBlock), unconstrained by the shared budget; the
 // candidates are then pooled, ordered by chain progress (furthest-behind first),
 // and admitted until the budget is consumed. So the budget is split per query
 // across chains rather than per chain — a chain that can only use a little
@@ -223,7 +224,7 @@ let checkAndFetch = async (
   for i in 0 to chainIds->Array.length - 1 {
     let chainId = chainIds->Array.getUnsafe(i)
     let cs = crossChainState->getChainState(chainId)
-    switch cs->ChainState.getNextQuery(~budget=remaining) {
+    switch cs->ChainState.getNextQuery {
     | (WaitingForNewBlock | NothingToQuery) as action =>
       actionByChain->Utils.Dict.setByInt(chainId, action)
     | Ready(queries) =>

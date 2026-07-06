@@ -735,6 +735,7 @@ module Source = {
             ~knownHeight,
             ~partitionId,
             ~selection as _,
+            ~maxNumItems as _,
             ~retry,
             ~logger as _,
           ) => {

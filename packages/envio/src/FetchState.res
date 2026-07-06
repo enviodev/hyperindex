@@ -97,14 +97,14 @@ let defaultEstResponseSize = 10_000.
 
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
-// toBlock None is the open-ended tail, capped at maxQueryBlockNumber. A partition
+// toBlock None is the open-ended tail, capped at knownHeight. A partition
 // that responded with no items has density 0, so its queries cost 0 — correct,
 // they don't fill the buffer. Only a partition that has never responded
 // (prevQueryRange 0) has no signal, so it falls back to defaultEstResponseSize.
-let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~maxQueryBlockNumber) =>
+let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~knownHeight) =>
   if p.prevQueryRange > 0 {
     let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-    (toBlock->Option.getOr(maxQueryBlockNumber) - fromBlock + 1)->Int.toFloat *. density
+    (toBlock->Option.getOr(knownHeight) - fromBlock + 1)->Int.toFloat *. density
   } else {
     defaultEstResponseSize
   }
@@ -545,8 +545,8 @@ type t = {
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
-  // size). Fetch depth is bounded separately by getNextQuery's itemBudget, the
-  // chain's per-tick slice of the indexer-wide pool.
+  // size). Event fetch depth is bounded separately, by CrossChainState's
+  // cross-chain admission against the indexer-wide buffer pool.
   maxOnBlockBufferSize: int,
   onBlockConfigs: array<Internal.onBlockConfig>,
   knownHeight: int,
@@ -1352,14 +1352,14 @@ let pushQueriesForRange = (
   ~partitionId: string,
   ~rangeFromBlock: int,
   ~rangeEndBlock: option<int>,
-  ~maxQueryBlockNumber: int,
+  ~knownHeight: int,
   ~maybeChunkRange: option<int>,
   ~maxChunks: int,
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
-  if rangeFromBlock <= maxQueryBlockNumber && maxChunks > 0 {
+  if rangeFromBlock <= knownHeight && maxChunks > 0 {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
@@ -1375,7 +1375,7 @@ let pushQueriesForRange = (
             partition,
             ~fromBlock=rangeFromBlock,
             ~toBlock=rangeEndBlock,
-            ~maxQueryBlockNumber,
+            ~knownHeight,
           ),
           chainId: 0,
           progress: 0.,
@@ -1384,7 +1384,7 @@ let pushQueriesForRange = (
       | Some(chunkRange) =>
         let maxBlock = switch rangeEndBlock {
         | Some(eb) => eb
-        | None => maxQueryBlockNumber
+        | None => knownHeight
         }
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
         if rangeFromBlock + chunkSize * 2 - 1 <= maxBlock {
@@ -1404,7 +1404,7 @@ let pushQueriesForRange = (
                 partition,
                 ~fromBlock=chunkFromBlock.contents,
                 ~toBlock=Some(chunkToBlock),
-                ~maxQueryBlockNumber,
+                ~knownHeight,
               ),
               chainId: 0,
               progress: 0.,
@@ -1425,7 +1425,7 @@ let pushQueriesForRange = (
               partition,
               ~fromBlock=rangeFromBlock,
               ~toBlock=rangeEndBlock,
-              ~maxQueryBlockNumber,
+              ~knownHeight,
             ),
             chainId: 0,
             progress: 0.,
@@ -1437,44 +1437,26 @@ let pushQueriesForRange = (
   }
 }
 
+// Candidate queries are sized against the natural ceiling (head/endBlock/mergeBlock),
+// not a share of the shared buffer — CrossChainState.checkAndFetch's admission loop
+// is what actually bounds how much gets fetched per tick, by estResponseSize (which
+// the HyperSync/SVM sources also enforce server-side via a maxNumLogs-style cap, so
+// a wrong estimate truncates the response instead of overshooting the buffer).
 let getNextQuery = (
-  {buffer, optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight} as fetchState: t,
-  ~budget,
-  ~chainPendingBudget,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
-  } else if budget <= 0 {
-    // No room left in the shared buffer pool for this chain; wait for processing
-    // to drain before fetching more.
-    NothingToQuery
   } else {
     let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
-      switch fetchState.endBlock {
+      switch endBlock {
       | Some(endBlock) => headBlockNumber < endBlock
       | None => true
       } &&
       !isOnBlockBehindTheHead,
     )
-
-    // Fetch at most `budget` items past the ready frontier (plus what's already
-    // in flight) so processing always has buffer without ballooning memory.
-    // budget already excludes items at/below the frontier (they're in the shared
-    // totalReadyCount), so offset the index by bufferReadyCount — otherwise the
-    // ready prefix is subtracted twice and the buffer caps at a fraction of its
-    // target. A partition that fetched further is skipped until the buffer drains.
-    let maxQueryBlockNumber = {
-      switch buffer->Array.get(
-        fetchState->bufferReadyCount + budget + chainPendingBudget->Float.toInt - 1,
-      ) {
-      | Some(item) =>
-        // Just in case check that we don't query beyond the current block
-        Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
-      | None => knownHeight
-      }
-    }
 
     let queries = []
 
@@ -1501,22 +1483,13 @@ let getNextQuery = (
       let partitionQueriesStart = queries->Array.length
 
       // Compute queryEndBlock for this partition
-      let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.mergeBlock)
+      let queryEndBlock = Utils.Math.minOptInt(endBlock, p.mergeBlock)
       let queryEndBlock = switch blockLag {
       | 0 => queryEndBlock
       | _ =>
         // Force head block as an endBlock when blockLag is set
         // because otherwise HyperSync might return bigger range
         Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
-      }
-      // Enforce the response range up until target block
-      // Otherwise for indexers with 100+ partitions
-      // we might blow up the buffer size to more than 600k events
-      // simply because of HyperSync returning extra blocks
-      let queryEndBlock = switch (queryEndBlock, maxQueryBlockNumber < knownHeight) {
-      | (Some(endBlock), true) => Some(Pervasives.min(maxQueryBlockNumber, endBlock))
-      | (None, true) => Some(maxQueryBlockNumber)
-      | (_, false) => queryEndBlock
       }
 
       let maybeChunkRange = getMinHistoryRange(p)
@@ -1535,7 +1508,7 @@ let getNextQuery = (
             ~partitionId,
             ~rangeFromBlock=cursor.contents,
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
-            ~maxQueryBlockNumber,
+            ~knownHeight,
             ~maybeChunkRange,
             ~maxChunks=maxPendingChunksPerPartition -
             pendingCount -
@@ -1563,7 +1536,7 @@ let getNextQuery = (
           ~partitionId,
           ~rangeFromBlock=cursor.contents,
           ~rangeEndBlock=queryEndBlock,
-          ~maxQueryBlockNumber,
+          ~knownHeight,
           ~maybeChunkRange,
           ~maxChunks=maxPendingChunksPerPartition -
           pendingCount -
