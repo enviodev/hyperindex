@@ -204,6 +204,16 @@ let rec onQueryResponse = async (
         newItems->Array.push(item)
       }
 
+      Logging.trace({
+        "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "partitionId": query.partitionId,
+        "fromBlock": fromBlockQueried,
+        "toBlock": latestFetchedBlockNumber,
+        "numEvents": parsedQueueItems->Array.length,
+        "numContractRegisterEvents": itemsWithContractRegister->Array.length,
+      })
+
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
       let proceed = (~newItemsWithDcs) =>
@@ -359,22 +369,6 @@ let fetchChain = async (
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
-            let numContractRegisterEvents = response.parsedQueueItems->Array.reduce(0, (
-              count,
-              item,
-            ) => {
-              let eventItem = item->Internal.castUnsafeEventItem
-              eventItem.eventConfig.contractRegister !== None ? count + 1 : count
-            })
-            Logging.trace({
-              "msg": "Finished querying",
-              "chainId": chain->ChainMap.Chain.toChainId,
-              "partitionId": query.partitionId,
-              "fromBlock": response.fromBlockQueried,
-              "toBlock": response.latestFetchedBlockNumber,
-              "numEvents": response.parsedQueueItems->Array.length,
-              "numContractRegisterEvents": numContractRegisterEvents,
-            })
             await onQueryResponse(
               state,
               {chain, response, query},
