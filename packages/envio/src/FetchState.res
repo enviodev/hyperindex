@@ -587,6 +587,25 @@ let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
   }
 }
 
+// Number of buffered items at or below the ready frontier (processable now,
+// i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
+// The buffer is kept sorted, so binary-search the frontier in O(log n).
+let bufferReadyCount = (fetchState: t) => {
+  let frontier = fetchState->bufferBlockNumber
+  let buffer = fetchState.buffer
+  let lo = ref(0)
+  let hi = ref(buffer->Array.length)
+  while lo.contents < hi.contents {
+    let mid = (lo.contents + hi.contents) / 2
+    if buffer->Array.getUnsafe(mid)->Internal.getItemBlockNumber <= frontier {
+      lo := mid + 1
+    } else {
+      hi := mid
+    }
+  }
+  lo.contents
+}
+
 /*
 Comparitor for two events from the same chain. No need for chain id or timestamp
 */
@@ -1443,11 +1462,16 @@ let getNextQuery = (
       !isOnBlockBehindTheHead,
     )
 
-    // Limit how far ahead we fetch to budget items (plus what's already in
-    // flight) so processing always has buffer without ballooning memory. A
-    // partition that fetched further is skipped until the buffer drains.
+    // Fetch at most `budget` items past the ready frontier (plus what's already
+    // in flight) so processing always has buffer without ballooning memory.
+    // budget already excludes items at/below the frontier (they're in the shared
+    // totalReadyCount), so offset the index by bufferReadyCount — otherwise the
+    // ready prefix is subtracted twice and the buffer caps at a fraction of its
+    // target. A partition that fetched further is skipped until the buffer drains.
     let maxQueryBlockNumber = {
-      switch buffer->Array.get(budget + chainPendingBudget->Float.toInt - 1) {
+      switch buffer->Array.get(
+        fetchState->bufferReadyCount + budget + chainPendingBudget->Float.toInt - 1,
+      ) {
       | Some(item) =>
         // Just in case check that we don't query beyond the current block
         Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
@@ -1758,25 +1782,6 @@ let make = (
 }
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
-
-// Number of buffered items at or below the ready frontier (processable now,
-// i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
-// The buffer is kept sorted, so binary-search the frontier in O(log n).
-let bufferReadyCount = (fetchState: t) => {
-  let frontier = fetchState->bufferBlockNumber
-  let buffer = fetchState.buffer
-  let lo = ref(0)
-  let hi = ref(buffer->Array.length)
-  while lo.contents < hi.contents {
-    let mid = (lo.contents + hi.contents) / 2
-    if buffer->Array.getUnsafe(mid)->Internal.getItemBlockNumber <= frontier {
-      lo := mid + 1
-    } else {
-      hi := mid
-    }
-  }
-  lo.contents
-}
 
 let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlockNumber) => {
   // - Remove queries where fromBlock > target

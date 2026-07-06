@@ -953,6 +953,7 @@ let evmOnEventRegistration = (
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
+  ~eventFilters: option<Internal.eventFilters>=?,
 ): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
@@ -980,33 +981,37 @@ let evmOnEventRegistration = (
     handler: None,
     contractRegister: None,
     getEventFiltersOrThrow: _ =>
-      switch dependsOnAddresses {
-      | Some(true) =>
-        Dynamic(
-          addresses => [
+      switch eventFilters {
+      | Some(eventFilters) => eventFilters
+      | None =>
+        switch dependsOnAddresses {
+        | Some(true) =>
+          Dynamic(
+            addresses => [
+              {
+                topic0: [
+                  // This is a sighash in the original code
+                  id->EvmTypes.Hex.fromStringUnsafe,
+                ],
+                topic1: addresses->Utils.magic,
+                topic2: [],
+                topic3: [],
+              },
+            ],
+          )
+        | _ =>
+          Static([
             {
               topic0: [
                 // This is a sighash in the original code
                 id->EvmTypes.Hex.fromStringUnsafe,
               ],
-              topic1: addresses->Utils.magic,
+              topic1: [],
               topic2: [],
               topic3: [],
             },
-          ],
-        )
-      | _ =>
-        Static([
-          {
-            topic0: [
-              // This is a sighash in the original code
-              id->EvmTypes.Hex.fromStringUnsafe,
-            ],
-            topic1: [],
-            topic2: [],
-            topic3: [],
-          },
-        ])
+          ])
+        }
       },
   }
 }

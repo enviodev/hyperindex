@@ -3,6 +3,7 @@ type rpc = {
   sourceFor: Source.sourceFor,
   syncConfig?: Config.sourceSyncOptions,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let getSyncConfig = (
@@ -31,7 +32,7 @@ let getSyncConfig = (
     intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getOr(
       intervalCeiling->Option.getOr(10_000),
     ),
-    backoffMillis: backoffMillis->Option.getOr(5000),
+    backoffMillis: backoffMillis->Option.getOr(2000),
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),
@@ -85,7 +86,7 @@ let makeSources = (
     ]
   | _ => []
   }
-  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
       chain,
       sourceFor,
@@ -95,6 +96,7 @@ let makeSources = (
       allEventParams,
       lowercaseAddresses,
       ?ws,
+      ?headers,
     })
     let _ = sources->Array.push(source)
   })

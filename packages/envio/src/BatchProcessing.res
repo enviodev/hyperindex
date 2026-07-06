@@ -127,6 +127,11 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     | Ok() =>
       state->IndexerState.recordProcessedBatch
 
+      switch state->IndexerState.simulateDeadInputTracker {
+      | Some(tracker) => tracker->SimulateDeadInputTracker.recordProcessed(~batch)
+      | None => ()
+      }
+
       if state->IndexerState.isResolvingReorg {
         // A reorg landed while this batch was processing. Apply its progress so
         // the rollback diff is computed against up-to-date chain progress, but

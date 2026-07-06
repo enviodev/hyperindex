@@ -74,6 +74,56 @@ let getKnownRawBlockWithBackoff = async (
   }
   result.contents->Option.getOrThrow
 }
+// Pulls the provider error message out of either a parsed Rpc.JsonRpcError or
+// the raw napi JsExn shape (`error.error.message`), so classifiers below don't
+// each have to re-derive it.
+let getErrorMessage = (exn: exn): option<string> =>
+  switch exn {
+  | Rpc.JsonRpcError({message}) => Some(message)
+  | JsExn(error) =>
+    try {
+      let message: string = (error->Obj.magic)["error"]["message"]
+      message->S.assertOrThrow(S.string)
+      Some(message)
+    } catch {
+    | _ => None
+    }
+  | _ => None
+  }
+
+// Deterministic "the range returned too much data" errors that carry no numeric
+// block-range suggestion (HyperRPC's 50k-log cap, response-size and result-count
+// limits). They depend on log density, not on a fixed block window, so waiting
+// never helps — the same range always re-trips the same cap. The reaction is to
+// shrink the range and retry immediately, ratcheting the max range down.
+let isResponseTooLargeError = {
+  let patterns = [
+    /more than \d+ logs/i,
+
+    // HyperRPC: "More than 50000 logs returned"
+
+    // ZkEVM
+    // LlamaRPC
+    // 1RPC
+    // Optimism
+    // Arbitrum
+    // Ankr
+    /\d+ logs returned/i,
+    /too many logs/i,
+    /query returned more than \d+ results/i,
+    /query exceeds max results/i,
+    /response size should not/i,
+    /(backend )?response too large/i,
+    /logs matched by query exceeds limit/i,
+    /block range is too wide/i,
+  ]
+  (exn: exn) =>
+    switch exn->getErrorMessage {
+    | Some(message) => patterns->Array.some(re => re->RegExp.test(message))
+    | None => false
+    }
+}
+
 let getSuggestedBlockIntervalFromExn = {
   // Unknown provider: "retry with the range 123-456"
   let suggestedRangeRegExp = /retry with the range (\d+)-(\d+)/
@@ -117,14 +167,6 @@ let getSuggestedBlockIntervalFromExn = {
   // TODO: Reproduce how the error message looks like
   // when we send request with numeric block range instead of hex
   // Infura, ZkSync: "Try with this block range [0x123,0x456]"
-
-  // Future handling needed for these providers that don't suggest ranges:
-  // - Ankr: "block range is too wide"
-  // - 1RPC: "response size should not greater than 10000000 bytes"
-  // - ZkEVM: "query returned more than 10000 results"
-  // - LlamaRPC: "query exceeds max results"
-  // - Optimism: "backend response too large" or "Block range is too large"
-  // - Arbitrum: "logs matched by query exceeds limit of 10000"
 
   let parseMessageForBlockRange = (message: string) => {
     // Helper to extract block range from regex match
@@ -209,17 +251,9 @@ let getSuggestedBlockIntervalFromExn = {
     // Whether it's the max range that the provider allows
     bool,
   )> =>
-    switch exn {
-    | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
-    | JsExn(error) =>
-      try {
-        let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrThrow(S.string)
-        parseMessageForBlockRange(message)
-      } catch {
-      | _ => None
-      }
-    | _ => None
+    switch exn->getErrorMessage {
+    | Some(message) => parseMessageForBlockRange(message)
+    | None => None
     }
 }
 
@@ -230,11 +264,38 @@ type eventBatchQuery = {
 
 let maxSuggestedBlockIntervalKey = "max"
 
+let getSourceMaxBlockInterval = (mutSuggestedBlockIntervals, ~intervalCeiling) =>
+  mutSuggestedBlockIntervals
+  ->Utils.Dict.dangerouslyGetNonOption(maxSuggestedBlockIntervalKey)
+  ->Option.getOr(intervalCeiling)
+
+type logSelection = {
+  addresses: option<array<Address.t>>,
+  topicQuery: Rpc.GetLogs.topicQuery,
+}
+
+// A log can satisfy more than one selection when a single event's `where` is an
+// OR of param groups, so dedup the fanned-out responses by (blockNumber,
+// logIndex) — unique per chain — keeping the first occurrence.
+let mergeAndDedupItems = (itemsPerSelection: array<array<EvmRpcClient.rpcEventItem>>) => {
+  let seen = Utils.Set.make()
+  let merged = []
+  itemsPerSelection->Array.forEach(items =>
+    items->Array.forEach((item: EvmRpcClient.rpcEventItem) => {
+      let key = `${item.log.blockNumber->Int.toString}-${item.log.logIndex->Int.toString}`
+      if seen->Utils.Set.has(key)->not {
+        seen->Utils.Set.add(key)->ignore
+        merged->Array.push(item)->ignore
+      }
+    })
+  )
+  merged
+}
+
 let getNextPage = (
   ~fromBlock,
   ~toBlock,
-  ~addresses,
-  ~topicQuery: Rpc.GetLogs.topicQuery,
+  ~logSelections: array<logSelection>,
   ~loadBlock,
   ~syncConfig as sc: Config.sourceSync,
   ~rpcClient: EvmRpcClient.t,
@@ -252,93 +313,111 @@ let getNextPage = (
     )
 
   let latestFetchedBlockPromise = loadBlock(toBlock)
-  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-  let logsPromise = rpcClient.getLogs({
-    fromBlock,
-    toBlock,
-    ?addresses,
-    topics: topicQuery->Array.map(filter =>
-      switch filter {
-      | Rpc.GetLogs.Null => Nullable.null
-      | Single(topic) => Nullable.make([topic])
-      | Multiple(topics) => Nullable.make(topics)
+
+  let queryLogs = ({addresses, topicQuery}: logSelection) => {
+    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
+    rpcClient.getLogs({
+      fromBlock,
+      toBlock,
+      ?addresses,
+      topics: topicQuery->Array.map(filter =>
+        switch filter {
+        | Rpc.GetLogs.Null => Nullable.null
+        | Single(topic) => Nullable.make([topic])
+        | Multiple(topics) => Nullable.make(topics)
+        }
+      ),
+    })
+  }
+
+  let logsPromise = switch logSelections {
+  | [] =>
+    latestFetchedBlockPromise->Promise.thenResolve((latestFetchedBlockInfo): eventBatchQuery => {
+      items: [],
+      latestFetchedBlockInfo,
+    })
+  // Fast path: a single selection needs no cross-request merge or dedup.
+  | [logSelection] =>
+    logSelection
+    ->queryLogs
+    ->Promise.then(async items => {
+      {
+        items,
+        latestFetchedBlockInfo: await latestFetchedBlockPromise,
       }
-    ),
-  })->Promise.then(async items => {
-    {
-      items,
-      latestFetchedBlockInfo: await latestFetchedBlockPromise,
-    }
-  })
+    })
+  | _ =>
+    logSelections
+    ->Array.map(queryLogs)
+    ->Promise.all
+    ->Promise.then(async itemsPerSelection => {
+      {
+        items: itemsPerSelection->mergeAndDedupItems,
+        latestFetchedBlockInfo: await latestFetchedBlockPromise,
+      }
+    })
+  }
 
   [queryTimoutPromise, logsPromise]
   ->Promise.race
   ->Promise.catch(err => {
+    let executedBlockInterval = toBlock - fromBlock + 1
+    let shrunkBlockInterval = Pervasives.max(
+      1,
+      (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt,
+    )
+
+    let throwFailedGettingItems = retry =>
+      throw(Source.GetItemsError(FailedGettingItems({exn: err, attemptedToBlock: toBlock, retry})))
+    let throwResize = interval =>
+      throwFailedGettingItems(WithSuggestedToBlock({toBlock: fromBlock + interval - 1}))
+
     switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
+    // "limited to N blocks" — a structural cap on the whole source; only tighten.
+    | Some((interval, true)) =>
+      let capped = Pervasives.min(
+        mutSuggestedBlockIntervals->getSourceMaxBlockInterval(~intervalCeiling=sc.intervalCeiling),
+        interval,
       )
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithSuggestedToBlock({
-              toBlock: fromBlock + nextBlockIntervalTry - 1,
-            }),
-          }),
-        ),
-      )
+      mutSuggestedBlockIntervals->Dict.set(maxSuggestedBlockIntervalKey, capped)
+      throwResize(capped)
+    // A one-off suggested range ("retry with range X-Y") — apply to this partition.
+    | Some((interval, false)) =>
+      mutSuggestedBlockIntervals->Dict.set(partitionId, interval)
+      throwResize(interval)
+    // Density cap with no suggested number (too many logs / response too large):
+    // shrink THIS partition and retry immediately (no wait); acceleration
+    // re-adapts on the next successful query. The interval>1 guard avoids a
+    // no-progress tight loop on a single over-cap block.
+    | None if executedBlockInterval > 1 && err->isResponseTooLargeError =>
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
+      throwResize(shrunkBlockInterval)
+    // Transient/unknown — shrink this partition and back off.
     | None =>
-      let executedBlockInterval = toBlock - fromBlock + 1
-      let nextBlockIntervalTry =
-        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
-      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithBackoff({
-              message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
-              backoffMillis: sc.backoffMillis,
-            }),
-          }),
-        ),
+      mutSuggestedBlockIntervals->Dict.set(partitionId, shrunkBlockInterval)
+      throwFailedGettingItems(
+        WithBackoff({
+          message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
+          backoffMillis: sc.backoffMillis,
+        }),
       )
     }
   })
-}
-
-type logSelection = {
-  addresses: option<array<Address.t>>,
-  topicQuery: Rpc.GetLogs.topicQuery,
 }
 
 type selectionConfig = {
-  getLogSelectionOrThrow: (~addressesByContractName: dict<array<Address.t>>) => logSelection,
+  getLogSelectionsOrThrow: (
+    ~addressesByContractName: dict<array<Address.t>>,
+  ) => array<logSelection>,
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let staticTopicSelections = []
-  let dynamicEventFilters = []
+  let evmOnEventRegistrations =
+    selection.onEventRegistrations->(
+      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
+    )
 
-  selection.onEventRegistrations
-  ->(Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>)
-  ->Array.forEach(({getEventFiltersOrThrow}) => {
-    switch getEventFiltersOrThrow(chain) {
-    | Static(s) => staticTopicSelections->Array.pushMany(s)->ignore
-    | Dynamic(fn) => dynamicEventFilters->Array.push(fn)->ignore
-    }
-  })
-
-  let getLogSelectionOrThrow = switch (
-    staticTopicSelections->LogSelection.compressTopicSelections,
-    dynamicEventFilters,
-  ) {
-  | ([], []) =>
+  if evmOnEventRegistrations->Utils.Array.isEmpty {
     throw(
       Source.GetItemsError(
         UnsupportedSelection({
@@ -346,48 +425,107 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         }),
       ),
     )
-  | ([topicSelection], []) => {
-      let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
-      (~addressesByContractName) => {
-        addresses: switch addressesByContractName->FetchState.addressesByContractNameGetAll {
-        | [] => None
-        | addresses => Some(addresses)
-        },
-        topicQuery,
-      }
-    }
-  | ([], [dynamicEventFilter]) if selection.onEventRegistrations->Array.length === 1 =>
-    let onEventRegistration = selection.onEventRegistrations->Utils.Array.firstUnsafe
+  }
 
-    (~addressesByContractName) => {
-      let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
-      {
-        addresses: onEventRegistration.isWildcard ? None : Some(addresses),
-        topicQuery: switch dynamicEventFilter(addresses) {
-        | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
-        | _ =>
-          throw(
-            Source.GetItemsError(
-              UnsupportedSelection({
-                message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
-              }),
-            ),
-          )
-        },
+  // eth_getLogs takes one address list and one topic selection per request, so
+  // fan out to one request per selection. Each address-bound event is grouped by
+  // its contract and later scoped to that contract's own addresses — pooling all
+  // contracts' addresses would let one contract's query fetch a sibling's logs,
+  // which route back by address and bypass the sibling's filter (routing never
+  // re-applies it). Pure-wildcard events carry no address constraint, so they're
+  // pooled and resolved once.
+  let noAddressTopicSelections = []
+  let staticByContract = Dict.make()
+  let dynamicByContract = Dict.make()
+  let dynamicWildcardByContract = Dict.make()
+  let contractNames = Utils.Set.make()
+
+  evmOnEventRegistrations->Array.forEach(reg => {
+    let contractName = reg.eventConfig.contractName
+    let {isWildcard, dependsOnAddresses, getEventFiltersOrThrow} = reg
+    let eventFilters = getEventFiltersOrThrow(chain)
+    if dependsOnAddresses {
+      contractNames->Utils.Set.add(contractName)->ignore
+      switch eventFilters {
+      | Internal.Static(topicSelections) =>
+        staticByContract->Utils.Dict.pushMany(contractName, topicSelections)
+      | Dynamic(fn) =>
+        (isWildcard ? dynamicWildcardByContract : dynamicByContract)->Utils.Dict.push(
+          contractName,
+          fn,
+        )
       }
+    } else {
+      noAddressTopicSelections
+      ->Array.pushMany(
+        switch eventFilters {
+        | Static(s) => s
+        | Dynamic(fn) => fn([])
+        },
+      )
+      ->ignore
     }
-  | _ =>
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
-        }),
-      ),
-    )
+  })
+
+  // `compressTopicSelections` folds the filter-less events into a single topic0
+  // OR-set, keeping the common case at one request.
+  let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
+    topicSelections
+    ->LogSelection.compressTopicSelections
+    ->Array.map(topicSelection => {
+      addresses,
+      topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
+    })
+
+  // Address-independent, so resolve once (the wildcard partition reuses this).
+  let noAddressLogSelections = toLogSelections(~addresses=None, noAddressTopicSelections)
+
+  let getLogSelectionsOrThrow = if contractNames->Utils.Set.size === 0 {
+    (~addressesByContractName as _) => noAddressLogSelections
+  } else {
+    (~addressesByContractName): array<logSelection> => {
+      let logSelections = noAddressLogSelections->Array.copy
+      contractNames->Utils.Set.forEach(contractName => {
+        switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None
+        | Some([]) => ()
+        | Some(addresses) =>
+          // Static + dynamic non-wildcard filters, scoped to this contract's addresses.
+          let addressedTopicSelections = []
+          switch staticByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(s) => addressedTopicSelections->Array.pushMany(s)->ignore
+          | None => ()
+          }
+          switch dynamicByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(fns) =>
+            fns->Array.forEach(fn =>
+              addressedTopicSelections->Array.pushMany(fn(addresses))->ignore
+            )
+          | None => ()
+          }
+          logSelections
+          ->Array.pushMany(toLogSelections(~addresses=Some(addresses), addressedTopicSelections))
+          ->ignore
+
+          // Dynamic wildcard-by-address filters fold the address into the topics,
+          // so they still match any address.
+          switch dynamicWildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(fns) =>
+            logSelections
+            ->Array.pushMany(
+              toLogSelections(~addresses=None, fns->Array.flatMap(fn => fn(addresses))),
+            )
+            ->ignore
+          | None => ()
+          }
+        }
+      })
+      logSelections
+    }
   }
 
   {
-    getLogSelectionOrThrow: getLogSelectionOrThrow,
+    getLogSelectionsOrThrow: getLogSelectionsOrThrow,
   }
 }
 
@@ -858,6 +996,7 @@ type options = {
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let make = (
@@ -870,6 +1009,7 @@ let make = (
     allEventParams,
     lowercaseAddresses,
     ?ws,
+    ?headers,
   }: options,
 ): t => {
   let chainId = chain->ChainMap.Chain.toChainId
@@ -884,10 +1024,19 @@ let make = (
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
+  // Per-partition adaptive block interval (AIMD), keyed by partitionId. The
+  // `max` key holds a source-wide ceiling that only ever tightens, set by
+  // structural provider limits ("limited to N blocks"). A partition's own entry
+  // can go stale when partitions merge/split — acceptable, it re-adapts.
   let mutSuggestedBlockIntervals = Dict.make()
 
-  let client = Rpc.makeClient(url)
-  let rpcClient = EvmRpcClient.make(~url, ~allEventParams, ~checksumAddresses=!lowercaseAddresses)
+  let client = Rpc.makeClient(url, ~headers?)
+  let rpcClient = EvmRpcClient.make(
+    ~url,
+    ~allEventParams,
+    ~checksumAddresses=!lowercaseAddresses,
+    ~headers?,
+  )
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
@@ -1016,15 +1165,16 @@ let make = (
   ) => {
     let startFetchingBatchTimeRef = Performance.now()
 
-    let suggestedBlockInterval = switch mutSuggestedBlockIntervals->Utils.Dict.dangerouslyGetNonOption(
-      maxSuggestedBlockIntervalKey,
-    ) {
-    | Some(maxSuggestedBlockInterval) => maxSuggestedBlockInterval
-    | None =>
+    let sourceMaxBlockInterval =
+      mutSuggestedBlockIntervals->getSourceMaxBlockInterval(
+        ~intervalCeiling=syncConfig.intervalCeiling,
+      )
+    let suggestedBlockInterval = Pervasives.min(
       mutSuggestedBlockIntervals
       ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-      ->Option.getOr(syncConfig.initialBlockInterval)
-    }
+      ->Option.getOr(syncConfig.initialBlockInterval),
+      sourceMaxBlockInterval,
+    )
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
@@ -1043,14 +1193,13 @@ let make = (
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
-    let {getLogSelectionOrThrow} = getSelectionConfig(selection)
-    let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
+    let {getLogSelectionsOrThrow} = getSelectionConfig(selection)
+    let logSelections = getLogSelectionsOrThrow(~addressesByContractName)
 
     let {items, latestFetchedBlockInfo} = await getNextPage(
       ~fromBlock,
       ~toBlock=suggestedToBlock,
-      ~addresses,
-      ~topicQuery,
+      ~logSelections,
       ~loadBlock=blockNumber =>
         blockLoader.contents
         ->LazyLoader.get(blockNumber)
@@ -1065,20 +1214,16 @@ let make = (
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
 
-    // Increase the suggested block interval only when it was actually applied
-    // and we didn't query to a hard toBlock
-    // We also don't care about it when we have a hard max block interval
-    if (
-      executedBlockInterval >= suggestedBlockInterval &&
-        !(mutSuggestedBlockIntervals->Dict.has(maxSuggestedBlockIntervalKey))
-    ) {
-      // Increase batch size going forward, but do not increase past a configured maximum
-      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    // Grow this partition's interval only when the full suggested range was
+    // actually applied (not clamped by a hard toBlock). The min clamps to the
+    // source-wide ceiling, which also stops growth once a structural cap tightened it.
+    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    if executedBlockInterval >= suggestedBlockInterval {
       mutSuggestedBlockIntervals->Dict.set(
         partitionId,
         Pervasives.min(
           executedBlockInterval + syncConfig.accelerationAdditive,
-          syncConfig.intervalCeiling,
+          sourceMaxBlockInterval,
         ),
       )
     }

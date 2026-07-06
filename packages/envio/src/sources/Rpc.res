@@ -38,7 +38,21 @@ let jsonRpcFetcher: Rest.ApiFetcher.t = async args => {
   }
 }
 
-let makeClient = url => Rest.client(url, ~fetcher=jsonRpcFetcher)
+let makeClient = (url, ~headers=?) => {
+  let fetcher: Rest.ApiFetcher.t = switch headers {
+  | None => jsonRpcFetcher
+  | Some(customHeaders) =>
+    async args => {
+      let headers = switch args.headers {
+      | Some(headers) => headers
+      | None => Dict.make()
+      }
+      customHeaders->Dict.forEachWithKey((value, key) => headers->Dict.set(key, value->Obj.magic))
+      await jsonRpcFetcher({...args, headers: Some(headers)})
+    }
+  }
+  Rest.client(url, ~fetcher)
+}
 
 type hex = string
 let makeHexSchema = fromStr =>

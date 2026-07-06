@@ -95,6 +95,40 @@ describe("EvmRpcClient - getHeight via napi", () => {
 
     t.expect(message->Option.getOr("no error")).toMatch(/parse eth_blockNumber result/)
   })
+
+  Async.it("Sends configured custom headers with the request", async t => {
+    let mock = await MockRpcServer.makeRaw(
+      ~status=200,
+      ~body=`{"jsonrpc":"2.0","id":1,"result":"0x1b4"}`,
+    )
+    let client = EvmRpcClient.make(
+      ~url=mock.url,
+      ~checksumAddresses=false,
+      ~headers=Dict.fromArray([("Authorization", "Bearer test-token")]),
+    )
+
+    let _ = await client.getHeight()
+    mock.close()
+
+    // Node lowercases header names on the way in.
+    t.expect(
+      MockRpcServer.getHeader(mock.requestHeaders->Array.getUnsafe(0), "authorization"),
+    ).toEqual(Some("Bearer test-token"))
+  })
+
+  it("Rejects an invalid header value at construction with a clear error", t => {
+    let message = try {
+      let _ = EvmRpcClient.make(
+        ~url="http://127.0.0.1:1",
+        ~checksumAddresses=false,
+        ~headers=Dict.fromArray([("Authorization", "Bearer bad\nvalue")]),
+      )
+      None
+    } catch {
+    | JsExn(e) => e->JsExn.message
+    }
+    t.expect(message->Option.getOr("no error")).toMatch(/invalid value for RPC header/)
+  })
 })
 
 describe("EvmRpcClient - getLogs via napi", () => {

@@ -2,6 +2,7 @@ use anyhow::Context;
 use napi_derive::napi;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 
 mod client;
 
@@ -13,6 +14,7 @@ use client::{parse_hex_u64, JsonRpcClient, RpcError};
 pub struct EvmRpcClientConfig {
     pub url: String,
     pub http_req_timeout_millis: Option<i64>,
+    pub headers: Option<HashMap<String, String>>,
 }
 
 #[napi(object)]
@@ -113,7 +115,8 @@ impl EvmRpcClient {
             .map_or(JsonRpcClient::default_http_req_timeout_millis(), |v| {
                 v as u64
             });
-        let inner = JsonRpcClient::new(cfg.url, http_req_timeout_millis).map_err(map_err)?;
+        let inner =
+            JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
         let decoder = DecoderCore::from_params(event_params, checksum_addresses)
             .context("build decoder")
             .map_err(map_err)?;

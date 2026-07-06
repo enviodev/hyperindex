@@ -2,6 +2,7 @@ pub mod abi_compat;
 pub mod chain_helpers;
 pub mod contract_import;
 pub mod entity_parsing;
+pub mod env_interpolation;
 pub mod event_parsing;
 pub mod field_types;
 pub mod human_config;

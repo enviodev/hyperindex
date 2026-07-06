@@ -216,9 +216,13 @@ let deriveSrcAddress = (
   ~providedSrcAddress: option<Address.t>,
   ~eventConfig: Internal.eventConfig,
   ~chainConfig: Config.chain,
+  ~config: Config.t,
 ): Address.t => {
   switch providedSrcAddress {
-  | Some(addr) => addr
+  // Canonicalize to the configured casing; the fallback addresses below already
+  // come from the parsed config and need no normalization. Relaxed (not
+  // Config.normalizeUserAddress) so test placeholders like "0xfoo" are allowed.
+  | Some(addr) => config->Config.normalizeSimulateAddress(addr)
   | None =>
     if (
       HandlerRegister.isWildcard(
@@ -236,46 +240,6 @@ let deriveSrcAddress = (
   }
 }
 
-// A non-wildcard event is gated by `clientAddressFilter` on srcAddress ownership,
-// so a simulate item whose srcAddress isn't indexed on this chain would be
-// silently dropped (handler never runs). Fail loudly instead.
-//
-// `config` must already have handler registrations applied, otherwise an event
-// made wildcard purely through `indexer.onEvent({ wildcard: true })` reads back
-// as non-wildcard and gets wrongly rejected.
-let validateSrcAddresses = (
-  ~simulateItems: array<JSON.t>,
-  ~config: Config.t,
-  ~chainConfig: Config.chain,
-  ~indexingAddresses: array<Internal.indexingAddress>,
-): unit => {
-  let known = Utils.Set.make()
-  indexingAddresses->Array.forEach(ia => known->Utils.Set.add(ia.address->Address.toString)->ignore)
-  simulateItems->Array.forEach(rawJson => {
-    let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
-    switch (raw->getContract, raw->getEvent) {
-    | (Some(contractName), Some(eventName)) =>
-      switch findEventConfig(~config, ~contractName, ~eventName) {
-      | Some(eventConfig) if !HandlerRegister.isWildcard(~contractName, ~eventName) =>
-        let item = rawJson->(Utils.magic: JSON.t => Envio.evmSimulateItem)
-        let srcAddress = deriveSrcAddress(
-          ~providedSrcAddress=item.srcAddress,
-          ~eventConfig,
-          ~chainConfig,
-        )
-        if !(known->Utils.Set.has(srcAddress->Address.toString)) {
-          JsError.throwWithMessage(
-            `simulate: ${contractName}.${eventName} resolved to address ${srcAddress->Address.toString}, which isn't indexed on chain ${chainConfig.id->Int.toString}. ` ++
-            `Provide a "srcAddress" configured or registered for ${contractName} on this chain, or use a wildcard event.`,
-          )
-        }
-      | _ => ()
-      }
-    | _ => ()
-    }
-  })
-}
-
 let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
   Internal.item,
 > => {
@@ -286,8 +250,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
   let currentLogIndex = ref(0)
 
   let items = []
+  // Coordinate "block:logIndex" -> the index of the first item that claimed it,
+  // used to reject two items resolving to the same (block, logIndex).
+  let seenCoordinates = Dict.make()
 
-  simulateItems->Array.forEach(rawJson => {
+  simulateItems->Array.forEachWithIndex((rawJson, itemIndex) => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (raw->getContract, raw->getEvent) {
@@ -311,8 +278,14 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       }
       let params = paramsJson->S.convertOrThrow(eventConfig.simulateParamsSchema)
 
+      // An explicit logIndex advances the auto-increment counter past itself, so a
+      // later item that omits logIndex picks up after it instead of colliding.
       let logIndex = switch item.logIndex {
-      | Some(li) => li
+      | Some(li) =>
+        if li >= currentLogIndex.contents {
+          currentLogIndex := li + 1
+        }
+        li
       | None =>
         let li = currentLogIndex.contents
         currentLogIndex := li + 1
@@ -323,6 +296,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~providedSrcAddress=item.srcAddress,
         ~eventConfig,
         ~chainConfig,
+        ~config,
       )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})
@@ -350,14 +324,44 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       // Update currentBlock for subsequent items
       currentBlock := blockNumber
 
-      let onEventRegistration: Internal.onEventRegistration = {
-        eventConfig,
-        handler: HandlerRegister.getHandler(~contractName, ~eventName),
-        contractRegister: HandlerRegister.getContractRegister(~contractName, ~eventName),
-        isWildcard: HandlerRegister.isWildcard(~contractName, ~eventName),
-        filterByAddresses: false,
-        dependsOnAddresses: false,
-        startBlock: None,
+      // A simulate item must land on a distinct (block, logIndex): event ordering
+      // and the dead-input tracker both key on it. Catch explicit duplicates and
+      // explicit-vs-auto-increment collisions here, naming both offending indices.
+      let coordinate = `${blockNumber->Int.toString}:${logIndex->Int.toString}`
+      switch seenCoordinates->Dict.get(coordinate) {
+      | Some(firstIndex) =>
+        JsError.throwWithMessage(
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->Int.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+        )
+      | None => seenCoordinates->Dict.set(coordinate, itemIndex)
+      }
+
+      // Build a real registration the same way `ChainState.makeInternal` does
+      // (not a stub), so the address filter and `where` behave identically to
+      // real indexing — the dead-input tracker relies on `clientAddressFilter`
+      // actually gating unrouted items.
+      let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
+      let handler = HandlerRegister.getHandler(~contractName, ~eventName)
+      let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
+      let onEventRegistration: Internal.onEventRegistration = switch config.ecosystem.name {
+      | Fuel =>
+        (EventConfigBuilder.buildFuelOnEventRegistration(
+          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+        ) :> Internal.onEventRegistration)
+      | Evm =>
+        (EventConfigBuilder.buildEvmOnEventRegistration(
+          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
+          ~probeChainId=chainId,
+          ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
+        ) :> Internal.onEventRegistration)
+      | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
 
       items
