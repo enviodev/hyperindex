@@ -216,9 +216,13 @@ let deriveSrcAddress = (
   ~providedSrcAddress: option<Address.t>,
   ~eventConfig: Internal.eventConfig,
   ~chainConfig: Config.chain,
+  ~config: Config.t,
 ): Address.t => {
   switch providedSrcAddress {
-  | Some(addr) => addr
+  // Canonicalize to the configured casing; the fallback addresses below already
+  // come from the parsed config and need no normalization. Relaxed (not
+  // Config.normalizeUserAddress) so test placeholders like "0xfoo" are allowed.
+  | Some(addr) => config->Config.normalizeSimulateAddress(addr)
   | None =>
     if eventConfig.isWildcard {
       dummySrcAddress
@@ -287,6 +291,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~providedSrcAddress=item.srcAddress,
         ~eventConfig,
         ~chainConfig,
+        ~config,
       )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})

@@ -1021,6 +1021,50 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 }
 
+// Canonicalize a user-provided address to the configured casing so it matches
+// addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
+// already canonical; only user-land input (simulate srcAddress, contractRegister
+// add) can carry arbitrary casing and needs this before comparison.
+let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
+  switch config.ecosystem.name {
+  | Ecosystem.Evm =>
+    if config.lowercaseAddresses {
+      address->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      address->Address.Evm.fromAddressOrThrow
+    }
+  // TODO: Ideally we should do the same for other ecosystems
+  | Ecosystem.Fuel | Ecosystem.Svm => address
+  }
+
+// Relaxed counterpart to normalizeUserAddress, used only for simulate srcAddress.
+// Tests commonly use short placeholder strings like "0xfoo" as a stand-in
+// identity (e.g. for a wildcard event whose srcAddress doesn't need to resolve
+// to any real contract), so only the "0x" prefix is enforced here. Under
+// address_format: checksum, a real address is checksummed even if the input
+// casing doesn't match (getAddress doesn't require the input to already be
+// checksummed) — a placeholder that isn't valid hex falls back unchanged.
+let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
+  switch config.ecosystem.name {
+  | Ecosystem.Evm =>
+    let str = address->Address.toString
+    if !(str->String.startsWith("0x")) {
+      JsError.throwWithMessage(
+        `simulate: srcAddress "${str}" is invalid. Expected a string starting with "0x".`,
+      )
+    }
+    if config.lowercaseAddresses {
+      address->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      try {
+        address->Address.Evm.fromAddressOrThrow
+      } catch {
+      | _ => address
+      }
+    }
+  | Ecosystem.Fuel | Ecosystem.Svm => address
+  }
+
 // Look up an event config by (contract, event) name. When `chainId` is given,
 // returns that chain's per-chain event config (matters for where-callback
 // probe detection, which runs with the chain's real id). Without `chainId`,
