@@ -1,5 +1,5 @@
 type registrations = {
-  onEventRegistrationsByChainId: dict<array<Internal.onEventRegistration>>,
+  registrationsByChainId: dict<array<Internal.onEventRegistration>>,
   onBlockByChainId: dict<array<Internal.onBlockConfig>>,
 }
 

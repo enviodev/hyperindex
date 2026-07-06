@@ -15,7 +15,7 @@ let empty = {
 // whatever handler/contractRegister/eventOptions got registered for them, and
 // the onBlock configs collected during registration.
 type registrations = {
-  onEventRegistrationsByChainId: dict<array<Internal.onEventRegistration>>,
+  registrationsByChainId: dict<array<Internal.onEventRegistration>>,
   onBlockByChainId: dict<array<Internal.onBlockConfig>>,
 }
 
@@ -263,17 +263,17 @@ let finishRegistration = (~config: Config.t) => {
   switch activeRegistration.contents {
   | Some(r) => {
       r.finished = true
-      let onEventRegistrationsByChainId = Dict.make()
+      let registrationsByChainId = Dict.make()
       config.chainMap
       ->ChainMap.values
       ->Array.forEach(chainConfig => {
-        onEventRegistrationsByChainId->Dict.set(
+        registrationsByChainId->Dict.set(
           chainConfig.id->Int.toString,
           buildOnEventRegistrations(~chainConfig, ~config),
         )
       })
       {
-        onEventRegistrationsByChainId,
+        registrationsByChainId,
         onBlockByChainId: r.registrations.onBlockByChainId,
       }
     }

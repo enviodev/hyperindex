@@ -110,7 +110,7 @@ let makeInternal = (
   // the event definitions by `HandlerRegister.finishRegistration`, keyed by
   // chain - this just looks up this chain's slice.
   let onEventRegistrations =
-    registrations.onEventRegistrationsByChainId
+    registrations.registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
     ->Option.getOr([])
 
