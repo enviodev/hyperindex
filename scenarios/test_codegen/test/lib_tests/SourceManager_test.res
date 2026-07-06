@@ -183,7 +183,7 @@ describe("SourceManager source priority with Live sources", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 10000.,
+    estResponseSize: 5000.,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
@@ -486,7 +486,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fetchedBlock: None,
     }
     // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
@@ -543,7 +543,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -553,7 +553,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -563,7 +563,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
@@ -1430,7 +1430,7 @@ describe("SourceManager.executeQuery", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 10000.,
+    estResponseSize: 5000.,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,

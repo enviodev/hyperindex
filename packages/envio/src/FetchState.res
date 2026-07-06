@@ -93,7 +93,7 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
 // Default estimate for a query whose partition hasn't responded yet, so the
 // shared budget still accounts for unknown queries instead of treating them as
 // free.
-let defaultEstResponseSize = 10_000.
+let defaultEstResponseSize = 5_000.
 
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
