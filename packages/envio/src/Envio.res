@@ -76,8 +76,8 @@ type svmInstructionBlock = {
   /** Unix block time (seconds). */
   time?: int,
   hash: string,
-  /** Block height (distinct from slot). Absent when HyperSync didn't return a
-   block for this slot, or the upstream omitted it. */
+  /** Block height (distinct from slot). Absent when not selected via
+   `field_selection.block_fields`. */
   height?: int,
   parentSlot?: int,
   parentHash?: string,
