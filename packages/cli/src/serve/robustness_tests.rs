@@ -11,7 +11,11 @@
 //!   never change a cached plan's result type);
 //! - a frozen (SIGSTOP'd) Postgres cannot hang requests beyond the
 //!   client-side query timeout;
-//! - the shutdown signal actually stops the server.
+//! - the shutdown signal actually stops the server;
+//! - a null `arguments` on an aggregate bool_exp predicate is a validation
+//!   error for every op except `count` (whose `arguments` list is genuinely
+//!   nullable), instead of reaching SQL generation and producing invalid
+//!   syntax like `bool_and(*)`.
 
 use super::env_config::ServeEnv;
 use super::model::ServerModel;
@@ -135,10 +139,14 @@ struct TestServer {
     handle: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
-/// Applies the differential fixture to the container and boots the server
-/// in-process on an ephemeral port, exactly as `serve::run` wires it minus
-/// the OS signal handler.
-async fn boot(env: ServeEnv, query_timeout: Option<Duration>) -> TestServer {
+/// Applies the differential fixture (plus optional test-local extra DDL) to
+/// the container and boots the server in-process on an ephemeral port,
+/// exactly as `serve::run` wires it minus the OS signal handler.
+async fn boot(
+    env: ServeEnv,
+    query_timeout: Option<Duration>,
+    extra_sql: Option<&str>,
+) -> TestServer {
     let pool = env.make_pg_pool().expect("pool");
 
     let fixture_dir = concat!(
@@ -154,6 +162,12 @@ async fn boot(env: ServeEnv, query_timeout: Option<Duration>) -> TestServer {
         for file in ["schema.sql", "seed.sql"] {
             let sql = std::fs::read_to_string(format!("{fixture_dir}/{file}")).unwrap();
             client.batch_execute(&sql).await.expect("fixture applies");
+        }
+        if let Some(sql) = extra_sql {
+            client
+                .batch_execute(sql)
+                .await
+                .expect("extra fixture SQL applies");
         }
         applied = true;
         break;
@@ -251,7 +265,7 @@ async fn postgres_outage_errors_cleanly_and_recovers_without_restart() {
         return;
     }
     let pg = TestPg::start();
-    let server = boot(test_env(pg.port), Some(Duration::from_secs(20))).await;
+    let server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
 
     let (status, body) = server.graphql(SIMPLE_QUERY, Duration::from_secs(10)).await;
     assert_eq!(
@@ -310,7 +324,7 @@ async fn table_recreate_does_not_poison_statement_cache() {
         return;
     }
     let pg = TestPg::start();
-    let server = boot(test_env(pg.port), Some(Duration::from_secs(20))).await;
+    let server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
 
     let query = "{ SimpleEntity(order_by: {id: asc}) { id value } }";
     for _ in 0..3 {
@@ -358,7 +372,7 @@ async fn frozen_postgres_is_bounded_by_the_client_query_timeout() {
     let pg = TestPg::start();
     // Short client-side timeout; the server-side statement_timeout can't
     // fire because Postgres is frozen, so this is the only bound.
-    let server = boot(test_env(pg.port), Some(Duration::from_secs(3))).await;
+    let server = boot(test_env(pg.port), Some(Duration::from_secs(3)), None).await;
 
     let (status, _) = server.graphql(SIMPLE_QUERY, Duration::from_secs(10)).await;
     assert_eq!(status, 200);
@@ -390,7 +404,7 @@ async fn shutdown_signal_stops_the_server() {
         return;
     }
     let pg = TestPg::start();
-    let mut server = boot(test_env(pg.port), Some(Duration::from_secs(20))).await;
+    let mut server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
 
     let (status, _) = server.graphql(SIMPLE_QUERY, Duration::from_secs(10)).await;
     assert_eq!(status, 200);
@@ -409,5 +423,55 @@ async fn shutdown_signal_stops_the_server() {
         (serve_result.is_ok(), new_request.is_err()),
         (true, true),
         "server should exit cleanly and stop accepting connections"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    // Exposes Token_aggregate_bool_exp (incl. bool_and/bool_or, once Token
+    // has a boolean column) on NftCollection_bool_exp.tokens_aggregate for
+    // the public role, mirroring aggregations_enabled's `table.public_aggregations`
+    // check in gql/schema_build.rs.
+    env.aggregate_entities = vec!["Token".to_string()];
+    let server = boot(
+        env,
+        Some(Duration::from_secs(20)),
+        Some(r#"ALTER TABLE public."Token" ADD COLUMN is_special boolean NOT NULL DEFAULT false;"#),
+    )
+    .await;
+
+    // count's `arguments` is a nullable list: null means count(*), and stays valid.
+    let (status, body) = server
+        .graphql(
+            "{ NftCollection(where: {tokens_aggregate: {count: {arguments: null, predicate: {_gte: 0}}}}) { id } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!((status, body["errors"].is_null()), (200, true), "{body}");
+
+    // bool_and/bool_or's `arguments` is a single non-null column enum: a
+    // null literal must be rejected as a validation error up front, not
+    // passed through to SQL generation as `bool_and(*)` (invalid syntax —
+    // only count(*) accepts the bare-`*` form).
+    let (status, body) = server
+        .graphql(
+            "{ NftCollection(where: {tokens_aggregate: {bool_and: {arguments: null, predicate: {_eq: true}}}}) { id } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (
+            status,
+            body["data"].is_null(),
+            body["errors"][0]["extensions"]["code"].as_str()
+        ),
+        (200, true, Some("validation-failed")),
+        "{body}"
     );
 }

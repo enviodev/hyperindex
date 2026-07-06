@@ -291,10 +291,12 @@ fn coerce_aggregate_bool_exp<'a>(
             match key.as_str() {
                 "arguments" => {
                     has_arguments = true;
-                    if kv.is_null() {
-                        continue;
-                    }
                     if op == "count" {
+                        // `arguments` is a nullable column list for count: null
+                        // means count(*), same as omitting it.
+                        if kv.is_null() {
+                            continue;
+                        }
                         let enum_name = format!("{rt}_select_column");
                         for (i, item) in list_items(kv).into_iter().enumerate() {
                             let ipath = format!("{kpath}[{i}]");
@@ -302,6 +304,9 @@ fn coerce_aggregate_bool_exp<'a>(
                             columns.push(api_to_db_column(remote, &api));
                         }
                     } else {
+                        // Non-count ops (bool_and/bool_or) require a single
+                        // non-null column enum; let coerce_enum reject a null
+                        // literal instead of silently emitting `op(*)`.
                         let enum_name = format!(
                             "{rt}_select_column_{rt}_aggregate_bool_exp_{op}_arguments_columns"
                         );
