@@ -90,23 +90,41 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   result
 })
 
+// Bounds for the no-history default estimate below. Also used by SourceManager
+// as the floor for its own maxNumLogs-style safety net.
+let minEstResponseSize = 2_000.
+let maxEstResponseSize = 10_000.
+
 // Default estimate for a query whose partition hasn't responded yet, so the
 // shared budget still accounts for unknown queries instead of treating them as
-// free.
-let defaultEstResponseSize = 5_000.
+// free. Scaled down as partitionsCount grows: assuming every partition's first
+// query is "big" starves the rest of that tick's admission when many
+// partitions share the same buffer, so the per-partition default shrinks
+// accordingly — clamped to [minEstResponseSize, maxEstResponseSize] either way.
+let calculateDefaultEstResponseSize = (~partitionsCount) =>
+  Pervasives.max(
+    minEstResponseSize,
+    Pervasives.min(maxEstResponseSize, 20_000. /. partitionsCount->Int.toFloat),
+  )
 
 // Estimated items a query will return, from the partition's event density
 // (items/block derived from its last response) and the query's block range.
 // toBlock None is the open-ended tail, capped at knownHeight. A partition
 // that responded with no items has density 0, so its queries cost 0 — correct,
 // they don't fill the buffer. Only a partition that has never responded
-// (prevQueryRange 0) has no signal, so it falls back to defaultEstResponseSize.
-let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~knownHeight) =>
+// (prevQueryRange 0) has no signal, so it falls back to calculateDefaultEstResponseSize.
+let calculateEstResponseSize = (
+  p: partition,
+  ~fromBlock,
+  ~toBlock,
+  ~knownHeight,
+  ~partitionsCount,
+) =>
   if p.prevQueryRange > 0 {
     let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
     (toBlock->Option.getOr(knownHeight) - fromBlock + 1)->Int.toFloat *. density
   } else {
-    defaultEstResponseSize
+    calculateDefaultEstResponseSize(~partitionsCount)
   }
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
@@ -1358,6 +1376,7 @@ let pushQueriesForRange = (
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
+  ~partitionsCount: int,
 ) => {
   if rangeFromBlock <= knownHeight && maxChunks > 0 {
     switch rangeEndBlock {
@@ -1376,6 +1395,7 @@ let pushQueriesForRange = (
             ~fromBlock=rangeFromBlock,
             ~toBlock=rangeEndBlock,
             ~knownHeight,
+            ~partitionsCount,
           ),
           chainId: 0,
           progress: 0.,
@@ -1405,6 +1425,7 @@ let pushQueriesForRange = (
                 ~fromBlock=chunkFromBlock.contents,
                 ~toBlock=Some(chunkToBlock),
                 ~knownHeight,
+                ~partitionsCount,
               ),
               chainId: 0,
               progress: 0.,
@@ -1426,6 +1447,7 @@ let pushQueriesForRange = (
               ~fromBlock=rangeFromBlock,
               ~toBlock=rangeEndBlock,
               ~knownHeight,
+              ~partitionsCount,
             ),
             chainId: 0,
             progress: 0.,
@@ -1517,6 +1539,7 @@ let getNextQuery = (
             ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
+            ~partitionsCount,
           )
         }
         switch pq {
@@ -1545,6 +1568,7 @@ let getNextQuery = (
           ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
+          ~partitionsCount,
         )
       }
 

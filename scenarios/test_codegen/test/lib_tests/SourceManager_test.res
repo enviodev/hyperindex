@@ -543,7 +543,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 5000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -553,7 +553,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 5000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -563,7 +563,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 5000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,

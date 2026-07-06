@@ -685,7 +685,7 @@ let executeQuery = async (
         // response at nothing — 0 items is indistinguishable from "no signal".
         ~itemsTarget={
           let est = query.estResponseSize->Math.ceil->Float.toInt
-          est > 0 ? est : FetchState.defaultEstResponseSize->Float.toInt
+          est > 0 ? est : FetchState.minEstResponseSize->Float.toInt
         },
         ~retry,
         ~logger,
