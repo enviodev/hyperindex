@@ -74,6 +74,13 @@ type query = {
   // the query's share of the frontier reach, so the buffer stays bounded no
   // matter how large the natural block range is or how many partitions there are.
   mutable itemsTarget: int,
+  // Set by the scheduler at admission: false for a gap-closer (a partition at the
+  // frontier, whose items become ready), true for a prefetch (a partition parked
+  // ahead, whose items stay stuck until the frontier reaches it). The two draw
+  // from different budgets, so the reservation is released from whichever the
+  // query was admitted against — recorded here since the frontier may move before
+  // the response lands.
+  mutable isPrefetch: bool,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
 }
@@ -1438,6 +1445,7 @@ let pushQueriesForRange = (
           chainId: 0,
           progress: 0.,
           itemsTarget: 0,
+              isPrefetch: false,
           addressesByContractName,
         })
       | Some(chunkRange) =>
@@ -1463,6 +1471,7 @@ let pushQueriesForRange = (
               chainId: 0,
               progress: 0.,
               itemsTarget: 0,
+              isPrefetch: false,
               addressesByContractName,
             })
             chunkFromBlock := chunkToBlock + 1
@@ -1480,6 +1489,7 @@ let pushQueriesForRange = (
             chainId: 0,
             progress: 0.,
             itemsTarget: 0,
+              isPrefetch: false,
             addressesByContractName,
           })
         }

@@ -14,10 +14,14 @@ type t = {
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
   mutable numEventsProcessed: float,
-  // Running sum of in-flight queries' reserved size, kept here so the
-  // scheduler doesn't re-sum pending queries on every tick. Incremented when
-  // queries are dispatched, decremented as their responses land.
-  mutable reservedSize: float,
+  // Running sums of in-flight queries' reserved items, so the scheduler doesn't
+  // re-sum pending queries every tick. reservedTotalSize covers every in-flight
+  // query (gap-closers and prefetch), against the total-buffer limit;
+  // reservedReadySize covers only gap-closers, against the ready-item target — so
+  // stuck prefetch in flight can't shrink the budget that keeps the frontier
+  // advancing. Both are incremented on dispatch and decremented as responses land.
+  mutable reservedReadySize: float,
+  mutable reservedTotalSize: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -81,7 +85,8 @@ let make = (
   timestampCaughtUpToHeadOrEndblock,
   committedProgressBlockNumber,
   numEventsProcessed,
-  reservedSize: 0.,
+  reservedReadySize: 0.,
+  reservedTotalSize: 0.,
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
@@ -424,7 +429,8 @@ let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
-let reservedSize = (cs: t) => cs.reservedSize
+let reservedReadySize = (cs: t) => cs.reservedReadySize
+let reservedTotalSize = (cs: t) => cs.reservedTotalSize
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
@@ -444,21 +450,28 @@ let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
 let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
 
-// Mark queries as in flight and reserve their estimated size against the shared
-// buffer budget in one step, so the counter stays in sync with the pending
-// queries it tracks.
+// Mark queries as in flight and reserve their items against the shared budgets in
+// one step, so the counters stay in sync with the pending queries they track.
+// Every query counts against the total-buffer reservation; only gap-closers count
+// against the ready reservation.
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
-  cs.reservedSize =
-    cs.reservedSize +.
-    queries->Array.reduce(0., (acc, query) => acc +. query->FetchState.queryReservedSize)
+  for i in 0 to queries->Array.length - 1 {
+    let query = queries->Array.getUnsafe(i)
+    let reserved = query->FetchState.queryReservedSize
+    cs.reservedTotalSize = cs.reservedTotalSize +. reserved
+    if !query.isPrefetch {
+      cs.reservedReadySize = cs.reservedReadySize +. reserved
+    }
+  }
 }
 
-// Drop every in-flight query and release their reservations together, keeping
-// reservedSize coupled to the pending queries it tracks.
+// Drop every in-flight query and release their reservations together, keeping the
+// reserved counters coupled to the pending queries they track.
 let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
-  cs.reservedSize = 0.
+  cs.reservedReadySize = 0.
+  cs.reservedTotalSize = 0.
 }
 
 // Propose the chain's candidate queries against their natural ceiling
@@ -566,8 +579,13 @@ let handleQueryResult = (
     )
     ->FetchState.updateKnownHeight(~knownHeight)
 
-  // The query is no longer in flight, so release its reservation.
-  cs.reservedSize = Pervasives.max(0., cs.reservedSize -. query->FetchState.queryReservedSize)
+  // The query is no longer in flight, so release its reservation from whichever
+  // pools it was admitted against.
+  let reserved = query->FetchState.queryReservedSize
+  cs.reservedTotalSize = Pervasives.max(0., cs.reservedTotalSize -. reserved)
+  if !query.isPrefetch {
+    cs.reservedReadySize = Pervasives.max(0., cs.reservedReadySize -. reserved)
+  }
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.

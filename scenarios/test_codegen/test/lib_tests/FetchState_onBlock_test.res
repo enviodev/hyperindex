@@ -14,6 +14,7 @@ let defaultQuery: FetchState.query = {
   chainId: 0,
   progress: 0.,
   itemsTarget: 0,
+  isPrefetch: false,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
 }
