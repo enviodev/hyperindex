@@ -335,7 +335,7 @@ let checkAndFetch = async (
       let deltaP = budget->Int.toFloat /. weightSum.contents
       Pervasives.max(
         1,
-        Pervasives.min(Js.Math.round(deltaP *. range->Int.toFloat)->Float.toInt, range),
+        Pervasives.min(Math.round(deltaP *. range->Int.toFloat)->Float.toInt, range),
       )
     }
   warmChains->Array.forEach(((chainId, range)) => {
@@ -388,7 +388,7 @@ let checkAndFetch = async (
       let remaining = isGapCloser ? readyRemaining : prefetchRemaining
       if remaining.contents > 0 {
         let baseTarget = switch query.density {
-        | Some(density) => Js.Math.round(density *. span->Int.toFloat)->Float.toInt
+        | Some(density) => Math.round(density *. span->Int.toFloat)->Float.toInt
         | None => isGapCloser ? gapEvenShare : prefetchEvenShare
         }
         let admitted = Pervasives.min(remaining.contents, Pervasives.max(1, baseTarget))
