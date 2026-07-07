@@ -446,19 +446,54 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
     )
     .await;
 
-    // count's `arguments` is a nullable list: null means count(*), and stays valid.
+    // Omitting `arguments` entirely means count(*): confirmed live against
+    // Hasura 2.43.0 on this exact fixture (this data shape and row set is
+    // its real recorded response, not a guess).
+    let (status, body) = server
+        .graphql(
+            "{ NftCollection(where: {tokens_aggregate: {count: {predicate: {_gte: 0}}}}) { id } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"data": {"NftCollection": [
+                {"id": "coll-1"}, {"id": "coll-2"}, {"id": "coll-3"}
+            ]}})
+        )
+    );
+
+    // An explicit `arguments: null` is a validation error even for count,
+    // whose `arguments` is a nullable *list* type — Hasura rejects the null
+    // literal itself rather than treating it as an omitted key. Wording and
+    // path confirmed live against Hasura 2.43.0 on this exact query.
     let (status, body) = server
         .graphql(
             "{ NftCollection(where: {tokens_aggregate: {count: {arguments: null, predicate: {_gte: 0}}}}) { id } }",
             Duration::from_secs(10),
         )
         .await;
-    assert_eq!((status, body["errors"].is_null()), (200, true), "{body}");
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected a list, but found null",
+                "extensions": {
+                    "path": "$.selectionSet.NftCollection.args.where.tokens_aggregate.count.arguments",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
+    );
 
     // bool_and/bool_or's `arguments` is a single non-null column enum: a
     // null literal must be rejected as a validation error up front, not
     // passed through to SQL generation as `bool_and(*)` (invalid syntax —
-    // only count(*) accepts the bare-`*` form).
+    // only count(*) accepts the bare-`*` form). Wording and path confirmed
+    // live against Hasura 2.43.0 on this exact query.
     let (status, body) = server
         .graphql(
             "{ NftCollection(where: {tokens_aggregate: {bool_and: {arguments: null, predicate: {_eq: true}}}}) { id } }",
@@ -466,12 +501,16 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
         )
         .await;
     assert_eq!(
+        (status, body),
         (
-            status,
-            body["data"].is_null(),
-            body["errors"][0]["extensions"]["code"].as_str()
-        ),
-        (200, true, Some("validation-failed")),
-        "{body}"
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected an enum value for type 'Token_select_column_Token_aggregate_bool_exp_bool_and_arguments_columns', but found null",
+                "extensions": {
+                    "path": "$.selectionSet.NftCollection.args.where.tokens_aggregate.bool_and.arguments",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
     );
 }

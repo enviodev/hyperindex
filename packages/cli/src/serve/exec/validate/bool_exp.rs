@@ -1,6 +1,4 @@
-use super::args::{
-    api_to_db_column, expect_list, expect_object, list_items, resolve_item, resolve_nested,
-};
+use super::args::{api_to_db_column, expect_list, expect_object, resolve_item, resolve_nested};
 use super::coerce::{coerce_bool_strict, coerce_column_value, coerce_enum, coerce_string_strict};
 use super::{ir, model_table, verr, Column, Ctx, GResult, Scalar, TypeRef, V};
 
@@ -292,13 +290,13 @@ fn coerce_aggregate_bool_exp<'a>(
                 "arguments" => {
                     has_arguments = true;
                     if op == "count" {
-                        // `arguments` is a nullable column list for count: null
-                        // means count(*), same as omitting it.
-                        if kv.is_null() {
-                            continue;
-                        }
+                        // Omitting `arguments` entirely means count(*) (the
+                        // loop body above never runs, so `columns` stays
+                        // empty); an explicit `null` is still a validation
+                        // error, matching Hasura's "expected a list, but
+                        // found null" for the analogous by-pk/eq cases.
                         let enum_name = format!("{rt}_select_column");
-                        for (i, item) in list_items(kv).into_iter().enumerate() {
+                        for (i, item) in expect_list(kv, &kpath)?.into_iter().enumerate() {
                             let ipath = format!("{kpath}[{i}]");
                             let api = coerce_enum(ctx, item, &enum_name, &ipath)?;
                             columns.push(api_to_db_column(remote, &api));
