@@ -251,9 +251,6 @@ pub(super) fn coerce_json_path_arg<'a>(
     let Some(v) = resolve_arg(ctx, flat, field, "path", field_path)? else {
         return Ok(None);
     };
-    if v.is_null() {
-        return Ok(None);
-    }
     let text = coerce_string_strict(v, &format!("{field_path}.args.path"))?;
     match parse_json_path(&text) {
         Ok(segments) => Ok(if segments.is_empty() {

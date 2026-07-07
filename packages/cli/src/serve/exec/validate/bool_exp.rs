@@ -313,9 +313,7 @@ fn coerce_aggregate_bool_exp<'a>(
                     }
                 }
                 "distinct" => {
-                    if !kv.is_null() {
-                        distinct = coerce_bool_strict(kv, &kpath)?;
-                    }
+                    distinct = coerce_bool_strict(kv, &kpath)?;
                 }
                 "filter" => {
                     if !kv.is_null() {
