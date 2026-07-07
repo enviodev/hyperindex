@@ -379,27 +379,28 @@ async fn run_subscription(
     let mut last_payload: Option<String> = None;
     let mut consecutive_failures: u32 = 0;
     loop {
-        let result = match exec::execute_operation(&state.serve, schema, &operation).await {
-            Ok(body) if is_stream => {
-                match advance_stream_cursor(&state, &operation, &body).await {
-                    Ok(Some(new_cursor_values)) => {
-                        // Non-empty batch: emit and move the cursor.
-                        send_frame(&sender, protocol.data_type(), &id, Some(&body));
-                        apply_cursor(&mut operation, new_cursor_values);
-                        Ok(())
-                    }
-                    Ok(None) => Ok(()), // empty batch: keep waiting
-                    Err(e) => Err(e),
-                }
-            }
-            Ok(body) => {
-                if last_payload.as_deref() != Some(body.as_str()) {
+        let result = if is_stream {
+            match exec::execute_stream_operation(&state.serve, &operation).await {
+                Ok((body, Some(new_cursor_values))) => {
+                    // Non-empty batch: emit and move the cursor.
                     send_frame(&sender, protocol.data_type(), &id, Some(&body));
-                    last_payload = Some(body);
+                    apply_cursor(&mut operation, new_cursor_values);
+                    Ok(())
                 }
-                Ok(())
+                Ok((_, None)) => Ok(()), // empty batch: keep waiting
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
+        } else {
+            match exec::execute_operation(&state.serve, schema, &operation).await {
+                Ok(body) => {
+                    if last_payload.as_deref() != Some(body.as_str()) {
+                        send_frame(&sender, protocol.data_type(), &id, Some(&body));
+                        last_payload = Some(body);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         };
         match result {
             Ok(()) => consecutive_failures = 0,
@@ -420,101 +421,6 @@ async fn run_subscription(
     }
 }
 
-/// For `<T>_stream` roots: fetches the cursor-column values of the current
-/// batch's last row (via a parallel query on the same args) so the next
-/// poll starts after it. Returns None when the batch is empty.
-async fn advance_stream_cursor(
-    state: &AppState,
-    operation: &ir::Operation,
-    batch_body: &str,
-) -> Result<Option<Vec<String>>, GraphQLError> {
-    let Some(ir::RootField::Table(root)) = operation.root_fields.first() else {
-        return Ok(None);
-    };
-    let ir::TableRootKind::Stream {
-        batch_size,
-        cursor,
-        where_,
-        ..
-    } = &root.kind
-    else {
-        return Ok(None);
-    };
-
-    // Cheap emptiness check on the emitted batch: {"data":{"<alias>":[]}}
-    let parsed: serde_json::Value = serde_json::from_str(batch_body)
-        .map_err(|_| GraphQLError::unexpected_payload("internal: non-JSON batch"))?;
-    let rows = parsed
-        .get("data")
-        .and_then(|d| d.get(&root.alias))
-        .and_then(|v| v.as_array());
-    match rows {
-        Some(rows) if !rows.is_empty() => {}
-        _ => return Ok(None),
-    }
-
-    // Query the raw cursor values for the same batch (the emitted selection
-    // may not include the cursor columns, and its serialization may differ
-    // from PG's text form, so read them directly).
-    let selection_items = cursor
-        .iter()
-        .enumerate()
-        .map(|(i, c)| ir::SelItem::Column {
-            alias: format!("c{i}"),
-            column: c.column.clone(),
-            // Force text serialization for lossless round-tripping into the
-            // next batch's bind values.
-            scalar: crate::serve::model::Scalar::String,
-            pg_type: "text".to_string(),
-            is_array: false,
-            json_path: None,
-        })
-        .collect();
-
-    let probe = ir::TableRoot {
-        alias: "c".to_string(),
-        table: root.table.clone(),
-        kind: ir::TableRootKind::Stream {
-            batch_size: *batch_size,
-            cursor: cursor
-                .iter()
-                .map(|c| ir::StreamCursor {
-                    column: c.column.clone(),
-                    scalar: c.scalar,
-                    pg_type: c.pg_type.clone(),
-                    is_array: c.is_array,
-                    initial_value: c.initial_value.clone(),
-                    descending: c.descending,
-                })
-                .collect(),
-            where_: where_.as_ref().map(clone_bool_exp),
-            selection: ir::ObjectSelection {
-                table: root.table.clone(),
-                items: selection_items,
-            },
-        },
-    };
-
-    let mut batch_json = String::new();
-    exec::sql::execute_root(&state.serve, &probe, &mut batch_json).await?;
-    let batch: serde_json::Value = serde_json::from_str(&batch_json)
-        .map_err(|_| GraphQLError::unexpected_payload("internal: non-JSON cursor batch"))?;
-    let last = match batch.as_array().and_then(|a| a.last()) {
-        Some(v) => v,
-        None => return Ok(None),
-    };
-    let mut values = Vec::new();
-    for (i, _) in cursor.iter().enumerate() {
-        let v = last.get(format!("c{i}"));
-        match v {
-            Some(serde_json::Value::String(s)) => values.push(s.clone()),
-            Some(other) if !other.is_null() => values.push(other.to_string()),
-            _ => return Ok(None),
-        }
-    }
-    Ok(Some(values))
-}
-
 fn apply_cursor(operation: &mut ir::Operation, values: Vec<String>) {
     if let Some(ir::RootField::Table(root)) = operation.root_fields.first_mut() {
         if let ir::TableRootKind::Stream { cursor, .. } = &mut root.kind {
@@ -522,93 +428,5 @@ fn apply_cursor(operation: &mut ir::Operation, values: Vec<String>) {
                 c.initial_value = Some(ir::SqlValue::new(v, c.pg_type.clone()));
             }
         }
-    }
-}
-
-/// BoolExp isn't Clone (SqlValue params keep it cheap to move, not copy);
-/// the stream probe needs its own copy of the where clause.
-fn clone_bool_exp(e: &ir::BoolExp) -> ir::BoolExp {
-    use ir::BoolExp::*;
-    match e {
-        And(v) => And(v.iter().map(clone_bool_exp).collect()),
-        Or(v) => Or(v.iter().map(clone_bool_exp).collect()),
-        Not(inner) => Not(Box::new(clone_bool_exp(inner))),
-        Compare {
-            column,
-            scalar,
-            pg_type,
-            is_array,
-            op,
-        } => Compare {
-            column: column.clone(),
-            scalar: *scalar,
-            pg_type: pg_type.clone(),
-            is_array: *is_array,
-            op: clone_compare_op(op),
-        },
-        ObjectRel {
-            local_column,
-            remote_table,
-            exp,
-        } => ObjectRel {
-            local_column: local_column.clone(),
-            remote_table: remote_table.clone(),
-            exp: Box::new(clone_bool_exp(exp)),
-        },
-        ArrayRel {
-            remote_column,
-            remote_table,
-            exp,
-        } => ArrayRel {
-            remote_column: remote_column.clone(),
-            remote_table: remote_table.clone(),
-            exp: Box::new(clone_bool_exp(exp)),
-        },
-        ArrayRelAggregate {
-            remote_column,
-            remote_table,
-            pred,
-        } => ArrayRelAggregate {
-            remote_column: remote_column.clone(),
-            remote_table: remote_table.clone(),
-            pred: ir::AggregatePredicate {
-                op: pred.op.clone(),
-                columns: pred.columns.clone(),
-                distinct: pred.distinct,
-                filter: pred.filter.as_ref().map(|f| Box::new(clone_bool_exp(f))),
-                predicate: pred.predicate.iter().map(clone_compare_op).collect(),
-            },
-        },
-    }
-}
-
-fn clone_compare_op(op: &ir::CompareOp) -> ir::CompareOp {
-    use ir::CompareOp::*;
-    match op {
-        Eq(v) => Eq(v.clone()),
-        Neq(v) => Neq(v.clone()),
-        Gt(v) => Gt(v.clone()),
-        Gte(v) => Gte(v.clone()),
-        Lt(v) => Lt(v.clone()),
-        Lte(v) => Lte(v.clone()),
-        In(v) => In(v.clone()),
-        Nin(v) => Nin(v.clone()),
-        IsNull(b) => IsNull(*b),
-        Like(v) => Like(v.clone()),
-        Nlike(v) => Nlike(v.clone()),
-        Ilike(v) => Ilike(v.clone()),
-        Nilike(v) => Nilike(v.clone()),
-        Similar(v) => Similar(v.clone()),
-        Nsimilar(v) => Nsimilar(v.clone()),
-        Regex(v) => Regex(v.clone()),
-        Iregex(v) => Iregex(v.clone()),
-        Nregex(v) => Nregex(v.clone()),
-        Niregex(v) => Niregex(v.clone()),
-        Contains(v) => Contains(v.clone()),
-        ContainedIn(v) => ContainedIn(v.clone()),
-        HasKey(v) => HasKey(v.clone()),
-        HasKeysAll(v) => HasKeysAll(v.clone()),
-        HasKeysAny(v) => HasKeysAny(v.clone()),
-        CastText(v) => CastText(v.iter().map(clone_compare_op).collect()),
     }
 }

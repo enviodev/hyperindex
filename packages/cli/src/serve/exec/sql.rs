@@ -18,20 +18,13 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio_postgres::types::{ToSql, Type};
 
-/// Executes one table root field, appending the JSON fragment for its value
-/// (e.g. `[{"id":"..."}]`, `{"aggregate":{"count":3}}`, or `null`) to `out`.
-///
-/// Writes the driver's `&str` column value straight into `out` instead of
-/// collecting it into an intermediate `String` first — on large unfiltered
-/// list queries (tens of MB of JSON per response) that owned copy briefly
-/// doubled peak memory, since Postgres already hands back one contiguous
-/// text value.
-pub async fn execute_root(
+/// Runs `sql`/`params` (as compiled by `compile_root`) and returns the
+/// single output row every root-field query produces.
+async fn run_root_query(
     state: &Arc<ServeState>,
-    root: &ir::TableRoot,
-    out: &mut String,
-) -> GResult<()> {
-    let (sql, params) = compile_root(&state.model.pg_schema, root);
+    sql: &str,
+    params: &[Option<String>],
+) -> GResult<tokio_postgres::Row> {
     // Pool failures (connect refused, wait timeout) get the same
     // postgres-error code as connection-level query failures so
     // subscriptions can tell "Postgres is briefly unreachable" (retryable)
@@ -47,21 +40,72 @@ pub async fn execute_root(
     // Hasura's inlined-literal form.
     let types = vec![Type::TEXT; params.len()];
     let stmt = client
-        .prepare_typed_cached(&sql, &types)
+        .prepare_typed_cached(sql, &types)
         .await
         .map_err(pg_error)?;
     let args: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
     let rows = client.query(&stmt, &args).await.map_err(pg_error)?;
-    match rows.as_slice() {
-        [row] => {
-            let text: &str = row.try_get(0).map_err(|_| internal_db_error())?;
-            out.push_str(text);
-            Ok(())
-        }
+    match rows.into_iter().next() {
         // Hasura fails the same way when its aggregate statement degenerates
         // to a non-aggregate query (e.g. `_aggregate { aggregate { __typename } }`).
-        _ => Err(internal_db_error()),
+        None => Err(internal_db_error()),
+        Some(row) => Ok(row),
     }
+}
+
+/// Executes one table root field, appending the JSON fragment for its value
+/// (e.g. `[{"id":"..."}]`, `{"aggregate":{"count":3}}`, or `null`) to `out`.
+///
+/// Writes the driver's `&str` column value straight into `out` instead of
+/// collecting it into an intermediate `String` first — on large unfiltered
+/// list queries (tens of MB of JSON per response) that owned copy briefly
+/// doubled peak memory, since Postgres already hands back one contiguous
+/// text value.
+pub async fn execute_root(
+    state: &Arc<ServeState>,
+    root: &ir::TableRoot,
+    out: &mut String,
+) -> GResult<()> {
+    let (sql, params) = compile_root(&state.model.pg_schema, root);
+    let row = run_root_query(state, &sql, &params).await?;
+    let text: &str = row.try_get(0).map_err(|_| internal_db_error())?;
+    out.push_str(text);
+    Ok(())
+}
+
+/// Like `execute_root`, but only for `_stream` roots: also reads back each
+/// cursor column's value for the batch's last row from the same query
+/// result (see `emit_stream_select`), instead of a second, near-identical
+/// query fired just to read those columns back out -- halving the DB load
+/// of each subscription poll. Returns `None` (cursor unchanged) when the
+/// batch was empty.
+pub async fn execute_stream_root(
+    state: &Arc<ServeState>,
+    root: &ir::TableRoot,
+    out: &mut String,
+) -> GResult<Option<Vec<String>>> {
+    let (sql, params) = compile_root(&state.model.pg_schema, root);
+    let row = run_root_query(state, &sql, &params).await?;
+    let root_text: &str = row.try_get(0).map_err(|_| internal_db_error())?;
+    out.push_str(root_text);
+    if root_text == "[]" {
+        return Ok(None);
+    }
+
+    let mut cursor_values = Vec::with_capacity(row.len().saturating_sub(1));
+    for i in 1..row.len() {
+        match row
+            .try_get::<_, Option<&str>>(i)
+            .map_err(|_| internal_db_error())?
+        {
+            Some(v) => cursor_values.push(v.to_string()),
+            // A non-empty batch always has a last row, so its cursor
+            // columns should never be NULL; treat it as "no rows" rather
+            // than advancing to an unusable position.
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(cursor_values))
 }
 
 fn internal_db_error() -> GraphQLError {
@@ -138,7 +182,7 @@ pub fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Optio
                 limit: Some(*batch_size),
                 ..RowsArgs::default()
             };
-            emit_many_select(&mut b, &root.table, &ra, selection, None, Out::Root);
+            emit_stream_select(&mut b, &root.table, &ra, selection);
         }
     }
     (b.text, b.params)
@@ -360,6 +404,28 @@ fn emit_many_select(
     }
     b.push(" FROM (");
     emit_rows_middle(b, table, ra, sel, corr);
+    b.push(") AS \"_r\"");
+}
+
+/// Like `emit_many_select`'s `Out::Root` shape, but also selects each order
+/// (cursor) column's value from the batch's last row in final sort order,
+/// text-cast for lossless round-tripping -- so a `_stream` subscription's
+/// poll loop can read the next cursor position out of this same query
+/// instead of firing a second, near-identical query just for that.
+fn emit_stream_select(b: &mut Sql, table: &str, ra: &RowsArgs, sel: &ir::ObjectSelection) {
+    b.push("SELECT (coalesce(json_agg(\"_v\"");
+    emit_order_by_refs(b, &ra.order);
+    b.push("), '[]'))::text AS \"root\"");
+    for k in 0..ra.order.len() {
+        b.push(", (array_agg((");
+        b.ident(&format!("_o{k}"));
+        b.push(")::text");
+        emit_order_by_refs(b, &ra.order);
+        b.push("))[count(*)] AS ");
+        b.ident(&format!("cursor_{k}"));
+    }
+    b.push(" FROM (");
+    emit_rows_middle(b, table, ra, sel, None);
     b.push(") AS \"_r\"");
 }
 
@@ -1615,7 +1681,8 @@ mod tests {
         assert_eq!(
             (sql.as_str(), params),
             (
-                "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" ASC), '[]'))::text AS \"root\" \
+                "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" ASC), '[]'))::text AS \"root\", \
+                 (array_agg((\"_o0\")::text ORDER BY \"_o0\" ASC))[count(*)] AS \"cursor_0\" \
                  FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\", \"t0\".\"tokenId\" AS \"_o0\" \
                  FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE ((\"t0\".\"tokenId\") > (($1)::numeric)) ORDER BY \"tokenId\" ASC LIMIT 10) AS \"t0\") AS \"_r\"",
                 vec![Some("5".to_string())]

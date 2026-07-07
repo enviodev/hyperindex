@@ -83,25 +83,61 @@ async fn execute_inner(
     execute_operation(state, schema, &operation).await
 }
 
+/// Bounds `fut` by the whole-operation client-side query timeout, if one is
+/// configured. Shared by every operation entry point so the timeout always
+/// covers the whole operation — every root field's pool wait + prepare +
+/// query — rather than each one individually, which would let an operation
+/// with N root fields hang for N budgets.
+async fn with_query_timeout<T>(
+    state: &Arc<ServeState>,
+    fut: impl std::future::Future<Output = Result<T, GraphQLError>>,
+) -> Result<T, GraphQLError> {
+    match state.query_timeout {
+        None => fut.await,
+        Some(limit) => tokio::time::timeout(limit, fut)
+            .await
+            .unwrap_or_else(|_| Err(GraphQLError::query_timeout())),
+    }
+}
+
 /// Executes an already-planned (non-subscription) operation.
-///
-/// The whole operation — every root field's pool wait + prepare + query —
-/// shares one client-side time budget. The server-side statement_timeout
-/// can't help when Postgres has stopped responding, and a per-root-field
-/// bound would still let a request with N root fields hang for N budgets.
 pub async fn execute_operation(
     state: &Arc<ServeState>,
     schema: &RoleSchema,
     operation: &ir::Operation,
 ) -> Result<String, GraphQLError> {
-    match state.query_timeout {
-        None => execute_operation_inner(state, schema, operation).await,
-        Some(limit) => {
-            tokio::time::timeout(limit, execute_operation_inner(state, schema, operation))
-                .await
-                .unwrap_or_else(|_| Err(GraphQLError::query_timeout()))
-        }
-    }
+    with_query_timeout(state, execute_operation_inner(state, schema, operation)).await
+}
+
+/// Executes an already-planned `_stream` subscription poll: like
+/// `execute_operation`, but via `sql::execute_stream_root` so the next
+/// cursor position comes back from the same query as the batch instead of
+/// a second poll-doubling round trip. Returns the response body plus the
+/// new cursor values (`None` when the batch was empty, so the cursor
+/// should stay put).
+pub async fn execute_stream_operation(
+    state: &Arc<ServeState>,
+    operation: &ir::Operation,
+) -> Result<(String, Option<Vec<String>>), GraphQLError> {
+    with_query_timeout(state, execute_stream_operation_inner(state, operation)).await
+}
+
+async fn execute_stream_operation_inner(
+    state: &Arc<ServeState>,
+    operation: &ir::Operation,
+) -> Result<(String, Option<Vec<String>>), GraphQLError> {
+    let Some(ir::RootField::Table(table_root)) = operation.root_fields.first() else {
+        return Err(GraphQLError::unexpected_payload(
+            "internal: stream operation missing its table root field",
+        ));
+    };
+    let mut out = String::with_capacity(256);
+    out.push_str("{\"data\":{");
+    out.push_str(&serde_json::to_string(&table_root.alias).unwrap());
+    out.push(':');
+    let cursor = sql::execute_stream_root(state, table_root, &mut out).await?;
+    out.push_str("}}");
+    Ok((out, cursor))
 }
 
 async fn execute_operation_inner(
