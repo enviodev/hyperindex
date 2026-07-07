@@ -60,35 +60,28 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Estimated number of items the query will return, from the partition's event
-  // density and the query's block range. `None` for the first two queries of a
-  // partition, before it has enough response history to derive a density. Used
-  // only to reserve the query's expected size against the shared buffer budget —
-  // never as the source's response cap (that's itemsTarget).
-  estResponseSize: option<float>,
+  // Owning partition's event density (items/block) from its last response, or
+  // `None` until it has two responses. The cross-chain scheduler reads it to size
+  // this query's itemsTarget (density × the block window it's allowed to reach).
+  density: option<float>,
   // Owning chain and the chain progress % at the query's fromBlock. Set by the
   // cross-chain scheduler so candidate queries can be pooled and ordered
   // (furthest-behind first) without allocating a side tuple per query.
   mutable chainId: int,
   mutable progress: float,
-  // Soft cap on items the source should return for this query (its maxNumLogs).
-  // Set by the cross-chain scheduler by spreading the buffer budget evenly across
-  // the queries dispatched this tick, so the buffer stays bounded regardless of
-  // how large the natural block range is or how many partitions there are.
+  // Soft cap on items the source should return for this query (its maxNumLogs),
+  // set by the cross-chain scheduler: the density-derived events expected within
+  // the query's share of the frontier reach, so the buffer stays bounded no
+  // matter how large the natural block range is or how many partitions there are.
   mutable itemsTarget: int,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
 }
 
-// Items a dispatched query reserves against the shared buffer budget. It won't
-// return more than itemsTarget (the source caps at it), and when we have a
-// density estimate it won't return more than that either — so reserve the
-// smaller of the two, falling back to the target when there's no estimate yet.
-let queryReservedSize = (query: query) =>
-  switch query.estResponseSize {
-  | Some(est) => Pervasives.min(est, query.itemsTarget->Int.toFloat)
-  | None => query.itemsTarget->Int.toFloat
-  }
+// A dispatched query returns at most itemsTarget items (the source caps at it),
+// so that's what it reserves against the shared buffer budget until its response
+// lands.
+let queryReservedSize = (query: query) => query.itemsTarget->Int.toFloat
 
 // Invert addressesByContractName into address→contractName for log-ownership
 // routing. 1:1 today (each address belongs to one contract), so no key
@@ -116,19 +109,14 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
-// Estimated items a query will return, from the partition's event density
-// (items/block derived from its last response) and the query's block range.
-// toBlock None is the open-ended tail, capped at knownHeight. `None` until the
-// partition has two responses of history (same gate as chunking): a single
-// sample is too noisy to size the budget against, so the first two queries carry
-// no estimate and reserve only their items target. A partition that responded
-// with no items has density 0, so its queries estimate at 0.
-let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~knownHeight) =>
+// A partition's event density (items/block) from its last response. `None` until
+// it has two responses of history (same gate as chunking): a single sample is
+// too noisy to size fetches against. A partition that responded with no items
+// has density 0 (correct — its queries add nothing to the buffer).
+let partitionDensity = (p: partition) =>
   switch getMinHistoryRange(p) {
   | None => None
-  | Some(_) =>
-    let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-    Some((toBlock->Option.getOr(knownHeight) - fromBlock + 1)->Int.toFloat *. density)
+  | Some(_) => Some(p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat)
   }
 
 let getMinQueryRange = (partitions: array<partition>) => {
@@ -616,6 +604,67 @@ let bufferReadyCount = (fetchState: t) => {
   }
   lo.contents
 }
+
+// Below this fraction of the frontier cluster having a density reading, the
+// cluster estimate is too thin to trust and callers fall back to a fixed reach.
+let minDensityCoverage = 0.2
+
+// Event density (items/block) of the region about to be fetched: the sum of
+// densities over the partitions sitting at the frontier (the back cluster), not
+// every partition — partitions parked far ahead cover a different stretch of the
+// chain and contribute nothing here. Partitions are stored sorted by
+// latestFetchedBlock, so the cluster is the prefix within tooFarBlockRange of the
+// earliest one. When only some cluster partitions have a reading, the known
+// average is projected across the whole cluster; below minDensityCoverage there's
+// too little signal and it returns None (caller uses a fixed reach instead).
+let frontierDensity = ({optimizedPartitions}: t): option<float> => {
+  let ids = optimizedPartitions.idsInAscOrder
+  switch ids->Array.get(0) {
+  | None => None
+  | Some(firstId) =>
+    let clusterMax =
+      (optimizedPartitions.entities->Dict.getUnsafe(firstId)).latestFetchedBlock.blockNumber +
+      OptimizedPartitions.tooFarBlockRange
+    let clusterCount = ref(0)
+    let knownCount = ref(0)
+    let knownSum = ref(0.)
+    let idx = ref(0)
+    let inCluster = ref(true)
+    while idx.contents < ids->Array.length && inCluster.contents {
+      let p = optimizedPartitions.entities->Dict.getUnsafe(ids->Array.getUnsafe(idx.contents))
+      if p.latestFetchedBlock.blockNumber <= clusterMax {
+        clusterCount := clusterCount.contents + 1
+        switch partitionDensity(p) {
+        | Some(density) =>
+          knownCount := knownCount.contents + 1
+          knownSum := knownSum.contents +. density
+        | None => ()
+        }
+        idx := idx.contents + 1
+      } else {
+        inCluster := false
+      }
+    }
+    if (
+      clusterCount.contents === 0 ||
+        knownCount.contents->Int.toFloat /. clusterCount.contents->Int.toFloat < minDensityCoverage
+    ) {
+      None
+    } else {
+      Some(
+        knownSum.contents /. knownCount.contents->Int.toFloat *. clusterCount.contents->Int.toFloat,
+      )
+    }
+  }
+}
+
+// Blocks spanned by the chain's indexed range, used to turn a progress-fraction
+// advance into a block distance. 0 until the first event is seen.
+let fetchRange = ({firstEventBlock, knownHeight}: t) =>
+  switch firstEventBlock {
+  | Some(firstEventBlock) => Pervasives.max(0, knownHeight - firstEventBlock)
+  | None => 0
+  }
 
 /*
 Comparitor for two events from the same chain. No need for chain id or timestamp
@@ -1385,12 +1434,7 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
-          estResponseSize: calculateEstResponseSize(
-            partition,
-            ~fromBlock=rangeFromBlock,
-            ~toBlock=rangeEndBlock,
-            ~knownHeight,
-          ),
+          density: partitionDensity(partition),
           chainId: 0,
           progress: 0.,
           itemsTarget: 0,
@@ -1415,12 +1459,7 @@ let pushQueriesForRange = (
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
-              estResponseSize: calculateEstResponseSize(
-                partition,
-                ~fromBlock=chunkFromBlock.contents,
-                ~toBlock=Some(chunkToBlock),
-                ~knownHeight,
-              ),
+              density: partitionDensity(partition),
               chainId: 0,
               progress: 0.,
               itemsTarget: 0,
@@ -1437,12 +1476,7 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
-            estResponseSize: calculateEstResponseSize(
-              partition,
-              ~fromBlock=rangeFromBlock,
-              ~toBlock=rangeEndBlock,
-              ~knownHeight,
-            ),
+            density: partitionDensity(partition),
             chainId: 0,
             progress: 0.,
             itemsTarget: 0,
@@ -1454,12 +1488,12 @@ let pushQueriesForRange = (
   }
 }
 
-// Candidate queries span the natural ceiling (head/endBlock/mergeBlock); their
-// estResponseSize is just a density-based prediction (or None before there's
-// history). CrossChainState.checkAndFetch is what bounds each tick: it sets every
-// admitted query's itemsTarget by spreading the shared buffer budget across the
-// queries it dispatches, and the HyperSync/SVM sources enforce that target
-// server-side as a maxNumLogs-style cap so the buffer can't overshoot.
+// Candidate queries span the natural ceiling (head/endBlock/mergeBlock), each
+// carrying its partition's density. CrossChainState.checkAndFetch is what bounds
+// each tick: it decides how far past the frontier to reach from the buffer budget
+// and the frontier density, admits only the candidates within that reach, and
+// sets each one's itemsTarget from its density — the HyperSync/SVM sources enforce
+// that target server-side as a maxNumLogs-style cap so the buffer can't overshoot.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
 ) => {

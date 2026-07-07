@@ -10,7 +10,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: None,
+  density: None,
   chainId: 0,
   progress: 0.,
   itemsTarget: 0,

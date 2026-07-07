@@ -196,17 +196,25 @@ let totalReservedSize = (crossChainState: t) => {
 let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
   Float.compare(a.progress, b.progress)
 
+// The reach a chain gets when it has no usable frontier density yet (cold start,
+// or a freshly-registered partition sitting at the frontier): probe a fixed block
+// window rather than reaching blindly. Reuses the partition "too far to merge"
+// threshold so the probe stays within one working cluster.
+let fixedReach = FetchState.OptimizedPartitions.tooFarBlockRange
+
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize events. Every chain proposes its candidate queries up to its
-// own natural ceiling (head/endBlock/mergeBlock), unconstrained by the shared
-// budget; the candidates are then pooled, ordered by chain progress
-// (furthest-behind first), and the queries needed to unblock the buffer are
-// admitted. The remaining buffer budget is spread evenly across the admitted
-// queries as their per-query items target (the source's response cap), so the
-// buffer stays bounded no matter how large a query's natural block range is or
-// how many partitions share the pool — one dense open-ended range can't balloon
-// the buffer, and many partitions each get a proportional slice instead of a
-// fixed default that would under-fetch or overshoot.
+// own natural ceiling (head/endBlock/mergeBlock); the scheduler then decides how
+// far past each chain's frontier to reach. From the shared budget and each warm
+// chain's frontier density it picks one progress-fraction advance (aligned, so
+// chains stay level for timestamp-ordered processing), turns that into a per-chain
+// block cutoff, and admits only the candidates within the cutoff — partitions
+// parked far ahead are skipped, since fetching them would only pile up
+// unprocessable items. Each admitted query's itemsTarget is its density times the
+// blocks it covers up to the cutoff, so the tick pulls in ~budget events total and
+// the buffer can't overshoot no matter how large a range or how many partitions.
+// Admission runs furthest-behind first, so when the budget is tight the most
+// behind chains claim it first.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -224,6 +232,13 @@ let checkAndFetch = async (
   // chain progress % at its fromBlock (the admission sort key), set here so the
   // pool can be ordered without a side tuple per query.
   let candidates = []
+  // Per-chain reach cutoff (block), keyed by chain id. Set to the fixed probe now
+  // for cold chains; warm chains are filled in once the aligned advance is known.
+  let cutoffByChain = Dict.make()
+  // Warm chains (frontier density known) and the running Σ(density × range) that
+  // sizes the shared progress advance.
+  let warmChains = []
+  let weightSum = ref(0.)
   for i in 0 to chainIds->Array.length - 1 {
     let chainId = chainIds->Array.getUnsafe(i)
     let cs = crossChainState->getChainState(chainId)
@@ -233,6 +248,14 @@ let checkAndFetch = async (
     | Ready(queries) =>
       // Default to NothingToQuery; replaced below if any candidate is admitted.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+      let frontier = cs->ChainState.frontierBlockNumber
+      let range = cs->ChainState.fetchRange
+      switch cs->ChainState.frontierDensity {
+      | Some(density) if range > 0 =>
+        weightSum := weightSum.contents +. density *. range->Int.toFloat
+        warmChains->Array.push((chainId, frontier, range))->ignore
+      | _ => cutoffByChain->Utils.Dict.setByInt(chainId, frontier + fixedReach)
+      }
       queries->Array.forEach(query => {
         query.chainId = chainId
         query.progress = cs->ChainState.getProgressPercentageAt(~blockNumber=query.fromBlock)
@@ -241,22 +264,62 @@ let checkAndFetch = async (
     }
   }
 
+  // Aligned advance: move every warm chain forward by the same progress fraction
+  // Δp, chosen so the tick's fetched events add up to the budget. Δp × range is
+  // the chain's block reach, floored at 1 (so the frontier partition is always
+  // reachable) and capped at its own range.
+  if budget > 0 && weightSum.contents > 0. {
+    let deltaP = budget->Int.toFloat /. weightSum.contents
+    warmChains->Array.forEach(((chainId, frontier, range)) => {
+      let reach = Pervasives.max(
+        1,
+        Pervasives.min(Js.Math.round(deltaP *. range->Int.toFloat)->Float.toInt, range),
+      )
+      cutoffByChain->Utils.Dict.setByInt(chainId, frontier + reach)
+    })
+  }
+
+  // Furthest-behind first, so the most-behind chains claim the budget first.
   candidates->Array.sort(compareByProgress)
 
-  // Admit the furthest-behind queries needed to unblock the buffer, then spread
-  // the budget evenly across them as each query's items target. Capping the
-  // count at the budget keeps every target >= 1 item (a smaller pool would leave
-  // budget on the table; a larger one would fetch sub-1-item queries), and since
-  // the whole pool sums to the budget the buffer never overshoots. At least one
-  // query is admitted whenever there's any budget, so a chain always progresses.
-  let admitCount = Pervasives.min(candidates->Array.length, budget)
-  let itemsTarget =
-    admitCount > 0 ? Js.Math.ceil_int(budget->Int.toFloat /. admitCount->Int.toFloat) : 0
+  // Even fallback cap for admitted candidates whose partition has no density yet,
+  // spread only across the near-frontier candidates that pass the reach filter.
+  let eligibleCount = ref(0)
+  candidates->Array.forEach(query =>
+    switch cutoffByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId) {
+    | Some(cutoff) if query.fromBlock <= cutoff => eligibleCount := eligibleCount.contents + 1
+    | _ => ()
+    }
+  )
+  let evenShare =
+    eligibleCount.contents > 0
+      ? Js.Math.ceil_int(budget->Int.toFloat /. eligibleCount.contents->Int.toFloat)
+      : 0
+
   let admittedByChain = Dict.make()
-  for idx in 0 to admitCount - 1 {
-    let query = candidates->Array.getUnsafe(idx)
-    query.itemsTarget = itemsTarget
-    admittedByChain->Utils.Dict.push(query.chainId->Int.toString, query)
+  let remaining = ref(budget)
+  let idx = ref(0)
+  while remaining.contents > 0 && idx.contents < candidates->Array.length {
+    let query = candidates->Array.getUnsafe(idx.contents)
+    idx := idx.contents + 1
+    switch cutoffByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId) {
+    // Parked beyond the reach — skip this tick, it would only add stuck items.
+    | Some(cutoff) if query.fromBlock <= cutoff =>
+      let effectiveTo = switch query.toBlock {
+      | Some(toBlock) => Pervasives.min(toBlock, cutoff)
+      | None => cutoff
+      }
+      let span = effectiveTo - query.fromBlock + 1
+      let baseTarget = switch query.density {
+      | Some(density) => Js.Math.round(density *. span->Int.toFloat)->Float.toInt
+      | None => evenShare
+      }
+      let target = Pervasives.min(remaining.contents, Pervasives.max(1, baseTarget))
+      query.itemsTarget = target
+      remaining := remaining.contents - target
+      admittedByChain->Utils.Dict.push(query.chainId->Int.toString, query)
+    | _ => ()
+    }
   }
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
     let partitions = Dict.make()

@@ -434,6 +434,9 @@ let contractAddresses = (cs: t, ~contractName) =>
   cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
+let frontierBlockNumber = (cs: t) => cs.fetchState->FetchState.bufferBlockNumber
+let frontierDensity = (cs: t) => cs.fetchState->FetchState.frontierDensity
+let fetchRange = (cs: t) => cs.fetchState->FetchState.fetchRange
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
 let getProgressPercentageAt = (cs: t, ~blockNumber) =>
   cs.fetchState->FetchState.getProgressPercentageAt(~blockNumber)

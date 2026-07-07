@@ -12,7 +12,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: None,
+  density: None,
   chainId: 0,
   progress: 0.,
   itemsTarget: 0,
@@ -1845,7 +1845,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
   // The default configuration with ability to overwrite some values.
   // Partitions here have no response yet, so their queries carry no size
-  // estimate (estResponseSize is None until a partition has two responses).
+  // estimate (density is None until a partition has two responses).
   let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
@@ -3221,7 +3221,7 @@ describe("FetchState unit tests for specific cases", () => {
           partition2Query,
           {
             // Only one response so far, so there's no density yet and the query
-            // carries no estimate (estResponseSize None until two responses).
+            // carries no estimate (density None until two responses).
             ...queryA,
             partitionId: "1",
             toBlock: Some(500),
