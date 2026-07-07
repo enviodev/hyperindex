@@ -124,13 +124,25 @@ impl TryFrom<FieldSelection> for SolanaFieldSelection {
     type Error = anyhow::Error;
 
     fn try_from(f: FieldSelection) -> Result<Self> {
+        let mut token_balance =
+            parse_fields::<TokenBalanceField>(f.token_balance, "token_balance")?;
+        // An empty list means the query isn't opted into token-balance rows at
+        // all (server-side "merge mode": a table needs its columns spelled out
+        // to join the result set — see `SvmHyperSyncSource.res`'s
+        // `needsTokenBalances` comment), so leave it alone. A non-empty list
+        // means balances are being fetched, and the store keys those rows by
+        // account, so `account` must always come back regardless of what the
+        // caller selected.
+        if !token_balance.is_empty() && !token_balance.contains(&TokenBalanceField::Account) {
+            token_balance.push(TokenBalanceField::Account);
+        }
         Ok(Self {
             block: parse_fields::<BlockField>(f.block, "block")?,
             transaction: parse_fields::<TransactionField>(f.transaction, "transaction")?,
             instruction: parse_fields::<InstructionField>(f.instruction, "instruction")?,
             log: parse_fields::<LogField>(f.log, "log")?,
             balance: parse_fields::<BalanceField>(f.balance, "balance")?,
-            token_balance: parse_fields::<TokenBalanceField>(f.token_balance, "token_balance")?,
+            token_balance,
             reward: parse_fields::<RewardField>(f.reward, "reward")?,
         })
     }
@@ -264,5 +276,46 @@ impl TryFrom<SvmQuery> for net::SolanaQuery {
                 .filter(|v| *v >= 0)
                 .map(|v| v as usize),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field_selection(token_balance: Option<Vec<String>>) -> SolanaFieldSelection {
+        FieldSelection {
+            token_balance,
+            ..Default::default()
+        }
+        .try_into()
+        .expect("valid field selection")
+    }
+
+    #[test]
+    fn account_is_force_added_when_token_balances_are_selected() {
+        let selection = field_selection(Some(vec!["mint".to_string()]));
+        assert_eq!(
+            selection.token_balance,
+            vec![TokenBalanceField::Mint, TokenBalanceField::Account]
+        );
+    }
+
+    #[test]
+    fn account_is_not_duplicated_when_already_selected() {
+        let selection = field_selection(Some(vec!["account".to_string(), "mint".to_string()]));
+        assert_eq!(
+            selection.token_balance,
+            vec![TokenBalanceField::Account, TokenBalanceField::Mint]
+        );
+    }
+
+    #[test]
+    fn empty_token_balance_selection_stays_empty() {
+        // An empty list opts the query OUT of token-balance rows entirely
+        // (server-side merge-mode semantics); force-adding `account` here
+        // would wrongly opt every query into fetching them.
+        assert!(field_selection(None).token_balance.is_empty());
+        assert!(field_selection(Some(vec![])).token_balance.is_empty());
     }
 }
