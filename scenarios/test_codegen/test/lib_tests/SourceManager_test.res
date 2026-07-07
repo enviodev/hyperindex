@@ -487,7 +487,6 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      reservedSize: 5000.,
       fetchedBlock: None,
     }
     // Chunking on (prevQueryRange set) so the tail wants two chunks per round.

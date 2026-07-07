@@ -266,7 +266,10 @@ let checkAndFetch = async (
   )
   // Stuck = total buffered minus ready (landed) and reserved-total minus
   // reserved-ready (in flight). Allow up to `target` stuck items ahead, so total
-  // buffered stays within ~2×target.
+  // buffered settles around ~2×target. It can transiently exceed that: a
+  // gap-closer for a cluster partition that isn't the current minimum lands above
+  // the frontier (stuck) but is charged to the ready budget, not this one — that
+  // overshoot is bounded by the cluster width and drains as the minimum advances.
   let prefetchBudget = Pervasives.max(
     0,
     target -

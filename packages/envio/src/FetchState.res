@@ -13,10 +13,6 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Items reserved against the shared buffer budget when this query was
-  // dispatched (min of the estimate and the items target, or the items target
-  // when there's no estimate yet). Released when the response lands.
-  reservedSize: float,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -1392,7 +1388,6 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
-      reservedSize: q->queryReservedSize,
       fetchedBlock: None,
     }
 
@@ -1445,7 +1440,7 @@ let pushQueriesForRange = (
           chainId: 0,
           progress: 0.,
           itemsTarget: 0,
-              isPrefetch: false,
+          isPrefetch: false,
           addressesByContractName,
         })
       | Some(chunkRange) =>
@@ -1489,7 +1484,7 @@ let pushQueriesForRange = (
             chainId: 0,
             progress: 0.,
             itemsTarget: 0,
-              isPrefetch: false,
+            isPrefetch: false,
             addressesByContractName,
           })
         }

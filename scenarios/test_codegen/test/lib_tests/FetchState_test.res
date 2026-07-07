@@ -1891,7 +1891,6 @@ describe("FetchState.getNextQuery & integration", () => {
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
-        reservedSize: 0.,
         fetchedBlock: None,
       },
     ])
@@ -2329,7 +2328,6 @@ describe("FetchState.getNextQuery & integration", () => {
                 fromBlock: 11,
                 toBlock: None,
                 isChunk: false,
-                reservedSize: 0.,
                 fetchedBlock: None,
               },
             ],
