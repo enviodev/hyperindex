@@ -336,33 +336,15 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
 
-      // Build a real registration the same way `ChainState.makeInternal` does
-      // (not a stub), so the address filter and `where` behave identically to
-      // real indexing — the dead-input tracker relies on `clientAddressFilter`
-      // actually gating unrouted items.
-      let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
-      let handler = HandlerRegister.getHandler(~contractName, ~eventName)
-      let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
-      let onEventRegistration: Internal.onEventRegistration = switch config.ecosystem.name {
-      | Fuel =>
-        (EventConfigBuilder.buildFuelOnEventRegistration(
-          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-        ) :> Internal.onEventRegistration)
-      | Evm =>
-        (EventConfigBuilder.buildEvmOnEventRegistration(
-          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
-          ~probeChainId=chainId,
-          ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
-        ) :> Internal.onEventRegistration)
-      | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
-      }
+      // Build a real registration the same way `HandlerRegister.buildOnEventRegistrations`
+      // does at startup (not a stub), so the address filter and `where`
+      // behave identically to real indexing — the dead-input tracker relies
+      // on `clientAddressFilter` actually gating unrouted items.
+      let onEventRegistration = HandlerRegister.buildOnEventRegistration(
+        ~config,
+        ~chainId,
+        ~eventConfig,
+      )
 
       items
       ->Array.push(

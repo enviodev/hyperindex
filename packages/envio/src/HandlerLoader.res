@@ -73,10 +73,11 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 }
 
 // `Config` holds only event definitions; handler + per-chain `where`
-// registration state is layered on as `onEventRegistration`s by
-// `HandlerRegister.finishRegistration`. This loads the user handler files and
-// returns the (unchanged) definitions config plus the per-chain registrations.
-let registerAllHandlers = async (~config: Config.t) => {
+// registration state is layered on separately as `onEventRegistration`s by
+// `HandlerRegister.finishRegistration`. This loads the user handler files
+// (populating the global `HandlerRegister` registry as a side effect) and
+// returns the resulting per-chain registrations.
+let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem)
 
   // Auto-load all .js files from src/handlers directory
@@ -89,6 +90,5 @@ let registerAllHandlers = async (~config: Config.t) => {
   })
   ->Promise.all
 
-  let registrationsByChainId = HandlerRegister.finishRegistration(~config)
-  (config, registrationsByChainId)
+  HandlerRegister.finishRegistration(~config)
 }

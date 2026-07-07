@@ -319,7 +319,7 @@ module Indexer = {
       }
     }
 
-    let (config, registrationsByChainId) = await HandlerLoader.registerAllHandlers(~config)
+    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema

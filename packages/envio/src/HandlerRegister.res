@@ -33,7 +33,7 @@ type activeRegistration = {
 // Stashed on `globalThis` so a duplicate envio module instance — e.g. when the
 // CLI's `bin.mjs` resolves envio from one path but the user's handlers resolve
 // it from `node_modules/envio` — shares one registry. Without this, each copy
-// keeps its own dict and `applyRegistrations` reads empty state.
+// keeps its own dict and `buildOnEventRegistrations` reads empty state.
 //
 // Version-gated: the record shapes below can evolve between envio versions,
 // so the guard uses strict full-version equality. On mismatch we throw with
@@ -131,6 +131,57 @@ let startRegistration = (~ecosystem) => {
   }
 }
 
+// Enrich one event definition into its (event, chain) registration using
+// whatever handler/contractRegister/where the user registered for it. Shared
+// by chain startup (`buildOnEventRegistrations`), `simulate`, and test
+// helpers so the three stay in sync instead of re-deriving the per-ecosystem
+// dispatch each place.
+let buildOnEventRegistration = (
+  ~config: Config.t,
+  ~chainId: int,
+  ~eventConfig: Internal.eventConfig,
+  ~startBlock=?,
+): Internal.onEventRegistration => {
+  let contractName = eventConfig.contractName
+  let eventName = eventConfig.name
+  let t = get(~contractName, ~eventName)
+  let isWildcard = t.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+  let handler = t.handler
+  let contractRegister = t.contractRegister
+
+  switch config.ecosystem.name {
+  | Fuel =>
+    (EventConfigBuilder.buildFuelOnEventRegistration(
+      ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
+      ~isWildcard,
+      ~handler,
+      ~contractRegister,
+      ~startBlock?,
+    ) :> Internal.onEventRegistration)
+  | Svm =>
+    (EventConfigBuilder.buildSvmOnEventRegistration(
+      ~eventConfig=eventConfig->(
+        Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+      ),
+      ~isWildcard,
+      ~handler,
+      ~contractRegister,
+      ~startBlock?,
+    ) :> Internal.onEventRegistration)
+  | Evm =>
+    (EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
+      ~isWildcard,
+      ~handler,
+      ~contractRegister,
+      ~eventFilters=t.eventOptions->Option.flatMap(v => v.where),
+      ~probeChainId=chainId,
+      ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
+      ~startBlock?,
+    ) :> Internal.onEventRegistration)
+  }
+}
+
 // Enrich a chain's static event definitions with the registered
 // handler/contractRegister/where (validating them along the way) to produce
 // the onEventRegistrations ChainState indexes off. Runs once per chain when
@@ -158,42 +209,14 @@ let buildOnEventRegistrations = (
 
     contract.events->Array.forEach(eventConfig => {
       let eventName = eventConfig.name
-      let t = get(~contractName, ~eventName)
-      let isWildcard = t.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
-      let handler = t.handler
-      let contractRegister = t.contractRegister
 
-      let onEventRegistration = switch config.ecosystem.name {
-      | Fuel =>
-        (EventConfigBuilder.buildFuelOnEventRegistration(
-          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~startBlock=?contract.startBlock,
-        ) :> Internal.onEventRegistration)
-      | Svm =>
-        (EventConfigBuilder.buildSvmOnEventRegistration(
-          ~eventConfig=eventConfig->(
-            Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
-          ),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~startBlock=?contract.startBlock,
-        ) :> Internal.onEventRegistration)
-      | Evm =>
-        (EventConfigBuilder.buildEvmOnEventRegistration(
-          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~eventFilters=t.eventOptions->Option.flatMap(v => v.where),
-          ~probeChainId=chainConfig.id,
-          ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
-          ~startBlock=?contract.startBlock,
-        ) :> Internal.onEventRegistration)
-      }
+      let onEventRegistration = buildOnEventRegistration(
+        ~config,
+        ~chainId=chainConfig.id,
+        ~eventConfig,
+        ~startBlock=?contract.startBlock,
+      )
+      let {isWildcard, handler, contractRegister} = onEventRegistration
 
       // Should validate the events
       eventRouter->EventRouter.addOrThrow(

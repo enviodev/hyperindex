@@ -1,12 +1,13 @@
 open Vitest
 
-// `registerAllHandlers` returns `(configWithRegistrations, _)` — the returned
-// config captures the event filters registered by the handler modules.
-let (configWithRegistrations, _) = await HandlerLoader.registerAllHandlers(
-  ~config=Config.loadWithoutRegistrations(),
-)
+// `registerAllHandlers` loads the handler modules, which register the event
+// filters into the global `HandlerRegister` registry as a side effect — that
+// registry state (not `config`, which never changes) is what
+// `MockConfig.getEvmOnEventRegistration` reads below.
+let config = Config.loadWithoutRegistrations()
+let _ = await HandlerLoader.registerAllHandlers(~config)
 
-let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config=configWithRegistrations, ...)
+let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config, ...)
 
 // The codegen'd onEventWhereArgs is structurally compatible with
 // Internal.onEventWhereArgs<_> at runtime; runtime parser uses Obj.magic.

@@ -699,31 +699,30 @@ let start = async (
   }
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  let configWithoutRegistrations = Config.loadWithoutRegistrations()
+  let config = Config.loadWithoutRegistrations()
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`
   // leaves it false so the process exits cleanly when indexing completes.
-  let isDevelopmentMode = !isTest && configWithoutRegistrations.isDev
+  let isDevelopmentMode = !isTest && config.isDev
   let persistence = switch persistence {
   | Some(p) => p
-  | None => PgStorage.makePersistenceFromConfig(~config=configWithoutRegistrations)
+  | None => PgStorage.makePersistenceFromConfig(~config)
   }
   globalPersistenceRef := Some(persistence)
   await persistence->Persistence.init(
     ~reset,
-    ~chainConfigs=configWithoutRegistrations.chainMap->ChainMap.values,
+    ~chainConfigs=config.chainMap->ChainMap.values,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
   )
 
-  // `Config.loadWithoutRegistrations` never sees registration state; handler,
-  // contractRegister, and eventFilters are baked into each event config only
-  // by the returned value here.
-  let (config, registrationsByChainId) = await HandlerLoader.registerAllHandlers(
-    ~config=configWithoutRegistrations,
-  )
+  // Loads user handler files, which register handler/contractRegister/where
+  // state into the global `HandlerRegister` registry as a side effect; this
+  // returns that state resolved into per-chain registrations. `config` itself
+  // is never mutated by registration — it holds only event definitions.
+  let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
   } else {

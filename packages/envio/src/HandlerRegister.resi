@@ -9,6 +9,13 @@ let isPendingRegistration: unit => bool
 let finishRegistration: (~config: Config.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
 
+let buildOnEventRegistration: (
+  ~config: Config.t,
+  ~chainId: int,
+  ~eventConfig: Internal.eventConfig,
+  ~startBlock: int=?,
+) => Internal.onEventRegistration
+
 let setHandler: (
   ~contractName: string,
   ~eventName: string,
