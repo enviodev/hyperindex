@@ -587,27 +587,15 @@ impl TransactionStore {
     }
 
     /// Merge one response's SVM token balances into the companion table, keyed
-    /// by (slot, transactionIndex, account) — unique per account, so this
-    /// dedups repeated observations of the same account the same way the
-    /// transaction table dedups transactions. Rows without a transaction index
-    /// or account are dropped; the SVM query forces `account` into the field
-    /// selection whenever token balances are requested, so a real response
-    /// row always carries one. Not exposed to JS.
+    /// by (slot, transactionIndex, account). Rows missing either are dropped;
+    /// the SVM query forces `account` into the field selection whenever token
+    /// balances are requested, so a real response row always carries one. Not
+    /// exposed to JS.
     pub(crate) fn insert_svm_token_balances(&self, mut rows: Vec<solana_simple::TokenBalance>) {
         rows.retain(|r| r.transaction_index.is_some() && r.account.is_some());
         if rows.is_empty() {
             return;
         }
-        let keys = rows
-            .iter()
-            .map(|r| {
-                (
-                    r.slot,
-                    r.transaction_index.unwrap(),
-                    r.account.clone().unwrap().into_boxed_str(),
-                )
-            })
-            .collect();
         let str_col = |f: fn(&solana_simple::TokenBalance) -> Option<&str>| -> Option<AnyCol> {
             crate::field_table::var_from(&rows, |r| f(r).map(str::as_bytes))
         };
@@ -617,6 +605,16 @@ impl TransactionStore {
             str_col(|r| r.pre_amount.as_deref()),
             str_col(|r| r.post_amount.as_deref()),
         ];
+        let keys = rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.slot,
+                    r.transaction_index.unwrap(),
+                    r.account.unwrap().into_boxed_str(),
+                )
+            })
+            .collect();
         self.inner
             .lock()
             .unwrap()
@@ -881,6 +879,40 @@ mod tests {
             (nonces(&after_prune), nonces(&after_rollback)),
             (vec![false, true, true], vec![false, true, false])
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn merge_resolves_re_fetched_transaction_to_newest() {
+        // The same (block, index) is re-fetched with a different `input` (an
+        // overlapping-partition or reorg re-fetch): the persistent store must
+        // resolve to the fresh copy, not accumulate both.
+        let persistent = TransactionStore::new_evm(false);
+
+        let page1 = TransactionStore::new_evm(false);
+        let mut first = raw_tx(1, 0);
+        first.input = Some(hypersync_client::format::Data::from(
+            vec![0xaa].into_boxed_slice(),
+        ));
+        page1.insert_evm_txs(vec![first]);
+        persistent.merge(&page1);
+
+        let page2 = TransactionStore::new_evm(false);
+        let mut second = raw_tx(1, 0);
+        second.input = Some(hypersync_client::format::Data::from(
+            vec![0xbb].into_boxed_slice(),
+        ));
+        page2.insert_evm_txs(vec![second]);
+        persistent.merge(&page2);
+
+        let mask = bit(EvmTxField::Input) as f64;
+        let cols = persistent
+            .materialize(vec![1], vec![0], vec![mask])
+            .await
+            .expect("materialize");
+        match column(&cols, "input") {
+            Some(Column::Str(v)) => assert_eq!(v, &vec![Some("0xbb".to_string())]),
+            other => panic!("expected input column, got present={}", other.is_some()),
+        }
     }
 
     #[test]

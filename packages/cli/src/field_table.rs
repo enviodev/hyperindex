@@ -286,11 +286,9 @@ impl AnyCol {
     }
 }
 
-/// One field's column, addressed by table slot rather than append order.
-/// Numeric and fixed-width cells overwrite in place; variable-width and list
-/// cells are individually boxed so overwriting a slot drops the old
-/// allocation immediately instead of it lingering until some later
-/// compaction pass reclaims it.
+/// One field's column, addressed by table slot. Variable-width and list cells
+/// are individually boxed so overwriting a slot frees the old allocation
+/// immediately rather than leaking until some later compaction.
 pub(crate) enum StoreCol {
     U64(Vec<u64>),
     I64(Vec<i64>),
@@ -306,8 +304,7 @@ pub(crate) enum StoreCol {
 }
 
 impl StoreCol {
-    /// An empty column of the same kind (and width) as `template`, used when a
-    /// field is seen for the first time.
+    /// An empty column matching `template`'s kind (and width, for `Fixed`).
     fn new_like(template: &AnyCol) -> Self {
         match template {
             AnyCol::U64(_) => StoreCol::U64(Vec::new()),
@@ -379,9 +376,8 @@ impl StoreCol {
         }
     }
 
-    /// Overwrite `slot` from `src`'s row `row`. The caller has already checked
-    /// `src.is_valid(row)`; a variable-width or list cell replaces (and so
-    /// drops) whatever the slot held before.
+    /// Overwrite `slot` from `src`'s row `row`. Caller must check
+    /// `src.is_valid(row)` first.
     fn set_from(&mut self, slot: usize, src: &AnyCol, row: usize) {
         match (self, src) {
             (StoreCol::U64(v), AnyCol::U64(s)) => v[slot] = s.get(row).unwrap(),
@@ -453,12 +449,10 @@ impl StoreCol {
     }
 }
 
-/// Merge-on-insert columnar table: one slot per distinct key, columns grown
-/// and overwritten in place rather than appended as immutable chunks. Two
-/// indexes stay in sync with every insert: `by_key` for point lookup and
-/// insert dedup, `order` for the range scans prune/rollback/token-balance read
-/// need. Freed slots go on `free` and are reused before the table grows, so
-/// capacity never shrinks but also never leaks.
+/// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
+/// point lookup and insert dedup; `order` backs the range scans prune,
+/// rollback, and token-balance read need. `free` holds freed slots for reuse,
+/// so capacity never shrinks but also never leaks.
 pub(crate) struct Table<K> {
     by_key: HashMap<K, u32>,
     order: BTreeMap<K, u32>,
@@ -525,13 +519,10 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.free.push(slot);
     }
 
-    /// Merge one batch's rows into the table: each key resolves to its
-    /// existing slot or a freshly allocated one, and every field the batch has
-    /// a valid cell for overwrites that slot's value and sets its mask bit. A
-    /// field the batch doesn't carry for a row is left untouched, so unioning
-    /// a batch with fewer fields than an earlier one for the same key only
-    /// ever adds coverage. Keys need not be sorted or unique within the batch
-    /// (a repeated key is just overwritten again — last write wins).
+    /// Merge one batch's rows into the table, per field: a field the batch
+    /// has no valid cell for is left untouched, so a sparser batch only ever
+    /// adds coverage to a key's existing row. Keys need not be sorted or
+    /// unique within the batch.
     pub(crate) fn merge_batch(&mut self, keys: Vec<K>, cols: Vec<Option<AnyCol>>) {
         debug_assert_eq!(cols.len(), self.n_fields);
         for (row, key) in keys.into_iter().enumerate() {
@@ -575,8 +566,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         other.clear();
     }
 
-    /// Drop rows with keys `<= up_to` (processed): freed slots are cleared
-    /// (dropping any boxed cells) and pushed onto the free list for reuse.
+    /// Drop rows with keys `<= up_to` (processed).
     pub(crate) fn prune(&mut self, up_to: K) {
         let dead: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
         for k in dead {
@@ -614,11 +604,10 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.len = 0;
     }
 
-    /// The per-field scratch a `materialize` call decodes from: one gathered
-    /// column per field whose bit is set in any row's mask, resolving each
-    /// requested key to its slot once (not once per field) and respecting both
-    /// the caller's per-row mask and the slot's own field presence. Built
-    /// under the store lock; decoding then runs on the caller's own copy.
+    /// The per-field scratch a `materialize` call decodes from: resolves each
+    /// requested key to its slot once, then gathers a column per field whose
+    /// bit is set in any row's mask, respecting both the caller's per-row mask
+    /// and the slot's own field presence.
     pub(crate) fn gather_scratch(&self, keys: &[Option<K>], masks: &[u64]) -> Vec<Option<AnyCol>> {
         let slots: Vec<Option<u32>> = keys
             .iter()
@@ -653,10 +642,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
 /// balances are requested, so it's always available to key on), so it isn't
 /// stored as its own column.
 impl Table<(u64, u32, Box<str>)> {
-    /// All slots for `(block, tx_index)`, in account order — the SVM
-    /// transaction decoder's per-row token-balance read. The empty-string
-    /// lower bound sorts before any account, so the range covers every row for
-    /// the pair before the third key component starts excluding rows.
+    /// All slots for `(block, tx_index)`, in account order. `""` sorts before
+    /// any real account, so the range starts exactly at the pair's first row.
     pub(crate) fn range_slots(
         &self,
         block: u64,
@@ -1147,5 +1134,24 @@ mod tests {
                 ("acctB".to_string(), b"mintB".to_vec()),
             ]
         );
+    }
+
+    #[test]
+    fn clear_drops_all_rows_and_resets_growth() {
+        let mut table = Table::new(2);
+        let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, Some(20), None)]);
+        table.merge_batch(keys, cols);
+
+        table.clear();
+        assert_eq!(
+            (table.len, table.free.len(), gathered_u64(&table, &[1, 2])),
+            (0, 0, vec![None, None])
+        );
+
+        // The table is fully usable afterwards, growing fresh from slot 0
+        // rather than carrying over any pre-clear state.
+        let (keys, cols) = u64_batch(&[(9, Some(90), None)]);
+        table.merge_batch(keys, cols);
+        assert_eq!((table.len, gathered_u64(&table, &[9])), (1, vec![Some(90)]));
     }
 }

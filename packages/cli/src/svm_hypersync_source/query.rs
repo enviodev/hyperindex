@@ -126,13 +126,10 @@ impl TryFrom<FieldSelection> for SolanaFieldSelection {
     fn try_from(f: FieldSelection) -> Result<Self> {
         let mut token_balance =
             parse_fields::<TokenBalanceField>(f.token_balance, "token_balance")?;
-        // An empty list means the query isn't opted into token-balance rows at
-        // all (server-side "merge mode": a table needs its columns spelled out
-        // to join the result set — see `SvmHyperSyncSource.res`'s
-        // `needsTokenBalances` comment), so leave it alone. A non-empty list
-        // means balances are being fetched, and the store keys those rows by
-        // account, so `account` must always come back regardless of what the
-        // caller selected.
+        // Our caller only lists token_balance columns when balances are
+        // actually wanted (see SvmHyperSyncSource.res); an empty list must
+        // stay untouched. Otherwise force `account` in — the store keys
+        // balance rows by account regardless of what the caller selected.
         if !token_balance.is_empty() && !token_balance.contains(&TokenBalanceField::Account) {
             token_balance.push(TokenBalanceField::Account);
         }

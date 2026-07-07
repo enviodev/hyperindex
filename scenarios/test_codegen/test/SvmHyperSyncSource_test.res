@@ -270,4 +270,51 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
     t.expect(fields.block).toEqual(Some([Slot, Blockhash, BlockTime, BlockHeight, ParentBlockhash]))
   })
+
+  // Token balances are keyed by account in the store, so the query must always
+  // carry `account` alongside whatever columns opted the table in — matches
+  // the Rust store's field_table.rs Table<(slot, txIndex, account)> key.
+  Async.it(
+    "requests tokenBalance columns with account included, and skips the transaction table",
+    async t => {
+      let eventConfig = makeEventConfig(~selectedTransactionFields=[TokenBalances])
+      let source = makeSource(~eventConfigs=[eventConfig])
+
+      let _ = await source.getItemsOrThrow(
+        ~fromBlock=slot - 10,
+        ~toBlock=Some(slot + 10),
+        ~addressesByContractName=Dict.fromArray([
+          ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+        ]),
+        ~contractNameByAddress,
+        ~knownHeight=slot + 1000,
+        ~partitionId="0",
+        ~selection={
+          eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          dependsOnAddresses: true,
+        },
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      )
+
+      let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+      let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
+      let expectedTokenBalance: option<array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>> = Some([
+        Slot,
+        TransactionIndex,
+        Account,
+        Mint,
+        Owner,
+        PreAmount,
+        PostAmount,
+      ])
+      t.expect({
+        "tokenBalance": fields.tokenBalance,
+        "transaction": fields.transaction,
+      }).toEqual({
+        "tokenBalance": expectedTokenBalance,
+        "transaction": None,
+      })
+    },
+  )
 })
