@@ -185,7 +185,7 @@ let totalReservedSize = (crossChainState: t) => {
   let total = ref(0.)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    total := total.contents +. cs->ChainState.pendingBudget
+    total := total.contents +. cs->ChainState.reservedSize
   }
   total.contents
 }
