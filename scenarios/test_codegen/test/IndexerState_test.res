@@ -165,7 +165,7 @@ let getItemKey = (item: Internal.item) =>
       blockNumber,
       logIndex,
     )
-  | Block({onBlockConfig: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+  | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
   }
 
 // Advance each chain's fetchState to its post-batch state, simulating the loop

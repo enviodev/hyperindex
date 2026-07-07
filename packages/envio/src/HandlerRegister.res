@@ -10,11 +10,23 @@ let empty = {
   eventOptions: None,
 }
 
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+// Per-chain onEventRegistrations built from the event definitions in
+// `Config.t` plus whatever handler/contractRegister/eventOptions got
+// registered for them, and the onBlock registrations collected during
+// registration.
+type chainRegistrations = {
+  onEventRegistrations: array<Internal.onEventRegistration>,
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+}
+
+// The finished registration state returned by `finishRegistration`.
+type registrationsByChainId = dict<chainRegistrations>
+
+type pendingRegistrations = {onBlockByChainId: dict<array<Internal.onBlockRegistration>>}
 
 type activeRegistration = {
   ecosystem: Ecosystem.t,
-  registrations: registrations,
+  registrations: pendingRegistrations,
   mutable finished: bool,
 }
 
@@ -119,11 +131,179 @@ let startRegistration = (~ecosystem) => {
   }
 }
 
-let finishRegistration = () => {
+// Enrich a chain's static event definitions with the registered
+// handler/contractRegister/where (validating them along the way) to produce
+// the onEventRegistrations ChainState indexes off. Runs once per chain when
+// registration finishes, so a bad `where`/duplicate event throws during
+// startup with a stack trace pointing here instead of surfacing later from
+// inside ChainState's construction. Events without a handler/contractRegister
+// get added to `notRegisteredEventsByContract` (event names grouped by
+// contract name) so the caller can report them once for the whole indexer
+// instead of per chain.
+let buildOnEventRegistrations = (
+  ~chainConfig: Config.chain,
+  ~config: Config.t,
+  ~notRegisteredEventsByContract: dict<Utils.Set.t<string>>,
+): array<Internal.onEventRegistration> => {
+  // We don't need the router itself, but only validation logic,
+  // since now event router is created for selection of events
+  // and validation doesn't work correctly in routers.
+  // Ideally to split it into two different parts.
+  let eventRouter = EventRouter.empty()
+
+  let onEventRegistrations: array<Internal.onEventRegistration> = []
+
+  chainConfig.contracts->Array.forEach(contract => {
+    let contractName = contract.name
+
+    contract.events->Array.forEach(eventConfig => {
+      let eventName = eventConfig.name
+      let t = get(~contractName, ~eventName)
+      let isWildcard = t.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+      let handler = t.handler
+      let contractRegister = t.contractRegister
+
+      let onEventRegistration = switch config.ecosystem.name {
+      | Fuel =>
+        (EventConfigBuilder.buildFuelOnEventRegistration(
+          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~startBlock=?contract.startBlock,
+        ) :> Internal.onEventRegistration)
+      | Svm =>
+        (EventConfigBuilder.buildSvmOnEventRegistration(
+          ~eventConfig=eventConfig->(
+            Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+          ),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~startBlock=?contract.startBlock,
+        ) :> Internal.onEventRegistration)
+      | Evm =>
+        (EventConfigBuilder.buildEvmOnEventRegistration(
+          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~eventFilters=t.eventOptions->Option.flatMap(v => v.where),
+          ~probeChainId=chainConfig.id,
+          ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
+          ~startBlock=?contract.startBlock,
+        ) :> Internal.onEventRegistration)
+      }
+
+      // Should validate the events
+      eventRouter->EventRouter.addOrThrow(
+        eventConfig.id,
+        (),
+        ~contractName,
+        ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
+        ~eventName,
+        ~isWildcard,
+      )
+
+      // Filter out events without a handler/contractRegister so they aren't
+      // fetched or dispatched (unless raw events are enabled).
+      let shouldBeIncluded = if config.enableRawEvents {
+        true
+      } else {
+        let isRegistered = contractRegister->Option.isSome || handler->Option.isSome
+        if !isRegistered {
+          let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
+            contractName,
+          ) {
+          | Some(set) => set
+          | None => {
+              let set = Utils.Set.make()
+              notRegisteredEventsByContract->Dict.set(contractName, set)
+              set
+            }
+          }
+          eventNames->Utils.Set.add(eventName)->ignore
+        }
+        isRegistered
+      }
+
+      // Check if event has Static([]) filters (from a dynamic where
+      // callback returning `false` / SkipAll for this chain).
+      // If so, skip it entirely - it should never be fetched
+      let shouldSkip = try {
+        let getEventFiltersOrThrow = (
+          onEventRegistration->(
+            Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration
+          )
+        ).getEventFiltersOrThrow
+
+        // Check for non-evm chains
+        if (
+          getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool)
+        ) {
+          switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
+          | Static([]) => true
+          | _ => false
+          }
+        } else {
+          false
+        }
+      } catch {
+      // Can throw when filter is invalid
+      // Don't skip an event in this case. Let it throw in a better place - source code
+      | _ => false
+      }
+
+      if shouldBeIncluded && !shouldSkip {
+        onEventRegistrations->Array.push(onEventRegistration)
+      }
+    })
+  })
+
+  onEventRegistrations
+}
+
+let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch activeRegistration.contents {
   | Some(r) => {
       r.finished = true
-      r.registrations
+      let notRegisteredEventsByContract: dict<Utils.Set.t<string>> = Dict.make()
+      let registrationsByChainId: registrationsByChainId = Dict.make()
+      config.chainMap
+      ->ChainMap.values
+      ->Array.forEach(chainConfig => {
+        let key = chainConfig.id->Int.toString
+        registrationsByChainId->Dict.set(
+          key,
+          {
+            onEventRegistrations: buildOnEventRegistrations(
+              ~chainConfig,
+              ~config,
+              ~notRegisteredEventsByContract,
+            ),
+            onBlockRegistrations: r.registrations.onBlockByChainId
+            ->Utils.Dict.dangerouslyGetNonOption(key)
+            ->Option.getOr([]),
+          },
+        )
+      })
+
+      // Reported once for the whole indexer (a shared contract on multiple
+      // chains would otherwise repeat the same message per chain).
+      let notRegisteredEntries = notRegisteredEventsByContract->Dict.toArray
+      if notRegisteredEntries->Utils.Array.notEmpty {
+        let groups =
+          notRegisteredEntries
+          ->Array.map(((contractName, eventNames)) =>
+            `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
+          )
+          ->Array.joinUnsafe(", ")
+        Logging.getLogger()->Logging.childInfo(
+          `Events without a handler, skipped for indexing: ${groups}`,
+        )
+      }
+
+      registrationsByChainId
     }
   | None =>
     JsError.throwWithMessage(
@@ -178,7 +358,7 @@ let registerOnBlock = (
           interval,
           chainId,
           handler,
-        }: Internal.onBlockConfig
+        }: Internal.onBlockRegistration
       ),
     )
   })

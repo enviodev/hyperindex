@@ -464,7 +464,7 @@ describe("SourceManager fetchNext", () => {
       chainId: 0,
       contractConfigs: Dict.make(),
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     }

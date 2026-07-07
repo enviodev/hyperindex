@@ -1,8 +1,12 @@
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+type chainRegistrations = {
+  onEventRegistrations: array<Internal.onEventRegistration>,
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+}
+type registrationsByChainId = dict<chainRegistrations>
 
 let startRegistration: (~ecosystem: Ecosystem.t) => unit
 let isPendingRegistration: unit => bool
-let finishRegistration: unit => registrations
+let finishRegistration: (~config: Config.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
 
 let setHandler: (

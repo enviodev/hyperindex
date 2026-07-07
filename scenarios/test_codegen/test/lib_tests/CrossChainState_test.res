@@ -34,7 +34,7 @@ let makeChainState = (
     ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,
-    ~onBlockConfigs=[
+    ~onBlockRegistrations=[
       {
         Internal.index: 0,
         name: "scheduler-test",
@@ -119,7 +119,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     chainId,
     contractConfigs: Dict.make(),
     blockLag: 0,
-    onBlockConfigs: [],
+    onBlockRegistrations: [],
     knownHeight,
     firstEventBlock: Some(0),
   }

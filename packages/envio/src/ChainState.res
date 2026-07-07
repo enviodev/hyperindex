@@ -95,7 +95,7 @@ let makeInternal = (
   ~firstEventBlock=None,
   ~progressBlockNumber,
   ~config: Config.t,
-  ~registrations: HandlerRegister.registrations,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
@@ -106,158 +106,42 @@ let makeInternal = (
   ~knownHeight=0,
   ~reducedPollingInterval=?,
 ): t => {
-  // We don't need the router itself, but only validation logic,
-  // since now event router is created for selection of events
-  // and validation doesn't work correctly in routers.
-  // Ideally to split it into two different parts.
-  let eventRouter = EventRouter.empty()
-
-  // Build the per-chain registrations (handler binding + `where`-derived fetch
-  // state) by layering the registered handlers onto the event definitions.
-  let onEventRegistrations: array<Internal.onEventRegistration> = []
-
-  let notRegisteredEvents = []
+  // Handler binding + `where`-derived fetch state, and onBlock registrations,
+  // are already collected by `HandlerRegister.finishRegistration`, keyed by
+  // chain - this just looks up this chain's slice.
+  let {onEventRegistrations, onBlockRegistrations} =
+    registrationsByChainId
+    ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
+    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
 
   chainConfig.contracts->Array.forEach(contract => {
-    let contractName = contract.name
-
-    contract.events->Array.forEach(eventConfig => {
-      let eventName = eventConfig.name
-      let isWildcard = HandlerRegister.isWildcard(~contractName, ~eventName)
-      let handler = HandlerRegister.getHandler(~contractName, ~eventName)
-      let contractRegister = HandlerRegister.getContractRegister(~contractName, ~eventName)
-
-      let onEventRegistration = switch config.ecosystem.name {
-      | Fuel =>
-        (EventConfigBuilder.buildFuelOnEventRegistration(
-          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~startBlock=?contract.startBlock,
-        ) :> Internal.onEventRegistration)
-      | Svm =>
-        (EventConfigBuilder.buildSvmOnEventRegistration(
-          ~eventConfig=eventConfig->(
-            Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
-          ),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~startBlock=?contract.startBlock,
-        ) :> Internal.onEventRegistration)
-      | Evm =>
-        (EventConfigBuilder.buildEvmOnEventRegistration(
-          ~eventConfig=eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig),
-          ~isWildcard,
-          ~handler,
-          ~contractRegister,
-          ~eventFilters=HandlerRegister.getOnEventWhere(~contractName, ~eventName),
-          ~probeChainId=chainConfig.id,
-          ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
-          ~startBlock=?contract.startBlock,
-        ) :> Internal.onEventRegistration)
-      }
-
-      // Should validate the events
-      eventRouter->EventRouter.addOrThrow(
-        eventConfig.id,
-        (),
-        ~contractName,
-        ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
-        ~eventName,
-        ~isWildcard,
-      )
-
-      // Filter out events without a handler/contractRegister so they aren't
-      // fetched or dispatched (unless raw events are enabled).
-      let shouldBeIncluded = if config.enableRawEvents {
-        true
-      } else {
-        let isRegistered = contractRegister->Option.isSome || handler->Option.isSome
-        if !isRegistered {
-          notRegisteredEvents->Array.push(onEventRegistration)
-        }
-        isRegistered
-      }
-
-      // Check if event has Static([]) filters (from a dynamic where
-      // callback returning `false` / SkipAll for this chain).
-      // If so, skip it entirely - it should never be fetched
-      let shouldSkip = try {
-        let getEventFiltersOrThrow = (
-          onEventRegistration->(
-            Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration
-          )
-        ).getEventFiltersOrThrow
-
-        // Check for non-evm chains
-        if (
-          getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool)
-        ) {
-          switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
-          | Static([]) => true
-          | _ => false
-          }
-        } else {
-          false
-        }
-      } catch {
-      // Can throw when filter is invalid
-      // Don't skip an event in this case. Let it throw in a better place - source code
-      | _ => false
-      }
-
-      if shouldBeIncluded && !shouldSkip {
-        onEventRegistrations->Array.push(onEventRegistration)
-      }
-    })
-
     switch contract.startBlock {
     | Some(startBlock) if startBlock < chainConfig.startBlock =>
       JsError.throwWithMessage(
-        `The start block for contract "${contractName}" is less than the chain start block. This is not supported yet.`,
+        `The start block for contract "${contract.name}" is less than the chain start block. This is not supported yet.`,
       )
     | _ => ()
     }
   })
 
-  if notRegisteredEvents->Utils.Array.notEmpty {
-    logger->Logging.childInfo(
-      `The event${if notRegisteredEvents->Array.length > 1 {
-          "s"
-        } else {
-          ""
-        }} ${notRegisteredEvents
-        ->Array.map(reg => `${reg.eventConfig.contractName}.${reg.eventConfig.name}`)
-        ->Array.joinUnsafe(", ")} don't have an event handler and skipped for indexing.`,
-    )
-  }
-
-  let onBlockConfigs =
-    registrations.onBlockByChainId->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
-  switch onBlockConfigs {
-  | Some(onBlockConfigs) =>
-    // TODO: Move it to the HandlerRegister module
-    // so the error is thrown with better stack trace
-    onBlockConfigs->Array.forEach(onBlockConfig => {
-      if onBlockConfig.startBlock->Option.getOr(startBlock) < startBlock {
+  // TODO: Move it to the HandlerRegister module
+  // so the error is thrown with better stack trace
+  onBlockRegistrations->Array.forEach(onBlockRegistration => {
+    if onBlockRegistration.startBlock->Option.getOr(startBlock) < startBlock {
+      JsError.throwWithMessage(
+        `The start block for onBlock handler "${onBlockRegistration.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
+      )
+    }
+    switch endBlock {
+    | Some(chainEndBlock) =>
+      if onBlockRegistration.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
         JsError.throwWithMessage(
-          `The start block for onBlock handler "${onBlockConfig.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
+          `The end block for onBlock handler "${onBlockRegistration.name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
         )
       }
-      switch endBlock {
-      | Some(chainEndBlock) =>
-        if onBlockConfig.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
-          JsError.throwWithMessage(
-            `The end block for onBlock handler "${onBlockConfig.name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
-          )
-        }
-      | None => ()
-      }
-    })
-  | None => ()
-  }
+    | None => ()
+    }
+  })
 
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
@@ -278,7 +162,7 @@ let makeInternal = (
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
       chainConfig.blockLag,
     ),
-    ~onBlockConfigs?,
+    ~onBlockRegistrations,
     ~firstEventBlock,
   )
 
@@ -370,13 +254,18 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (chainConfig: Config.chain, ~config, ~registrations, ~knownHeight) => {
+let makeFromConfig = (
+  chainConfig: Config.chain,
+  ~config,
+  ~registrationsByChainId,
+  ~knownHeight,
+) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.id})
 
   makeInternal(
     ~chainConfig,
     ~config,
-    ~registrations,
+    ~registrationsByChainId,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~reorgCheckpoints=[],
@@ -402,7 +291,7 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config,
-  ~registrations,
+  ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
@@ -422,7 +311,7 @@ let makeFromDbState = (
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
     ~config,
-    ~registrations,
+    ~registrationsByChainId,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,
