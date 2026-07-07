@@ -346,25 +346,25 @@ let checkAndFetch = async (
   // Furthest-behind first, so the most-behind chains claim the budgets first.
   candidates->Array.sort(compareByProgress)
 
-  // Even fallback cap for admitted candidates whose partition has no density yet,
-  // split within each budget class across the density-less candidates in it.
-  let gapDensityLess = ref(0)
-  let prefetchDensityLess = ref(0)
-  candidates->Array.forEach(query =>
-    if query.density->Option.isNone {
-      let frontier =
-        frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
-      if query.fromBlock <= frontier + gapCloserWindow {
-        gapDensityLess := gapDensityLess.contents + 1
-      } else {
-        prefetchDensityLess := prefetchDensityLess.contents + 1
-      }
+  // Even fallback target for admitted candidates whose partition has no density
+  // yet. Split each budget class across every candidate in it — not just the
+  // density-less ones — so a single cold candidate can't claim the whole budget
+  // and starve the density-driven queries sharing its class.
+  let gapCount = ref(0)
+  let prefetchCount = ref(0)
+  candidates->Array.forEach(query => {
+    let frontier =
+      frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
+    if query.fromBlock <= frontier + gapCloserWindow {
+      gapCount := gapCount.contents + 1
+    } else {
+      prefetchCount := prefetchCount.contents + 1
     }
-  )
+  })
   let evenShare = (budget, count) =>
     count > 0 ? Js.Math.ceil_int(budget->Int.toFloat /. count->Int.toFloat) : 0
-  let gapEvenShare = evenShare(readyBudget, gapDensityLess.contents)
-  let prefetchEvenShare = evenShare(prefetchBudget, prefetchDensityLess.contents)
+  let gapEvenShare = evenShare(readyBudget, gapCount.contents)
+  let prefetchEvenShare = evenShare(prefetchBudget, prefetchCount.contents)
 
   let admittedByChain = Dict.make()
   let readyRemaining = ref(readyBudget)
