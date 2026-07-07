@@ -17,16 +17,14 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let noAddressesTopicSelections = []
   let contractNames = Utils.Set.make()
 
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-  ->Array.forEach(({
-    dependsOnAddresses,
-    contractName,
-    getEventFiltersOrThrow,
-    selectedBlockFields,
-    selectedTransactionFields,
-    isWildcard,
-  }) => {
+  selection.onEventRegistrations
+  ->(Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>)
+  ->Array.forEach(reg => {
+    let eventConfig =
+      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    let contractName = eventConfig.contractName
+    let {selectedBlockFields, selectedTransactionFields} = eventConfig
+    let {dependsOnAddresses, getEventFiltersOrThrow, isWildcard} = reg
     selectedBlockFields
     ->Utils.Set.toArray
     ->Array.forEach(name =>
@@ -141,7 +139,7 @@ type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
-  eventRouter: EventRouter.t<Internal.evmEventConfig>,
+  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
@@ -199,13 +197,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     item: HyperSyncClient.EventItems.item,
     ~block: HyperSyncClient.ResponseTypes.block,
     ~params: Internal.eventParams,
-    ~eventConfig: Internal.evmEventConfig,
+    ~onEventRegistration: Internal.evmOnEventRegistration,
   ): Internal.item => {
     let {transactionIndex, logIndex, srcAddress} = item
     let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
-      eventConfig: (eventConfig :> Internal.eventConfig),
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       timestamp: block.timestamp->Option.getUnsafe,
       chain,
       blockNumber: item.blockNumber,
@@ -213,8 +211,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       logIndex,
       transactionIndex,
       payload: {
-        contractName: eventConfig.contractName,
-        eventName: eventConfig.name,
+        contractName: onEventRegistration.eventConfig.contractName,
+        eventName: onEventRegistration.eventConfig.name,
         chainId,
         params,
         block: block->(Utils.magic: HyperSyncClient.ResponseTypes.block => Internal.eventBlock),
@@ -332,17 +330,17 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
     let handleDecodeFailure = (
-      ~eventConfig: Internal.evmEventConfig,
+      ~onEventRegistration: Internal.evmOnEventRegistration,
       ~logIndex,
       ~blockNumber,
       ~chainId,
       ~exn,
     ) => {
-      if !eventConfig.isWildcard {
+      if !onEventRegistration.isWildcard {
         //Wildcard events can be parsed as undefined if the number of topics
         //don't match the event with the given topic0
         //Non wildcard events should be expected to be parsed
-        let msg = `Event ${eventConfig.name} was unexpectedly parsed as undefined`
+        let msg = `Event ${onEventRegistration.eventConfig.name} was unexpectedly parsed as undefined`
         let logger = Logging.createChildFrom(
           ~logger,
           ~params={
@@ -370,19 +368,24 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
       switch maybeEventConfig {
       | None => () //ignore events that aren't registered
-      | Some(eventConfig) =>
+      | Some(onEventRegistration) =>
         switch item.params
         ->Nullable.toOption
-        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
+        ->Option.flatMap(Dict.get(_, onEventRegistration.eventConfig.contractName)) {
         | Some(params) =>
           parsedQueueItems
           ->Array.push(
-            makeEventBatchQueueItem(item, ~block=getBlock(item.blockNumber), ~params, ~eventConfig),
+            makeEventBatchQueueItem(
+              item,
+              ~block=getBlock(item.blockNumber),
+              ~params,
+              ~onEventRegistration,
+            ),
           )
           ->ignore
         | None =>
           handleDecodeFailure(
-            ~eventConfig,
+            ~onEventRegistration,
             ~logIndex=item.logIndex,
             ~blockNumber=item.blockNumber,
             ~chainId,

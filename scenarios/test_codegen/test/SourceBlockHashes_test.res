@@ -25,18 +25,30 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   id: pairCreatedEventId,
   contractName: "UniswapV2Factory",
   name: "PairCreated",
-  isWildcard: false,
-  filterByAddresses: false,
-  dependsOnAddresses: true,
-  startBlock: None,
-  handler: None,
-  contractRegister: None,
   paramsRawEventSchema: S.literal(%raw(`null`))
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
   simulateParamsSchema: S.unknown
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
+  // Block number and hash are needed so HyperSync returns block data for each item;
+  // otherwise blockHashes harvested from items would crash on undefined `block`.
+  selectedBlockFields: Utils.Set.fromArray(([Number, Hash]: array<Internal.evmBlockField>)),
+  selectedTransactionFields: Utils.Set.make(),
+  transactionFieldMask: 0.,
+  sighash: pairCreatedTopic0,
+  topicCount: 3,
+  paramsMetadata: [],
+}
+
+let pairCreatedRegistration: Internal.evmOnEventRegistration = {
+  eventConfig: (pairCreatedEventConfig :> Internal.eventConfig),
+  isWildcard: false,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
+  startBlock: None,
+  handler: None,
+  contractRegister: None,
   getEventFiltersOrThrow: _ =>
     Static([
       {
@@ -46,14 +58,6 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
         topic3: [],
       },
     ]),
-  // Block number and hash are needed so HyperSync returns block data for each item;
-  // otherwise blockHashes harvested from items would crash on undefined `block`.
-  selectedBlockFields: Utils.Set.fromArray(([Number, Hash]: array<Internal.evmBlockField>)),
-  selectedTransactionFields: Utils.Set.make(),
-  transactionFieldMask: 0.,
-  sighash: pairCreatedTopic0,
-  topicCount: 3,
-  paramsMetadata: [],
 }
 
 // Match the on-chain ABI so the hypersync-client decoder doesn't raise
@@ -78,11 +82,11 @@ let makeAddressesByContractName = () =>
   Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
 
 let makeSelection = (): FetchState.selection => {
-  eventConfigs: [(pairCreatedEventConfig :> Internal.eventConfig)],
+  onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
   dependsOnAddresses: true,
 }
 
-let makeEventRouter = () => [pairCreatedEventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain)
+let makeEventRouter = () => [pairCreatedRegistration]->EventRouter.fromEvmEventModsOrThrow(~chain)
 
 let makeHyperSyncSource = () =>
   HyperSyncSource.make({

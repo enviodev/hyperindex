@@ -13,7 +13,7 @@ let makeTransaction = (~transactionIndex, ~transactionHash) =>
 
 module Gravatar = {
   let contractName = "Gravatar"
-  let chainConfig = (Config.loadWithoutRegistrations()).chainMap->ChainMap.get(MockConfig.chain1337)
+  let chainConfig = (Config.load()).chainMap->ChainMap.get(MockConfig.chain1337)
   let contract = chainConfig.contracts->Array.find(c => c.name == contractName)->Option.getOrThrow
   let defaultAddress = contract.addresses[0]->Option.getOrThrow
 
@@ -27,7 +27,7 @@ module Gravatar = {
   module NewGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=MockConfig.getEvmEventConfig(
+        ~onEventRegistration=MockConfig.getEvmOnEventRegistration(
           ~contractName="Gravatar",
           ~eventName="NewGravatar",
         ),
@@ -39,7 +39,7 @@ module Gravatar = {
   module UpdatedGravatar = {
     let mkEventConstr = params =>
       makeEventConstructorWithDefaultSrcAddress(
-        ~eventConfig=MockConfig.getEvmEventConfig(
+        ~onEventRegistration=MockConfig.getEvmOnEventRegistration(
           ~contractName="Gravatar",
           ~eventName="UpdatedGravatar",
         ),
