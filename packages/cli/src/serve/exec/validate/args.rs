@@ -159,7 +159,7 @@ pub(super) fn coerce_stream_args<'a>(
     };
     let mut cursor: Vec<ir::StreamCursor> = Vec::new();
     let table = model_table(ctx, table_name);
-    for (i, item) in list_items(cursor_v).into_iter().enumerate() {
+    for (i, item) in expect_list(cursor_v, &cursor_path)?.into_iter().enumerate() {
         if item.is_null() {
             continue;
         }
@@ -229,6 +229,12 @@ pub(super) fn coerce_stream_args<'a>(
                 descending,
             });
         }
+    }
+    if cursor.is_empty() {
+        return Err(verr(
+            format!("{field_path}.args"),
+            "one streaming column field is expected",
+        ));
     }
 
     let mut where_ = None;

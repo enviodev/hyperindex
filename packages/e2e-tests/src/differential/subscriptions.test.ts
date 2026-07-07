@@ -208,6 +208,51 @@ describe.sequential("differential subscriptions", () => {
         const envio = await run(endpoints.envio);
         expect(envio.payloads).toEqual(hasura.payloads);
       }, 90_000);
+
+      it.each([
+        ["cursor: []", "[]"],
+        ["cursor: [null]", "[null]"],
+      ])(
+        "streaming subscription rejects an empty cursor (%s)",
+        async (_label, cursorLiteral) => {
+          const query = `subscription { SimulateTestEvent_stream(batch_size: 2, cursor: ${cursorLiteral}) { id blockNumber } }`;
+
+          const run = async (url: string): Promise<ScenarioResult> => {
+            const session = await connect(url, protocol, { adminSecret });
+            try {
+              const sub = subscribe(session, protocol, { query });
+              const errorPayload = await sub.nextError();
+              return { payloads: [], errorPayload };
+            } finally {
+              await session.close();
+            }
+          };
+
+          const hasura = await run(endpoints.hasura);
+          const envio = await run(endpoints.envio);
+          expect(envio.errorPayload).toEqual(hasura.errorPayload);
+        },
+        60_000
+      );
+
+      it("streaming subscription rejects a null cursor", async () => {
+        const query = `subscription { SimulateTestEvent_stream(batch_size: 2, cursor: null) { id blockNumber } }`;
+
+        const run = async (url: string): Promise<ScenarioResult> => {
+          const session = await connect(url, protocol, { adminSecret });
+          try {
+            const sub = subscribe(session, protocol, { query });
+            const errorPayload = await sub.nextError();
+            return { payloads: [], errorPayload };
+          } finally {
+            await session.close();
+          }
+        };
+
+        const hasura = await run(endpoints.hasura);
+        const envio = await run(endpoints.envio);
+        expect(envio.errorPayload).toEqual(hasura.errorPayload);
+      }, 60_000);
     });
   }
 });
