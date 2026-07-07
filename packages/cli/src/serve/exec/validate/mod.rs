@@ -24,7 +24,7 @@ mod variables;
 
 use args::{
     api_to_db_column, coerce_by_pk_args, coerce_json_path_arg, coerce_select_args,
-    coerce_stream_args, list_items, resolve_arg,
+    coerce_stream_args, expect_list, resolve_arg,
 };
 use coerce::{coerce_bool_strict, coerce_enum, coerce_string_strict};
 use fragments::fragment_prepass;
@@ -907,20 +907,17 @@ fn aggregate_body<'a>(
                 }
                 let mut columns: Vec<String> = Vec::new();
                 if let Some(v) = resolve_arg(ctx, flat, field, "columns", &field_path)? {
-                    if !v.is_null() {
-                        let enum_name = format!("{table_name}_select_column");
-                        for (i, item) in list_items(v).into_iter().enumerate() {
-                            let ipath = format!("{field_path}.args.columns[{i}]");
-                            let api = coerce_enum(ctx, item, &enum_name, &ipath)?;
-                            columns.push(api_to_db_column(table, &api));
-                        }
+                    let columns_path = format!("{field_path}.args.columns");
+                    let enum_name = format!("{table_name}_select_column");
+                    for (i, item) in expect_list(v, &columns_path)?.into_iter().enumerate() {
+                        let ipath = format!("{columns_path}[{i}]");
+                        let api = coerce_enum(ctx, item, &enum_name, &ipath)?;
+                        columns.push(api_to_db_column(table, &api));
                     }
                 }
                 let distinct = match resolve_arg(ctx, flat, field, "distinct", &field_path)? {
-                    Some(v) if !v.is_null() => {
-                        coerce_bool_strict(v, &format!("{field_path}.args.distinct"))?
-                    }
-                    _ => false,
+                    Some(v) => coerce_bool_strict(v, &format!("{field_path}.args.distinct"))?,
+                    None => false,
                 };
                 items.push(ir::AggFieldItem::Count {
                     alias: flat.key.clone(),

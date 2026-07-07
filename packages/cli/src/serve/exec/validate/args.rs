@@ -159,7 +159,7 @@ pub(super) fn coerce_stream_args<'a>(
     };
     let mut cursor: Vec<ir::StreamCursor> = Vec::new();
     let table = model_table(ctx, table_name);
-    for (i, item) in list_items(cursor_v).into_iter().enumerate() {
+    for (i, item) in expect_list(cursor_v, &cursor_path)?.into_iter().enumerate() {
         if item.is_null() {
             continue;
         }
@@ -180,11 +180,9 @@ pub(super) fn coerce_stream_args<'a>(
             let v = resolve_nested(ctx, *value, &fd.ty, fd.default_value.is_some(), &vpath)?;
             match key.as_str() {
                 "initial_value" => initial = Some(v),
-                "ordering" => {
-                    if !v.is_null() {
-                        let dir = coerce_enum(ctx, v, "cursor_ordering", &vpath)?;
-                        descending = dir == "DESC";
-                    }
+                "ordering" if !v.is_null() => {
+                    let dir = coerce_enum(ctx, v, "cursor_ordering", &vpath)?;
+                    descending = dir == "DESC";
                 }
                 _ => {}
             }
@@ -230,6 +228,12 @@ pub(super) fn coerce_stream_args<'a>(
             });
         }
     }
+    if cursor.is_empty() {
+        return Err(verr(
+            format!("{field_path}.args"),
+            "one streaming column field is expected",
+        ));
+    }
 
     let mut where_ = None;
     if let Some(v) = resolve_arg(ctx, flat, field, "where", field_path)? {
@@ -251,9 +255,6 @@ pub(super) fn coerce_json_path_arg<'a>(
     let Some(v) = resolve_arg(ctx, flat, field, "path", field_path)? else {
         return Ok(None);
     };
-    if v.is_null() {
-        return Ok(None);
-    }
     let text = coerce_string_strict(v, &format!("{field_path}.args.path"))?;
     match parse_json_path(&text) {
         Ok(segments) => Ok(if segments.is_empty() {

@@ -15,7 +15,11 @@
 //! - a null `arguments` on an aggregate bool_exp predicate is a validation
 //!   error for every op except `count` (whose `arguments` list is genuinely
 //!   nullable), instead of reaching SQL generation and producing invalid
-//!   syntax like `bool_and(*)`.
+//!   syntax like `bool_and(*)`;
+//! - a null `distinct` on an aggregate bool_exp predicate, on an aggregate
+//!   selection's `count`, and a null `path` on a json/jsonb field are each
+//!   validation errors, not a silent false/count(*)/whole-value fallback —
+//!   confirmed against a live Hasura 2.43.0 instance for each case.
 
 use super::env_config::ServeEnv;
 use super::model::ServerModel;
@@ -446,19 +450,54 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
     )
     .await;
 
-    // count's `arguments` is a nullable list: null means count(*), and stays valid.
+    // Omitting `arguments` entirely means count(*): confirmed live against
+    // Hasura 2.43.0 on this exact fixture (this data shape and row set is
+    // its real recorded response, not a guess).
+    let (status, body) = server
+        .graphql(
+            "{ NftCollection(where: {tokens_aggregate: {count: {predicate: {_gte: 0}}}}) { id } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"data": {"NftCollection": [
+                {"id": "coll-1"}, {"id": "coll-2"}, {"id": "coll-3"}
+            ]}})
+        )
+    );
+
+    // An explicit `arguments: null` is a validation error even for count,
+    // whose `arguments` is a nullable *list* type — Hasura rejects the null
+    // literal itself rather than treating it as an omitted key. Wording and
+    // path confirmed live against Hasura 2.43.0 on this exact query.
     let (status, body) = server
         .graphql(
             "{ NftCollection(where: {tokens_aggregate: {count: {arguments: null, predicate: {_gte: 0}}}}) { id } }",
             Duration::from_secs(10),
         )
         .await;
-    assert_eq!((status, body["errors"].is_null()), (200, true), "{body}");
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected a list, but found null",
+                "extensions": {
+                    "path": "$.selectionSet.NftCollection.args.where.tokens_aggregate.count.arguments",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
+    );
 
     // bool_and/bool_or's `arguments` is a single non-null column enum: a
     // null literal must be rejected as a validation error up front, not
     // passed through to SQL generation as `bool_and(*)` (invalid syntax —
-    // only count(*) accepts the bare-`*` form).
+    // only count(*) accepts the bare-`*` form). Wording and path confirmed
+    // live against Hasura 2.43.0 on this exact query.
     let (status, body) = server
         .graphql(
             "{ NftCollection(where: {tokens_aggregate: {bool_and: {arguments: null, predicate: {_eq: true}}}}) { id } }",
@@ -466,12 +505,132 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
         )
         .await;
     assert_eq!(
+        (status, body),
         (
-            status,
-            body["data"].is_null(),
-            body["errors"][0]["extensions"]["code"].as_str()
-        ),
-        (200, true, Some("validation-failed")),
-        "{body}"
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected an enum value for type 'Token_select_column_Token_aggregate_bool_exp_bool_and_arguments_columns', but found null",
+                "extensions": {
+                    "path": "$.selectionSet.NftCollection.args.where.tokens_aggregate.bool_and.arguments",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
+    );
+
+    // `distinct` is a plain Boolean field: a null literal must be rejected,
+    // not silently treated as `false`. Wording and path confirmed live
+    // against Hasura 2.43.0 on this exact query.
+    let (status, body) = server
+        .graphql(
+            "{ NftCollection(where: {tokens_aggregate: {count: {distinct: null, predicate: {_gte: 0}}}}) { id } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected a boolean for type 'Boolean', but found null",
+                "extensions": {
+                    "path": "$.selectionSet.NftCollection.args.where.tokens_aggregate.count.distinct",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn aggregate_selection_count_null_args_errors_cleanly() {
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.aggregate_entities = vec!["Token".to_string()];
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    // `count`'s `columns` is a nullable list, but an explicit null literal
+    // is still a validation error — same rule as the aggregate bool_exp
+    // `arguments` case, just on the selection side (`{ T_aggregate {
+    // aggregate { count(columns: ...) } } }` instead of `where: {...}`).
+    // Wording and path confirmed live against Hasura 2.43.0.
+    let (status, body) = server
+        .graphql(
+            "{ Token_aggregate { aggregate { count(columns: null) } } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected a list, but found null",
+                "extensions": {
+                    "path": "$.selectionSet.Token_aggregate.selectionSet.aggregate.selectionSet.count.args.columns",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
+    );
+
+    // Same rule for `distinct` on the selection side. Wording and path
+    // confirmed live against Hasura 2.43.0.
+    let (status, body) = server
+        .graphql(
+            "{ Token_aggregate { aggregate { count(distinct: null) } } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected a boolean for type 'Boolean', but found null",
+                "extensions": {
+                    "path": "$.selectionSet.Token_aggregate.selectionSet.aggregate.selectionSet.count.args.distinct",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn json_field_null_path_errors_cleanly() {
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
+
+    // A json/jsonb field's `path` is a nullable String, but an explicit
+    // null literal is still a validation error, not "no path" (which is
+    // what omitting the argument means). Wording and path confirmed live
+    // against Hasura 2.43.0.
+    let (status, body) = server
+        .graphql(
+            "{ EntityWithAllTypes(limit: 1) { json(path: null) } }",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            200,
+            serde_json::json!({"errors": [{
+                "message": "expected a string for type 'String', but found null",
+                "extensions": {
+                    "path": "$.selectionSet.EntityWithAllTypes.selectionSet.json.args.path",
+                    "code": "validation-failed"
+                }
+            }]})
+        )
     );
 }
