@@ -4,7 +4,7 @@ open Vitest
 // filters into the global `HandlerRegister` registry as a side effect — that
 // registry state (not `config`, which never changes) is what
 // `MockConfig.getEvmOnEventRegistration` reads below.
-let config = Config.loadWithoutRegistrations()
+let config = Config.load()
 let _ = await HandlerLoader.registerAllHandlers(~config)
 
 let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config, ...)

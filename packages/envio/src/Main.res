@@ -82,7 +82,7 @@ let getInitialChainState = (~chainId: int): option<Persistence.initialChainState
   }
 }
 
-// Importing `generated` must not trigger `Config.loadWithoutRegistrations()`,
+// Importing `generated` must not trigger `Config.load()`,
 // so the exported indexer calls this lazily on first `indexer.chains` access.
 let buildChainsObject = (~config: Config.t) => {
   let chainIds = []
@@ -372,7 +372,7 @@ let getGlobalIndexer = (): 'indexer => {
   // math at `FetchState.res:619` stays untouched.
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let config = Config.loadWithoutRegistrations()
+    let config = Config.load()
     let ecosystem = config.ecosystem
     let raw =
       rawOptions->(
@@ -471,13 +471,13 @@ let getGlobalIndexer = (): 'indexer => {
   // `Api.res` calls `getGlobalIndexer()` at envio-package load, so the keys
   // array is memoized lazily: an early `createEffect` / `S` import that
   // never touches the indexer must not trigger a config parse. The memo is
-  // safe because `Config.loadWithoutRegistrations` is itself pure.
+  // safe because `Config.load` is itself pure.
   let keysMemo: ref<option<array<string>>> = ref(None)
   let getKeys = () =>
     switch keysMemo.contents {
     | Some(k) => k
     | None => {
-        let keys = switch Config.loadWithoutRegistrations().ecosystem.name {
+        let keys = switch Config.load().ecosystem.name {
         | Evm | Fuel => [
             "name",
             "description",
@@ -505,15 +505,15 @@ let getGlobalIndexer = (): 'indexer => {
 
   let get = (~prop: string) =>
     switch prop {
-    | "name" => Config.loadWithoutRegistrations().name->(Utils.magic: string => unknown)
+    | "name" => Config.load().name->(Utils.magic: string => unknown)
     | "description" =>
-      Config.loadWithoutRegistrations().description->(Utils.magic: option<string> => unknown)
+      Config.load().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
-        let (_, chainIds) = buildChainsObject(~config=Config.loadWithoutRegistrations())
+        let (_, chainIds) = buildChainsObject(~config=Config.load())
         chainIds->(Utils.magic: array<int> => unknown)
       }
     | "chains" => {
-        let (chains, _) = buildChainsObject(~config=Config.loadWithoutRegistrations())
+        let (chains, _) = buildChainsObject(~config=Config.load())
         chains->(Utils.magic: {..} => unknown)
       }
     | "onEvent" => onEventFn->Utils.magic
@@ -657,7 +657,7 @@ type mainArgs = Yargs.parsedArgs<args>
 let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
 let migrate = async (~reset) => {
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence->Persistence.init(
     ~reset,
@@ -670,7 +670,7 @@ let migrate = async (~reset) => {
 }
 
 let dropSchema = async () => {
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config)
   await persistence.storage.reset()
   await persistence.storage.close()
@@ -699,7 +699,7 @@ let start = async (
   }
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`

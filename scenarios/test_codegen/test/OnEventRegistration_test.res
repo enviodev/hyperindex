@@ -6,7 +6,7 @@ open Vitest
 // registration, and `dependsOnAddresses` follows the shared
 // `Internal.dependsOnAddresses` formula. Filter-parsing behavior is
 // covered separately by `EventFilters_test.res`.
-let config = Config.loadWithoutRegistrations()
+let config = Config.load()
 let _ = await HandlerLoader.registerAllHandlers(~config)
 
 let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config, ...)

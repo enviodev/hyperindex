@@ -51,14 +51,14 @@ describe("Chains State", () => {
           item,
           loadManager,
           persistence: PgStorage.makePersistenceFromConfig(
-            ~config=Config.loadWithoutRegistrations(),
+            ~config=Config.load(),
           ),
           indexerState,
           isPreload: false,
           checkpointId: 0n,
           chains,
           isResolved: false,
-          config: Config.loadWithoutRegistrations(),
+          config: Config.load(),
         })
 
         // Verify we can access current event's chain info

@@ -1288,7 +1288,7 @@ let throwIfIncompatible = (
 // definitions, never handler/contractRegister/where state (that's layered on
 // separately as `HandlerRegister.registrationsByChainId`). That purity is
 // what lets this memoize without invalidation.
-let loadWithoutRegistrations = () =>
+let load = () =>
   switch cached.contents {
   | Some(c) => c
   | None => {

@@ -1,7 +1,7 @@
 open Vitest
 
 let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) => {
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
 
   let chainStates = Dict.make()
   config.chainMap

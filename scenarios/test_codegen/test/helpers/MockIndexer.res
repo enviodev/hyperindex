@@ -1,6 +1,6 @@
 type chainId = Indexer.chainId
 
-let config = Config.loadWithoutRegistrations()
+let config = Config.load()
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
@@ -207,7 +207,7 @@ module Storage = {
   let toPersistence = (storageMock: t) => {
     {
       ...PgStorage.makePersistenceFromConfig(
-        ~config=Config.loadWithoutRegistrations(),
+        ~config=Config.load(),
         ~storage=storageMock.storage,
       ),
       storageStatus: Ready({
@@ -290,7 +290,7 @@ module Indexer = {
     // from the config it's given, so registration must see the resolved
     // config rather than the raw generated one.
     let config = {
-      let config = Config.loadWithoutRegistrations()
+      let config = Config.load()
 
       let chainMap =
         chains

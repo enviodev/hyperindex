@@ -5,7 +5,7 @@ let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
 let getEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {
   | Some(c) => c
-  | None => Config.loadWithoutRegistrations()
+  | None => Config.load()
   }
   config
   ->Config.getEventConfig(~contractName, ~eventName, ~chainId?)
@@ -24,7 +24,7 @@ let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>
 let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {
   | Some(c) => c
-  | None => Config.loadWithoutRegistrations()
+  | None => Config.load()
   }
   let eventConfig = getEventConfig(~config, ~contractName, ~eventName, ~chainId?)
   let probeChainId = switch chainId {
