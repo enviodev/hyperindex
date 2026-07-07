@@ -10,9 +10,10 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
+  estResponseSize: None,
   chainId: 0,
   progress: 0.,
+  itemsTarget: 0,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
 }
@@ -98,7 +99,6 @@ describe("FetchState onBlock functionality", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -147,7 +147,6 @@ describe("FetchState onBlock functionality", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -197,7 +196,6 @@ describe("FetchState onBlock functionality", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -251,7 +249,6 @@ describe("FetchState onBlock functionality", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -308,7 +305,6 @@ describe("FetchState onBlock functionality", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,

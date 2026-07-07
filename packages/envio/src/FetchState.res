@@ -13,9 +13,10 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Estimated items this in-flight query will add, carried from the query so the
-  // shared buffer budget can account for what's already being fetched.
-  estResponseSize: float,
+  // Items reserved against the shared buffer budget when this query was
+  // dispatched (min of the estimate and the items target, or the items target
+  // when there's no estimate yet). Released when the response lands.
+  reservedSize: float,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -59,18 +60,35 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Estimated number of items the query will return, from the partition's
-  // density and the query's block range. Used to admit queries against the
-  // shared buffer budget.
-  estResponseSize: float,
+  // Estimated number of items the query will return, from the partition's event
+  // density and the query's block range. `None` for the first two queries of a
+  // partition, before it has enough response history to derive a density. Used
+  // only to reserve the query's expected size against the shared buffer budget —
+  // never as the source's response cap (that's itemsTarget).
+  estResponseSize: option<float>,
   // Owning chain and the chain progress % at the query's fromBlock. Set by the
   // cross-chain scheduler so candidate queries can be pooled and ordered
   // (furthest-behind first) without allocating a side tuple per query.
   mutable chainId: int,
   mutable progress: float,
+  // Soft cap on items the source should return for this query (its maxNumLogs).
+  // Set by the cross-chain scheduler by spreading the buffer budget evenly across
+  // the queries dispatched this tick, so the buffer stays bounded regardless of
+  // how large the natural block range is or how many partitions there are.
+  mutable itemsTarget: int,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
 }
+
+// Items a dispatched query reserves against the shared buffer budget. It won't
+// return more than itemsTarget (the source caps at it), and when we have a
+// density estimate it won't return more than that either — so reserve the
+// smaller of the two, falling back to the target when there's no estimate yet.
+let queryReservedSize = (query: query) =>
+  switch query.estResponseSize {
+  | Some(est) => Pervasives.min(est, query.itemsTarget->Int.toFloat)
+  | None => query.itemsTarget->Int.toFloat
+  }
 
 // Invert addressesByContractName into address→contractName for log-ownership
 // routing. 1:1 today (each address belongs to one contract), so no key
@@ -90,43 +108,6 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   result
 })
 
-// Bounds for the no-history default estimate below. Also used by SourceManager
-// as the floor for its own maxNumLogs-style safety net.
-let minEstResponseSize = 2_000.
-let maxEstResponseSize = 10_000.
-
-// Default estimate for a query whose partition hasn't responded yet, so the
-// shared budget still accounts for unknown queries instead of treating them as
-// free. Scaled down as partitionsCount grows: assuming every partition's first
-// query is "big" starves the rest of that tick's admission when many
-// partitions share the same buffer, so the per-partition default shrinks
-// accordingly — clamped to [minEstResponseSize, maxEstResponseSize] either way.
-let calculateDefaultEstResponseSize = (~partitionsCount) =>
-  Pervasives.max(
-    minEstResponseSize,
-    Pervasives.min(maxEstResponseSize, 20_000. /. partitionsCount->Int.toFloat),
-  )
-
-// Estimated items a query will return, from the partition's event density
-// (items/block derived from its last response) and the query's block range.
-// toBlock None is the open-ended tail, capped at knownHeight. A partition
-// that responded with no items has density 0, so its queries cost 0 — correct,
-// they don't fill the buffer. Only a partition that has never responded
-// (prevQueryRange 0) has no signal, so it falls back to calculateDefaultEstResponseSize.
-let calculateEstResponseSize = (
-  p: partition,
-  ~fromBlock,
-  ~toBlock,
-  ~knownHeight,
-  ~partitionsCount,
-) =>
-  if p.prevQueryRange > 0 {
-    let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-    (toBlock->Option.getOr(knownHeight) - fromBlock + 1)->Int.toFloat *. density
-  } else {
-    calculateDefaultEstResponseSize(~partitionsCount)
-  }
-
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getMinHistoryRange = (p: partition) => {
   switch (p.prevQueryRange, p.prevPrevQueryRange) {
@@ -134,6 +115,21 @@ let getMinHistoryRange = (p: partition) => {
   | (a, b) => Some(a < b ? a : b)
   }
 }
+
+// Estimated items a query will return, from the partition's event density
+// (items/block derived from its last response) and the query's block range.
+// toBlock None is the open-ended tail, capped at knownHeight. `None` until the
+// partition has two responses of history (same gate as chunking): a single
+// sample is too noisy to size the budget against, so the first two queries carry
+// no estimate and reserve only their items target. A partition that responded
+// with no items has density 0, so its queries estimate at 0.
+let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~knownHeight) =>
+  switch getMinHistoryRange(p) {
+  | None => None
+  | Some(_) =>
+    let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
+    Some((toBlock->Option.getOr(knownHeight) - fromBlock + 1)->Int.toFloat *. density)
+  }
 
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
@@ -1340,7 +1336,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
-      estResponseSize: q.estResponseSize,
+      reservedSize: q->queryReservedSize,
       fetchedBlock: None,
     }
 
@@ -1376,7 +1372,6 @@ let pushQueriesForRange = (
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
-  ~partitionsCount: int,
 ) => {
   if rangeFromBlock <= knownHeight && maxChunks > 0 {
     switch rangeEndBlock {
@@ -1395,10 +1390,10 @@ let pushQueriesForRange = (
             ~fromBlock=rangeFromBlock,
             ~toBlock=rangeEndBlock,
             ~knownHeight,
-            ~partitionsCount,
           ),
           chainId: 0,
           progress: 0.,
+          itemsTarget: 0,
           addressesByContractName,
         })
       | Some(chunkRange) =>
@@ -1425,10 +1420,10 @@ let pushQueriesForRange = (
                 ~fromBlock=chunkFromBlock.contents,
                 ~toBlock=Some(chunkToBlock),
                 ~knownHeight,
-                ~partitionsCount,
               ),
               chainId: 0,
               progress: 0.,
+              itemsTarget: 0,
               addressesByContractName,
             })
             chunkFromBlock := chunkToBlock + 1
@@ -1447,10 +1442,10 @@ let pushQueriesForRange = (
               ~fromBlock=rangeFromBlock,
               ~toBlock=rangeEndBlock,
               ~knownHeight,
-              ~partitionsCount,
             ),
             chainId: 0,
             progress: 0.,
+            itemsTarget: 0,
             addressesByContractName,
           })
         }
@@ -1459,11 +1454,12 @@ let pushQueriesForRange = (
   }
 }
 
-// Candidate queries are sized against the natural ceiling (head/endBlock/mergeBlock),
-// not a share of the shared buffer — CrossChainState.checkAndFetch's admission loop
-// is what actually bounds how much gets fetched per tick, by estResponseSize (which
-// the HyperSync/SVM sources also enforce server-side via a maxNumLogs-style cap, so
-// a wrong estimate truncates the response instead of overshooting the buffer).
+// Candidate queries span the natural ceiling (head/endBlock/mergeBlock); their
+// estResponseSize is just a density-based prediction (or None before there's
+// history). CrossChainState.checkAndFetch is what bounds each tick: it sets every
+// admitted query's itemsTarget by spreading the shared buffer budget across the
+// queries it dispatches, and the HyperSync/SVM sources enforce that target
+// server-side as a maxNumLogs-style cap so the buffer can't overshoot.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
 ) => {
@@ -1539,7 +1535,6 @@ let getNextQuery = (
             ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
-            ~partitionsCount,
           )
         }
         switch pq {
@@ -1568,7 +1563,6 @@ let getNextQuery = (
           ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
-          ~partitionsCount,
         )
       }
 

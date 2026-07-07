@@ -178,7 +178,7 @@ let priorityOrder = (crossChainState: t) =>
     Float.compare(a->ChainState.getProgressPercentage, b->ChainState.getProgressPercentage)
   )
 
-// In-flight estimated items across every chain — the live draw against
+// Items reserved by in-flight queries across every chain — the live draw against
 // targetBufferSize alongside totalReadyCount, so the pool isn't re-dispatched
 // while queries are still being fetched.
 let totalReservedSize = (crossChainState: t) => {
@@ -197,18 +197,21 @@ let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
   Float.compare(a.progress, b.progress)
 
 // Dispatch a fetch tick across the whole indexer from one shared pool of
-// ~targetBufferSize ready events. Every chain proposes its candidate queries
-// (each carrying an estimated response size) up to its own natural ceiling
-// (head/endBlock/mergeBlock), unconstrained by the shared budget; the
-// candidates are then pooled, ordered by chain progress (furthest-behind first),
-// and admitted until the budget is consumed. So the budget is split per query
-// across chains rather than per chain — a chain that can only use a little
-// leaves the rest for the others automatically.
+// ~targetBufferSize events. Every chain proposes its candidate queries up to its
+// own natural ceiling (head/endBlock/mergeBlock), unconstrained by the shared
+// budget; the candidates are then pooled, ordered by chain progress
+// (furthest-behind first), and the queries needed to unblock the buffer are
+// admitted. The remaining buffer budget is spread evenly across the admitted
+// queries as their per-query items target (the source's response cap), so the
+// buffer stays bounded no matter how large a query's natural block range is or
+// how many partitions share the pool — one dense open-ended range can't balloon
+// the buffer, and many partitions each get a proportional slice instead of a
+// fixed default that would under-fetch or overshoot.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
-  let remaining = Pervasives.max(
+  let budget = Pervasives.max(
     0,
     crossChainState.targetBufferSize -
     crossChainState->totalReadyCount -
@@ -240,19 +243,20 @@ let checkAndFetch = async (
 
   candidates->Array.sort(compareByProgress)
 
-  // Admit furthest-behind first until the budget runs out. The condition is
-  // checked before each query, so as long as there's any budget left we admit
-  // the next one even when its estimate alone exceeds the remainder — otherwise a
-  // chain whose only query is bigger than the budget would never make progress.
+  // Admit the furthest-behind queries needed to unblock the buffer, then spread
+  // the budget evenly across them as each query's items target. Capping the
+  // count at the budget keeps every target >= 1 item (a smaller pool would leave
+  // budget on the table; a larger one would fetch sub-1-item queries), and since
+  // the whole pool sums to the budget the buffer never overshoots. At least one
+  // query is admitted whenever there's any budget, so a chain always progresses.
+  let admitCount = Pervasives.min(candidates->Array.length, budget)
+  let itemsTarget =
+    admitCount > 0 ? Js.Math.ceil_int(budget->Int.toFloat /. admitCount->Int.toFloat) : 0
   let admittedByChain = Dict.make()
-  let running = ref(0.)
-  let remainingF = remaining->Int.toFloat
-  let idx = ref(0)
-  while running.contents < remainingF && idx.contents < candidates->Array.length {
-    let query = candidates->Array.getUnsafe(idx.contents)
+  for idx in 0 to admitCount - 1 {
+    let query = candidates->Array.getUnsafe(idx)
+    query.itemsTarget = itemsTarget
     admittedByChain->Utils.Dict.push(query.chainId->Int.toString, query)
-    running := running.contents +. query.estResponseSize
-    idx := idx.contents + 1
   }
   admittedByChain->Dict.forEachWithKey((queries, chainId) => {
     let partitions = Dict.make()
@@ -262,7 +266,7 @@ let checkAndFetch = async (
         {
           "fromBlock": query.fromBlock,
           "targetBlock": query.toBlock,
-          "targetEvents": query.estResponseSize->Math.round->Float.toInt,
+          "targetEvents": query.itemsTarget,
         },
       )
     )

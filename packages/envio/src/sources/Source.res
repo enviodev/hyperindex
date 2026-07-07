@@ -65,10 +65,10 @@ type t = {
     ~partitionId: string,
     ~selection: FetchState.selection,
     // Soft cap on the number of primary items (logs/instructions/receipts) the
-    // source should ask its backend for, from the query's own estResponseSize.
-    // A HyperSync-backed source enforces it server-side, so a wrong estimate
-    // truncates the response instead of overshooting the shared buffer. Sources
-    // without an equivalent lever (RPC, Fuel, Simulate) ignore it.
+    // source should ask its backend for — the cross-chain scheduler's even share
+    // of the buffer budget for this query. A HyperSync-backed source enforces it
+    // server-side, so the response is truncated instead of overshooting the shared
+    // buffer. Sources without an equivalent lever (RPC, Fuel, Simulate) ignore it.
     ~itemsTarget: int,
     ~retry: int,
     ~logger: Pino.t,

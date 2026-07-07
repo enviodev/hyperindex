@@ -680,13 +680,10 @@ let executeQuery = async (
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
-        // Ceil (not truncate) so a sub-1 estimate from a sparse partition over a
-        // small range doesn't round down to 0 and ask the backend to cap the
-        // response at nothing — 0 items is indistinguishable from "no signal".
-        ~itemsTarget={
-          let est = query.estResponseSize->Math.ceil->Float.toInt
-          est > 0 ? est : FetchState.minEstResponseSize->Float.toInt
-        },
+        // Set by the cross-chain scheduler as an even share of the buffer budget.
+        // Floor at 1 so a query dispatched outside that path (e.g. in tests) never
+        // asks the backend to cap the response at 0 items.
+        ~itemsTarget=Pervasives.max(1, query.itemsTarget),
         ~retry,
         ~logger,
       )

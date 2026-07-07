@@ -12,9 +12,10 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
+  estResponseSize: None,
   chainId: 0,
   progress: 0.,
+  itemsTarget: 0,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
 }
@@ -1724,24 +1725,6 @@ describe("FetchState.registerDynamicContracts", () => {
   )
 })
 
-describe("FetchState.calculateDefaultEstResponseSize", () => {
-  it("Scales down as partitionsCount grows, clamped to [2_000, 10_000]", t => {
-    t.expect({
-      "onePartition": FetchState.calculateDefaultEstResponseSize(~partitionsCount=1),
-      "twoPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=2),
-      "threePartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=3),
-      "tenPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=10),
-      "hundredPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=100),
-    }).toEqual({
-      "onePartition": 10_000.,
-      "twoPartitions": 10_000.,
-      "threePartitions": 20_000. /. 3.,
-      "tenPartitions": 2_000.,
-      "hundredPartitions": 2_000.,
-    })
-  })
-})
-
 describe("FetchState.getNextQuery & integration", () => {
   let dc1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
   let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
@@ -1861,9 +1844,8 @@ describe("FetchState.getNextQuery & integration", () => {
   }
 
   // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so query sizing falls back to
-  // FetchState.calculateDefaultEstResponseSize, which scales with partition count
-  // (20_000. /. partitionsCount, clamped to [2_000., 10_000.]).
+  // Partitions here have no response yet, so their queries carry no size
+  // estimate (estResponseSize is None until a partition has two responses).
   let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
@@ -1884,7 +1866,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
           fromBlock: 0,
           toBlock: None,
           selection: fetchState.normalSelection,
@@ -1909,7 +1890,7 @@ describe("FetchState.getNextQuery & integration", () => {
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
-        estResponseSize: 10000.,
+        reservedSize: 0.,
         fetchedBlock: None,
       },
     ])
@@ -1964,7 +1945,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
           fromBlock: 11,
           toBlock: None,
           selection: updatedFetchState.normalSelection,
@@ -1999,7 +1979,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
           toBlock: Some(8),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -2018,7 +1997,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
           toBlock: Some(8),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -2117,7 +2095,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 20_000. /. 3.,
           toBlock: Some(10),
           isChunk: false,
           selection: fetchState.normalSelection,
@@ -2127,7 +2104,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 20_000. /. 3.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2178,7 +2154,6 @@ describe("FetchState.getNextQuery & integration", () => {
     let expectedPartition2Query: FetchState.query = {
       ...defaultQuery,
       partitionId: "2",
-      estResponseSize: 10000.,
       fromBlock: 3,
       toBlock: None,
       selection: fetchState.normalSelection,
@@ -2188,7 +2163,6 @@ describe("FetchState.getNextQuery & integration", () => {
     let expectedPartition0Query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([
@@ -2234,7 +2208,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2244,7 +2217,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           FetchState.partitionId: "0",
-          estResponseSize: 10000.,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([
@@ -2268,7 +2240,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
           toBlock: Some(10),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2278,7 +2249,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           FetchState.partitionId: "0",
-          estResponseSize: 10000.,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([
@@ -2358,7 +2328,7 @@ describe("FetchState.getNextQuery & integration", () => {
                 fromBlock: 11,
                 toBlock: None,
                 isChunk: false,
-                estResponseSize: 10000.,
+                reservedSize: 0.,
                 fetchedBlock: None,
               },
             ],
@@ -2423,7 +2393,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 20_000. /. 3.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -2436,7 +2405,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 20_000. /. 3.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -2446,7 +2414,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 20_000. /. 3.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2618,7 +2585,6 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 5000.,
           toBlock: None,
           selection: {
             dependsOnAddresses: false,
@@ -2733,7 +2699,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "1",
-      estResponseSize: 5000.,
       fromBlock: 1,
       toBlock: None,
       isChunk: false,
@@ -2777,7 +2742,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2831,7 +2795,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query0: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2844,7 +2807,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query1: FetchState.query = {
       ...defaultQuery,
       partitionId: "1",
-      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2877,7 +2839,6 @@ describe("FetchState unit tests for specific cases", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2908,7 +2869,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2976,7 +2936,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -3094,7 +3053,6 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: Some(0),
       isChunk: false,
@@ -3121,7 +3079,6 @@ describe("FetchState unit tests for specific cases", () => {
       let query: FetchState.query = {
         ...defaultQuery,
         partitionId: "0",
-        estResponseSize: 5000.,
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
@@ -3178,7 +3135,6 @@ describe("FetchState unit tests for specific cases", () => {
       let query: FetchState.query = {
         ...defaultQuery,
         partitionId: "0",
-        estResponseSize: 5000.,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
         fromBlock: 0,
@@ -3264,11 +3220,10 @@ describe("FetchState unit tests for specific cases", () => {
         Ready([
           partition2Query,
           {
-            // Partition responded with no items, so its density is 0 and the
-            // estimate is 0 (empty queries don't fill the buffer).
+            // Only one response so far, so there's no density yet and the query
+            // carries no estimate (estResponseSize None until two responses).
             ...queryA,
             partitionId: "1",
-            estResponseSize: 0.,
             toBlock: Some(500),
             fromBlock: 401,
           },
@@ -3284,7 +3239,6 @@ describe("FetchState.sortForBatch", () => {
     {
       ...defaultQuery,
       FetchState.partitionId: "0",
-      estResponseSize: 5000.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -3599,7 +3553,6 @@ describe("FetchState progress tracking", () => {
     let query = {
       ...defaultQuery,
       FetchState.partitionId: "0",
-      estResponseSize: 5000.,
       toBlock: None,
       isChunk: false,
       selection: fs0.normalSelection,
@@ -3675,7 +3628,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let query0 = {
         ...defaultQuery,
         FetchState.partitionId: "0",
-        estResponseSize: 5000.,
         toBlock: None,
         isChunk: false,
         selection: fetchStateWithTwoPartitions.normalSelection,
@@ -3723,7 +3675,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let query3 = {
         ...defaultQuery,
         FetchState.partitionId: "0",
-        estResponseSize: 5000.,
         toBlock: None,
         isChunk: false,
         selection: fetchState.normalSelection,

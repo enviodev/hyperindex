@@ -8,9 +8,10 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
+  estResponseSize: None,
   chainId: 0,
   progress: 0.,
+  itemsTarget: 0,
   selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
   addressesByContractName: Dict.make(),
 }
@@ -93,7 +94,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         let query: FetchState.query = {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 0.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -282,7 +282,6 @@ describe("IndexerState", () => {
               let query: FetchState.query = {
                 ...defaultQuery,
                 partitionId: "0",
-                estResponseSize: 0.,
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
@@ -367,7 +366,6 @@ describe("IndexerState", () => {
         let concurrentQuery: FetchState.query = {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 0.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,

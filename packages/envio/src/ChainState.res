@@ -14,7 +14,7 @@ type t = {
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
   mutable numEventsProcessed: float,
-  // Running sum of in-flight queries' estResponseSize, kept here so the
+  // Running sum of in-flight queries' reserved size, kept here so the
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
@@ -447,7 +447,8 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.estResponseSize)
+    cs.pendingBudget +.
+    queries->Array.reduce(0., (acc, query) => acc +. query->FetchState.queryReservedSize)
 }
 
 // Drop every in-flight query and release their reservations together, keeping
@@ -563,7 +564,7 @@ let handleQueryResult = (
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
-  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.estResponseSize)
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query->FetchState.queryReservedSize)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.
