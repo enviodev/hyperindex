@@ -180,11 +180,9 @@ pub(super) fn coerce_stream_args<'a>(
             let v = resolve_nested(ctx, *value, &fd.ty, fd.default_value.is_some(), &vpath)?;
             match key.as_str() {
                 "initial_value" => initial = Some(v),
-                "ordering" => {
-                    if !v.is_null() {
-                        let dir = coerce_enum(ctx, v, "cursor_ordering", &vpath)?;
-                        descending = dir == "DESC";
-                    }
+                "ordering" if !v.is_null() => {
+                    let dir = coerce_enum(ctx, v, "cursor_ordering", &vpath)?;
+                    descending = dir == "DESC";
                 }
                 _ => {}
             }
