@@ -270,6 +270,9 @@ let checkAndFetch = async (
   // gap-closer for a cluster partition that isn't the current minimum lands above
   // the frontier (stuck) but is charged to the ready budget, not this one — that
   // overshoot is bounded by the cluster width and drains as the minimum advances.
+  // Independent of the ready budget on purpose: prefetch keeps warming partitions
+  // parked ahead even while the indexer is processing-bound, so a run of in-flight
+  // gap-closers can't starve it.
   let prefetchBudget = Pervasives.max(
     0,
     target -
@@ -281,9 +284,12 @@ let checkAndFetch = async (
   let chainIds = crossChainState.chainIds
   let actionByChain = Dict.make()
   let candidates = []
-  // Per-chain frontier and reach (block window), keyed by chain id.
+  // Per-chain frontier and reach (block window) for each budget class, keyed by
+  // chain id. Prefetch gets its own reach so it isn't throttled by the ready
+  // budget or by in-flight gap-closer reservations.
   let frontierByChain = Dict.make()
-  let reachByChain = Dict.make()
+  let gapReachByChain = Dict.make()
+  let prefetchReachByChain = Dict.make()
   // Warm chains (frontier density known) and the running Σ(density × range) that
   // sizes the shared progress advance.
   let warmChains = []
@@ -303,7 +309,9 @@ let checkAndFetch = async (
       | Some(density) if range > 0 =>
         weightSum := weightSum.contents +. density *. range->Int.toFloat
         warmChains->Array.push((chainId, range))->ignore
-      | _ => reachByChain->Utils.Dict.setByInt(chainId, fixedReach)
+      | _ =>
+        gapReachByChain->Utils.Dict.setByInt(chainId, fixedReach)
+        prefetchReachByChain->Utils.Dict.setByInt(chainId, fixedReach)
       }
       queries->Array.forEach(query => {
         query.chainId = chainId
@@ -313,24 +321,26 @@ let checkAndFetch = async (
     }
   }
 
-  // Aligned advance: every warm chain moves forward by the same progress fraction,
-  // sized so the tick's gap-closers add up to the ready budget. Reach = Δp × range,
-  // floored at 1 and capped at the chain's range. A ready budget of 0 means enough
-  // ready items already, so nothing needs fetching (reach 0). An all-empty frontier
+  // Aligned advance: each budget class moves every warm chain forward by the same
+  // progress fraction, sized so the tick's queries in that class add up to its
+  // budget. Reach = Δp × range, floored at 1 and capped at the chain's range. A
+  // budget of 0 means that class fetches nothing (reach 0). An all-empty frontier
   // (weightSum 0) reaches to the ceiling to skip the empty region fast.
-  warmChains->Array.forEach(((chainId, range)) => {
-    let reach = if readyBudget <= 0 {
+  let computeReach = (budget, range) =>
+    if budget <= 0 {
       0
     } else if weightSum.contents <= 0. {
       range
     } else {
-      let deltaP = readyBudget->Int.toFloat /. weightSum.contents
+      let deltaP = budget->Int.toFloat /. weightSum.contents
       Pervasives.max(
         1,
         Pervasives.min(Js.Math.round(deltaP *. range->Int.toFloat)->Float.toInt, range),
       )
     }
-    reachByChain->Utils.Dict.setByInt(chainId, reach)
+  warmChains->Array.forEach(((chainId, range)) => {
+    gapReachByChain->Utils.Dict.setByInt(chainId, computeReach(readyBudget, range))
+    prefetchReachByChain->Utils.Dict.setByInt(chainId, computeReach(prefetchBudget, range))
   })
 
   // Furthest-behind first, so the most-behind chains claim the budgets first.
@@ -368,11 +378,13 @@ let checkAndFetch = async (
     idx := idx.contents + 1
     let frontier =
       frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
+    let isGapCloser = query.fromBlock <= frontier + gapCloserWindow
     let reach =
-      reachByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
+      (isGapCloser ? gapReachByChain : prefetchReachByChain)
+      ->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)
+      ->Option.getOr(0)
     let span = querySpan(query, ~reach)
     if span > 0 {
-      let isGapCloser = query.fromBlock <= frontier + gapCloserWindow
       let remaining = isGapCloser ? readyRemaining : prefetchRemaining
       if remaining.contents > 0 {
         let baseTarget = switch query.density {

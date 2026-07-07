@@ -302,3 +302,150 @@ describe("CrossChainState readiness", () => {
   })
 })
 
+
+describe("CrossChainState two-budget scheduling", () => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let addrOf = id =>
+    ("0x123456789012345678901234567890123456789" ++ id)->Address.unsafeFromString
+
+  // A partition at `lfb`; `density` (items/block) omitted → fresh (no history), so
+  // the chain reads as cold. `density=Some` sets two prior responses of that rate.
+  let mkPartition = (~id, ~lfb, ~density=?): FetchState.partition => {
+    let (prevQueryRange, prevPrevQueryRange, prevRangeSize) = switch density {
+    | Some(d) => (100, 100, (d *. 100.)->Float.toInt)
+    | None => (0, 0, 0)
+    }
+    {
+      id,
+      latestFetchedBlock: {blockNumber: lfb, blockTimestamp: 0},
+      selection: normalSelection,
+      addressesByContractName: Dict.fromArray([("MockContract", [addrOf(id)])]),
+      mergeBlock: None,
+      dynamicContract: None,
+      mutPendingQueries: [],
+      prevQueryRange,
+      prevPrevQueryRange,
+      prevRangeSize,
+      latestBlockRangeUpdateBlock: 0,
+    }
+  }
+
+  let makeChain = (~chainId, ~knownHeight, ~partitions, ~buffer=[]) => {
+    let fetchState: FetchState.t = {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions,
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=partitions->Array.length,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: None,
+      buffer,
+      normalSelection,
+      latestOnBlockBlockNumber: knownHeight,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      contractConfigs: Dict.make(),
+      blockLag: 0,
+      onBlockRegistrations: [],
+      knownHeight,
+      firstEventBlock: Some(0),
+    }
+    let mockSource = MockIndexer.Source.make([], ~chain=#1)
+    ChainState.make(
+      ~chainConfig={...baseChainConfig, id: chainId},
+      ~fetchState,
+      ~indexingAddresses=Dict.make()->(
+        Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t
+      ),
+      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+      ~reorgDetection=ReorgDetection.make(
+        ~chainReorgCheckpoints=[],
+        ~maxReorgDepth=200,
+        ~shouldRollbackOnReorg=false,
+      ),
+      ~committedProgressBlockNumber=-1,
+      ~logger=Logging.getLogger(),
+    )
+  }
+
+  let dispatchedQueries = async cm => {
+    let queries = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain as _, ~action) => {
+      switch action {
+      | Ready(qs) => qs->Array.forEach(q => queries->Array.push(q)->ignore)
+      | _ => ()
+      }
+      Promise.resolve()
+    })
+    queries
+  }
+
+  Async.it("keeps advancing the frontier when the buffer is full of stuck items", async t => {
+    // Warm partition at block 100, far behind head. 150 buffered items sit at block
+    // 200 (above the frontier) → all stuck, readyCount 0 (readyBudget open),
+    // prefetchBudget 0 (total buffered already exceeds target). The gap-closer must
+    // still go out — a stuck-full buffer must not stall frontier progress.
+    let stuck = Belt.Array.make(150, 0)->Array.map(_ => mockEvent(~blockNumber=200))
+    let cs = makeChain(
+      ~chainId=1,
+      ~knownHeight=100000,
+      ~partitions=[mkPartition(~id="0", ~lfb=100, ~density=1.0)],
+      ~buffer=stuck,
+    )
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=100)
+    let queries = await dispatchedQueries(cm)
+    t.expect(queries->Array.map(q => (q.partitionId, q.isPrefetch))).toEqual([("0", false)])
+  })
+
+  Async.it("classifies a far-ahead partition as prefetch, the frontier one as gap-closer", async t => {
+    // p0 at the frontier (block 100) → gap-closer; p1 parked >20k ahead (block
+    // 100000) → prefetch, drawn from the separate prefetch budget.
+    let cs = makeChain(
+      ~chainId=1,
+      ~knownHeight=1000000,
+      ~partitions=[
+        mkPartition(~id="0", ~lfb=100, ~density=1.0),
+        mkPartition(~id="1", ~lfb=100000, ~density=1.0),
+      ],
+    )
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1000)
+    let queries = await dispatchedQueries(cm)
+    // Both partitions get queries (each may chunk); every p0 query is a gap-closer
+    // and every p1 query is a prefetch.
+    t.expect({
+      "p0AllGapClosers": queries->Array.every(q => q.partitionId != "0" || !q.isPrefetch),
+      "p1AllPrefetch": queries->Array.every(q => q.partitionId != "1" || q.isPrefetch),
+      "p0Dispatched": queries->Array.some(q => q.partitionId == "0"),
+      "p1Dispatched": queries->Array.some(q => q.partitionId == "1"),
+    }).toEqual({
+      "p0AllGapClosers": true,
+      "p1AllPrefetch": true,
+      "p0Dispatched": true,
+      "p1Dispatched": true,
+    })
+  })
+
+  Async.it("still prefetches parked-ahead partitions when the ready buffer is full", async t => {
+    // The buffer already holds `target` ready items at block 50 (<= frontier 100),
+    // so the ready budget is 0 and the frontier gap-closer (p0) is skipped. The
+    // prefetch budget is independent, so the far-ahead partition (p1) is still
+    // warmed — prefetch is not coupled to the ready budget.
+    let ready = Belt.Array.make(5, 0)->Array.map(_ => mockEvent(~blockNumber=50))
+    let cs = makeChain(
+      ~chainId=1,
+      ~knownHeight=1000000,
+      ~partitions=[
+        mkPartition(~id="0", ~lfb=100),
+        mkPartition(~id="1", ~lfb=100000, ~density=1.0),
+      ],
+      ~buffer=ready,
+    )
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=5)
+    let queries = await dispatchedQueries(cm)
+    t.expect({
+      "gapCloserDispatched": queries->Array.some(q => q.partitionId == "0"),
+      "prefetchDispatched": queries->Array.some(q => q.partitionId == "1" && q.isPrefetch),
+    }).toEqual({"gapCloserDispatched": false, "prefetchDispatched": true})
+  })
+})
