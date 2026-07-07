@@ -9,7 +9,7 @@ let createTestIndexer: unit => unknown = () => {
       NodeJs.Path.getDirname(NodeJs.ImportMeta.importMeta),
       "TestIndexerWorker.res.mjs",
     )->NodeJs.Path.toString
-  TestIndexer.makeCreateTestIndexer(~config=Config.loadWithoutRegistrations(), ~workerPath)()->(
+  TestIndexer.makeCreateTestIndexer(~config=Config.load(), ~workerPath)()->(
     Utils.magic: TestIndexer.t<'a> => unknown
   )
 }

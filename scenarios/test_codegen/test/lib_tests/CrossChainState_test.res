@@ -1,6 +1,6 @@
 open Vitest
 
-let baseChainConfig = Config.loadWithoutRegistrations().chainMap->ChainMap.values->Utils.Array.firstUnsafe
+let baseChainConfig = Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
 let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({

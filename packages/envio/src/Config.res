@@ -1284,11 +1284,11 @@ let throwIfIncompatible = (
   }
 }
 
-// The returned value is a pure function of the JSON — no handler
-// registrations are applied here. Post-registration configs come from
-// `HandlerLoader.applyRegistrations`. That purity is what lets this
-// memoize without invalidation.
-let loadWithoutRegistrations = () =>
+// The returned value is a pure function of the JSON: it holds only event
+// definitions, never handler/contractRegister/where state (that's layered on
+// separately as `HandlerRegister.registrationsByChainId`). That purity is
+// what lets this memoize without invalidation.
+let load = () =>
   switch cached.contents {
   | Some(c) => c
   | None => {
