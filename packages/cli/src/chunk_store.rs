@@ -162,6 +162,49 @@ impl VarCol {
     }
 }
 
+/// Variable-width UTF-8 string cells: like `VarCol`, but the shared buffer is a
+/// `String` rather than raw bytes. A cell is always pushed from a `&str`, so
+/// the buffer's UTF-8 validity is an invariant maintained by construction —
+/// `get` slices it directly with no re-validation, unlike round-tripping a
+/// string through a byte column and `String::from_utf8_lossy` on every read.
+pub(crate) struct StrCol {
+    offsets: Vec<u32>,
+    data: String,
+    validity: BitVec,
+}
+
+impl StrCol {
+    fn new() -> Self {
+        Self {
+            offsets: vec![0],
+            data: String::new(),
+            validity: BitVec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, v: Option<&str>) {
+        if let Some(s) = v {
+            self.data.push_str(s);
+        }
+        self.offsets.push(self.data.len() as u32);
+        self.validity.push(v.is_some());
+    }
+
+    pub(crate) fn get(&self, i: usize) -> Option<&str> {
+        self.validity
+            .get(i)
+            .then(|| &self.data[self.offsets[i] as usize..self.offsets[i + 1] as usize])
+    }
+
+    fn truncate(&mut self, len: usize) {
+        if len + 1 < self.offsets.len() {
+            self.offsets.truncate(len + 1);
+            self.data.truncate(*self.offsets.last().unwrap() as usize);
+            self.validity.truncate(len);
+        }
+    }
+}
+
 /// Per-row boxed lists, for rare fields whose cells are collections.
 pub(crate) struct ListCol<T> {
     rows: Vec<Option<Vec<T>>>,
@@ -195,6 +238,7 @@ pub(crate) enum AnyCol {
     Bool(NumCol<bool>),
     Fixed(FixedCol),
     Var(VarCol),
+    Str(StrCol),
     StrList(ListCol<String>),
     HashList(ListCol<[u8; 32]>),
     AccessLists(ListCol<format::AccessList>),
@@ -220,6 +264,9 @@ impl AnyCol {
     pub(crate) fn new_var() -> Self {
         AnyCol::Var(VarCol::new())
     }
+    pub(crate) fn new_str() -> Self {
+        AnyCol::Str(StrCol::new())
+    }
     pub(crate) fn new_str_list() -> Self {
         AnyCol::StrList(ListCol::new())
     }
@@ -242,6 +289,7 @@ impl AnyCol {
             AnyCol::Bool(_) => Self::new_bool(),
             AnyCol::Fixed(c) => Self::new_fixed(c.width),
             AnyCol::Var(_) => Self::new_var(),
+            AnyCol::Str(_) => Self::new_str(),
             AnyCol::StrList(_) => Self::new_str_list(),
             AnyCol::HashList(_) => Self::new_hash_list(),
             AnyCol::AccessLists(_) => Self::new_access_lists(),
@@ -257,6 +305,7 @@ impl AnyCol {
             AnyCol::Bool(c) => c.validity.get(i),
             AnyCol::Fixed(c) => c.validity.get(i),
             AnyCol::Var(c) => c.validity.get(i),
+            AnyCol::Str(c) => c.validity.get(i),
             AnyCol::StrList(c) => c.rows[i].is_some(),
             AnyCol::HashList(c) => c.rows[i].is_some(),
             AnyCol::AccessLists(c) => c.rows[i].is_some(),
@@ -272,6 +321,7 @@ impl AnyCol {
             AnyCol::Bool(c) => c.validity.any(),
             AnyCol::Fixed(c) => c.validity.any(),
             AnyCol::Var(c) => c.validity.any(),
+            AnyCol::Str(c) => c.validity.any(),
             AnyCol::StrList(c) => c.rows.iter().any(|r| r.is_some()),
             AnyCol::HashList(c) => c.rows.iter().any(|r| r.is_some()),
             AnyCol::AccessLists(c) => c.rows.iter().any(|r| r.is_some()),
@@ -287,6 +337,7 @@ impl AnyCol {
             AnyCol::Bool(c) => c.push(None),
             AnyCol::Fixed(c) => c.push(None),
             AnyCol::Var(c) => c.push(None),
+            AnyCol::Str(c) => c.push(None),
             AnyCol::StrList(c) => c.push(None),
             AnyCol::HashList(c) => c.push(None),
             AnyCol::AccessLists(c) => c.push(None),
@@ -302,6 +353,7 @@ impl AnyCol {
             (AnyCol::Bool(d), AnyCol::Bool(s)) => d.push(s.get(row)),
             (AnyCol::Fixed(d), AnyCol::Fixed(s)) => d.push(s.get(row)),
             (AnyCol::Var(d), AnyCol::Var(s)) => d.push(s.get(row)),
+            (AnyCol::Str(d), AnyCol::Str(s)) => d.push(s.get(row)),
             (AnyCol::StrList(d), AnyCol::StrList(s)) => d.push(s.get(row).cloned()),
             (AnyCol::HashList(d), AnyCol::HashList(s)) => d.push(s.get(row).cloned()),
             (AnyCol::AccessLists(d), AnyCol::AccessLists(s)) => d.push(s.get(row).cloned()),
@@ -318,6 +370,7 @@ impl AnyCol {
             AnyCol::Bool(c) => c.truncate(len),
             AnyCol::Fixed(c) => c.truncate(len),
             AnyCol::Var(c) => c.truncate(len),
+            AnyCol::Str(c) => c.truncate(len),
             AnyCol::StrList(c) => c.truncate(len),
             AnyCol::HashList(c) => c.truncate(len),
             AnyCol::AccessLists(c) => c.truncate(len),
@@ -643,6 +696,15 @@ pub(crate) fn var_from<R>(rows: &[R], f: impl Fn(&R) -> Option<&[u8]>) -> Option
     built(AnyCol::Var(col))
 }
 
+/// Like `var_from`, for fields that are already text (e.g. a base58 hash) —
+/// storing them as `StrCol` skips the bytes↔text round-trip `var_from` +
+/// `utf8` would otherwise pay on every read.
+pub(crate) fn str_from<R>(rows: &[R], f: impl Fn(&R) -> Option<&str>) -> Option<AnyCol> {
+    let mut col = StrCol::new();
+    rows.iter().for_each(|r| col.push(f(r)));
+    built(AnyCol::Str(col))
+}
+
 pub(crate) fn fixed_from<R>(
     rows: &[R],
     width: usize,
@@ -728,6 +790,16 @@ pub(crate) fn bytes_cells<T>(
         Some(AnyCol::Var(c)) => (0..len).map(|i| c.get(i).map_or(Ok(None), &f)).collect(),
         Some(AnyCol::Fixed(c)) => (0..len).map(|i| c.get(i).map_or(Ok(None), &f)).collect(),
         Some(_) => panic!("expected a byte column"),
+    }
+}
+
+/// Decode a `StrCol` straight into owned `String` cells — no UTF-8 validation,
+/// since the column's buffer is a `String` by construction.
+pub(crate) fn str_cells(col: Option<&AnyCol>, len: usize) -> Vec<Option<String>> {
+    match col {
+        None => vec![None; len],
+        Some(AnyCol::Str(c)) => (0..len).map(|i| c.get(i).map(str::to_string)).collect(),
+        Some(_) => panic!("expected a string column"),
     }
 }
 
@@ -905,6 +977,21 @@ mod tests {
     }
 
     #[test]
+    fn str_col_roundtrip_and_truncate() {
+        let mut col = StrCol::new();
+        col.push(Some("abc"));
+        col.push(None);
+        col.push(Some(""));
+        col.push(Some("xy"));
+        assert_eq!(
+            (col.get(0), col.get(1), col.get(2), col.get(3)),
+            (Some("abc"), None, Some(""), Some("xy"))
+        );
+        col.truncate(2);
+        assert_eq!((col.offsets.len(), col.data.len()), (3, 3));
+    }
+
+    #[test]
     fn prune_drops_whole_chunks_and_watermarks_bisected() {
         let mut store = ChunkStore::new(2, true);
         store.push_chunk(u64_chunk(&[(1, Some(10), None), (2, Some(20), None)]));
@@ -973,8 +1060,7 @@ mod tests {
     fn coalesce_merges_small_runs_and_dedups_newest_wins() {
         let mut store = ChunkStore::new(2, true);
         // One large chunk keeps the median meaningful.
-        let large: Vec<TestRow> =
-            (1000..1200).map(|k| (k, Some(k), None)).collect();
+        let large: Vec<TestRow> = (1000..1200).map(|k| (k, Some(k), None)).collect();
         store.push_chunk(u64_chunk(&large));
         for i in 0..COALESCE_CHUNK_COUNT {
             let k = i as u64;
