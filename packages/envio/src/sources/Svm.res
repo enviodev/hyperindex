@@ -37,8 +37,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     Logging.createChildFrom(
       ~logger,
       ~params={
-        "program": eventItem.eventConfig.contractName,
-        "instruction": eventItem.eventConfig.name,
+        "program": eventItem.onEventRegistration.eventConfig.contractName,
+        "instruction": eventItem.onEventRegistration.eventConfig.name,
         "chainId": eventItem.chain->ChainMap.Chain.toChainId,
         "slot": eventItem.blockNumber,
         "programId": instruction.programId,
@@ -101,6 +101,7 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
+      ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
     ) => JsError.throwWithMessage("Svm does not support getting items"),

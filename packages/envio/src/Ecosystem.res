@@ -69,12 +69,12 @@ let getItemLogger = {
     | None =>
       let logger = switch item {
       | Internal.Event(_) => ecosystem.toEventLogger(item->Internal.castUnsafeEventItem)
-      | Block({blockNumber, onBlockConfig}) =>
+      | Block({blockNumber, onBlockRegistration}) =>
         Logging.createChildFrom(
           ~logger=ecosystem.logger,
           ~params={
-            "onBlock": onBlockConfig.name,
-            "chainId": onBlockConfig.chainId,
+            "onBlock": onBlockRegistration.name,
+            "chainId": onBlockRegistration.chainId,
             "block": blockNumber,
           },
         )

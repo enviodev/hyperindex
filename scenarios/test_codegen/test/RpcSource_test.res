@@ -737,7 +737,7 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
+      onEventRegistrations: [(MockIndexer.evmOnEventRegistration() :> Internal.onEventRegistration)],
     }->RpcSource.getSelectionConfig(~chain)
 
     t.expect(
@@ -756,9 +756,9 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Selection config with wildcard events", t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(~id="1", ~isWildcard=true) :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(~id="2", ~isWildcard=true) :> Internal.eventConfig),
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(~id="1", ~isWildcard=true) :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(~id="2", ~isWildcard=true) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -776,12 +776,12 @@ describe("RpcSource - getSelectionConfig", () => {
   Async.it("Wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="event 2",
           ~isWildcard=true,
           ~dependsOnAddresses=true,
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -800,12 +800,12 @@ describe("RpcSource - getSelectionConfig", () => {
   Async.it("Non-wildcard topic selection which depends on addresses", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="event 2",
           ~isWildcard=false,
           ~dependsOnAddresses=true,
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -824,8 +824,8 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Fans out one selection per wildcard event that has filters", t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="1",
           ~isWildcard=true,
           ~eventFilters=Static([
@@ -836,8 +836,8 @@ describe("RpcSource - getSelectionConfig", () => {
               topic3: [],
             },
           ]),
-        ) :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(
+        ) :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(
           ~id="2",
           ~isWildcard=true,
           ~eventFilters=Static([
@@ -848,7 +848,7 @@ describe("RpcSource - getSelectionConfig", () => {
               topic3: [],
             },
           ]),
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -869,8 +869,8 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Fans out one selection per group of a single wildcard event's OR filter", t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="w",
           ~isWildcard=true,
           ~eventFilters=Static([
@@ -887,7 +887,7 @@ describe("RpcSource - getSelectionConfig", () => {
               topic3: [],
             },
           ]),
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -909,7 +909,7 @@ describe("RpcSource - getSelectionConfig", () => {
     try {
       let _ = {
         dependsOnAddresses: true,
-        eventConfigs: [],
+        onEventRegistrations: [],
       }->RpcSource.getSelectionConfig(~chain)
       JsError.throwWithMessage("Should have thrown")
     } catch {
@@ -924,9 +924,9 @@ describe("RpcSource - getSelectionConfig", () => {
   it("Fans out one selection per event when a normal event is mixed with a filtered event", t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(~id="1") :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(~id="2", ~dependsOnAddresses=true) :> Internal.eventConfig),
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(~id="1") :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(~id="2", ~dependsOnAddresses=true) :> Internal.onEventRegistration),
       ],
     }->RpcSource.getSelectionConfig(~chain)
 
@@ -1177,7 +1177,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   Async.it(
     "Shrinks the partition block interval immediately (no backoff) on each too-large retry",
     async t => {
-      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_1`)
+      let eventConfig = MockIndexer.evmOnEventRegistration(~id=`${sighash}_1`)
 
       let blockJson = JSON.Object(
         Dict.fromArray([
@@ -1229,8 +1229,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           {
             sighash,
             topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
             params: [],
           },
         ],
@@ -1242,16 +1242,17 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           let _ = await source.getItemsOrThrow(
             ~fromBlock=0,
             ~toBlock,
-            ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
             ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-              Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
             ),
             ~knownHeight=1_000_000,
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
-              eventConfigs: [(eventConfig :> Internal.eventConfig)],
+              onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
+            ~itemsTarget=5000,
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource response too large"}),
           )
@@ -1308,7 +1309,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   Async.it(
     "Re-grows the partition interval on the next successful query after a density shrink",
     async t => {
-      let eventConfig = MockIndexer.evmEventConfig(~id=`${sighash}_2`)
+      let eventConfig = MockIndexer.evmOnEventRegistration(~id=`${sighash}_2`)
 
       let blockJson = JSON.Object(
         Dict.fromArray([
@@ -1366,8 +1367,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           {
             sighash,
             topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
             params: [],
           },
         ],
@@ -1379,16 +1380,17 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           let _ = await source.getItemsOrThrow(
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
-            ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
             ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-              Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
             ),
             ~knownHeight=1_000_000,
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
-              eventConfigs: [(eventConfig :> Internal.eventConfig)],
+              onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
+            ~itemsTarget=5000,
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
           )
@@ -1441,7 +1443,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
   Async.it(
     "Throws a retryable error instead of a source-disabling one when the receipt is null",
     async t => {
-      let eventConfig = MockIndexer.evmEventConfig(
+      let eventConfig = MockIndexer.evmOnEventRegistration(
         ~id=`${sighash}_1`,
         ~transactionFieldNames=[GasUsed],
       )
@@ -1488,8 +1490,8 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           {
             sighash,
             topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
             params: [],
           },
         ],
@@ -1502,16 +1504,17 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
             let _ = await source.getItemsOrThrow(
               ~fromBlock=0,
               ~toBlock=Some(100),
-              ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+              ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
               ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-                Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+                Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
               ),
               ~knownHeight=100,
               ~partitionId="0",
               ~selection={
                 dependsOnAddresses: true,
-                eventConfigs: [(eventConfig :> Internal.eventConfig)],
+                onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
               },
+              ~itemsTarget=5000,
               ~retry,
               ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
             )
@@ -1564,7 +1567,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       // A single event whose `where` is an OR of two param groups compiles to
       // two topic selections → two eth_getLogs. The mock returns the same log
       // for both, so the result must be deduped to one item.
-      let eventConfig = MockIndexer.evmEventConfig(
+      let eventConfig = MockIndexer.evmOnEventRegistration(
         // `id` must equal the router key derived at lookup — `sighash_topicCount`
         ~id=`${sighash}_1`,
         ~eventFilters=Static([
@@ -1630,8 +1633,8 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
           {
             sighash,
             topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
             params: [],
           },
         ],
@@ -1642,16 +1645,17 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         let page = await source.getItemsOrThrow(
           ~fromBlock=0,
           ~toBlock=Some(100),
-          ~addressesByContractName=Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+          ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
           ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-            Dict.fromArray([(eventConfig.contractName, [mockAddress])]),
+            Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
           ),
           ~knownHeight=100,
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
-            eventConfigs: [(eventConfig :> Internal.eventConfig)],
+            onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
+          ~itemsTarget=5000,
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource fan-out"}),
         )
@@ -1680,7 +1684,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       // `where: false` compiles to an empty topic-selection set, so there is
       // nothing to query — the batch must advance the cursor without issuing an
       // eth_getLogs (and without throwing, which the pre-fan-out code did).
-      let eventConfig = MockIndexer.evmEventConfig(
+      let eventConfig = MockIndexer.evmOnEventRegistration(
         ~id=`${sighash}_1`,
         ~isWildcard=true,
         ~eventFilters=Static([]),
@@ -1717,8 +1721,8 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           {
             sighash,
             topicCount: 1,
-            eventName: eventConfig.name,
-            contractName: eventConfig.contractName,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
             params: [],
           },
         ],
@@ -1735,8 +1739,9 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: false,
-            eventConfigs: [(eventConfig :> Internal.eventConfig)],
+            onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
+          ~itemsTarget=5000,
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource skip-all"}),
         )
@@ -1775,7 +1780,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
   Async.it(
     "a filtered contract must not receive a log fetched by another contract's query",
     async t => {
-      let eventA = MockIndexer.evmEventConfig(
+      let eventA = MockIndexer.evmOnEventRegistration(
         ~contractName="ContractA",
         ~id=`${sighash}_1`,
         ~eventFilters=Static([
@@ -1789,7 +1794,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
       )
       // Unfiltered, but pin topic0 to the bare sighash (MockIndexer otherwise
       // derives it from `id`, which we set to the router key `sighash_1`).
-      let eventB = MockIndexer.evmEventConfig(
+      let eventB = MockIndexer.evmOnEventRegistration(
         ~contractName="ContractB",
         ~id=`${sighash}_1`,
         ~eventFilters=Static([
@@ -1879,8 +1884,8 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
-          {sighash, topicCount: 1, eventName: eventA.name, contractName: "ContractA", params: []},
-          {sighash, topicCount: 1, eventName: eventB.name, contractName: "ContractB", params: []},
+          {sighash, topicCount: 1, eventName: eventA.eventConfig.name, contractName: "ContractA", params: []},
+          {sighash, topicCount: 1, eventName: eventB.eventConfig.name, contractName: "ContractB", params: []},
         ],
         lowercaseAddresses: false,
       })
@@ -1895,8 +1900,9 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
-            eventConfigs: [(eventA :> Internal.eventConfig), (eventB :> Internal.eventConfig)],
+            onEventRegistrations: [(eventA :> Internal.onEventRegistration), (eventB :> Internal.onEventRegistration)],
           },
+          ~itemsTarget=5000,
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource pooled leak"}),
         )

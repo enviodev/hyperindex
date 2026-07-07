@@ -73,11 +73,13 @@ describe("clientAddressFilter — precompiled predicate", () => {
   ]
 
   let buildFilter = (~eventFilters: JSON.t) =>
-    EventConfigBuilder.buildEvmEventConfig(
-      ~contractName="ERC20",
-      ~eventName="Transfer",
-      ~sighash=transferSighash,
-      ~params=transferParams,
+    EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
@@ -164,11 +166,13 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
   // Wildcard Transfer filtering `to` by the registered ERC20 addresses; the
   // single config address is effective from block 5 (contract startBlock).
   let registeredAddr = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
-  let eventConfig = EventConfigBuilder.buildEvmEventConfig(
-    ~contractName="ERC20",
-    ~eventName="Transfer",
-    ~sighash=transferSighash,
-    ~params=transferParams,
+  let onEventRegistration = EventConfigBuilder.buildEvmOnEventRegistration(
+    ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=transferParams,
+    ),
     ~isWildcard=true,
     ~handler=None,
     ~contractRegister=None,
@@ -184,7 +188,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
       blockHash: `0x${blockNumber->Int.toString}`,
-      eventConfig: (eventConfig :> Internal.eventConfig),
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       logIndex: 0,
       transactionIndex: 0,
       payload: {"params": {"to": to}}->(
@@ -193,12 +197,12 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     })
 
   it("drops over-fetched events before the param-address's registration block", t => {
-    let eventConfigs = [(eventConfig :> Internal.eventConfig)]
+    let onEventRegistrations = [(onEventRegistration :> Internal.onEventRegistration)]
     let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
-      ~eventConfigs,
+      ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,
       ~startBlock=0,
@@ -208,7 +212,7 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
       ~chainId=1,
       ~knownHeight=1000,
     )
-    let query = switch fetchState->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
+    let query = switch fetchState->FetchState.getNextQuery {
     | Ready([q]) => q
     | _ => JsError.throwWithMessage("expected a single ready query")
     }
@@ -230,15 +234,17 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
   // A merged partition can over-fetch an address before its effectiveStartBlock;
   // the codegen'd srcAddress check in clientAddressFilter drops those.
   let registeredAddr = "0x3333333333333333333333333333333333333333"->Address.unsafeFromString
-  let eventConfig = EventConfigBuilder.buildEvmEventConfig(
-    ~contractName="ERC20",
-    ~eventName="Transfer",
-    ~sighash=transferSighash,
-    ~params=[
-      {name: "from", abiType: "address", indexed: true},
-      {name: "to", abiType: "address", indexed: true},
-      {name: "value", abiType: "uint256", indexed: false},
-    ],
+  let onEventRegistration = EventConfigBuilder.buildEvmOnEventRegistration(
+    ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=[
+        {name: "from", abiType: "address", indexed: true},
+        {name: "to", abiType: "address", indexed: true},
+        {name: "value", abiType: "uint256", indexed: false},
+      ],
+    ),
     ~isWildcard=false,
     ~handler=None,
     ~contractRegister=None,
@@ -254,7 +260,7 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
       blockHash: `0x${blockNumber->Int.toString}`,
-      eventConfig: (eventConfig :> Internal.eventConfig),
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       logIndex: 0,
       transactionIndex: 0,
       payload: {"srcAddress": srcAddress}->(
@@ -263,12 +269,12 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     })
 
   it("keeps events at/after effectiveStartBlock, drops earlier ones", t => {
-    let eventConfigs = [(eventConfig :> Internal.eventConfig)]
+    let onEventRegistrations = [(onEventRegistration :> Internal.onEventRegistration)]
     let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
-      ~eventConfigs,
+      ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,
       ~startBlock=0,
@@ -278,7 +284,7 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
       ~chainId=1,
       ~knownHeight=1000,
     )
-    let query = switch fetchState->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
+    let query = switch fetchState->FetchState.getNextQuery {
     | Ready([q]) => q
     | _ => JsError.throwWithMessage("expected a single ready query")
     }

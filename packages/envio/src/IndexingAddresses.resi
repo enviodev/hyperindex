@@ -6,7 +6,9 @@ type t
 
 let deriveEffectiveStartBlock: (~registrationBlock: int, ~contractStartBlock: option<int>) => int
 
-let makeContractConfigs: (~eventConfigs: array<Internal.eventConfig>) => dict<contractConfig>
+let makeContractConfigs: (
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+) => dict<contractConfig>
 
 let makeIndexingAddress: (
   ~contract: Internal.indexingAddress,

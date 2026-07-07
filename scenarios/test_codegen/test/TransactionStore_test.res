@@ -3,14 +3,14 @@ open Vitest
 // Build an `Internal.item` Event with the given store key. The payload is a bare
 // object so getPayloadTransaction/setPayloadTransaction (which read/write its
 // `transaction` property) behave like a real store-backed EVM payload.
-// `mask` mirrors the per-event `eventConfig.transactionFieldMask` that
-// materializeItems reads to decide which fields to materialise for the item.
+// `mask` mirrors the per-event `onEventRegistration.eventConfig.transactionFieldMask`
+// that materializeItems reads to decide which fields to materialise for the item.
 let makeStoreBackedItem = (~blockNumber, ~transactionIndex, ~mask=2.): Internal.item =>
   {
     "kind": 0,
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
-    "eventConfig": {"transactionFieldMask": mask},
+    "onEventRegistration": {"eventConfig": {"transactionFieldMask": mask}},
     "payload": (Dict.make(): dict<Internal.eventTransaction>),
   }->(Utils.magic: {..} => Internal.item)
 

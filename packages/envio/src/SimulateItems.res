@@ -216,11 +216,20 @@ let deriveSrcAddress = (
   ~providedSrcAddress: option<Address.t>,
   ~eventConfig: Internal.eventConfig,
   ~chainConfig: Config.chain,
+  ~config: Config.t,
 ): Address.t => {
   switch providedSrcAddress {
-  | Some(addr) => addr
+  // Canonicalize to the configured casing; the fallback addresses below already
+  // come from the parsed config and need no normalization. Relaxed (not
+  // Config.normalizeUserAddress) so test placeholders like "0xfoo" are allowed.
+  | Some(addr) => config->Config.normalizeSimulateAddress(addr)
   | None =>
-    if eventConfig.isWildcard {
+    if (
+      HandlerRegister.isWildcard(
+        ~contractName=eventConfig.contractName,
+        ~eventName=eventConfig.name,
+      )
+    ) {
       dummySrcAddress
     } else {
       switch firstContractAddress(~chainConfig, ~contractName=eventConfig.contractName) {
@@ -287,6 +296,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~providedSrcAddress=item.srcAddress,
         ~eventConfig,
         ~chainConfig,
+        ~config,
       )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})
@@ -326,10 +336,20 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
 
+      // Build a real registration the same way `HandlerRegister.buildOnEventRegistrations`
+      // does at startup (not a stub), so the address filter and `where`
+      // behave identically to real indexing — the dead-input tracker relies
+      // on `clientAddressFilter` actually gating unrouted items.
+      let onEventRegistration = HandlerRegister.buildOnEventRegistration(
+        ~config,
+        ~chainId,
+        ~eventConfig,
+      )
+
       items
       ->Array.push(
         Internal.Event({
-          eventConfig,
+          onEventRegistration,
           timestamp,
           chain,
           blockNumber,

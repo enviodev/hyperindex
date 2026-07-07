@@ -10,7 +10,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     async t => {
       let selectionConfig = {
         dependsOnAddresses: true,
-        eventConfigs: [(MockIndexer.evmEventConfig() :> Internal.eventConfig)],
+        onEventRegistrations: [(MockIndexer.evmOnEventRegistration() :> Internal.onEventRegistration)],
       }->HyperSyncSource.getSelectionConfig(~chain)
 
       t.expect(selectionConfig).toEqual({
@@ -61,11 +61,11 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     async t => {
       let selectionConfig = {
         dependsOnAddresses: true,
-        eventConfigs: [
-          (MockIndexer.evmEventConfig(
+        onEventRegistrations: [
+          (MockIndexer.evmOnEventRegistration(
             ~blockFieldNames=([Hash, Number, Timestamp, Nonce]: array<Internal.evmBlockField>),
             ~transactionFieldNames=([Hash, GasPrice]: array<Internal.evmTransactionField>),
-          ) :> Internal.eventConfig),
+          ) :> Internal.onEventRegistration),
         ],
       }->HyperSyncSource.getSelectionConfig(~chain)
 
@@ -83,10 +83,10 @@ describe("HyperSyncSource - getSelectionConfig", () => {
   Async.it("Excludes transactionIndex from the query (served from the log / store key)", async t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~transactionFieldNames=([TransactionIndex, Hash]: array<Internal.evmTransactionField>),
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->HyperSyncSource.getSelectionConfig(~chain)
 
@@ -100,17 +100,17 @@ describe("HyperSyncSource - getSelectionConfig", () => {
   Async.it("Combines field selection from multiple events on different contracts", async t => {
     let selectionConfig = {
       dependsOnAddresses: true,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~contractName="Foo",
           ~blockFieldNames=([Hash, Number, Timestamp]: array<Internal.evmBlockField>),
           ~transactionFieldNames=([Hash]: array<Internal.evmTransactionField>),
-        ) :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(
+        ) :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(
           ~contractName="Bar",
           ~blockFieldNames=([Nonce]: array<Internal.evmBlockField>),
           ~transactionFieldNames=([GasPrice]: array<Internal.evmTransactionField>),
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->HyperSyncSource.getSelectionConfig(~chain)
 
@@ -127,15 +127,15 @@ describe("HyperSyncSource - getSelectionConfig", () => {
   Async.it("Topic selection with two wildcard events", async t => {
     let selectionConfig = {
       dependsOnAddresses: false,
-      eventConfigs: [
-        (MockIndexer.evmEventConfig(
+      onEventRegistrations: [
+        (MockIndexer.evmOnEventRegistration(
           ~id="wildcard event 1",
           ~isWildcard=true,
-        ) :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(
+        ) :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(
           ~id="wildcard event 2",
           ~isWildcard=true,
-        ) :> Internal.eventConfig),
+        ) :> Internal.onEventRegistration),
       ],
     }->HyperSyncSource.getSelectionConfig(~chain)
 
@@ -165,13 +165,13 @@ describe("HyperSyncSource - getSelectionConfig", () => {
     async t => {
       let selectionConfig = {
         dependsOnAddresses: false,
-        eventConfigs: [
-          (MockIndexer.evmEventConfig(~id="event 1") :> Internal.eventConfig),
-          (MockIndexer.evmEventConfig(
+        onEventRegistrations: [
+          (MockIndexer.evmOnEventRegistration(~id="event 1") :> Internal.onEventRegistration),
+          (MockIndexer.evmOnEventRegistration(
             ~id="event 2",
             ~isWildcard=true,
             ~dependsOnAddresses=true,
-          ) :> Internal.eventConfig),
+          ) :> Internal.onEventRegistration),
         ],
       }->HyperSyncSource.getSelectionConfig(~chain)
 

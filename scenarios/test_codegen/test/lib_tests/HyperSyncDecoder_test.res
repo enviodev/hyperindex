@@ -178,7 +178,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
 
     let eventItem =
       Internal.Event({
-        eventConfig: (MockIndexer.evmEventConfig(~contractName="ERC20") :> Internal.eventConfig),
+        onEventRegistration: (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
         timestamp: 1234,
         chain: ChainMap.Chain.makeUnsafe(~chainId=137),
         blockNumber,

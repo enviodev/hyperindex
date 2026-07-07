@@ -44,8 +44,8 @@ let runContractRegistersOrThrow = async (
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
     let contractRegister = switch eventItem {
-    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {eventConfig: {contractRegister: None, name: eventName}} =>
+    | {onEventRegistration: {contractRegister: Some(contractRegister)}} => contractRegister
+    | {onEventRegistration: {contractRegister: None, eventConfig: {name: eventName}}} =>
       // Unexpected case, since we should pass only events with contract register to this function
       JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
@@ -140,6 +140,20 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
     )
 
+    let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
+      let eventItem = item->Internal.castUnsafeEventItem
+      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
+    })
+    Logging.trace({
+      "msg": "Finished querying",
+      "chainId": chain->ChainMap.Chain.toChainId,
+      "partitionId": query.partitionId,
+      "fromBlock": fromBlockQueried,
+      "toBlock": latestFetchedBlockNumber,
+      "numEvents": parsedQueueItems->Array.length,
+      "numContractRegisterEvents": numContractRegisterEvents,
+    })
+
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
@@ -196,7 +210,7 @@ let rec onQueryResponse = async (
       for idx in 0 to parsedQueueItems->Array.length - 1 {
         let item = parsedQueueItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.eventConfig.contractRegister !== None {
+        if eventItem.onEventRegistration.contractRegister !== None {
           itemsWithContractRegister->Array.push(item)
         }
         // TODO: Don't really need to keep it in the queue
@@ -334,15 +348,6 @@ let fetchChain = async (
     // there's nothing to fetch. During backfill any such chain is idle.
     let reducedPolling = !isRealtime
 
-    // Accumulated across all queries dispatched in this tick so their per-query
-    // results collapse into a single completion log instead of one per query.
-    let dispatchedCount = switch action {
-    | FetchState.Ready(queries) => queries->Array.length
-    | WaitingForNewBlock | NothingToQuery => 0
-    }
-    let fetchedByPartition = Dict.make()
-    let fetchedCount = ref(0)
-
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
@@ -368,22 +373,6 @@ let fetchChain = async (
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
-            fetchedCount := fetchedCount.contents + 1
-            fetchedByPartition->Dict.set(
-              query.partitionId,
-              {
-                "fromBlock": response.fromBlockQueried,
-                "toBlock": response.latestFetchedBlockNumber,
-                "numEvents": response.parsedQueueItems->Array.length,
-              },
-            )
-            if dispatchedCount > 0 && fetchedCount.contents === dispatchedCount {
-              Logging.trace({
-                "msg": "Finished querying",
-                "chainId": chain->ChainMap.Chain.toChainId,
-                "partitions": fetchedByPartition,
-              })
-            }
             await onQueryResponse(
               state,
               {chain, response, query},
