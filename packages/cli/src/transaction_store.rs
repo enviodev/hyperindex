@@ -25,7 +25,9 @@ use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{
     encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
-use crate::field_columns::{build_columns, Column, Columns, SvmTokenBalanceOut};
+use crate::field_columns::{
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmTokenBalanceOut,
+};
 use crate::svm_hypersync_source::types::bigint_u64;
 
 /// Transaction field codes shared with ReScript by ordinal value. The order is
@@ -147,10 +149,6 @@ impl SvmTxField {
             TokenBalances => "tokenBalances",
         }
     }
-}
-
-fn bytes<T: AsRef<[u8]>>(v: &T) -> &[u8] {
-    v.as_ref()
 }
 
 /// Build one EVM field's column from a response's transactions. `None` for the
@@ -379,17 +377,6 @@ fn gather_token_balances(
             Some(rows.unwrap_or_default())
         })
         .collect()
-}
-
-/// Ecosystem selecting `materialize`'s decoder. A store is per-chain, hence
-/// single-ecosystem, and is fixed at construction. `Evm` carries that chain's
-/// address-checksumming setting — a per-chain EVM constant the decoder needs,
-/// which the type ties to EVM so it can't be set without (or forgotten for) it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Ecosystem {
-    Evm { should_checksum: bool },
-    Svm,
-    Fuel,
 }
 
 /// The transaction table plus SVM's token-balance companion (empty on other
@@ -633,20 +620,14 @@ impl TransactionStore {
 /// position in the selection mask, so the two must not drift.
 #[napi]
 pub fn evm_transaction_field_names() -> Vec<String> {
-    EvmTxField::VARIANTS
-        .iter()
-        .map(|f| f.name().to_string())
-        .collect()
+    field_names(EvmTxField::VARIANTS, EvmTxField::name)
 }
 
 /// Ordered SVM transaction-field names; `Svm.res transactionFields` is tested
 /// against this.
 #[napi]
 pub fn svm_transaction_field_names() -> Vec<String> {
-    SvmTxField::VARIANTS
-        .iter()
-        .map(|f| f.name().to_string())
-        .collect()
+    field_names(SvmTxField::VARIANTS, SvmTxField::name)
 }
 
 #[cfg(test)]

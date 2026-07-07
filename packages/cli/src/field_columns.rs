@@ -14,6 +14,33 @@ use crate::evm_hypersync_source::types::{
     AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 
+/// Ecosystem selecting `materialize`'s decoder, shared by every per-chain field
+/// store (`TransactionStore`, `BlockStore`). A store is per-chain, hence
+/// single-ecosystem, and is fixed at construction. `Evm` carries that chain's
+/// address-checksumming setting — a per-chain EVM constant the decoder needs,
+/// which the type ties to EVM so it can't be set without (or forgotten for) it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ecosystem {
+    Evm { should_checksum: bool },
+    Svm,
+    Fuel,
+}
+
+/// A byte-slice view of anything that can cheaply produce one (hashes,
+/// addresses, raw strings) — shared by every column-fill helper across stores.
+pub fn bytes<T: AsRef<[u8]>>(v: &T) -> &[u8] {
+    v.as_ref()
+}
+
+/// Ordered field names for an ecosystem's field-code enum, the `#[napi]`-exposed
+/// contract each store's ReScript field-name array is tested against.
+pub fn field_names<F: Copy>(
+    variants: &'static [F],
+    name: impl Fn(F) -> &'static str,
+) -> Vec<String> {
+    variants.iter().map(|&f| name(f).to_string()).collect()
+}
+
 /// The materialised SVM token balance, matching the public `svmTokenBalance`
 /// shape (napi camel-cases the field names).
 #[napi(object)]

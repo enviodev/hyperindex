@@ -21,7 +21,7 @@ use crate::chunk_store::{
 };
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
-use crate::field_columns::{build_columns, Column, Columns};
+use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
 
 /// EVM block field codes shared with ReScript by ordinal value. The order is the
 /// contract: it mirrors `Evm.res` `blockFields`, and the ordinal is the bit
@@ -121,10 +121,6 @@ impl SvmBlockField {
             ParentHash => "parentHash",
         }
     }
-}
-
-fn bytes<T: AsRef<[u8]>>(v: &T) -> &[u8] {
-    v.as_ref()
 }
 
 /// Build one EVM field's column from a response's blocks. `None` for the
@@ -304,18 +300,6 @@ fn decode_svm_block_columns(
     )
 }
 
-/// Ecosystem selecting `materialize`'s decoder. A store is per-chain, hence
-/// single-ecosystem, and is fixed at construction. `Evm` carries that chain's
-/// address-checksumming setting (only `miner` uses it) — a per-chain EVM
-/// constant the decoder needs, tied to EVM so it can't be set without (or
-/// forgotten for) it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Ecosystem {
-    Evm { should_checksum: bool },
-    Svm,
-    Fuel,
-}
-
 #[napi]
 pub struct BlockStore {
     inner: Mutex<ChunkStore<u64>>,
@@ -493,19 +477,13 @@ impl BlockStore {
 /// in the selection mask, so the two must not drift.
 #[napi]
 pub fn evm_block_field_names() -> Vec<String> {
-    EvmBlockField::VARIANTS
-        .iter()
-        .map(|f| f.name().to_string())
-        .collect()
+    field_names(EvmBlockField::VARIANTS, EvmBlockField::name)
 }
 
 /// Ordered SVM block-field names; `Svm.res blockFields` is tested against this.
 #[napi]
 pub fn svm_block_field_names() -> Vec<String> {
-    SvmBlockField::VARIANTS
-        .iter()
-        .map(|f| f.name().to_string())
-        .collect()
+    field_names(SvmBlockField::VARIANTS, SvmBlockField::name)
 }
 
 #[cfg(test)]
