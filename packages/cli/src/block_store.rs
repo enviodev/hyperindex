@@ -17,7 +17,7 @@ use strum::VariantArray;
 
 use crate::chunk_store::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
-    i64_from, u64_cells, u64_from, utf8, var_from, AnyCol, Chunk, ChunkStore,
+    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Chunk, ChunkStore,
 };
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
@@ -245,12 +245,10 @@ fn svm_block_col(field: SvmBlockField, blocks: &[solana_simple::Block]) -> Optio
         // The slot is the chunk key, not a column.
         Slot => None,
         Time => i64_from(blocks, |b| b.block_time),
-        Hash => var_from(blocks, |b| Some(b.blockhash.as_bytes())),
+        Hash => str_from(blocks, |b| Some(b.blockhash.as_str())),
         Height => u64_from(blocks, |b| b.block_height),
         ParentSlot => u64_from(blocks, |b| b.parent_slot),
-        ParentHash => var_from(blocks, |b| {
-            b.parent_blockhash.as_ref().map(|s| s.as_bytes())
-        }),
+        ParentHash => str_from(blocks, |b| b.parent_blockhash.as_deref()),
     }
 }
 
@@ -275,7 +273,7 @@ fn decode_svm_block_field(
                 .collect(),
         ),
         Time => Column::I64(i64_cells(col, len)),
-        Hash | ParentHash => Column::Str(bytes_cells(col, len, |b| Ok(Some(utf8(b))))?),
+        Hash | ParentHash => Column::Str(str_cells(col, len)),
         Height => Column::I64(u64_cells(col, len, |v| {
             i64::try_from(v).map(Some).context("height overflow")
         })?),
