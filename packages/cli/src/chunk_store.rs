@@ -973,8 +973,7 @@ mod tests {
     fn coalesce_merges_small_runs_and_dedups_newest_wins() {
         let mut store = ChunkStore::new(2, true);
         // One large chunk keeps the median meaningful.
-        let large: Vec<TestRow> =
-            (1000..1200).map(|k| (k, Some(k), None)).collect();
+        let large: Vec<TestRow> = (1000..1200).map(|k| (k, Some(k), None)).collect();
         store.push_chunk(u64_chunk(&large));
         for i in 0..COALESCE_CHUNK_COUNT {
             let k = i as u64;
