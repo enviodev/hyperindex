@@ -1,11 +1,10 @@
-//! Per-chain block store, chunk-columnar: every fetch response contributes one
-//! chunk of blocks (keyed by number — slot on SVM) holding only the selected
-//! fields' columns. Large values never cross the napi boundary until read. At
-//! batch preparation the fields a chain's events selected are gathered under
-//! the store lock and decoded in bulk, off the JS thread, into columnar form;
-//! the main thread zips the columns into plain JS objects. The store lives on
-//! the ReScript `ChainState`; fetch responses merge in, and rows are pruned or
-//! rolled back by block via the chunk lifecycle.
+//! Per-chain block store: a merge-on-insert `Table` keyed by number (slot on
+//! SVM), holding only the selected fields' columns. Large values never cross
+//! the napi boundary until read. At batch preparation the fields a chain's
+//! events selected are gathered under the store lock and decoded in bulk, off
+//! the JS thread, into columnar form; the main thread zips the columns into
+//! plain JS objects. The store lives on the ReScript `ChainState`; fetch
+//! responses merge in, and rows are pruned or rolled back by block.
 
 use std::sync::Mutex;
 
@@ -15,13 +14,13 @@ use hypersync_client_solana::simple_types as solana_simple;
 use napi_derive::napi;
 use strum::VariantArray;
 
-use crate::chunk_store::{
-    bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
-    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Chunk, ChunkStore,
-};
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
 use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
+use crate::field_table::{
+    bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
+    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Table,
+};
 
 /// EVM block field codes shared with ReScript by ordinal value. The order is the
 /// contract: it mirrors `Evm.res` `blockFields`, and the ordinal is the bit
@@ -130,7 +129,7 @@ impl SvmBlockField {
 fn evm_block_col(field: EvmBlockField, blocks: &[simple_types::Block]) -> Option<AnyCol> {
     use EvmBlockField::*;
     match field {
-        // The block number is the chunk key, not a column.
+        // The block number is the table key, not a column.
         Number => None,
         Timestamp => var_from(blocks, |b| b.timestamp.as_ref().map(bytes)),
         Hash => fixed_from(blocks, 32, |b| b.hash.as_ref().map(bytes)),
@@ -242,7 +241,7 @@ fn decode_evm_block_columns(
 fn svm_block_col(field: SvmBlockField, blocks: &[solana_simple::Block]) -> Option<AnyCol> {
     use SvmBlockField::*;
     match field {
-        // The slot is the chunk key, not a column.
+        // The slot is the table key, not a column.
         Slot => None,
         Time => i64_from(blocks, |b| b.block_time),
         Hash => str_from(blocks, |b| Some(b.blockhash.as_str())),
@@ -300,7 +299,7 @@ fn decode_svm_block_columns(
 
 #[napi]
 pub struct BlockStore {
-    inner: Mutex<ChunkStore<u64>>,
+    inner: Mutex<Table<u64>>,
     // Fixed at construction; drives the decoder in `materialize`.
     ecosystem: Ecosystem,
 }
@@ -327,7 +326,7 @@ impl BlockStore {
         Self::with_ecosystem(Ecosystem::Fuel)
     }
 
-    /// Move every chunk from `page` into this store (merging a fetch-response
+    /// Move every row from `page` into this store (merging a fetch-response
     /// page into the persistent per-chain store).
     #[napi]
     pub fn merge(&self, page: &BlockStore) {
@@ -419,7 +418,7 @@ impl BlockStore {
             Ecosystem::Fuel => 0,
         };
         Self {
-            inner: Mutex::new(ChunkStore::new(n_fields, true)),
+            inner: Mutex::new(Table::new(n_fields)),
             ecosystem,
         }
     }
@@ -432,41 +431,35 @@ impl BlockStore {
         self.inner.lock().unwrap().gather_scratch(&keys, masks)
     }
 
-    /// Add one response's EVM blocks as a chunk (called by the HyperSync source
-    /// while building a page). One block per number, so overlapping partition
-    /// re-fetches simply resolve newest-first at read. Not exposed to JS.
+    /// Merge one response's EVM blocks into the table (called by the HyperSync
+    /// source while building a page). One block per number, so overlapping
+    /// partition re-fetches overwrite in place instead of duplicating. Not
+    /// exposed to JS.
     pub(crate) fn insert_evm_blocks(&self, mut blocks: Vec<simple_types::Block>) {
         blocks.retain(|b| b.number.is_some());
         if blocks.is_empty() {
             return;
         }
-        blocks.sort_unstable_by_key(|b| b.number.unwrap());
         let keys = blocks.iter().map(|b| b.number.unwrap()).collect();
         let cols = EvmBlockField::VARIANTS
             .iter()
             .map(|&f| evm_block_col(f, &blocks))
             .collect();
-        self.inner
-            .lock()
-            .unwrap()
-            .push_chunk(Chunk::new(keys, cols));
+        self.inner.lock().unwrap().merge_batch(keys, cols);
     }
 
-    /// Add one response's SVM blocks as a chunk, keyed by slot. Not exposed to JS.
-    pub(crate) fn insert_svm_blocks(&self, mut blocks: Vec<solana_simple::Block>) {
+    /// Merge one response's SVM blocks into the table, keyed by slot. Not
+    /// exposed to JS.
+    pub(crate) fn insert_svm_blocks(&self, blocks: Vec<solana_simple::Block>) {
         if blocks.is_empty() {
             return;
         }
-        blocks.sort_unstable_by_key(|b| b.slot);
         let keys = blocks.iter().map(|b| b.slot).collect();
         let cols = SvmBlockField::VARIANTS
             .iter()
             .map(|&f| svm_block_col(f, &blocks))
             .collect();
-        self.inner
-            .lock()
-            .unwrap()
-            .push_chunk(Chunk::new(keys, cols));
+        self.inner.lock().unwrap().merge_batch(keys, cols);
     }
 }
 
@@ -593,7 +586,7 @@ mod tests {
         store.insert_evm_blocks(vec![block]);
 
         // A production-shaped mask: the config-extended trio plus a selected
-        // extra field, all decoded from the one stored chunk.
+        // extra field, all decoded from the one stored row.
         let mask = (bit(EvmBlockField::Number)
             | bit(EvmBlockField::Timestamp)
             | bit(EvmBlockField::Hash)
@@ -629,7 +622,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn field_union_across_chunks_resolves_both_fields() {
+    async fn field_union_across_batches_resolves_both_fields() {
         // The same block arrives twice with different populated fields (e.g. a
         // hash-only observation later enriched by a full fetch): reads union
         // them.

@@ -1,11 +1,12 @@
-//! Per-chain transaction store, chunk-columnar: every fetch response
-//! contributes one chunk of transactions keyed by (blockNumber,
-//! transactionIndex), holding only the selected fields' columns — a large
-//! field (e.g. EVM `input`) never crosses the napi boundary until an event
-//! that selected it is materialised. SVM token balances live in a companion
-//! duplicate-key table gathered by key range. The store lives on the ReScript
-//! `ChainState`; fetch responses merge in, and rows are pruned/rolled back by
-//! block via the chunk lifecycle.
+//! Per-chain transaction store: a merge-on-insert `Table` keyed by
+//! (blockNumber, transactionIndex), holding only the selected fields'
+//! columns — a large field (e.g. EVM `input`) never crosses the napi boundary
+//! until an event that selected it is materialised, and never duplicates
+//! across overlapping partition re-fetches since a key's cell overwrites in
+//! place. SVM token balances live in a companion table keyed by (slot,
+//! transactionIndex, account) and gathered by (slot, transactionIndex) range.
+//! The store lives on the ReScript `ChainState`; fetch responses merge in,
+//! and rows are pruned/rolled back by block.
 
 use std::sync::Mutex;
 
@@ -15,18 +16,18 @@ use hypersync_client_solana::simple_types as solana_simple;
 use napi_derive::napi;
 use strum::VariantArray;
 
-use crate::chunk_store::{
-    access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
-    bool_from, bytes_cells, f64_cells, f64_from, fixed_from, hash_list_cells, hash_list_from,
-    hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
-    AnyCol, Chunk, ChunkStore,
-};
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{
     encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 use crate::field_columns::{
     build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmTokenBalanceOut,
+};
+use crate::field_table::{
+    access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
+    bool_from, bytes_cells, f64_cells, f64_from, fixed_from, hash_list_cells, hash_list_from,
+    hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
+    AnyCol, Table,
 };
 use crate::svm_hypersync_source::types::bigint_u64;
 
@@ -158,7 +159,7 @@ impl SvmTxField {
 fn evm_tx_col(field: EvmTxField, txs: &[simple_types::Transaction]) -> Option<AnyCol> {
     use EvmTxField::*;
     match field {
-        // The within-block index is part of the chunk key, not a column.
+        // The within-block index is part of the table key, not a column.
         TransactionIndex => None,
         Hash => fixed_from(txs, 32, |t| t.hash.as_ref().map(bytes)),
         From => fixed_from(txs, 20, |t| t.from.as_ref().map(bytes)),
@@ -333,30 +334,35 @@ fn decode_svm_columns(
     )
 }
 
-const TOKEN_BALANCE_FIELDS: usize = 5;
+/// Token-balance columns: `mint`, `owner`, `preAmount`, `postAmount`.
+/// `account` is the key's third component (see `insert_svm_token_balances`),
+/// not a column.
+const TOKEN_BALANCE_FIELDS: usize = 4;
 
-/// One materialised token-balance row from the companion table's columns.
-fn token_balance_row(chunk: &Chunk<(u64, u32)>, row: usize) -> SvmTokenBalanceOut {
-    let cell = |f: usize| match &chunk.cols[f] {
-        Some(AnyCol::Var(c)) => c.get(row).map(utf8),
-        None => None,
-        Some(_) => panic!("expected a token-balance string column"),
-    };
+/// One materialised token-balance row, read directly by slot off the
+/// companion table's columns; `account` comes from the key, not a column.
+fn token_balance_row(
+    table: &Table<(u64, u32, Box<str>)>,
+    key: &(u64, u32, Box<str>),
+    slot: u32,
+) -> SvmTokenBalanceOut {
+    let cell = |f: usize| table.var_cell(f, slot).map(utf8);
     SvmTokenBalanceOut {
-        account: cell(0),
-        mint: cell(1),
-        owner: cell(2),
-        pre_amount: cell(3),
-        post_amount: cell(4),
+        account: Some(key.2.to_string()),
+        mint: cell(0),
+        owner: cell(1),
+        pre_amount: cell(2),
+        post_amount: cell(3),
     }
 }
 
-/// Gather each selected row's token balances: all rows for the key from the
-/// newest chunk holding it. A selected row whose transaction has no balances
-/// (or whose key is missing entirely) yields `[]`, not a missing field — an
-/// absent transaction means "no balances". Unselected rows stay missing.
+/// Gather each selected row's token balances: every account row keyed to
+/// (blockNumber, transactionIndex). A selected row whose transaction has no
+/// balances (or whose key is missing entirely) yields `[]`, not a missing
+/// field — an absent transaction means "no balances". Unselected rows stay
+/// missing.
 fn gather_token_balances(
-    table: &ChunkStore<(u64, u32)>,
+    table: &Table<(u64, u32, Box<str>)>,
     keys: &[Option<(u64, u32)>],
     masks: &[u64],
 ) -> Vec<Option<Vec<SvmTokenBalanceOut>>> {
@@ -367,14 +373,15 @@ fn gather_token_balances(
             if m & bit == 0 {
                 return None;
             }
-            let rows = key.and_then(|key| {
-                table.chunks.iter().rev().find_map(|chunk| {
-                    chunk
-                        .find_range(key)
-                        .map(|(lo, hi)| (lo..hi).map(|row| token_balance_row(chunk, row)).collect())
+            let rows = key
+                .map(|(block, index)| {
+                    table
+                        .range_slots(block, index)
+                        .map(|(k, slot)| token_balance_row(table, k, slot))
+                        .collect()
                 })
-            });
-            Some(rows.unwrap_or_default())
+                .unwrap_or_default();
+            Some(rows)
         })
         .collect()
 }
@@ -382,8 +389,8 @@ fn gather_token_balances(
 /// The transaction table plus SVM's token-balance companion (empty on other
 /// ecosystems), guarded together so merges and gathers stay atomic.
 struct Stores {
-    txs: ChunkStore<(u64, u32)>,
-    token_balances: ChunkStore<(u64, u32)>,
+    txs: Table<(u64, u32)>,
+    token_balances: Table<(u64, u32, Box<str>)>,
 }
 
 #[napi]
@@ -415,7 +422,7 @@ impl TransactionStore {
         Self::with_ecosystem(Ecosystem::Fuel)
     }
 
-    /// Move every chunk from `page` into this store (merging a fetch-response
+    /// Move every row from `page` into this store (merging a fetch-response
     /// page into the persistent per-chain store).
     #[napi]
     pub fn merge(&self, page: &TransactionStore) {
@@ -502,7 +509,9 @@ impl TransactionStore {
         if let Ok(up_to) = u64::try_from(up_to_block) {
             let mut stores = self.inner.lock().unwrap();
             stores.txs.prune((up_to, u32::MAX));
-            stores.token_balances.prune((up_to, u32::MAX));
+            stores
+                .token_balances
+                .prune((up_to, u32::MAX, Box::from("")));
         }
     }
 
@@ -513,7 +522,9 @@ impl TransactionStore {
         match u64::try_from(target_block) {
             Ok(target) => {
                 stores.txs.rollback((target, u32::MAX));
-                stores.token_balances.rollback((target, u32::MAX));
+                stores
+                    .token_balances
+                    .rollback((target, u32::MAX, Box::from("")));
             }
             Err(_) => {
                 stores.txs.clear();
@@ -532,16 +543,16 @@ impl TransactionStore {
         };
         Self {
             inner: Mutex::new(Stores {
-                txs: ChunkStore::new(n_fields, true),
-                token_balances: ChunkStore::new(TOKEN_BALANCE_FIELDS, false),
+                txs: Table::new(n_fields),
+                token_balances: Table::new(TOKEN_BALANCE_FIELDS),
             }),
             ecosystem,
         }
     }
 
-    /// Add one response's EVM transactions as a chunk (called by the HyperSync
-    /// source while building a page). Rows without a (block, index) key are
-    /// dropped. Not exposed to JS.
+    /// Merge one response's EVM transactions into the table (called by the
+    /// HyperSync source while building a page). Rows without a (block, index)
+    /// key are dropped. Not exposed to JS.
     pub(crate) fn insert_evm_txs(&self, mut txs: Vec<simple_types::Transaction>) {
         txs.retain(|t| t.block_number.is_some() && t.transaction_index.is_some());
         if txs.is_empty() {
@@ -553,65 +564,62 @@ impl TransactionStore {
                 u64::from(t.transaction_index.unwrap()) as u32,
             )
         };
-        txs.sort_unstable_by_key(key);
         let keys = txs.iter().map(key).collect();
         let cols = EvmTxField::VARIANTS
             .iter()
             .map(|&f| evm_tx_col(f, &txs))
             .collect();
-        self.inner
-            .lock()
-            .unwrap()
-            .txs
-            .push_chunk(Chunk::new(keys, cols));
+        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
     }
 
-    /// Add one response's SVM transactions as a chunk, keyed by
+    /// Merge one response's SVM transactions into the table, keyed by
     /// (slot, transactionIndex). Not exposed to JS.
-    pub(crate) fn insert_svm_txs(&self, mut txs: Vec<solana_simple::Transaction>) {
+    pub(crate) fn insert_svm_txs(&self, txs: Vec<solana_simple::Transaction>) {
         if txs.is_empty() {
             return;
         }
-        let key = |t: &solana_simple::Transaction| (t.slot, t.transaction_index);
-        txs.sort_unstable_by_key(key);
-        let keys = txs.iter().map(key).collect();
+        let keys = txs.iter().map(|t| (t.slot, t.transaction_index)).collect();
         let cols = SvmTxField::VARIANTS
             .iter()
             .map(|&f| svm_tx_col(f, &txs))
             .collect();
-        self.inner
-            .lock()
-            .unwrap()
-            .txs
-            .push_chunk(Chunk::new(keys, cols));
+        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
     }
 
-    /// Add one response's SVM token balances to the companion duplicate-key
-    /// table. The sort is stable so a transaction's balances keep their
-    /// response order. Not exposed to JS.
+    /// Merge one response's SVM token balances into the companion table, keyed
+    /// by (slot, transactionIndex, account). Rows missing either are dropped;
+    /// the SVM query forces `account` into the field selection whenever token
+    /// balances are requested, so a real response row always carries one. Not
+    /// exposed to JS.
     pub(crate) fn insert_svm_token_balances(&self, mut rows: Vec<solana_simple::TokenBalance>) {
-        rows.retain(|r| r.transaction_index.is_some());
+        rows.retain(|r| r.transaction_index.is_some() && r.account.is_some());
         if rows.is_empty() {
             return;
         }
-        let key = |r: &solana_simple::TokenBalance| (r.slot, r.transaction_index.unwrap());
-        rows.sort_by_key(key);
-        let keys = rows.iter().map(key).collect();
         let str_col = |f: fn(&solana_simple::TokenBalance) -> Option<&str>| -> Option<AnyCol> {
-            crate::chunk_store::var_from(&rows, |r| f(r).map(str::as_bytes))
+            crate::field_table::var_from(&rows, |r| f(r).map(str::as_bytes))
         };
         let cols = vec![
-            str_col(|r| r.account.as_deref()),
             str_col(|r| r.mint.as_deref()),
             str_col(|r| r.owner.as_deref()),
             str_col(|r| r.pre_amount.as_deref()),
             str_col(|r| r.post_amount.as_deref()),
         ];
+        let keys = rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.slot,
+                    r.transaction_index.unwrap(),
+                    r.account.unwrap().into_boxed_str(),
+                )
+            })
+            .collect();
         self.inner
             .lock()
             .unwrap()
             .token_balances
-            .push_chunk(Chunk::new(keys, cols));
+            .merge_batch(keys, cols);
     }
 }
 
@@ -791,17 +799,19 @@ mod tests {
     async fn token_balances_gather_by_key_range() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
-        let balance = |slot, index, mint: &str| solana_simple::TokenBalance {
+        let balance = |slot, index, account: &str, mint: &str| solana_simple::TokenBalance {
             slot,
             transaction_index: Some(index),
+            account: Some(account.to_string()),
             mint: Some(mint.to_string()),
             ..Default::default()
         };
-        // Two balances on (5,0); one on a transaction with no tx row (5,1).
+        // Two balances (distinct accounts) on (5,0); one on a transaction with
+        // no tx row (5,1).
         store.insert_svm_token_balances(vec![
-            balance(5, 0, "mintA"),
-            balance(5, 0, "mintB"),
-            balance(5, 1, "mintC"),
+            balance(5, 0, "acctA", "mintA"),
+            balance(5, 0, "acctB", "mintB"),
+            balance(5, 1, "acctC", "mintC"),
         ]);
 
         let mask = (1u64 << (SvmTxField::TokenBalances as u32)) as f64;
@@ -869,6 +879,40 @@ mod tests {
             (nonces(&after_prune), nonces(&after_rollback)),
             (vec![false, true, true], vec![false, true, false])
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn merge_resolves_re_fetched_transaction_to_newest() {
+        // The same (block, index) is re-fetched with a different `input` (an
+        // overlapping-partition or reorg re-fetch): the persistent store must
+        // resolve to the fresh copy, not accumulate both.
+        let persistent = TransactionStore::new_evm(false);
+
+        let page1 = TransactionStore::new_evm(false);
+        let mut first = raw_tx(1, 0);
+        first.input = Some(hypersync_client::format::Data::from(
+            vec![0xaa].into_boxed_slice(),
+        ));
+        page1.insert_evm_txs(vec![first]);
+        persistent.merge(&page1);
+
+        let page2 = TransactionStore::new_evm(false);
+        let mut second = raw_tx(1, 0);
+        second.input = Some(hypersync_client::format::Data::from(
+            vec![0xbb].into_boxed_slice(),
+        ));
+        page2.insert_evm_txs(vec![second]);
+        persistent.merge(&page2);
+
+        let mask = bit(EvmTxField::Input) as f64;
+        let cols = persistent
+            .materialize(vec![1], vec![0], vec![mask])
+            .await
+            .expect("materialize");
+        match column(&cols, "input") {
+            Some(Column::Str(v)) => assert_eq!(v, &vec![Some("0xbb".to_string())]),
+            other => panic!("expected input column, got present={}", other.is_some()),
+        }
     }
 
     #[test]

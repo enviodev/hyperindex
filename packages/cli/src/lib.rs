@@ -1,5 +1,4 @@
 mod block_store;
-mod chunk_store;
 mod cli_args;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
@@ -12,6 +11,7 @@ mod evm_hypersync_source;
 mod evm_rpc_source;
 pub mod executor;
 mod field_columns;
+mod field_table;
 mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
