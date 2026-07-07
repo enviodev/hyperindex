@@ -205,7 +205,7 @@ describe("EventRouter", () => {
   )
 
   it("fromEvmEventModsOrThrow works", t => {
-    let item = MockConfig.getEvmEventConfig(~contractName="Gravatar", ~eventName="NewGravatar")
+    let item = MockConfig.getEvmOnEventRegistration(~contractName="Gravatar", ~eventName="NewGravatar")
     let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
 
     t.expect(router).toEqual(

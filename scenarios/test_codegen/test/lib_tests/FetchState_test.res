@@ -15,7 +15,7 @@ let defaultQuery: FetchState.query = {
   estResponseSize: 0.,
   chainId: 0,
   progress: 0.,
-  selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
+  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
 
@@ -79,7 +79,7 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
 let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Internal.Event({
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
-  eventConfig: Utils.magic("Mock eventConfig in fetchstate test"),
+  onEventRegistration: Utils.magic("Mock onEventRegistration in fetchstate test"),
   logIndex,
   transactionIndex: 0,
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
@@ -91,15 +91,15 @@ let dcToItem = (dc: Internal.indexingAddress) => {
   item
 }
 
-let baseEventConfig = (MockIndexer.evmEventConfig(
+let baseEventConfig = (MockIndexer.evmOnEventRegistration(
   ~id="0",
   ~contractName="Gravatar",
-) :> Internal.eventConfig)
+) :> Internal.onEventRegistration)
 
-let baseEventConfig2 = (MockIndexer.evmEventConfig(
+let baseEventConfig2 = (MockIndexer.evmOnEventRegistration(
   ~id="0",
   ~contractName="NftFactory",
-) :> Internal.eventConfig)
+) :> Internal.onEventRegistration)
 
 let makeInitial = (
   ~knownHeight=knownHeight,
@@ -108,7 +108,7 @@ let makeInitial = (
   ~maxAddrInPartition=3,
   ~targetBufferSize=targetBufferSize,
 ) => {
-  let eventConfigs = [baseEventConfig, baseEventConfig2]
+  let onEventRegistrations = [baseEventConfig, baseEventConfig2]
   let addresses = [
     {
       Internal.address: mockAddress0,
@@ -116,10 +116,10 @@ let makeInitial = (
       registrationBlock: -1,
     },
   ]
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
   let fetchState = FetchState.make(
-    ~eventConfigs,
+    ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,
     ~startBlock,
@@ -147,7 +147,7 @@ let makeInitialFs = (~knownHeight=?, ~startBlock=?, ~blockLag=?, ~maxAddrInParti
 // owns it in production. Returns both so tests can thread the index through
 // registerDynamicContracts/handleQueryResult/rollback.
 let makeFs = (
-  ~eventConfigs,
+  ~onEventRegistrations,
   ~addresses,
   ~startBlock,
   ~endBlock,
@@ -156,14 +156,14 @@ let makeFs = (
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=?,
-  ~onBlockConfigs=?,
+  ~onBlockRegistrations=?,
   ~blockLag=?,
   ~firstEventBlock=?,
 ) => {
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
   let fetchState = FetchState.make(
-    ~eventConfigs,
+    ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,
     ~startBlock,
@@ -173,7 +173,7 @@ let makeFs = (
     ~maxOnBlockBufferSize,
     ~knownHeight,
     ~progressBlockNumber=?progressBlockNumber,
-    ~onBlockConfigs=?onBlockConfigs,
+    ~onBlockRegistrations=?onBlockRegistrations,
     ~blockLag=?blockLag,
     ~firstEventBlock=?firstEventBlock,
   )
@@ -253,7 +253,7 @@ describe("FetchState.make", () => {
       chainId: 0,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     })
@@ -263,7 +263,7 @@ describe("FetchState.make", () => {
     t.expect(
       () => {
         makeFs(
-          ~eventConfigs=[baseEventConfig],
+          ~onEventRegistrations=[baseEventConfig],
           ~addresses=[],
           ~startBlock=0,
           ~endBlock=None,
@@ -281,7 +281,7 @@ describe("FetchState.make", () => {
     "Keeps addresses without a matching contract on fetchState so they can be picked up after config changes",
     t => {
       let (fetchState, indexingAddresses) = makeFs(
-        ~eventConfigs=[baseEventConfig],
+        ~onEventRegistrations=[baseEventConfig],
         ~addresses=[
           makeConfigContract("Gravatar", mockAddress0),
           // Address for a contract that currently has no events configured.
@@ -325,7 +325,7 @@ describe("FetchState.make", () => {
   it("Creates FetchState with static and dc addresses reaching the maxAddrInPartition limit", t => {
     let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
     let (fetchState, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig],
+      ~onEventRegistrations=[baseEventConfig],
       ~addresses=[makeConfigContract("Gravatar", mockAddress1), dc],
       ~startBlock=0,
       ~endBlock=None,
@@ -368,7 +368,7 @@ describe("FetchState.make", () => {
       chainId,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     })
@@ -379,8 +379,8 @@ describe("FetchState.make", () => {
     t => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let (fetchState, _indexingAddresses) = makeFs(
-        ~eventConfigs=[
-          (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+        ~onEventRegistrations=[
+          (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
           baseEventConfig,
         ],
         ~addresses=[makeConfigContract("ContractA", mockAddress1), dc],
@@ -441,7 +441,7 @@ describe("FetchState.make", () => {
         chainId,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
-        onBlockConfigs: [],
+        onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
       })
@@ -460,8 +460,8 @@ describe("FetchState.make", () => {
       let dc1 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress3)
       let dc2 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress4)
       let (fetchState, _indexingAddresses) = makeFs(
-        ~eventConfigs=[
-          (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+        ~onEventRegistrations=[
+          (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
           baseEventConfig,
         ],
         ~addresses=[
@@ -559,7 +559,7 @@ describe("FetchState.make", () => {
         chainId,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
-        onBlockConfigs: [],
+        onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
       })
@@ -567,19 +567,19 @@ describe("FetchState.make", () => {
   )
 
   it("Two static contracts with different names merge based on block distance", t => {
-    let contractAEventConfig = (MockIndexer.evmEventConfig(
+    let contractAEventConfig = (MockIndexer.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractA",
-    ) :> Internal.eventConfig)
-    let closeContractBEventConfig = (MockIndexer.evmEventConfig(
+    ) :> Internal.onEventRegistration)
+    let closeContractBEventConfig = (MockIndexer.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractB",
       ~startBlock=19_999,
-    ) :> Internal.eventConfig)
+    ) :> Internal.onEventRegistration)
 
     // --- Close startBlocks: direct push into current partition ---
     let (closeFetchState, _indexingAddresses) = makeFs(
-      ~eventConfigs=[contractAEventConfig, closeContractBEventConfig],
+      ~onEventRegistrations=[contractAEventConfig, closeContractBEventConfig],
       ~addresses=[
         {
           address: mockAddress0,
@@ -617,13 +617,13 @@ describe("FetchState.make", () => {
     ).toEqual(None)
 
     // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
-    let farContractBEventConfig = (MockIndexer.evmEventConfig(
+    let farContractBEventConfig = (MockIndexer.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractB",
       ~startBlock=20_002,
-    ) :> Internal.eventConfig)
+    ) :> Internal.onEventRegistration)
     let (farFetchState, _indexingAddresses) = makeFs(
-      ~eventConfigs=[contractAEventConfig, farContractBEventConfig],
+      ~onEventRegistrations=[contractAEventConfig, farContractBEventConfig],
       ~addresses=[
         {
           address: mockAddress0,
@@ -664,19 +664,19 @@ describe("FetchState.make", () => {
   it(
     "Same contract with close configured startBlocks creates one partition, far startBlocks creates two with mergeBlock",
     t => {
-      let contractAEventConfig = (MockIndexer.evmEventConfig(
+      let contractAEventConfig = (MockIndexer.evmOnEventRegistration(
         ~id="0",
         ~contractName="ContractA",
-      ) :> Internal.eventConfig)
-      let closeContractBEventConfig = (MockIndexer.evmEventConfig(
+      ) :> Internal.onEventRegistration)
+      let closeContractBEventConfig = (MockIndexer.evmOnEventRegistration(
         ~id="0",
         ~contractName="ContractB",
         ~startBlock=19_999,
-      ) :> Internal.eventConfig)
+      ) :> Internal.onEventRegistration)
 
       // --- Close startBlocks: direct push into current partition ---
       let (closeFetchState, _indexingAddresses) = makeFs(
-        ~eventConfigs=[contractAEventConfig, closeContractBEventConfig],
+        ~onEventRegistrations=[contractAEventConfig, closeContractBEventConfig],
         ~addresses=[
           {
             address: mockAddress0,
@@ -712,13 +712,13 @@ describe("FetchState.make", () => {
       ).toEqual(None)
 
       // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
-      let farContractBEventConfig = (MockIndexer.evmEventConfig(
+      let farContractBEventConfig = (MockIndexer.evmOnEventRegistration(
         ~id="0",
         ~contractName="ContractB",
         ~startBlock=20_002,
-      ) :> Internal.eventConfig)
+      ) :> Internal.onEventRegistration)
       let (farFetchState, _indexingAddresses) = makeFs(
-        ~eventConfigs=[contractAEventConfig, farContractBEventConfig],
+        ~onEventRegistrations=[contractAEventConfig, farContractBEventConfig],
         ~addresses=[
           {
             address: mockAddress0,
@@ -766,20 +766,20 @@ describe("FetchState.make", () => {
   )
 
   it("Different contracts with filterByAddresses merge into a single partition", t => {
-    let contractAEventConfig = (MockIndexer.evmEventConfig(
+    let contractAEventConfig = (MockIndexer.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractA",
       ~filterByAddresses=true,
-    ) :> Internal.eventConfig)
-    let contractBEventConfig = (MockIndexer.evmEventConfig(
+    ) :> Internal.onEventRegistration)
+    let contractBEventConfig = (MockIndexer.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractB",
       ~filterByAddresses=true,
       ~startBlock=100,
-    ) :> Internal.eventConfig)
+    ) :> Internal.onEventRegistration)
 
     let (fetchState, _indexingAddresses) = makeFs(
-      ~eventConfigs=[contractAEventConfig, contractBEventConfig],
+      ~onEventRegistrations=[contractAEventConfig, contractBEventConfig],
       ~addresses=[
         {
           address: mockAddress0,
@@ -1377,17 +1377,17 @@ describe("FetchState.registerDynamicContracts", () => {
     // block, so these no longer need a partition per registration block.
     t => {
       let (fetchState, indexingAddresses) = makeFs(
-        ~eventConfigs=[
+        ~onEventRegistrations=[
           baseEventConfig,
-          (MockIndexer.evmEventConfig(~id="0", ~contractName="NftFactory") :> Internal.eventConfig),
+          (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="NftFactory") :> Internal.onEventRegistration),
           // An event from another contract
           // which has an event filter by addresses
-          (MockIndexer.evmEventConfig(
+          (MockIndexer.evmOnEventRegistration(
             ~id="0",
             ~contractName="SimpleNft",
             ~isWildcard=false,
             ~filterByAddresses=true,
-          ) :> Internal.eventConfig),
+          ) :> Internal.onEventRegistration),
         ],
         ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
         ~startBlock=10,
@@ -1605,29 +1605,29 @@ describe("FetchState.registerDynamicContracts", () => {
   it(
     "Creates FetchState with wildcard and normal events. Addresses not belonging to event configs should be skipped (pre-registration case)",
     t => {
-      let wildcard1 = (MockIndexer.evmEventConfig(
+      let wildcard1 = (MockIndexer.evmOnEventRegistration(
         ~id="wildcard1",
         ~contractName="Gravatar",
         ~isWildcard=true,
-      ) :> Internal.eventConfig)
-      let wildcard2 = (MockIndexer.evmEventConfig(
+      ) :> Internal.onEventRegistration)
+      let wildcard2 = (MockIndexer.evmOnEventRegistration(
         ~id="wildcard2",
         ~contractName="Gravatar",
         ~isWildcard=true,
-      ) :> Internal.eventConfig)
-      let normal1 = (MockIndexer.evmEventConfig(
+      ) :> Internal.onEventRegistration)
+      let normal1 = (MockIndexer.evmOnEventRegistration(
         ~id="normal1",
         ~contractName="NftFactory",
-      ) :> Internal.eventConfig)
-      let normal2 = (MockIndexer.evmEventConfig(
+      ) :> Internal.onEventRegistration)
+      let normal2 = (MockIndexer.evmOnEventRegistration(
         ~id="normal2",
         ~contractName="NftFactory",
         ~isWildcard=true,
         ~dependsOnAddresses=true,
-      ) :> Internal.eventConfig)
+      ) :> Internal.onEventRegistration)
 
       let (fetchState, _indexingAddresses) = makeFs(
-        ~eventConfigs=[wildcard1, wildcard2, normal1, normal2],
+        ~onEventRegistrations=[wildcard1, wildcard2, normal1, normal2],
         ~addresses=[
           makeConfigContract("NftFactory", mockAddress0),
           makeConfigContract("NftFactory", mockAddress1),
@@ -1668,7 +1668,7 @@ describe("FetchState.registerDynamicContracts", () => {
                 dependsOnAddresses: false,
                 // Even though normal2 is also a wildcard event
                 // it should be a part of the normal selection
-                eventConfigs: [wildcard1, wildcard2],
+                onEventRegistrations: [wildcard1, wildcard2],
               },
               addressesByContractName: Dict.make(),
               mergeBlock: None,
@@ -1687,7 +1687,7 @@ describe("FetchState.registerDynamicContracts", () => {
               },
               selection: {
                 dependsOnAddresses: true,
-                eventConfigs: [normal1, normal2],
+                onEventRegistrations: [normal1, normal2],
               },
               addressesByContractName: Dict.fromArray([
                 ("NftFactory", [mockAddress0, mockAddress1, mockAddress5]),
@@ -1714,12 +1714,30 @@ describe("FetchState.registerDynamicContracts", () => {
         chainId,
         contractConfigs: fetchState.contractConfigs,
         blockLag: 0,
-        onBlockConfigs: [],
+        onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
       })
     },
   )
+})
+
+describe("FetchState.calculateDefaultEstResponseSize", () => {
+  it("Scales down as partitionsCount grows, clamped to [2_000, 10_000]", t => {
+    t.expect({
+      "onePartition": FetchState.calculateDefaultEstResponseSize(~partitionsCount=1),
+      "twoPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=2),
+      "threePartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=3),
+      "tenPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=10),
+      "hundredPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=100),
+    }).toEqual({
+      "onePartition": 10_000.,
+      "twoPartitions": 10_000.,
+      "threePartitions": 20_000. /. 3.,
+      "tenPartitions": 2_000.,
+      "hundredPartitions": 2_000.,
+    })
+  })
 })
 
 describe("FetchState.getNextQuery & integration", () => {
@@ -1775,7 +1793,7 @@ describe("FetchState.getNextQuery & integration", () => {
       normalSelection,
       chainId,
       contractConfigs: makeInitialFs().contractConfigs,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     }
@@ -1834,34 +1852,23 @@ describe("FetchState.getNextQuery & integration", () => {
       chainId,
       contractConfigs: makeInitialFs().contractConfigs,
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     }
   }
 
   // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so the block window isn't constrained
-  // (the small test heights stay below the buffer-position cap) and query sizing
-  // falls back to FetchState.defaultEstResponseSize (10000).
-  let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10, ~budget=10) =>
+  // Partitions here have no response yet, so query sizing falls back to
+  // FetchState.calculateDefaultEstResponseSize, which scales with partition count
+  // (20_000. /. partitionsCount, clamped to [2_000., 10_000.]).
+  let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
     | None => fs
     }
     ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
-
-  it("Returns NothingToQuery when the buffer budget is exhausted", t => {
-    // Same state queries Ready with a positive budget (see the test below), so a
-    // non-positive budget is the only reason nothing is queried here.
-    let (fetchState, _indexingAddresses) = makeInitial()
-
-    t.expect(
-      (fetchState->getNextQuery(~budget=0), fetchState->getNextQuery(~budget=-5)),
-      ~message="Should skip fetching when there's no room left in the shared buffer pool",
-    ).toEqual((NothingToQuery, NothingToQuery))
-  })
+    ->FetchState.getNextQuery
 
   it("Emulate first indexer queries with a static event", t => {
     let (fetchState, indexingAddresses) = makeInitial()
@@ -1944,14 +1951,12 @@ describe("FetchState.getNextQuery & integration", () => {
       when block height exceeded the end block`,
     ).toEqual(NothingToQuery)
     t.expect(
-      updatedFetchState->getNextQuery(~budget=2),
+      updatedFetchState->getNextQuery,
       ~message=`Should wait for new block even if partitions have nothing to query`,
     ).toEqual(WaitingForNewBlock)
     t.expect(
-      updatedFetchState->getNextQuery(~budget=2, ~knownHeight=11),
-      ~message=`Should fetch the head block once the partition is behind the head:
-      budget is measured past the ready frontier, so the 2 already-ready items
-      don't eat the budget and pin the target block below the frontier`,
+      updatedFetchState->getNextQuery(~knownHeight=11),
+      ~message=`Should fetch the head block once the partition is behind the head`,
     ).toEqual(
       Ready([
         {
@@ -2110,7 +2115,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           toBlock: Some(10),
           isChunk: false,
           selection: fetchState.normalSelection,
@@ -2120,7 +2125,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2319,13 +2324,6 @@ describe("FetchState.getNextQuery & integration", () => {
       4,
     ))
 
-    t.expect(
-      fetchStateWithResponse1->getNextQuery(~budget=1),
-      ~message=`Buffer has no items past the ready frontier, so a tight budget no
-      longer caps the proposal here (the shared budget is enforced by cross-chain
-      admission); the merge continuation is proposed the same as with a full budget`,
-    ).toEqual(fetchStateWithResponse1->getNextQuery)
-
     let queries = switch fetchStateWithResponse1->getNextQuery {
     | Ready(queries) => queries
     | _ =>
@@ -2385,15 +2383,15 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Wildcard partition never merges to another one", t => {
-    let wildcard = (MockIndexer.evmEventConfig(
+    let wildcard = (MockIndexer.evmOnEventRegistration(
       ~id="wildcard",
       ~contractName="ContractA",
       ~isWildcard=true,
-    ) :> Internal.eventConfig)
+    ) :> Internal.onEventRegistration)
     let (fetchState, indexingAddresses) = makeFs(
-      ~eventConfigs=[
-        (MockIndexer.evmEventConfig(~id="0", ~contractName="Gravatar") :> Internal.eventConfig),
-        (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+      ~onEventRegistrations=[
+        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
         wildcard,
       ],
       ~addresses=[makeConfigContract("ContractA", mockAddress1)],
@@ -2411,11 +2409,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count).toEqual(3)
 
-    let nextQuery =
-      {...fetchState, knownHeight: 10}->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      )
+    let nextQuery = {...fetchState, knownHeight: 10}->FetchState.getNextQuery
 
     t.expect(
       nextQuery,
@@ -2427,20 +2421,20 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
           selection: {
             dependsOnAddresses: false,
-            eventConfigs: [wildcard],
+            onEventRegistrations: [wildcard],
           },
           addressesByContractName: Dict.make(),
         },
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -2450,7 +2444,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          estResponseSize: 20_000. /. 3.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2591,18 +2585,18 @@ describe("FetchState.getNextQuery & integration", () => {
 
   it("Keeps wildcard partition on rollback", t => {
     let wildcardEventConfigs = [
-      (MockIndexer.evmEventConfig(
+      (MockIndexer.evmOnEventRegistration(
         ~id="wildcard",
         ~contractName="ContractA",
         ~isWildcard=true,
-      ) :> Internal.eventConfig),
+      ) :> Internal.onEventRegistration),
     ]
-    let eventConfigs = [
+    let onEventRegistrations = [
       ...wildcardEventConfigs,
-      (MockIndexer.evmEventConfig(~id="0", ~contractName="Gravatar") :> Internal.eventConfig),
+      (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
     ]
     let (fetchState, indexingAddresses) = makeFs(
-      ~eventConfigs,
+      ~onEventRegistrations,
       ~addresses=[],
       ~startBlock=0,
       ~endBlock=None,
@@ -2622,11 +2616,11 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           toBlock: None,
           selection: {
             dependsOnAddresses: false,
-            eventConfigs: wildcardEventConfigs,
+            onEventRegistrations: wildcardEventConfigs,
           },
           addressesByContractName: Dict.make(),
           fromBlock: 0,
@@ -2665,7 +2659,7 @@ describe("FetchState.getNextQuery & integration", () => {
             latestBlockRangeUpdateBlock: 0,
             selection: {
               dependsOnAddresses: false,
-              eventConfigs: wildcardEventConfigs,
+              onEventRegistrations: wildcardEventConfigs,
             },
             addressesByContractName: Dict.make(),
             mergeBlock: None,
@@ -2737,7 +2731,7 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "1",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 1,
       toBlock: None,
       isChunk: false,
@@ -2781,7 +2775,7 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2810,17 +2804,17 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Shouldn't wait for new block until all partitions reached the head", t => {
-    let wildcard = (MockIndexer.evmEventConfig(
+    let wildcard = (MockIndexer.evmOnEventRegistration(
       ~id="wildcard",
       ~contractName="ContractA",
       ~isWildcard=true,
-    ) :> Internal.eventConfig)
+    ) :> Internal.onEventRegistration)
     // FetchState with 2 partitions,
     // one of them reached the head
     // another reached max queue size
     let (fetchState, indexingAddresses) = makeFs(
-      ~eventConfigs=[
-        (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+      ~onEventRegistrations=[
+        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
         wildcard,
       ],
       ~addresses=[makeConfigContract("ContractA", mockAddress0)],
@@ -2835,20 +2829,20 @@ describe("FetchState unit tests for specific cases", () => {
     let query0: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
       selection: {
         dependsOnAddresses: false,
-        eventConfigs: [wildcard],
+        onEventRegistrations: [wildcard],
       },
       addressesByContractName: Dict.make(),
     }
     let query1: FetchState.query = {
       ...defaultQuery,
       partitionId: "1",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2873,10 +2867,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
     t.expect(
-      {...fetchState, knownHeight: 2}->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ),
+      {...fetchState, knownHeight: 2}->FetchState.getNextQuery,
       ~message=`Should be possible to query wildcard partition,
       if it didn't reach max queue size limit`,
     ).toEqual(
@@ -2890,21 +2881,12 @@ describe("FetchState unit tests for specific cases", () => {
           isChunk: false,
           selection: {
             dependsOnAddresses: false,
-            eventConfigs: [wildcard],
+            onEventRegistrations: [wildcard],
           },
           addressesByContractName: Dict.make(),
         },
       ]),
     )
-    t.expect(
-      {
-        ...fetchState,
-        knownHeight: 2,
-      }->FetchState.getNextQuery(~budget=1, ~chainPendingBudget=0.),
-      ~message=`Budget is measured past the ready frontier; the item already
-      buffered past it consumes the single-item budget, so the behind partition
-      stays capped and nothing new is fetched until the queue drains`,
-    ).toEqual(NothingToQuery)
   })
 
   it("Allows to get event one block earlier than the dc registring event", t => {
@@ -2924,7 +2906,7 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2965,8 +2947,8 @@ describe("FetchState unit tests for specific cases", () => {
 
   it("Returns NoItem when there is an empty partition at block 0", t => {
     let (fetchState, indexingAddresses) = makeFs(
-      ~eventConfigs=[
-        (MockIndexer.evmEventConfig(~id="0", ~contractName="ContractA") :> Internal.eventConfig),
+      ~onEventRegistrations=[
+        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
       ],
       ~addresses=[
         makeConfigContract("ContractA", mockAddress1),
@@ -2992,7 +2974,7 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -3110,7 +3092,7 @@ describe("FetchState unit tests for specific cases", () => {
     let query: FetchState.query = {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       fromBlock: 0,
       toBlock: Some(0),
       isChunk: false,
@@ -3137,7 +3119,7 @@ describe("FetchState unit tests for specific cases", () => {
       let query: FetchState.query = {
         ...defaultQuery,
         partitionId: "0",
-        estResponseSize: 10000.,
+        estResponseSize: 5000.,
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
@@ -3181,7 +3163,7 @@ describe("FetchState unit tests for specific cases", () => {
       let knownHeight = 600
 
       let (fetchState, indexingAddresses) = makeFs(
-        ~eventConfigs=[baseEventConfig],
+        ~onEventRegistrations=[baseEventConfig],
         ~addresses=[makeConfigContract("Gravatar", mockAddress1)],
         ~startBlock=0,
         ~endBlock=None,
@@ -3194,7 +3176,7 @@ describe("FetchState unit tests for specific cases", () => {
       let query: FetchState.query = {
         ...defaultQuery,
         partitionId: "0",
-        estResponseSize: 10000.,
+        estResponseSize: 5000.,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
         fromBlock: 0,
@@ -3218,10 +3200,7 @@ describe("FetchState unit tests for specific cases", () => {
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
       let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
 
-      let queries = switch fetchStateWithDcA->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      let queries = switch fetchStateWithDcA->FetchState.getNextQuery {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3251,10 +3230,7 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
 
-      let queries = switch fetchStateWithDcB->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
+      let queries = switch fetchStateWithDcB->FetchState.getNextQuery {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3266,10 +3242,7 @@ describe("FetchState unit tests for specific cases", () => {
         fromBlock: 200,
       }
       t.expect(
-        fetchStateWithDcB->FetchState.getNextQuery(
-          ~budget=targetBufferSize,
-          ~chainPendingBudget=0.,
-        ),
+        fetchStateWithDcB->FetchState.getNextQuery,
         ~message=`Create a new partition for the newly registered contract`,
       ).toEqual(Ready([partition2Query, queries->Array.getUnsafe(1)]))
 
@@ -3283,10 +3256,7 @@ describe("FetchState unit tests for specific cases", () => {
         )
 
       t.expect(
-        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
-          ~budget=targetBufferSize,
-          ~chainPendingBudget=0.,
-        ),
+        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery,
         ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
       ).toEqual(
         Ready([
@@ -3312,7 +3282,7 @@ describe("FetchState.sortForBatch", () => {
     {
       ...defaultQuery,
       FetchState.partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -3396,7 +3366,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns true when endBlock is reached and queue is empty", t => {
     // latestFullyFetchedBlock = startBlock - 1 = 5, endBlock = 5
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3418,7 +3388,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when endBlock not reached and below head - blockLag", t => {
     // latestFullyFetchedBlock = 49, endBlock = 100, head - lag = 50
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3440,7 +3410,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns true when endBlock not reached but latest >= head - blockLag", t => {
     // latestFullyFetchedBlock = 49, head - lag = 49
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3462,7 +3432,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns true when no endBlock and latest >= head - blockLag (boundary)", t => {
     // latestFullyFetchedBlock = 50, head - lag = 50
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3484,7 +3454,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when no endBlock and latest < head - blockLag", t => {
     // latestFullyFetchedBlock = 49, head - lag = 50
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3506,7 +3476,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when queue is not empty even if thresholds are met", t => {
     // EndBlock reached but queue has items
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3528,7 +3498,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
 
   it("Returns true when the queue is empty and threshold is more than current block height", t => {
     let (fs, _indexingAddresses) = makeFs(
-      ~eventConfigs=[baseEventConfig, baseEventConfig2],
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
         {
           Internal.address: mockAddress0,
@@ -3627,7 +3597,7 @@ describe("FetchState progress tracking", () => {
     let query = {
       ...defaultQuery,
       FetchState.partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize: 5000.,
       toBlock: None,
       isChunk: false,
       selection: fs0.normalSelection,
@@ -3683,26 +3653,27 @@ describe("FetchState progress tracking", () => {
   })
 })
 
-describe("FetchState buffer overflow prevention", () => {
+describe("FetchState proposes queries against the natural ceiling", () => {
   it(
-    "Should limit endBlock when maxQueryBlockNumber < knownHeight to prevent buffer overflow",
+    "Should not cap a query below endBlock/knownHeight just because the buffer is already large",
     t => {
       let (fetchState, indexingAddresses) = makeInitial(~maxAddrInPartition=1, ~targetBufferSize=10)
 
-      // Create a second partition to ensure buffer limiting logic is exercised across partitions
-      // Register at a later block, so partition "0" remains the earliest and is selected
+      // Create a second partition to make sure a large buffer elsewhere doesn't
+      // affect this partition's own proposal.
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
       let fetchStateWithTwoPartitions =
         fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dc->dcToItem])
 
-      // Buffer 15 items (blocks 6..20). With budget 10 the cap is the block at
-      // buffer index 10-1=9, i.e. block 15 — below both knownHeight and endBlock.
+      // Buffer 15 items (blocks 6..20), far more than targetBufferSize=10. Admission
+      // against the shared budget happens in CrossChainState, not here — getNextQuery
+      // proposes against the natural ceiling regardless of how full the buffer is.
       let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=20 - i))
 
       let query0 = {
         ...defaultQuery,
         FetchState.partitionId: "0",
-        estResponseSize: 10000.,
+        estResponseSize: 5000.,
         toBlock: None,
         isChunk: false,
         selection: fetchStateWithTwoPartitions.normalSelection,
@@ -3719,38 +3690,38 @@ describe("FetchState buffer overflow prevention", () => {
           ~newItems=largeQueueEvents,
         )
 
-      // Test case 1: With endBlock set, should be limited by maxQueryBlockNumber
+      // Test case 1: With endBlock set, should propose all the way to endBlock
       let fetchStateWithEndBlock = {
         ...fetchStateWithLargeQueue,
         endBlock: Some(25),
         knownHeight: 30,
       }
 
-      switch fetchStateWithEndBlock->FetchState.getNextQuery(~budget=10, ~chainPendingBudget=0.) {
+      switch fetchStateWithEndBlock->FetchState.getNextQuery {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should limit endBlock to maxQueryBlockNumber (15) when both endBlock and maxQueryBlockNumber are present",
-        ).toBe(Some(15))
-      | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
+          ~message="Should propose up to endBlock, unconstrained by the buffer's current size",
+        ).toBe(Some(25))
+      | _ => JsError.throwWithMessage("Expected Ready query")
       }
 
-      // Test case 2: endBlock=None, maxQueryBlockNumber=15 -> Should use Some(15)
+      // Test case 2: endBlock=None -> Should use the open-ended head target
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
-      switch fetchStateNoEndBlock->FetchState.getNextQuery(~budget=10, ~chainPendingBudget=0.) {
+      switch fetchStateNoEndBlock->FetchState.getNextQuery {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
-          ~message="Should set endBlock to maxQueryBlockNumber (15) when no endBlock was specified",
-        ).toBe(Some(15))
-      | _ => JsError.throwWithMessage("Expected Ready query when buffer limiting is active")
+          ~message="Should use None (fetch to head), unconstrained by the buffer's current size",
+        ).toBe(None)
+      | _ => JsError.throwWithMessage("Expected Ready query")
       }
 
-      // Test case 3: Small queue, no buffer limiting -> Should use Head target
+      // Test case 3: Small queue -> Should also use the open-ended head target
       let query3 = {
         ...defaultQuery,
         FetchState.partitionId: "0",
-        estResponseSize: 10000.,
+        estResponseSize: 5000.,
         toBlock: None,
         isChunk: false,
         selection: fetchState.normalSelection,
@@ -3768,26 +3739,22 @@ describe("FetchState buffer overflow prevention", () => {
         )
         ->FetchState.updateKnownHeight(~knownHeight=30)
 
-      switch fetchStateSmallQueue->FetchState.getNextQuery(
-        ~budget=targetBufferSize,
-        ~chainPendingBudget=0.,
-      ) {
-      | Ready([q]) =>
-        t.expect(q.toBlock, ~message="Should use None when buffer is not limited").toBe(None)
+      switch fetchStateSmallQueue->FetchState.getNextQuery {
+      | Ready([q]) => t.expect(q.toBlock, ~message="Should use None (fetch to head)").toBe(None)
       | _ => JsError.throwWithMessage("Expected Ready query")
       }
     },
   )
 })
 
-describe("FetchState with onBlockConfig only (no events)", () => {
-  let makeOnBlockConfig = (
+describe("FetchState with onBlockRegistration only (no events)", () => {
+  let makeOnBlockRegistration = (
     ~name="testOnBlock",
     ~index=0,
     ~startBlock=None,
     ~endBlock=None,
     ~interval=1,
-  ): Internal.onBlockConfig => {
+  ): Internal.onBlockRegistration => {
     index,
     name,
     chainId,
@@ -3800,11 +3767,11 @@ describe("FetchState with onBlockConfig only (no events)", () => {
   it(
     "Creates FetchState with no event configs, triggers WaitingForNewBlock, then fills buffer on updateKnownHeight",
     t => {
-      let onBlockConfig = makeOnBlockConfig(~interval=1, ~startBlock=Some(0))
+      let onBlockRegistration = makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))
 
-      // Create FetchState with no event configs but with onBlockConfig
+      // Create FetchState with no event configs but with onBlockRegistration
       let (fetchState, _indexingAddresses) = makeFs(
-        ~eventConfigs=[],
+        ~onEventRegistrations=[],
         ~addresses=[],
         ~startBlock=0,
         ~endBlock=None,
@@ -3812,7 +3779,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
         ~maxOnBlockBufferSize=10,
         ~chainId,
         ~knownHeight=0,
-        ~onBlockConfigs=[onBlockConfig],
+        ~onBlockRegistrations=[onBlockRegistration],
       )
 
       // Verify initial state
@@ -3822,13 +3789,13 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ).toEqual([])
       t.expect(fetchState.buffer, ~message="Buffer should be empty initially").toEqual([])
       t.expect(fetchState.knownHeight, ~message="knownHeight should be 0 initially").toBe(0)
-      t.expect(fetchState.onBlockConfigs, ~message="onBlockConfigs should be set").toEqual([
-        onBlockConfig,
-      ])
+      t.expect(
+        fetchState.onBlockRegistrations,
+        ~message="onBlockRegistrations should be set",
+      ).toEqual([onBlockRegistration])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
-      let nextQuery =
-        fetchState->FetchState.getNextQuery(~budget=targetBufferSize, ~chainPendingBudget=0.)
+      let nextQuery = fetchState->FetchState.getNextQuery
       t.expect(
         nextQuery,
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
@@ -3870,8 +3837,7 @@ describe("FetchState with onBlockConfig only (no events)", () => {
       ])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
-      let nextQuery2 =
-        updatedFetchState->FetchState.getNextQuery(~budget=targetBufferSize, ~chainPendingBudget=0.)
+      let nextQuery2 = updatedFetchState->FetchState.getNextQuery
       t.expect(
         nextQuery2,
         ~message="Should return NothingToQuery when there are no partitions to query",
@@ -3882,10 +3848,8 @@ describe("FetchState with onBlockConfig only (no events)", () => {
 
 describe("Stale query response should not overwrite block range", () => {
   // The default configuration with ability to overwrite some values
-  let getNextQuery = (fs, ~knownHeight=100000, ~budget=targetBufferSize) =>
-    fs
-    ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery(~budget, ~chainPendingBudget=0.)
+  let getNextQuery = (fs, ~knownHeight=100000) =>
+    fs->FetchState.updateKnownHeight(~knownHeight)->FetchState.getNextQuery
 
   it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
     let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100000)

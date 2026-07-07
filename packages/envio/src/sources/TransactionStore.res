@@ -82,7 +82,7 @@ let materializeItems = async (store: t, ~items: array<Internal.item>) => {
       | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
       | None =>
         let {blockNumber, transactionIndex} = eventItem
-        let mask = eventItem.eventConfig.transactionFieldMask
+        let mask = eventItem.onEventRegistration.eventConfig.transactionFieldMask
         if mask != 0. {
           anySelected := true
         }

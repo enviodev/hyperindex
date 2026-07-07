@@ -4,7 +4,7 @@ type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   apiToken: option<string>,
-  eventConfigs: array<Internal.svmInstructionEventConfig>,
+  onEventRegistrations: array<Internal.svmOnEventRegistration>,
   clientTimeoutMillis: int,
 }
 
@@ -210,7 +210,7 @@ let toSvmInstruction = (
 // first router hit. Falls back to the `_none` key (program-wide handler) when
 // no discriminator-keyed handler matches.
 let probeRouter = (
-  router: EventRouter.t<Internal.svmInstructionEventConfig>,
+  router: EventRouter.t<Internal.svmOnEventRegistration>,
   programId: SvmTypes.Pubkey.t,
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   byteLengthsDesc: array<int>,
@@ -280,9 +280,18 @@ let toQueryBlockField = (field: Internal.svmBlockField): option<
   | ParentHash => Some(ParentBlockhash)
   }
 
-let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: options): t => {
+let make = (
+  {chain, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis}: options,
+): t => {
   let name = "SvmHyperSync"
   let chainId = chain->ChainMap.Chain.toChainId
+
+  // Definitions drive query/decode building; the registrations drive routing
+  // (they carry `isWildcard` and become each decoded item's `onEventRegistration`).
+  let eventConfigs =
+    onEventRegistrations->Array.map(reg =>
+      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+    )
 
   // Built once at startup and handed to the client so `get` decodes matching
   // instructions in Rust rather than per-instruction over the napi boundary.
@@ -297,7 +306,10 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     },
   )
 
-  let (eventRouter, programOrderings) = EventRouter.fromSvmEventConfigsOrThrow(eventConfigs, ~chain)
+  let (eventRouter, programOrderings) = EventRouter.fromSvmEventConfigsOrThrow(
+    onEventRegistrations,
+    ~chain,
+  )
 
   // programId.toString -> sorted-desc byte lengths
   let orderingByProgram = Dict.make()
@@ -370,6 +382,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
     ~knownHeight,
     ~partitionId as _,
     ~selection as _,
+    ~itemsTarget,
     ~retry,
     ~logger,
   ) => {
@@ -398,6 +411,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
       toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
       instructions: instructionSelections,
       fields,
+      maxNumInstructions: itemsTarget,
     }
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
@@ -476,7 +490,11 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
 
       switch maybeConfig {
       | None => ()
-      | Some(eventConfig) =>
+      | Some(onEventRegistration) =>
+        let eventConfig =
+          onEventRegistration.eventConfig->(
+            Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+          )
         let logKey =
           instr.slot->Int.toString ++
           ":" ++
@@ -505,7 +523,7 @@ let make = ({chain, endpointUrl, apiToken, eventConfigs, clientTimeoutMillis}: o
         parsedQueueItems
         ->Array.push(
           Internal.Event({
-            eventConfig: (eventConfig :> Internal.eventConfig),
+            onEventRegistration,
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),

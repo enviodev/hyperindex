@@ -13,7 +13,7 @@ type selectionConfig = {
   getRecieptsSelection: (
     ~addressesByContractName: dict<array<Address.t>>,
   ) => array<HyperFuelClient.QueryTypes.receiptSelection>,
-  eventRouter: EventRouter.t<Internal.fuelEventConfig>,
+  eventRouter: EventRouter.t<Internal.fuelOnEventRegistration>,
 }
 
 let logDataReceiptTypeSelection: array<FuelSDK.receiptType> = [LogData]
@@ -127,39 +127,40 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
 
   let contractNames = Utils.Set.make()
 
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
-  ->Array.forEach(eventConfig => {
+  selection.onEventRegistrations->Array.forEach(reg => {
+    let eventConfig =
+      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
     let contractName = eventConfig.contractName
-    if !eventConfig.isWildcard {
+    let isWildcard = reg.isWildcard
+    if !isWildcard {
       let _ = contractNames->Utils.Set.add(contractName)
     }
     eventRouter->EventRouter.addOrThrow(
       eventConfig.id,
-      eventConfig,
+      reg,
       ~contractName,
       ~eventName=eventConfig.name,
       ~chain,
-      ~isWildcard=eventConfig.isWildcard,
+      ~isWildcard,
     )
 
-    switch eventConfig {
-    | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
-    | {kind: Mint} => addNonLogDataReceiptType(contractName, Mint)
-    | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
-    | {kind: Burn} => addNonLogDataReceiptType(contractName, Burn)
-    | {kind: Transfer, isWildcard: true} => {
+    switch (eventConfig.kind, isWildcard) {
+    | (Mint, true) => addNonLogDataWildcardReceiptTypes(Mint)
+    | (Mint, false) => addNonLogDataReceiptType(contractName, Mint)
+    | (Burn, true) => addNonLogDataWildcardReceiptTypes(Burn)
+    | (Burn, false) => addNonLogDataReceiptType(contractName, Burn)
+    | (Transfer, true) => {
         addNonLogDataWildcardReceiptTypes(Transfer)
         addNonLogDataWildcardReceiptTypes(TransferOut)
       }
-    | {kind: Transfer} => {
+    | (Transfer, false) => {
         addNonLogDataReceiptType(contractName, Transfer)
         addNonLogDataReceiptType(contractName, TransferOut)
       }
-    | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-    | {kind: Call} =>
+    | (Call, true) => addNonLogDataWildcardReceiptTypes(Call)
+    | (Call, false) =>
       JsError.throwWithMessage("Call receipt indexing currently supported only in wildcard mode")
-    | {kind: LogData({logId}), isWildcard} => {
+    | (LogData({logId}), _) => {
         let rb = logId->BigInt.fromStringOrThrow
         if isWildcard {
           wildcardLogDataRbs->Array.push(rb)->ignore
@@ -239,6 +240,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
+    ~itemsTarget as _,
     ~retry,
     ~logger,
   ) => {
@@ -330,7 +332,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       | Call(_) => callEventTag
       }
 
-      let eventConfig = switch selectionConfig.eventRouter->EventRouter.get(
+      let onEventRegistration = switch selectionConfig.eventRouter->EventRouter.get(
         ~tag=eventId,
         ~contractNameByAddress,
         ~contractAddress,
@@ -351,8 +353,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
             ~logger,
           )
         }
-      | Some(eventConfig) => eventConfig
+      | Some(onEventRegistration) => onEventRegistration
       }
+
+      let eventConfig =
+        onEventRegistration.eventConfig->(
+          Utils.magic: Internal.eventConfig => Internal.fuelEventConfig
+        )
 
       let params = switch (eventConfig, receipt) {
       | ({kind: LogData({decode})}, LogData({data})) =>
@@ -407,7 +414,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       }
 
       Internal.Event({
-        eventConfig: (eventConfig :> Internal.eventConfig),
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         chain,
         blockNumber: block.height,
         logIndex: receiptIndex,

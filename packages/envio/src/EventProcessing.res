@@ -74,8 +74,8 @@ let runEventHandlerOrThrow = async (
   }
   let handlerDuration = timeBeforeHandler->Performance.secondsSince
   Prometheus.ProcessingHandler.increment(
-    ~contract=eventItem.eventConfig.contractName,
-    ~event=eventItem.eventConfig.name,
+    ~contract=eventItem.onEventRegistration.eventConfig.contractName,
+    ~event=eventItem.onEventRegistration.eventConfig.name,
     ~duration=handlerDuration,
   )
 }
@@ -90,7 +90,7 @@ let runHandlerOrThrow = async (
   ~chains: Internal.chains,
 ) => {
   switch item {
-  | Block({onBlockConfig: {handler}, blockNumber}) =>
+  | Block({onBlockRegistration: {handler}, blockNumber}) =>
     try {
       let contextParams: UserContext.contextParams = {
         item,
@@ -121,8 +121,8 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) =>
-    switch eventConfig.handler {
+  | Event({onEventRegistration}) =>
+    switch onEventRegistration.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
@@ -161,7 +161,7 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler, contractName, name: eventName}}) =>
+      | Event({onEventRegistration: {handler, eventConfig: {contractName, name: eventName}}}) =>
         switch handler {
         | None => ()
         | Some(handler) =>
@@ -200,7 +200,7 @@ let preloadBatchOrThrow = async (
           | _ => ()
           }
         }
-      | Block({onBlockConfig: {handler}, blockNumber}) =>
+      | Block({onBlockRegistration: {handler}, blockNumber}) =>
         try {
           promises->Array.push(
             handler({

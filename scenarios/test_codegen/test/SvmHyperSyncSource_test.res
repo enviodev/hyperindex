@@ -38,14 +38,8 @@ let makeEventConfig = (
     id: "0x21",
     name: "CreateMetadataAccountV3",
     contractName: "TokenMetadata",
-    isWildcard: false,
-    filterByAddresses: false,
-    dependsOnAddresses: true,
-    handler: None,
-    contractRegister: None,
     paramsRawEventSchema: %raw(`null`),
     simulateParamsSchema: %raw(`null`),
-    startBlock: None,
     programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
     discriminator: Some("0x21"),
     discriminatorByteLen: 1,
@@ -65,6 +59,14 @@ let makeEventConfig = (
     definedTypes: JSON.Null,
   }
 }
+
+let makeReg = (~eventConfig=makeEventConfig()) =>
+  EventConfigBuilder.buildSvmOnEventRegistration(
+    ~eventConfig,
+    ~isWildcard=false,
+    ~handler=None,
+    ~contractRegister=None,
+  )
 
 let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
   nextSlot: slot + 1,
@@ -114,7 +116,7 @@ let mockClient: SvmHyperSyncClient.t = {
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = (~eventConfigs=[makeEventConfig()]) => {
+let makeSource = (~onEventRegistrations=[makeReg()]) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
@@ -128,7 +130,7 @@ let makeSource = (~eventConfigs=[makeEventConfig()]) => {
     chain,
     endpointUrl: "https://solana.hypersync.xyz",
     apiToken: None,
-    eventConfigs,
+    onEventRegistrations,
     clientTimeoutMillis: 10_000,
   }) catch {
   | exn =>
@@ -144,7 +146,7 @@ let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("omits block on the item and requests opted-in table columns", async t => {
     let source = makeSource()
-    let eventConfig = makeEventConfig()
+    let reg = makeReg()
 
     let response = await source.getItemsOrThrow(
       ~fromBlock=slot - 10,
@@ -155,8 +157,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~contractNameByAddress,
       ~knownHeight=slot + 1000,
       ~partitionId="0",
+      ~itemsTarget=5000,
       ~selection={
-        eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        onEventRegistrations: [reg],
         dependsOnAddresses: true,
       },
       ~retry=0,
@@ -191,6 +194,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           // Inclusive `toBlock` becomes exclusive `toSlot` on the wire (+1).
           toSlot: slot + 11,
           instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
+          maxNumInstructions: 5000,
           fields: {
             block: [Slot, Blockhash, BlockTime],
             transaction: [
@@ -218,8 +222,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it(
     "does not fetch the transaction table when only transactionIndex is selected",
     async t => {
-      let eventConfig = makeEventConfig(~selectedTransactionFields=[TransactionIndex])
-      let source = makeSource(~eventConfigs=[eventConfig])
+      let reg = makeReg(~eventConfig=makeEventConfig(~selectedTransactionFields=[TransactionIndex]))
+      let source = makeSource(~onEventRegistrations=[reg])
 
       let _ = await source.getItemsOrThrow(
         ~fromBlock=slot - 10,
@@ -231,9 +235,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~knownHeight=slot + 1000,
         ~partitionId="0",
         ~selection={
-          eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          onEventRegistrations: [reg],
           dependsOnAddresses: true,
         },
+        ~itemsTarget=5000,
         ~retry=0,
         ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )
@@ -246,8 +251,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   // Selected block fields are added to the query's block columns on top of the
   // always-fetched slot/blockhash/blockTime trio.
   Async.it("requests the selected block fields' columns", async t => {
-    let eventConfig = makeEventConfig(~selectedBlockFields=[Height, ParentHash])
-    let source = makeSource(~eventConfigs=[eventConfig])
+    let reg = makeReg(~eventConfig=makeEventConfig(~selectedBlockFields=[Height, ParentHash]))
+    let source = makeSource(~onEventRegistrations=[reg])
 
     let _ = await source.getItemsOrThrow(
       ~fromBlock=slot - 10,
@@ -259,9 +264,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~knownHeight=slot + 1000,
       ~partitionId="0",
       ~selection={
-        eventConfigs: [(eventConfig :> Internal.eventConfig)],
+        onEventRegistrations: [reg],
         dependsOnAddresses: true,
       },
+      ~itemsTarget=5000,
       ~retry=0,
       ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
     )
@@ -277,8 +283,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it(
     "requests tokenBalance columns with account included, and skips the transaction table",
     async t => {
-      let eventConfig = makeEventConfig(~selectedTransactionFields=[TokenBalances])
-      let source = makeSource(~eventConfigs=[eventConfig])
+      let reg = makeReg(~eventConfig=makeEventConfig(~selectedTransactionFields=[TokenBalances]))
+      let source = makeSource(~onEventRegistrations=[reg])
 
       let _ = await source.getItemsOrThrow(
         ~fromBlock=slot - 10,
@@ -290,9 +296,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~knownHeight=slot + 1000,
         ~partitionId="0",
         ~selection={
-          eventConfigs: [(eventConfig :> Internal.eventConfig)],
+          onEventRegistrations: [reg],
           dependsOnAddresses: true,
         },
+        ~itemsTarget=5000,
         ~retry=0,
         ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )

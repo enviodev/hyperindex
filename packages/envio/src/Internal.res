@@ -408,31 +408,17 @@ type indexingContract = {
   effectiveStartBlock: int,
 }
 
-// This is private so it's not manually constructed internally
-// The idea is that it can only be coerced from fuel/evmEventConfig
-// and it can include their fields. We prevent manual creation,
-// so the fields are not overwritten and we can safely cast the type back to fuel/evmEventConfig
+// Definition of an event/instruction we know how to decode: identity + decode
+// schemas + chain-independent field selection. A pure function of the ABI +
+// config, shared across chains. `private` so it can only be coerced from an
+// ecosystem variant (fields never overwritten), which lets sources cast the
+// base back down to evm/fuel/svm safely.
 type eventConfig = private {
   id: string,
   name: string,
   contractName: string,
-  isWildcard: bool,
-  // Whether the event has an event filter which uses addresses
-  filterByAddresses: bool,
-  // Usually always false for wildcard events
-  // But might be true for wildcard event with dynamic event filter by addresses
-  dependsOnAddresses: bool,
-  // Precompiled predicate (EVM only) for events that filter an indexed address
-  // param by registered addresses. Given the decoded event and the log's block
-  // number, drops an event whose param-address isn't registered at/before that
-  // block — the param-level analogue of EventRouter's srcAddress
-  // `effectiveStartBlock` check. Absent otherwise.
-  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
-  handler: option<handler>,
-  contractRegister: option<contractRegister>,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
-  startBlock: option<int>,
   // Field names selected for the chain's transaction-store materialisation
   // (camelCase, matching the ecosystem's `transactionFields`). Stored as a
   // string set so the shared mask logic is ecosystem-agnostic; sources recover
@@ -484,18 +470,16 @@ type eventFilters =
 
 type evmEventConfig = {
   ...eventConfig,
-  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
   selectedBlockFields: Utils.Set.t<evmBlockField>,
   sighash: string,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
 }
 
-// Shared formula for `eventConfig.dependsOnAddresses`. Kept here so
-// `EventConfigBuilder.build{Evm,Fuel}EventConfig` and
-// `HandlerLoader.applyRegistrations` stay in sync when handler state flips
-// the value. Fuel events always have `filterByAddresses=false`, so callers
-// there simply pass it through as `false`.
+// Shared formula for a registration's `dependsOnAddresses`. Kept here so the
+// `EventConfigBuilder.build*OnEventRegistration` builders stay in sync. Fuel
+// and SVM events always have `filterByAddresses=false`, so callers there pass
+// it through as `false`.
 let dependsOnAddresses = (~isWildcard, ~filterByAddresses) => !isWildcard || filterByAddresses
 
 type evmContractConfig = {
@@ -544,6 +528,44 @@ type svmInstructionEventConfig = {
   definedTypes: JSON.t,
 }
 
+// Per-(event, chain) registration produced when user handler code registers an
+// event (`onEvent`) or a dynamic contract registers. References its definition
+// by value as `.eventConfig` and adds the handler binding plus the
+// registration/`where`-derived fetch state. Not `private`: Fuel/SVM
+// registrations add no ecosystem-specific fields (so they're bare aliases that
+// must stay directly constructable), and the evm→base cast in sources is sound
+// by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
+type onEventRegistration = {
+  eventConfig: eventConfig,
+  handler: option<handler>,
+  contractRegister: option<contractRegister>,
+  isWildcard: bool,
+  // Whether the event has an event filter which uses addresses.
+  filterByAddresses: bool,
+  // Usually always false for wildcard events, but might be true for a wildcard
+  // event with a dynamic event filter by addresses.
+  dependsOnAddresses: bool,
+  // Precompiled predicate for events that filter an indexed address param by
+  // registered addresses (see `EventConfigBuilder.buildAddressFilter`); drops a
+  // decoded event whose param-address isn't registered at/before the log's
+  // block. Absent otherwise.
+  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
+  // Final start block: the contract/chain config value, overridden by a
+  // `where.block.number._gte` when the registered `where` supplies one.
+  startBlock: option<int>,
+}
+
+type evmOnEventRegistration = {
+  ...onEventRegistration,
+  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+}
+
+// Fuel and SVM registrations add no ecosystem-specific fetch state (their
+// filters are config-derived and live on the definition), so they're bare
+// aliases of the base registration.
+type fuelOnEventRegistration = onEventRegistration
+type svmOnEventRegistration = onEventRegistration
+
 type svmProgramConfig = {
   name: string,
   programId: SvmTypes.Pubkey.t,
@@ -564,7 +586,7 @@ type dcs = array<indexingAddress>
 // to make item properly unboxed
 type eventItem = private {
   kind: [#0],
-  eventConfig: eventConfig,
+  onEventRegistration: onEventRegistration,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
@@ -601,7 +623,7 @@ type onBlockArgs = {
   context: handlerContext,
 }
 
-type onBlockConfig = {
+type onBlockRegistration = {
   // When there are multiple onBlock handlers per chain,
   // we want to use the order they are defined for sorting
   index: int,
@@ -617,14 +639,14 @@ type onBlockConfig = {
 type item =
   | @as(0)
   Event({
-      eventConfig: eventConfig,
+      onEventRegistration: onEventRegistration,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockConfig: onBlockConfig, blockNumber: int, logIndex: int})
+  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int, logIndex: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
@@ -636,7 +658,7 @@ external getItemLogIndex: item => int = "logIndex"
 let getItemChainId = item =>
   switch item {
   | Event({chain}) => chain->ChainMap.Chain.toChainId
-  | Block({onBlockConfig: {chainId}}) => chainId
+  | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
 @get

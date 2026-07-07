@@ -101,8 +101,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     Logging.createChildFrom(
       ~logger,
       ~params={
-        "contract": eventItem.eventConfig.contractName,
-        "event": eventItem.eventConfig.name,
+        "contract": eventItem.onEventRegistration.eventConfig.contractName,
+        "event": eventItem.onEventRegistration.eventConfig.name,
         "chainId": eventItem.chain->ChainMap.Chain.toChainId,
         "block": eventItem.blockNumber,
         "logIndex": eventItem.logIndex,
@@ -112,7 +112,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
     let eventConfig =
-      eventItem.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      eventItem.onEventRegistration.eventConfig->(
+        Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+      )
     // Store-backed payloads get `block` written at batch prep and inline
     // sources carry it from the start, with hash/timestamp always selected —
     // so both are present by the time a raw event is built.

@@ -26,6 +26,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
+      ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
     ) => {

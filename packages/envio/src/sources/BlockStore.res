@@ -57,7 +57,7 @@ let groupByBlock = (items: array<Internal.item>): (
     ~hasInline=payload => payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome,
     ~key=eventItem => eventItem.blockNumber,
     ~sameKey=(a, b) => a == b,
-    ~mask=eventItem => eventItem.eventConfig.blockFieldMask,
+    ~mask=eventItem => eventItem.onEventRegistration.eventConfig.blockFieldMask,
   )
 
 // Every ecosystem's field selection always includes its always-included trio,

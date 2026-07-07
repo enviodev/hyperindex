@@ -221,11 +221,13 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
   ]
 
   let build = (~eventFilters: option<JSON.t>, ~startBlock: option<int>=?) =>
-    EventConfigBuilder.buildEvmEventConfig(
-      ~contractName="ERC20",
-      ~eventName="Transfer",
-      ~sighash=transferSighash,
-      ~params=transferParams,
+    EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
@@ -269,11 +271,13 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
 
   it("dynamic where callback — per-chain startBlock wins over contract value", t => {
     let whereFn = %raw(`({chain}) => ({block: {number: {_gte: chain.id === 137 ? 5000 : 250}}})`)
-    let chain137 = EventConfigBuilder.buildEvmEventConfig(
-      ~contractName="ERC20",
-      ~eventName="Transfer",
-      ~sighash=transferSighash,
-      ~params=transferParams,
+    let chain137 = EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
@@ -282,11 +286,13 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
-    let chain1 = EventConfigBuilder.buildEvmEventConfig(
-      ~contractName="ERC20",
-      ~eventName="Transfer",
-      ~sighash=transferSighash,
-      ~params=transferParams,
+    let chain1 = EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
@@ -310,15 +316,17 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
 
   let buildEvmTransfer = (~startBlock: option<int>) =>
-    EventConfigBuilder.buildEvmEventConfig(
-      ~contractName="ERC20",
-      ~eventName="Transfer",
-      ~sighash=transferSighash,
-      ~params=[
-        {name: "from", abiType: "address", indexed: true},
-        {name: "to", abiType: "address", indexed: true},
-        {name: "value", abiType: "uint256", indexed: false},
-      ],
+    EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=[
+          {name: "from", abiType: "address", indexed: true},
+          {name: "to", abiType: "address", indexed: true},
+          {name: "value", abiType: "uint256", indexed: false},
+        ],
+      ),
       ~isWildcard=false,
       ~handler=None,
       ~contractRegister=None,
@@ -329,7 +337,9 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
     )
 
   let makeFetchState = (~contractStartBlock: option<int>) => {
-    let eventConfigs = [(buildEvmTransfer(~startBlock=contractStartBlock) :> Internal.eventConfig)]
+    let onEventRegistrations = [
+      (buildEvmTransfer(~startBlock=contractStartBlock) :> Internal.onEventRegistration),
+    ]
     let addresses = [
       {
         Internal.address: mockAddress,
@@ -337,9 +347,9 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
         registrationBlock: -1,
       },
     ]
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     FetchState.make(
-      ~eventConfigs,
+      ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,
       ~startBlock=0,
@@ -354,9 +364,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
   // Pull the first query the scheduler would dispatch. `updateKnownHeight`
   // is needed so `getNextQuery` sees a non-zero head.
   let firstQuery = (fetchState: FetchState.t) =>
-    switch fetchState
-    ->FetchState.updateKnownHeight(~knownHeight=10000)
-    ->FetchState.getNextQuery(~budget=5000, ~chainPendingBudget=0.) {
+    switch fetchState->FetchState.updateKnownHeight(~knownHeight=10000)->FetchState.getNextQuery {
     | Ready([q]) => q
     | Ready(qs) =>
       JsError.throwWithMessage(

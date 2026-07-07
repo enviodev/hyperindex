@@ -378,46 +378,12 @@ let buildEvmEventConfig = (
   ~eventName: string,
   ~sighash: string,
   ~params: array<paramMeta>,
-  ~isWildcard: bool,
-  ~handler: option<Internal.handler>,
-  ~contractRegister: option<Internal.contractRegister>,
-  ~eventFilters: option<JSON.t>,
-  ~probeChainId: int,
-  ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
-  ~startBlock: option<int>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
-  let indexedParams = params->Array.filter(p => p.indexed)
-
-  let {
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    addressFilterParamGroups,
-    startBlock: whereStartBlock,
-  } = LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
-    ~sighash,
-    ~params=indexedParams->Array.map(p => p.name),
-    ~contractName,
-    ~probeChainId,
-    ~onEventBlockFilterSchema,
-    ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
-    ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
-    ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
-  )
-
-  // `where.block.number._gte` overrides the contract-level startBlock
-  // when present. The user opts into this explicitly in handler code so
-  // it should win over the `config.yaml` contract `start_block`; absent
-  // `where.block`, the caller's contract-level value passes through.
-  let resolvedStartBlock = switch whereStartBlock {
-  | Some(_) as sb => sb
-  | None => startBlock
-  }
 
   let (selectedBlockFields, selectedTransactionFields) = resolveFieldSelection(
     ~blockFields,
@@ -430,16 +396,8 @@ let buildEvmEventConfig = (
     id: sighash ++ "_" ++ topicCount->Int.toString,
     name: eventName,
     contractName,
-    isWildcard,
-    handler,
-    contractRegister,
     paramsRawEventSchema: buildParamsSchema(params),
     simulateParamsSchema: buildSimulateParamsSchema(params),
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups, ~isWildcard),
-    dependsOnAddresses: !isWildcard || filterByAddresses,
-    startBlock: resolvedStartBlock,
     selectedBlockFields,
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
@@ -451,6 +409,59 @@ let buildEvmEventConfig = (
     sighash,
     topicCount,
     paramsMetadata: params,
+  }
+}
+
+// Enrich an EVM definition into a per-(event,chain) registration: resolve the
+// registered `where` (with `probeChainId`) into the lazy `getEventFiltersOrThrow`
+// closure + address filters, and override `startBlock` with `where.block._gte`.
+let buildEvmOnEventRegistration = (
+  ~eventConfig: Internal.evmEventConfig,
+  ~isWildcard: bool,
+  ~handler: option<Internal.handler>,
+  ~contractRegister: option<Internal.contractRegister>,
+  ~eventFilters: option<JSON.t>,
+  ~probeChainId: int,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
+  ~startBlock: option<int>=?,
+): Internal.evmOnEventRegistration => {
+  let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
+
+  let {
+    getEventFiltersOrThrow,
+    filterByAddresses,
+    addressFilterParamGroups,
+    startBlock: whereStartBlock,
+  } = LogSelection.parseEventFiltersOrThrow(
+    ~eventFilters,
+    ~sighash=eventConfig.sighash,
+    ~params=indexedParams->Array.map(p => p.name),
+    ~contractName=eventConfig.contractName,
+    ~probeChainId,
+    ~onEventBlockFilterSchema,
+    ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
+    ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
+    ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
+  )
+
+  // `where.block.number._gte` overrides the contract-level startBlock when
+  // present (an explicit per-event opt-in that wins over `config.yaml`);
+  // otherwise the contract/chain value passes through.
+  let resolvedStartBlock = switch whereStartBlock {
+  | Some(_) as sb => sb
+  | None => startBlock
+  }
+
+  {
+    eventConfig: (eventConfig :> Internal.eventConfig),
+    isWildcard,
+    handler,
+    contractRegister,
+    getEventFiltersOrThrow,
+    filterByAddresses,
+    clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups, ~isWildcard),
+    dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
+    startBlock: resolvedStartBlock,
   }
 }
 
@@ -471,13 +482,9 @@ let buildSvmInstructionEventConfig = (
   ~blockFields: array<Internal.svmBlockField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
-  ~isWildcard: bool,
-  ~handler: option<Internal.handler>,
-  ~contractRegister: option<Internal.contractRegister>,
   ~accounts: array<string>=[],
   ~args: JSON.t=JSON.Null,
   ~definedTypes: JSON.t=JSON.Null,
-  ~startBlock: option<int>=?,
 ): Internal.svmInstructionEventConfig => {
   let paramsSchema =
     S.json(~validate=false)
@@ -503,15 +510,8 @@ let buildSvmInstructionEventConfig = (
     },
     name: instructionName,
     contractName,
-    isWildcard,
-    handler,
-    contractRegister,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    filterByAddresses: false,
-    dependsOnAddresses: !isWildcard,
-    clientAddressFilter: ?buildAddressFilter([], ~isWildcard, ~srcAddressExpr="event.programId"),
-    startBlock,
     programId,
     discriminator,
     discriminatorByteLen,
@@ -528,16 +528,33 @@ let buildSvmInstructionEventConfig = (
   }
 }
 
+// Enrich an SVM definition into a registration. SVM has no `where`; only the
+// handler binding + wildcard-derived address gate are registration state.
+let buildSvmOnEventRegistration = (
+  ~eventConfig: Internal.svmInstructionEventConfig,
+  ~isWildcard: bool,
+  ~handler: option<Internal.handler>,
+  ~contractRegister: option<Internal.contractRegister>,
+  ~startBlock: option<int>=?,
+): Internal.svmOnEventRegistration => {
+  eventConfig: (eventConfig :> Internal.eventConfig),
+  handler,
+  contractRegister,
+  isWildcard,
+  filterByAddresses: false,
+  dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
+  clientAddressFilter: ?buildAddressFilter([], ~isWildcard, ~srcAddressExpr="event.programId"),
+  startBlock,
+}
+
+// ============== Build Fuel event config ==============
+
 let buildFuelEventConfig = (
   ~contractName: string,
   ~eventName: string,
   ~kind: string,
   ~sighash: string,
   ~rawAbi: JSON.t,
-  ~isWildcard: bool,
-  ~handler: option<Internal.handler>,
-  ~contractRegister: option<Internal.contractRegister>,
-  ~startBlock: option<int>=?,
 ): Internal.fuelEventConfig => {
   let fuelKind = switch kind {
   | "logData" =>
@@ -577,15 +594,8 @@ let buildFuelEventConfig = (
     },
     name: eventName,
     contractName,
-    isWildcard,
-    handler,
-    contractRegister,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    filterByAddresses: false,
-    dependsOnAddresses: !isWildcard,
-    clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
-    startBlock,
     // Fuel keeps the transaction and block inline on the payload; nothing to
     // materialise.
     selectedTransactionFields: Utils.Set.make(),
@@ -593,4 +603,23 @@ let buildFuelEventConfig = (
     blockFieldMask: 0.,
     kind: fuelKind,
   }
+}
+
+// Enrich a Fuel definition into a registration (handler binding +
+// wildcard-derived address gate; Fuel never filters by addresses).
+let buildFuelOnEventRegistration = (
+  ~eventConfig: Internal.fuelEventConfig,
+  ~isWildcard: bool,
+  ~handler: option<Internal.handler>,
+  ~contractRegister: option<Internal.contractRegister>,
+  ~startBlock: option<int>=?,
+): Internal.fuelOnEventRegistration => {
+  eventConfig: (eventConfig :> Internal.eventConfig),
+  handler,
+  contractRegister,
+  isWildcard,
+  filterByAddresses: false,
+  dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
+  clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
+  startBlock,
 }

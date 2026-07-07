@@ -48,7 +48,7 @@ module Make = () => {
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Address.t,
-    eventConfig: Internal.evmEventConfig,
+    onEventRegistration: Internal.evmOnEventRegistration,
     transactionIndex: int,
   }
 
@@ -62,7 +62,7 @@ module Make = () => {
 
   let makeEventConstructor = (
     ~params: Internal.eventParams,
-    ~eventConfig: Internal.evmEventConfig,
+    ~onEventRegistration: Internal.evmOnEventRegistration,
     ~srcAddress,
     ~makeBlock: (
       ~blockNumber: int,
@@ -81,7 +81,9 @@ module Make = () => {
   ) => {
     let transactionHash =
       Crypto.hashKeccak256Any(
-        params->RescriptSchema.S.reverseConvertToJsonOrThrow(eventConfig.paramsRawEventSchema),
+        params->RescriptSchema.S.reverseConvertToJsonOrThrow(
+          onEventRegistration.eventConfig.paramsRawEventSchema,
+        ),
       )
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
@@ -90,8 +92,8 @@ module Make = () => {
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
-        contractName: eventConfig.contractName,
-        eventName: eventConfig.name,
+        contractName: onEventRegistration.eventConfig.contractName,
+        eventName: onEventRegistration.eventConfig.name,
         params,
         srcAddress,
         chainId,
@@ -106,7 +108,7 @@ module Make = () => {
       makeEvent,
       logIndex,
       srcAddress,
-      eventConfig,
+      onEventRegistration,
       transactionIndex,
     }
   }
@@ -168,11 +170,11 @@ module Make = () => {
       logIndex,
       srcAddress,
       transactionHash,
-      eventConfig,
+      onEventRegistration,
       transactionIndex,
     }): log => {
       let log = Internal.Event({
-        eventConfig: (eventConfig :> Internal.eventConfig),
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         blockNumber,
@@ -229,7 +231,9 @@ module Make = () => {
           (prev, {addresses, eventKeys}) => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
-              eventKeys->arrayHas(getEventKey((l.item->Internal.castUnsafeEventItem).eventConfig)))
+              eventKeys->arrayHas(
+                getEventKey((l.item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig),
+              ))
           },
         )
         if isLogInConfig {

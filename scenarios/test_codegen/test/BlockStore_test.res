@@ -10,7 +10,7 @@ let makeStoreBackedItem = (~blockNumber, ~mask): Internal.item =>
     "kind": 0,
     "blockNumber": blockNumber,
     "transactionIndex": 0,
-    "eventConfig": {"blockFieldMask": mask},
+    "onEventRegistration": {"eventConfig": {"blockFieldMask": mask}},
     "payload": (Dict.make(): dict<Internal.eventBlock>),
   }->(Utils.magic: {..} => Internal.item)
 

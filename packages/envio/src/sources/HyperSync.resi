@@ -34,6 +34,7 @@ module GetLogs: {
     ~toBlock: option<int>,
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
+    ~maxNumLogs: int,
   ) => promise<logsQueryPage>
 }
 
