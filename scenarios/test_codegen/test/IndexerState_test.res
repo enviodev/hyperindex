@@ -13,12 +13,12 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   itemsTarget: 0,
   isPrefetch: false,
-  selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
+  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
@@ -36,20 +36,20 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       Int.fromFloat(Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
     }
 
-    let eventConfigs = [
-      (MockIndexer.evmEventConfig(
+    let onEventRegistrations = [
+      (MockIndexer.evmOnEventRegistration(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
-      ) :> Internal.eventConfig),
+      ) :> Internal.onEventRegistration),
     ]
     let addresses = []
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~eventConfigs,
+      ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,
       ~startBlock=0,
@@ -83,8 +83,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
           transactionIndex: 0,
-          eventConfig: "Mock eventConfig in IndexerState test"->(
-            Utils.magic: string => Internal.eventConfig
+          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
+            Utils.magic: string => Internal.onEventRegistration
           ),
           payload: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
             Utils.magic: string => Internal.eventPayload
@@ -100,7 +100,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           isChunk: false,
           selection: {
             dependsOnAddresses: false,
-            eventConfigs,
+            onEventRegistrations,
           },
           addressesByContractName: Dict.make(),
         }
@@ -166,7 +166,7 @@ let getItemKey = (item: Internal.item) =>
       blockNumber,
       logIndex,
     )
-  | Block({onBlockConfig: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+  | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
   }
 
 // Advance each chain's fetchState to its post-batch state, simulating the loop
@@ -193,8 +193,8 @@ describe("IndexerState", () => {
           blockHash: "0x0",
           logIndex: 0,
           transactionIndex: 0,
-          eventConfig: "Mock eventConfig in IndexerState test"->(
-            Utils.magic: string => Internal.eventConfig
+          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
+            Utils.magic: string => Internal.onEventRegistration
           ),
           payload: `mock initial event`->(Utils.magic: string => Internal.eventPayload),
         })
@@ -252,24 +252,24 @@ describe("IndexerState", () => {
     it(
       "applyBatchProgress keeps a fetchState that advanced during the batch",
       t => {
-        let config = Config.loadWithoutRegistrations()
-        let eventConfigs = [
-          (MockIndexer.evmEventConfig(
+        let config = Config.load()
+        let onEventRegistrations = [
+          (MockIndexer.evmOnEventRegistration(
             ~id="0",
             ~contractName="Gravatar",
             ~isWildcard=true,
-          ) :> Internal.eventConfig),
+          ) :> Internal.onEventRegistration),
         ]
 
         let makeFetchState = (~chainId, ~eventBlocks) => {
           let addresses = []
-          let contractConfigs = IndexingAddresses.makeContractConfigs(~eventConfigs)
+          let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
           let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
           let fetchState = ref(
             FetchState.make(
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
-              ~eventConfigs,
+              ~onEventRegistrations,
               ~contractConfigs,
               ~addresses,
               ~startBlock=0,
@@ -286,7 +286,7 @@ describe("IndexerState", () => {
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
-                selection: {dependsOnAddresses: false, eventConfigs},
+                selection: {dependsOnAddresses: false, onEventRegistrations},
                 addressesByContractName: Dict.make(),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -303,8 +303,8 @@ describe("IndexerState", () => {
                       blockHash: `0x${blockNumber->Int.toString}`,
                       logIndex: 0,
                       transactionIndex: 0,
-                      eventConfig: "Mock eventConfig"->(
-                        Utils.magic: string => Internal.eventConfig
+                      onEventRegistration: "Mock onEventRegistration"->(
+                        Utils.magic: string => Internal.onEventRegistration
                       ),
                       payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
                     }),
@@ -370,7 +370,7 @@ describe("IndexerState", () => {
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {dependsOnAddresses: false, eventConfigs},
+          selection: {dependsOnAddresses: false, onEventRegistrations},
           addressesByContractName: Dict.make(),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
@@ -386,7 +386,7 @@ describe("IndexerState", () => {
               blockHash: "0x15",
               logIndex: 0,
               transactionIndex: 0,
-              eventConfig: "Mock eventConfig"->(Utils.magic: string => Internal.eventConfig),
+              onEventRegistration: "Mock onEventRegistration"->(Utils.magic: string => Internal.onEventRegistration),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
           ],

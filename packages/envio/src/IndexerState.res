@@ -188,7 +188,7 @@ let makeFromDbState = (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
-  ~registrations,
+  ~registrationsByChainId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
@@ -234,7 +234,7 @@ let makeFromDbState = (
         ~isInReorgThreshold,
         ~isRealtime,
         ~config,
-        ~registrations,
+        ~registrationsByChainId,
         ~reducedPollingInterval?,
       ),
     )

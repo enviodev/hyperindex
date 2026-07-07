@@ -411,12 +411,12 @@ type selectionConfig = {
 }
 
 let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let evmEventConfigs =
-    selection.eventConfigs->(
-      Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>
+  let evmOnEventRegistrations =
+    selection.onEventRegistrations->(
+      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
     )
 
-  if evmEventConfigs->Utils.Array.isEmpty {
+  if evmOnEventRegistrations->Utils.Array.isEmpty {
     throw(
       Source.GetItemsError(
         UnsupportedSelection({
@@ -439,12 +439,9 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   let dynamicWildcardByContract = Dict.make()
   let contractNames = Utils.Set.make()
 
-  evmEventConfigs->Array.forEach(({
-    contractName,
-    isWildcard,
-    dependsOnAddresses,
-    getEventFiltersOrThrow,
-  }) => {
+  evmOnEventRegistrations->Array.forEach(reg => {
+    let contractName = reg.eventConfig.contractName
+    let {isWildcard, dependsOnAddresses, getEventFiltersOrThrow} = reg
     let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
       contractNames->Utils.Set.add(contractName)->ignore
@@ -994,7 +991,7 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmEventConfig>,
+  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
@@ -1246,7 +1243,11 @@ let make = (
         ~contractAddress=routedAddress,
       ) {
       | None => None
-      | Some(eventConfig) =>
+      | Some(onEventRegistration) =>
+        let eventConfig =
+          onEventRegistration.eventConfig->(
+            Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+          )
         switch maybeDecodedEvent
         ->Nullable.toOption
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
@@ -1293,7 +1294,7 @@ let make = (
                 }
 
                 Internal.Event({
-                  eventConfig: (eventConfig :> Internal.eventConfig),
+                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
                   timestamp: block->getBlockTimestamp,
                   blockNumber: block->getBlockNumber,
                   blockHash: block->getBlockHash,

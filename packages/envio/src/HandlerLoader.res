@@ -72,116 +72,12 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   ->Promise.all
 }
 
-// EVM re-runs `parseEventFiltersOrThrow` with the registered `where:` JSON so
-// per-event filters propagate into `getEventFiltersOrThrow` / `filterByAddresses`
-// — which is why `evmEventConfig` has to retain `sighash` and `indexedParams`.
-// `dependsOnAddresses` is routed through `Internal.dependsOnAddresses` so the
-// formula stays in sync with `EventConfigBuilder.build{Evm,Fuel}EventConfig`.
-let applyRegistrations = (~config: Config.t): Config.t => {
-  let newChainMap = config.chainMap->ChainMap.map(chain => {
-    let newContracts = chain.contracts->Array.map(contract => {
-      let newEvents = contract.events->Array.map(
-        ev => {
-          let isWildcard = HandlerRegister.isWildcard(
-            ~contractName=ev.contractName,
-            ~eventName=ev.name,
-          )
-          let handler = HandlerRegister.getHandler(
-            ~contractName=ev.contractName,
-            ~eventName=ev.name,
-          )
-          let contractRegister = HandlerRegister.getContractRegister(
-            ~contractName=ev.contractName,
-            ~eventName=ev.name,
-          )
-          switch config.ecosystem.name {
-          | Fuel =>
-            let fuelEv = ev->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
-
-            ({
-              ...fuelEv,
-              isWildcard,
-              handler,
-              contractRegister,
-              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter([], ~isWildcard),
-              dependsOnAddresses: Internal.dependsOnAddresses(
-                ~isWildcard,
-                ~filterByAddresses=false,
-              ),
-            } :> Internal.eventConfig)
-          | Evm =>
-            let evmEv = ev->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-            let eventFilters = HandlerRegister.getOnEventWhere(
-              ~contractName=ev.contractName,
-              ~eventName=ev.name,
-            )
-            let indexedParams = evmEv.paramsMetadata->Array.filter(p => p.indexed)
-            let {
-              getEventFiltersOrThrow,
-              filterByAddresses,
-              addressFilterParamGroups,
-            } = LogSelection.parseEventFiltersOrThrow(
-              ~eventFilters,
-              ~sighash=evmEv.sighash,
-              ~params=indexedParams->Array.map(p => p.name),
-              ~contractName=ev.contractName,
-              ~probeChainId=chain.id,
-              ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
-              ~topic1=?indexedParams
-              ->Array.get(0)
-              ->Option.map(EventConfigBuilder.buildTopicGetter),
-              ~topic2=?indexedParams
-              ->Array.get(1)
-              ->Option.map(EventConfigBuilder.buildTopicGetter),
-              ~topic3=?indexedParams
-              ->Array.get(2)
-              ->Option.map(EventConfigBuilder.buildTopicGetter),
-            )
-
-            ({
-              ...evmEv,
-              isWildcard,
-              handler,
-              contractRegister,
-              getEventFiltersOrThrow,
-              filterByAddresses,
-              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter(
-                addressFilterParamGroups,
-                ~isWildcard,
-              ),
-              dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
-            } :> Internal.eventConfig)
-          | Svm =>
-            let svmEv =
-              ev->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-            ({
-              ...svmEv,
-              isWildcard,
-              handler,
-              contractRegister,
-              clientAddressFilter: ?EventConfigBuilder.buildAddressFilter(
-                [],
-                ~isWildcard,
-                ~srcAddressExpr="event.programId",
-              ),
-              dependsOnAddresses: Internal.dependsOnAddresses(
-                ~isWildcard,
-                ~filterByAddresses=false,
-              ),
-            } :> Internal.eventConfig)
-          }
-        },
-      )
-      {...contract, events: newEvents}
-    })
-    {...chain, contracts: newContracts}
-  })
-  {...config, chainMap: newChainMap}
-}
-
-// `Config` never reads `HandlerRegister`. The only way to get a config that
-// reflects registration state is through the returned value here.
-let registerAllHandlers = async (~config: Config.t) => {
+// `Config` holds only event definitions; handler + per-chain `where`
+// registration state is layered on separately as `onEventRegistration`s by
+// `HandlerRegister.finishRegistration`. This loads the user handler files
+// (populating the global `HandlerRegister` registry as a side effect) and
+// returns the resulting per-chain registrations.
+let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~ecosystem=config.ecosystem)
 
   // Auto-load all .js files from src/handlers directory
@@ -194,6 +90,5 @@ let registerAllHandlers = async (~config: Config.t) => {
   })
   ->Promise.all
 
-  let registrations = HandlerRegister.finishRegistration()
-  (applyRegistrations(~config), registrations)
+  HandlerRegister.finishRegistration(~config)
 }

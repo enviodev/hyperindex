@@ -13,7 +13,7 @@ let defaultQuery: FetchState.query = {
   progress: 0.,
   itemsTarget: 0,
   isPrefetch: false,
-  selection: {FetchState.dependsOnAddresses: false, eventConfigs: []},
+  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
 
@@ -179,7 +179,7 @@ describe("SourceManager.getSourceRole", () => {
 })
 
 describe("SourceManager source priority with Live sources", () => {
-  let selection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
+  let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addressesByContractName = Dict.make()
 
   let mockQuery = (): FetchState.query => {
@@ -369,7 +369,7 @@ describe("SourceManager source priority with Live sources", () => {
 })
 
 describe("SourceManager fetchNext", () => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
 
   // Selection (getNextQuery) now happens in CrossChainState; SourceManager only
   // dispatches the chosen action. This shim keeps the per-chain tests focused on
@@ -465,7 +465,7 @@ describe("SourceManager fetchNext", () => {
       chainId: 0,
       contractConfigs: Dict.make(),
       blockLag: 0,
-      onBlockConfigs: [],
+      onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
     }
@@ -1421,7 +1421,7 @@ describe("SourceManager wait for new blocks", () => {
   )
 })
 describe("SourceManager.executeQuery", () => {
-  let selection = {FetchState.dependsOnAddresses: false, eventConfigs: []}
+  let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addressesByContractName = Dict.make()
 
   let mockQuery = (): FetchState.query => {

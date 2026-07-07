@@ -39,39 +39,35 @@ let getSyncConfig = (
   }
 }
 
-let collectEventParams = (contracts: array<Internal.evmContractConfig>): array<
+let collectEventParams = (onEventRegistrations: array<Internal.evmOnEventRegistration>): array<
   HyperSyncClient.Decoder.eventParamsInput,
 > => {
   let result = []
-  contracts->Array.forEach(contract => {
-    contract.events->Array.forEach(event => {
-      result
-      ->Array.push({
-        HyperSyncClient.Decoder.sighash: event.sighash,
-        topicCount: event.topicCount,
-        eventName: event.name,
-        contractName: contract.name,
-        params: event.paramsMetadata,
-      })
-      ->ignore
+  onEventRegistrations->Array.forEach(reg => {
+    let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    result
+    ->Array.push({
+      HyperSyncClient.Decoder.sighash: event.sighash,
+      topicCount: event.topicCount,
+      eventName: event.name,
+      contractName: event.contractName,
+      params: event.paramsMetadata,
     })
+    ->ignore
   })
   result
 }
 
 let makeSources = (
   ~chain,
-  ~contracts: array<Internal.evmContractConfig>,
+  ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
   ~hyperSync,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
-  let eventRouter =
-    contracts
-    ->Array.flatMap(contract => contract.events)
-    ->EventRouter.fromEvmEventModsOrThrow(~chain)
+  let eventRouter = onEventRegistrations->EventRouter.fromEvmEventModsOrThrow(~chain)
 
-  let allEventParams = collectEventParams(contracts)
+  let allEventParams = collectEventParams(onEventRegistrations)
 
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
