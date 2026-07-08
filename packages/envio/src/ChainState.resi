@@ -18,6 +18,7 @@ let make: (
   ~isProgressAtHead: bool=?,
   ~transactionStore: TransactionStore.t=?,
   ~chainDensity: option<float>=?,
+  ~blockStore: BlockStore.t=?,
   ~logger: Pino.t,
 ) => t
 
@@ -111,11 +112,18 @@ let handleQueryResult: (
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => unit
-let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
+let materializeBatchItems: (
+  t,
+  ~items: array<Internal.item>,
+  ~ecosystem: Ecosystem.name,
+) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
-  ~page: option<TransactionStore.t>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
+  ~ecosystem: Ecosystem.name,
 ) => promise<unit>
 let registerReorgGuard: (
   t,
@@ -127,7 +135,7 @@ let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
-let applyBatchProgress: (t, ~batch: Batch.t) => unit
+let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: t => unit
 let rollback: (
   t,

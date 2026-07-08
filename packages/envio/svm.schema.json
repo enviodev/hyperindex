@@ -472,6 +472,16 @@
             "$ref": "#/$defs/SvmTransactionField"
           }
         },
+        "block_fields": {
+          "description": "Block fields to include on each matched instruction's `block`, as a list of field names. `slot`/`time`/`hash` are always included; this adds `height`/`parentSlot`/`parentHash`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/SvmBlockField"
+          }
+        },
         "log_fields": {
           "description": "Set to `true` to include program logs scoped to each matched instruction.",
           "type": [
@@ -503,6 +513,15 @@
         "accountKeys",
         "recentBlockhash",
         "version"
+      ]
+    },
+    "SvmBlockField": {
+      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. `slot`/`time`/`hash` are always included,\nso everything here is opt-in on top of that trio.",
+      "type": "string",
+      "enum": [
+        "height",
+        "parentSlot",
+        "parentHash"
       ]
     },
     "ArgDef": {

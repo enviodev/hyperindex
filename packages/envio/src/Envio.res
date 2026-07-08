@@ -66,18 +66,21 @@ type svmLog = {
   message: string,
 }
 
-/** Block context for a matched instruction. `time`/`hash` follow the
- EVM/Fuel field names so the shared `Ecosystem.t` getters in `Svm.res` read
- them uniformly. */
+/** Block context for a matched instruction. `slot`/`hash` are always present;
+ `time` can still be absent — HyperSync/Solana may not report a block time for
+ every slot. Every other field is opt-in via `field_selection.block_fields`,
+ materialised from the per-chain block store at batch prep. */
 type svmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   slot: int,
-  /** Unix block time (seconds). `0` when HyperSync didn't return a block
-   for this instruction's slot. */
-  time: int,
-  /** Block hash. Currently always empty — populated by the future
-   reorg-guard `queryBlockHash(slot)` route. */
+  /** Unix block time (seconds). */
+  time?: int,
   hash: string,
+  /** Block height (distinct from slot). Absent when not selected via
+   `field_selection.block_fields`. */
+  height?: int,
+  parentSlot?: int,
+  parentHash?: string,
 }
 
 /** The per-instruction payload handlers receive as their `instruction`
@@ -111,7 +114,9 @@ type svmInstruction = {
   /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */
   logs?: array<svmLog>,
-  block: svmInstructionBlock,
+  // Omitted on construction; materialised onto the payload at batch prep,
+  // before a handler ever reads it.
+  block?: svmInstructionBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */

@@ -184,12 +184,12 @@ let parseDecoded = (
   }
 }
 
+// `block` is omitted; it's materialised from the block store at batch prep.
 let toSvmInstruction = (
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   ~programName,
   ~instructionName,
   ~logs,
-  ~block,
 ): Envio.svmInstruction => {
   programName,
   instructionName,
@@ -204,7 +204,6 @@ let toSvmInstruction = (
   d8: ?instr.d8,
   params: ?(instr.decoded->Option.map(parseDecoded)),
   ?logs,
-  block,
 }
 
 // Probe the discriminator byte-length ordering longest-first. Stops at the
@@ -268,11 +267,23 @@ let toQueryTxField = (field: Internal.svmTransactionField): option<
   | TokenBalances => None
   }
 
+// Map a selected block field to its HyperSync query column. Slot/Blockhash/
+// BlockTime are requested unconditionally (needed for reorg detection and the
+// item's slot/timestamp), so selecting `slot`/`time`/`hash` adds no extra column.
+let toQueryBlockField = (field: Internal.svmBlockField): option<
+  SvmHyperSyncClient.QueryTypes.blockField,
+> =>
+  switch field {
+  | Slot | Time | Hash => None
+  | Height => Some(BlockHeight)
+  | ParentSlot => Some(ParentSlot)
+  | ParentHash => Some(ParentBlockhash)
+  }
+
 let make = (
   {chain, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis}: options,
 ): t => {
   let name = "SvmHyperSync"
-  let chainId = chain->ChainMap.Chain.toChainId
 
   // Definitions drive query/decode building; the registrations drive routing
   // (they carry `isWildcard` and become each decoded item's `onEventRegistration`).
@@ -344,6 +355,24 @@ let make = (
       }
     )
 
+  // Union of selected block fields across the chain's events. `slot`/`time`/
+  // `hash` are always fetched (as Slot/BlockTime/Blockhash); the rest are added
+  // only when an instruction selected them.
+  let blockQueryFields = {
+    let fields: array<SvmHyperSyncClient.QueryTypes.blockField> = [Slot, Blockhash, BlockTime]
+    let selected = Utils.Set.make()
+    eventConfigs->Array.forEach(cfg =>
+      cfg.selectedBlockFields->Utils.Set.forEach(field => selected->Utils.Set.add(field)->ignore)
+    )
+    selected->Utils.Set.forEach(field =>
+      switch field->toQueryBlockField {
+      | Some(queryField) => fields->Array.push(queryField)->ignore
+      | None => ()
+      }
+    )
+    fields
+  }
+
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -365,7 +394,7 @@ let make = (
     // field list returns no rows (instructions and blocks are exempt), so each
     // opted-into table needs its columns spelled out here.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
-      block: [Slot, Blockhash, BlockTime],
+      block: blockQueryFields,
       transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
       tokenBalance: ?(
@@ -384,9 +413,7 @@ let make = (
       maxNumInstructions: itemsTarget,
     }
 
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
-
-    let (resp, transactionStore) = try await client.get(~query) catch {
+    let (resp, transactionStore, blockStore) = try await client.get(~query) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -405,11 +432,13 @@ let make = (
       )
     }
     let pageFetchTime = pageFetchRef->Performance.secondsSince
+    let requestStats = [{Source.method: "getInstructions", seconds: pageFetchTime}]
 
     let parsingRef = Performance.now()
 
-    // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
-    // without a block row (rare; usually skipped slots) fall back to `None`.
+    // Per-slot blockTime lookup from the response's `blocks` table, for the
+    // batch's `latestFetchedBlockTimestamp`. Slots without a block row (rare;
+    // usually skipped slots) fall back to `None`.
     let blockTimeBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b => {
       switch b.blockTime {
@@ -482,28 +511,19 @@ let make = (
             )
           )
 
-        let slotKey = instr.slot->Int.toString
-        let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload = toSvmInstruction(
           instr,
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
-          ~block={
-            slot: instr.slot,
-            time: blockTime->Option.getOr(0),
-            hash: "",
-          },
         )
 
         parsedQueueItems
         ->Array.push(
           Internal.Event({
             onEventRegistration,
-            timestamp: blockTime->Option.getOr(0),
             chain,
             blockNumber: instr.slot,
-            blockHash: "",
             logIndex: synthLogIndex(instr),
             // The parent transaction is materialised from the store at batch prep.
             transactionIndex: instr.transactionIndex,
@@ -538,11 +558,14 @@ let make = (
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
+      // Raw blocks kept in Rust; materialised onto the payload at batch prep.
+      blockStore: Some(blockStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats,
     }
   }
 
@@ -551,6 +574,7 @@ let make = (
   // wire, so we request `maxSlot + 1`; the caller filters to the exact slots.
   let queryBlockDataRange = async (~fromSlot, ~toSlot) => {
     let blockDatas = []
+    let requestStats = []
     let fromRef = ref(fromSlot)
     let keepGoing = ref(true)
     while keepGoing.contents {
@@ -561,9 +585,12 @@ let make = (
         fields: {block: [Slot, Blockhash, BlockTime]},
         maxNumBlocks: 1000,
       }
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
-      // Block-only query; the store page is empty.
-      let (resp, _) = await client.get(~query)
+      let timerRef = Performance.now()
+      // Block-only query; the store pages are empty.
+      let (resp, _, _) = await client.get(~query)
+      requestStats
+      ->Array.push({Source.method: "getBlockHashes", seconds: timerRef->Performance.secondsSince})
+      ->ignore
       resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({
@@ -582,12 +609,12 @@ let make = (
         fromRef := resp.nextSlot
       }
     }
-    blockDatas
+    (blockDatas, requestStats)
   }
 
   let getBlockHashes = async (~blockNumbers, ~logger as _) =>
     switch blockNumbers->Array.get(0) {
-    | None => Ok([])
+    | None => {Source.result: Ok([]), requestStats: []}
     | Some(firstSlot) =>
       try {
         let minSlot = ref(firstSlot)
@@ -602,14 +629,19 @@ let make = (
           }
           requested->Utils.Set.add(slot)->ignore
         })
-        let blockDatas = await queryBlockDataRange(
+        let (blockDatas, requestStats) = await queryBlockDataRange(
           ~fromSlot=minSlot.contents,
           ~toSlot=maxSlot.contents,
         )
         // Keep one entry per requested slot; drop duplicates and unrelated slots.
-        Ok(blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)))
+        {
+          Source.result: Ok(
+            blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)),
+          ),
+          requestStats,
+        }
       } catch {
-      | exn => Error(exn)
+      | exn => {Source.result: Error(exn), requestStats: []}
       }
     }
 
@@ -622,16 +654,9 @@ let make = (
     getBlockHashes,
     getHeightOrThrow: async () => {
       let timer = Performance.now()
-      let h = await client.getHeight()
+      let height = await client.getHeight()
       let seconds = timer->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getHeight")
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId,
-        ~method="getHeight",
-        ~seconds,
-      )
-      h
+      {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
   }

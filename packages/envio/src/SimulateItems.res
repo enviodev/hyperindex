@@ -304,15 +304,15 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
       let transactionJson: option<JSON.t> =
         rawItem["transaction"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
-      let (block, blockNumber, timestamp, blockHash) = switch config.ecosystem.name {
+      let (block, blockNumber) = switch config.ecosystem.name {
       | Fuel =>
         let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
-        (block, blockFields.height, blockFields.time, blockFields.id)
+        (block, blockFields.height)
       | Evm =>
         let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
-        (block, blockFields.number, blockFields.timestamp, blockFields.hash)
+        (block, blockFields.number)
       | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
@@ -350,10 +350,8 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       ->Array.push(
         Internal.Event({
           onEventRegistration,
-          timestamp,
           chain,
           blockNumber,
-          blockHash,
           logIndex,
           // Simulate keeps the transaction inline on the payload, so the store
           // key is unused.

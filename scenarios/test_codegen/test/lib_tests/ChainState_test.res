@@ -148,6 +148,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(
       ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=100., ~fetchState),
+      ~blockTimestampName="timestamp",
     )
     // (100 - 0) events over (10 - 0) blocks = 10 events/block
     t.expect(cs->ChainState.chainDensity).toEqual(Some(10.))
@@ -160,6 +161,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(
       ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=100., ~fetchState),
+      ~blockTimestampName="timestamp",
     )
     t.expect(cs->ChainState.chainDensity, ~message="seeded at 10 events/block").toEqual(Some(10.))
 
@@ -167,6 +169,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     // EMA: (old=10 + new=20) / 2 = 15.
     cs->ChainState.applyBatchProgress(
       ~batch=makeBatch(~progressBlockNumber=20, ~totalEventsProcessed=300., ~fetchState),
+      ~blockTimestampName="timestamp",
     )
     t.expect(cs->ChainState.chainDensity).toEqual(Some(15.))
   })
