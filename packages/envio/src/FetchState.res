@@ -44,10 +44,6 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
-  // Item count of the response that set prevQueryRange. Unread now that density
-  // is tracked chain-wide on ChainState instead of per partition; left in place
-  // to avoid touching every partition-construction site for no behavior change.
-  prevRangeSize: int,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated prevQueryRange. Prevents degradation of the chunking heuristic
   // when parallel query responses arrive out of order.
@@ -200,7 +196,6 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
-        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       }
     }
@@ -438,7 +433,6 @@ module OptimizedPartitions = {
     optimizedPartitions: t,
     ~query,
     ~knownHeight,
-    ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
     let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
@@ -470,7 +464,6 @@ module OptimizedPartitions = {
         }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
-    let updatedPrevRangeSize = shouldUpdateBlockRange ? itemsCount : p.prevRangeSize
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -492,7 +485,6 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
-        prevRangeSize: updatedPrevRangeSize,
         latestBlockRangeUpdateBlock: shouldUpdateBlockRange
           ? latestFetchedBlock.blockNumber
           : p.latestBlockRangeUpdateBlock,
@@ -897,7 +889,6 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
-            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
@@ -1233,7 +1224,6 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
-                        prevRangeSize: p.prevRangeSize,
                         latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
                       })
                     }
@@ -1298,7 +1288,6 @@ let handleQueryResult = (
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
-      ~itemsCount=newItems->Array.length,
       ~latestFetchedBlock,
     ),
     ~mutItems=?{
@@ -1632,7 +1621,6 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
-      prevRangeSize: 0,
       latestBlockRangeUpdateBlock: 0,
     })
   }

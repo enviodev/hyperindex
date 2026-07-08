@@ -425,7 +425,6 @@ describe("SourceManager fetchNext", () => {
       dynamicContract: None,
       mutPendingQueries: [],
       prevQueryRange: 0,
-      prevRangeSize: 0,
       prevPrevQueryRange: 0,
       latestBlockRangeUpdateBlock: 0,
     }
@@ -494,7 +493,6 @@ describe("SourceManager fetchNext", () => {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
         prevQueryRange: 10,
-        prevRangeSize: 0,
         prevPrevQueryRange: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
