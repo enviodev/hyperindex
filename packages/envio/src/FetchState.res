@@ -95,6 +95,12 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
 // its own maxNumLogs-style safety net.
 let minItemsTarget = 2_000.
 
+// Ceiling for an unknown-density probe query's itemsTarget. A partition with no
+// trusted density yet gets one open-ended probe; without a cap it would claim its
+// full even share of the chain's (possibly whole-pool) budget and starve sibling
+// chains needing their own first probe in the same cross-chain tick.
+let maxItemsTarget = 10_000.
+
 // itemsTarget for a query over [fromBlock, toBlock], from the partition's event
 // density (items/block derived from its last response). toBlock None is the
 // open-ended tail, capped at chainTargetBlock — the soft per-tick horizon the
@@ -1696,8 +1702,10 @@ let getNextQuery = (
         consumed.contents
       | None =>
         // No trusted density yet (zero or one response): one open query sized
-        // exactly to this round's share.
-        let itemsTarget = Math.round(budget)
+        // to this round's share, capped so a single probe can't swallow the
+        // whole (possibly cross-chain-wide) budget and starve other partitions
+        // or chains before they get their own first probe.
+        let itemsTarget = Pervasives.min(Math.round(budget), maxItemsTarget)
         fs.bucket->Array.push({
           partitionId: fs.partitionId,
           fromBlock: fs.cursor,
