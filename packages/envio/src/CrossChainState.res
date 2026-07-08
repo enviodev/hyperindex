@@ -251,10 +251,12 @@ let querySpan = (query: FetchState.query, ~reach) =>
 // progress) the scheduler picks one aligned progress-fraction advance (so chains
 // stay level for timestamp-ordered processing) and turns it into a per-chain block
 // reach. Each candidate is a gap-closer (near the frontier) or a prefetch (parked
-// ahead); its itemsTarget is the chain's density times the blocks it covers within
-// the reach (split across same-chain, same-class siblings), and it draws from the
-// matching budget. Admission runs furthest-behind first, so the most behind chains
-// claim the budgets first.
+// ahead); its itemsTarget sizes off whichever density signal it has — the
+// candidate's own partition (precise, when that partition has its own history) or
+// else the chain's EMA (split across same-chain, same-class siblings) — times the
+// blocks it covers within the reach, and it draws from the matching budget.
+// Admission runs furthest-behind first, so the most behind chains claim the
+// budgets first.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -349,35 +351,41 @@ let checkAndFetch = async (
   // Furthest-behind first, so the most-behind chains claim the budgets first.
   candidates->Array.sort(compareByProgress)
 
-  // Density is chain-wide now, not per partition, so a warm chain's target for
-  // the region a class's reach covers (density × span) has to be split across
-  // however many of that chain's candidates land in the same class this tick —
-  // otherwise N frontier partitions on one chain would each separately claim the
-  // full chain-level estimate. Cold chains (density unknown) keep the old pooled
-  // even-share fallback, split across every cold-chain candidate in the class.
+  // Three tiers of sizing signal, most to least precise:
+  //  1. The query's own partition density (query.density) — this partition has
+  //     its own proven history (or inherited a merge-combined one), so size it
+  //     directly, no sharing needed.
+  //  2. The chain-level density — for partitions without their own history but
+  //     on a chain with an overall estimate. Split across however many tier-2
+  //     candidates land in the same class on that chain this tick, so N such
+  //     partitions on one chain don't each separately claim the full estimate.
+  //  3. Fully cold (neither) — the old pooled even-share fallback, split across
+  //     every tier-3 candidate in the class.
   let gapCountByChain = Dict.make()
   let prefetchCountByChain = Dict.make()
   let gapColdCount = ref(0)
   let prefetchColdCount = ref(0)
-  candidates->Array.forEach(query => {
-    let frontier =
-      frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
-    let isGapCloser = query.fromBlock <= frontier + gapCloserWindow
-    switch chainDensityByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId) {
-    | Some(_) =>
-      let counts = isGapCloser ? gapCountByChain : prefetchCountByChain
-      counts->Utils.Dict.setByInt(
-        query.chainId,
-        counts->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0) + 1,
-      )
-    | None =>
-      if isGapCloser {
-        gapColdCount := gapColdCount.contents + 1
-      } else {
-        prefetchColdCount := prefetchColdCount.contents + 1
+  candidates->Array.forEach(query =>
+    if query.density->Option.isNone {
+      let frontier =
+        frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
+      let isGapCloser = query.fromBlock <= frontier + gapCloserWindow
+      switch chainDensityByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId) {
+      | Some(_) =>
+        let counts = isGapCloser ? gapCountByChain : prefetchCountByChain
+        counts->Utils.Dict.setByInt(
+          query.chainId,
+          counts->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0) + 1,
+        )
+      | None =>
+        if isGapCloser {
+          gapColdCount := gapColdCount.contents + 1
+        } else {
+          prefetchColdCount := prefetchColdCount.contents + 1
+        }
       }
     }
-  })
+  )
   let evenShare = (budget, count) =>
     count > 0 ? Js.Math.ceil_int(budget->Int.toFloat /. count->Int.toFloat) : 0
   let gapEvenShare = evenShare(readyBudget, gapColdCount.contents)
@@ -404,16 +412,18 @@ let checkAndFetch = async (
     if span > 0 {
       let remaining = isGapCloser ? readyRemaining : prefetchRemaining
       if remaining.contents > 0 {
-        let baseTarget = switch chainDensityByChain->Utils.Dict.dangerouslyGetByIntNonOption(
-          query.chainId,
-        ) {
-        | Some(density) =>
-          let count =
-            (isGapCloser ? gapCountByChain : prefetchCountByChain)
-            ->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)
-            ->Option.getOr(1)
-          Math.round(density *. span->Int.toFloat /. count->Int.toFloat)->Float.toInt
-        | None => isGapCloser ? gapEvenShare : prefetchEvenShare
+        let baseTarget = switch query.density {
+        | Some(density) => Math.round(density *. span->Int.toFloat)->Float.toInt
+        | None =>
+          switch chainDensityByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId) {
+          | Some(density) =>
+            let count =
+              (isGapCloser ? gapCountByChain : prefetchCountByChain)
+              ->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)
+              ->Option.getOr(1)
+            Math.round(density *. span->Int.toFloat /. count->Int.toFloat)->Float.toInt
+          | None => isGapCloser ? gapEvenShare : prefetchEvenShare
+          }
         }
         let admitted = Pervasives.min(remaining.contents, Pervasives.max(1, baseTarget))
         query.itemsTarget = admitted

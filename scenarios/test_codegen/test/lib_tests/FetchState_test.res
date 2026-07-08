@@ -12,6 +12,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
+  density: None,
   chainId: 0,
   progress: 0.,
   itemsTarget: 0,
@@ -239,6 +240,7 @@ describe("FetchState.make", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           },
         ],
@@ -353,6 +355,7 @@ describe("FetchState.make", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           },
         ],
@@ -409,6 +412,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
             {
@@ -424,6 +428,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
           ],
@@ -493,6 +498,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
             {
@@ -508,6 +514,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
             {
@@ -523,6 +530,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
             {
@@ -538,6 +546,7 @@ describe("FetchState.make", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
           ],
@@ -1275,6 +1284,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
       {
@@ -1290,6 +1300,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
     ])
@@ -1340,6 +1351,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
       {
@@ -1357,6 +1369,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
     ])
@@ -1520,6 +1533,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
     ])
@@ -1569,6 +1583,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
       {
@@ -1585,6 +1600,7 @@ describe("FetchState.registerDynamicContracts", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
     ])
@@ -1664,6 +1680,7 @@ describe("FetchState.registerDynamicContracts", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
             {
@@ -1684,6 +1701,7 @@ describe("FetchState.registerDynamicContracts", () => {
               mutPendingQueries: [],
               prevQueryRange: 0,
               prevPrevQueryRange: 0,
+              prevRangeSize: 0,
               latestBlockRangeUpdateBlock: 0,
             },
           ],
@@ -1741,6 +1759,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -1781,6 +1800,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.fromArray([
@@ -1798,6 +1818,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2044,6 +2065,7 @@ describe("FetchState.getNextQuery & integration", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
       // Creates a new partition for this without merging, since 0 is full and 1 has mergeBlock
@@ -2060,6 +2082,7 @@ describe("FetchState.getNextQuery & integration", () => {
         mutPendingQueries: [],
         prevQueryRange: 0,
         prevPrevQueryRange: 0,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       },
     ])
@@ -2310,6 +2333,7 @@ describe("FetchState.getNextQuery & integration", () => {
             ],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             latestFetchedBlock: {
               blockNumber: 10,
@@ -2424,6 +2448,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2439,6 +2464,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([
@@ -2473,6 +2499,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: fetchState.normalSelection,
             // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
@@ -2509,6 +2536,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -2594,6 +2622,7 @@ describe("FetchState.getNextQuery & integration", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: {
               dependsOnAddresses: false,
@@ -2630,6 +2659,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
@@ -2645,6 +2675,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
@@ -2943,6 +2974,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
@@ -2955,6 +2987,7 @@ describe("FetchState unit tests for specific cases", () => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
