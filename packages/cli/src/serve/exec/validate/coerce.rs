@@ -147,16 +147,25 @@ impl Num {
             Num::Small(n) => hs_scientific_decimal(&n.to_string()),
             Num::Big(s) => hs_scientific_decimal(s),
             Num::Float(f) => {
-                if f.is_infinite() {
-                    let neg = *f < 0.0;
-                    ctx.inf_floats
-                        .iter()
-                        .find(|s| s.starts_with('-') == neg)
-                        .or_else(|| ctx.inf_floats.first())
-                        .map(|s| hs_scientific_decimal(s))
-                        .unwrap_or_else(|| "Infinity".to_string())
-                } else {
-                    hs_scientific_decimal(&format!("{f}"))
+                // f64-overflowing literals are rewritten to a unique finite
+                // sentinel per occurrence before parsing (see prescan.rs),
+                // so this is an exact per-occurrence lookup, not a guess by
+                // sign -- two distinct out-of-range literals in the same
+                // query each keep their own original text.
+                match ctx.inf_float_originals.get(&f.to_bits()) {
+                    Some(orig) => hs_scientific_decimal(orig),
+                    // Defensive: every f64-overflowing literal should have
+                    // been rewritten already, so a genuinely infinite value
+                    // here would be unexpected -- fall back to a plain
+                    // Hasura-style display instead of losing the sign.
+                    None if f.is_infinite() => {
+                        if *f < 0.0 {
+                            "-Infinity".to_string()
+                        } else {
+                            "Infinity".to_string()
+                        }
+                    }
+                    None => hs_scientific_decimal(&format!("{f}")),
                 }
             }
         }
@@ -429,7 +438,12 @@ pub(super) fn coerce_column_value(
                 ));
             };
             if let Num::Float(f) = &num {
-                if f.is_infinite() {
+                // A literal that overflowed f64 is rewritten to a finite
+                // sentinel before parsing (see prescan.rs), so it no longer
+                // satisfies `is_infinite()` here -- check the sentinel map
+                // too, or an out-of-range literal like `1e400` would wrongly
+                // coerce instead of erroring like Hasura does.
+                if f.is_infinite() || ctx.inf_float_originals.contains_key(&f.to_bits()) {
                     return Err(float_bounds_error(path, &num.display(ctx)));
                 }
             }

@@ -62,6 +62,8 @@ tar = "0.4"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["limit", "timeout", "util"] }
+socket2 = "0.5"
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -88,6 +90,7 @@ tracing-subscriber = "0.3.22"
 pretty_assertions = "1.4.1"
 insta = "1.46"
 rustls-pemfile = "1.0"
+tokio-tungstenite = "0.29"
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored

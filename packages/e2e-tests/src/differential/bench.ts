@@ -60,14 +60,8 @@ import { allCases } from "./corpus/index.js";
 import { hasuraUrl, serveUrl } from "./env.js";
 import { runCase } from "./runner.js";
 import { runSql } from "./hasuraSetup.js";
+import { arg, flag } from "./cliArgs.js";
 import type { CorpusCase } from "./corpus.js";
-
-const argv = process.argv.slice(2);
-const flag = (name: string) => argv.includes(name);
-const arg = (name: string): string | undefined => {
-  const i = argv.indexOf(name);
-  return i >= 0 ? argv[i + 1] : undefined;
-};
 
 const concurrency = Number(arg("--concurrency") ?? 1);
 const budgetMs = Number(arg("--budget-ms") ?? 1500);

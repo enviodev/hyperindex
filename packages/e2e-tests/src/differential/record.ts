@@ -11,13 +11,12 @@ import { phaseConfigs, type Phase } from "./corpus.js";
 import { applyFixture, trackDatabase } from "./hasuraSetup.js";
 import { hasuraUrl } from "./env.js";
 import { runCase } from "./runner.js";
+import { arg } from "./cliArgs.js";
 
 const fixtureDir = new URL("../../fixtures/differential/", import.meta.url);
 const snapshotsDir = new URL("snapshots/", fixtureDir);
 
-const phaseArg = process.argv.includes("--phase")
-  ? (process.argv[process.argv.indexOf("--phase") + 1] as Phase)
-  : undefined;
+const phaseArg = arg("--phase") as Phase | undefined;
 
 const phases: Phase[] = phaseArg ? [phaseArg] : ["default", "limited"];
 

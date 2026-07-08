@@ -9,6 +9,9 @@ target
 .pnpm-store
 node_modules
 
+# Claude Code agent worktrees (local scratch space, never repo content)
+.claude/worktrees/
+
 #All generated code for scenarios
 scenarios/**/generated
 scenarios/**/*.bs.js

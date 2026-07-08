@@ -11,6 +11,7 @@
     "test:differential": "vitest run --config vitest.differential.config.ts",
     "record:differential": "tsx src/differential/record.ts",
     "bench:differential": "tsx src/differential/bench.ts",
+    "soak:differential": "tsx src/differential/soakLoad.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

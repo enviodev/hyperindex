@@ -66,6 +66,29 @@ baseline, so Hasura/Docker can stay stopped while iterating on Rust.
 `bench.ts` measures timing only — always confirm correctness with
 `diffServe.ts` on the small dataset separately.
 
+### Soak / load testing
+
+`bench.ts` is single-connection (concurrency 1) latency only. `soakLoad.ts`
+fires a mixed sample of the `bench: true` corpus at N concurrent workers
+against a running `envio serve` for an extended duration, and checks the
+things that only show up under sustained concurrent load: RSS growth
+(leak), fd-count growth (leak), p99 latency drift over time, and zero 5xx
+responses. Needs `envio serve` already running (or pass `--spawn`) — no
+Hasura needed.
+
+```sh
+cd scenarios/test_codegen && pnpm exec envio serve --port 8081 &
+cd packages/e2e-tests
+pnpm soak:differential -- --duration 60s --concurrency 32        # quick local iteration
+pnpm soak:differential -- --duration 2h --concurrency 48 --spawn # real acceptance soak
+```
+
+Exits non-zero (and prints why) on any 5xx, an RSS or fd-count growth
+trend past a configurable threshold (excluding an initial warmup slice),
+or late-run p99 more than `--p99-drift-multiplier` (default 2x) worse than
+an early stabilized window. See the flag list in `soakLoad.ts`'s module
+doc comment for the full set of thresholds/knobs.
+
 ## Regenerating the fixture schema
 
 When the generated DDL changes (packages/envio/src/db/*), re-run:

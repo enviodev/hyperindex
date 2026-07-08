@@ -19,103 +19,27 @@
 //! - a null `distinct` on an aggregate bool_exp predicate, on an aggregate
 //!   selection's `count`, and a null `path` on a json/jsonb field are each
 //!   validation errors, not a silent false/count(*)/whole-value fallback —
-//!   confirmed against a live Hasura 2.43.0 instance for each case.
+//!   confirmed against a live Hasura 2.43.0 instance for each case;
+//! - a WebSocket client that goes silent (no reads or writes, connection
+//!   otherwise alive) is closed within 30s instead of leaking a subscription
+//!   poll loop forever;
+//! - `envio serve` started before Postgres is reachable retries within its
+//!   startup budget and becomes healthy once Postgres comes up;
+//! - `ENVIO_SERVE_RATE_LIMIT_PER_SEC` actually rejects requests over the
+//!   configured per-IP rate with 429;
+//! - `ENVIO_SERVE_REQUEST_TIMEOUT_MS` (the HTTP middleware layer) sheds a
+//!   request with a clean 503 independently of the client-side query
+//!   timeout.
 
 use super::env_config::ServeEnv;
 use super::model::ServerModel;
 use super::project_schema::ProjectSchema;
+use super::test_support::{docker_available, free_port, TestPg};
 use super::{http, pg_catalog, ServeState};
 use crate::project_paths::ParsedProjectPaths;
-use std::process::Command;
+use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-fn docker_available() -> bool {
-    Command::new("docker")
-        .arg("info")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-fn run(cmd: &mut Command) -> std::process::Output {
-    let output = cmd.output().expect("failed to run docker");
-    assert!(
-        output.status.success(),
-        "docker command failed: {} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-/// A throwaway `postgres:16` container, torn down on drop.
-struct TestPg {
-    name: String,
-    port: u16,
-}
-
-impl TestPg {
-    fn start() -> TestPg {
-        let name = format!(
-            "envio-robust-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        // A fixed host port, picked by binding an ephemeral socket first:
-        // docker re-allocates `-p 127.0.0.1::5432`-style dynamic ports on
-        // every container restart, which would make the kill/start
-        // recovery test fail for the wrong reason (a real Postgres comes
-        // back at the same address).
-        let port = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.local_addr().unwrap().port()
-        };
-        run(Command::new("docker").args([
-            "run",
-            "-d",
-            "--name",
-            &name,
-            "-e",
-            "POSTGRES_PASSWORD=testing",
-            "-e",
-            "POSTGRES_USER=postgres",
-            "-e",
-            "POSTGRES_DB=envio-dev",
-            "-p",
-            &format!("127.0.0.1:{port}:5432"),
-            "postgres:16",
-        ]));
-
-        for _ in 0..60 {
-            let ready = Command::new("docker")
-                .args(["exec", &name, "pg_isready", "-U", "postgres"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            if ready {
-                return TestPg { name, port };
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        panic!("test Postgres container did not become ready in time");
-    }
-
-    fn docker(&self, action: &str) {
-        run(Command::new("docker").args([action, &self.name]));
-    }
-}
-
-impl Drop for TestPg {
-    fn drop(&mut self) {
-        let _ = Command::new("docker")
-            .args(["rm", "-f", &self.name])
-            .output();
-    }
-}
 
 fn test_env(pg_port: u16) -> ServeEnv {
     ServeEnv {
@@ -133,6 +57,12 @@ fn test_env(pg_port: u16) -> ServeEnv {
         pool_wait_timeout_ms: Some(15_000),
         connect_timeout_ms: Some(5_000),
         pool_max_size: 8,
+        startup_retry_budget_ms: 60_000,
+        healthz_timeout_ms: 2_000,
+        ws_ping_interval_ms: 15_000,
+        max_concurrent_requests: 64,
+        request_timeout_ms: 130_000,
+        rate_limit_per_sec: None,
     }
 }
 
@@ -143,21 +73,15 @@ struct TestServer {
     handle: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
-/// Applies the differential fixture (plus optional test-local extra DDL) to
-/// the container and boots the server in-process on an ephemeral port,
-/// exactly as `serve::run` wires it minus the OS signal handler.
-async fn boot(
-    env: ServeEnv,
-    query_timeout: Option<Duration>,
-    extra_sql: Option<&str>,
-) -> TestServer {
-    let pool = env.make_pg_pool().expect("pool");
-
+/// Applies the differential fixture schema/seed (plus optional test-local
+/// extra DDL) to the pool's Postgres, retrying the connection while the
+/// container is still coming up. Panics if it can't get a connection at all
+/// within the retry budget.
+async fn apply_fixture(pool: &deadpool_postgres::Pool, extra_sql: Option<&str>) {
     let fixture_dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../e2e-tests/fixtures/differential"
     );
-    let mut applied = false;
     for _ in 0..20 {
         let Ok(client) = pool.get().await else {
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -173,13 +97,21 @@ async fn boot(
                 .await
                 .expect("extra fixture SQL applies");
         }
-        applied = true;
-        break;
+        return;
     }
-    assert!(
-        applied,
-        "could not reach the test Postgres to apply fixtures"
-    );
+    panic!("could not reach the test Postgres to apply fixtures");
+}
+
+/// Applies the differential fixture to the container and boots the server
+/// in-process on an ephemeral port, exactly as `serve::run` wires it minus
+/// the OS signal handler.
+async fn boot(
+    env: ServeEnv,
+    query_timeout: Option<Duration>,
+    extra_sql: Option<&str>,
+) -> TestServer {
+    let pool = env.make_pg_pool().expect("pool");
+    apply_fixture(&pool, extra_sql).await;
 
     let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scenarios/test_codegen");
     let paths = ParsedProjectPaths::new(project_root, "config.yaml").unwrap();
@@ -192,6 +124,11 @@ async fn boot(
         pool: pool.clone(),
         admin_secret: env.admin_secret.clone(),
         query_timeout,
+        healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
+        ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
+        max_concurrent_requests: env.max_concurrent_requests,
+        request_timeout: Duration::from_millis(env.request_timeout_ms),
+        rate_limit_per_sec: env.rate_limit_per_sec,
     });
 
     let port = {
@@ -237,6 +174,23 @@ impl TestServer {
             .expect("request should get an HTTP response");
         let status = res.status().as_u16();
         let body: serde_json::Value = res.json().await.expect("JSON body");
+        (status, body)
+    }
+
+    /// Like `graphql`, but for responses the overload/rate-limit middleware
+    /// produces -- those are plain text, not the `{"errors": [...]}` GraphQL
+    /// shape, so parsing them as JSON would panic.
+    async fn graphql_raw(&self, query: &str, timeout: Duration) -> (u16, String) {
+        let res = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{}/v1/graphql", self.port))
+            .header("content-type", "application/json")
+            .body(serde_json::json!({ "query": query }).to_string())
+            .timeout(timeout)
+            .send()
+            .await
+            .expect("request should get an HTTP response");
+        let status = res.status().as_u16();
+        let body = res.text().await.expect("text body");
         (status, body)
     }
 
@@ -431,6 +385,63 @@ async fn shutdown_signal_stops_the_server() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn rate_limit_returns_429_once_exceeded() {
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.rate_limit_per_sec = Some(2);
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut statuses = Vec::new();
+    for _ in 0..5 {
+        let (status, _) = server
+            .graphql_raw(SIMPLE_QUERY, Duration::from_secs(10))
+            .await;
+        statuses.push(status);
+    }
+
+    assert!(
+        statuses.contains(&429),
+        "expected at least one 429 once ENVIO_SERVE_RATE_LIMIT_PER_SEC=2 is exceeded, got {statuses:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn request_timeout_middleware_returns_503_before_the_query_timeout() {
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    // Tower's HTTP-level request timeout fires well before the (much
+    // longer) client-side query timeout, so the middleware layer -- not
+    // `with_query_timeout` -- is what's under test here.
+    env.request_timeout_ms = 500;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    pg.docker("pause");
+    let started = Instant::now();
+    let (status, body) = server
+        .graphql_raw(SIMPLE_QUERY, Duration::from_secs(10))
+        .await;
+    let elapsed = started.elapsed();
+    pg.docker("unpause");
+
+    assert_eq!(
+        (
+            status,
+            body.contains("ENVIO_SERVE_REQUEST_TIMEOUT_MS"),
+            elapsed < Duration::from_secs(5)
+        ),
+        (503, true, true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
     if !docker_available() {
         eprintln!("skipping: docker is not available");
@@ -542,6 +553,104 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
     );
 }
 
+const SUBSCRIBE_QUERY: &str = "subscription { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn black_holed_websocket_client_is_closed_within_30s() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    // Fast ping interval so "2x interval" is well inside the 30s accept
+    // window without the test needing to wait near the production default.
+    env.ws_ping_interval_ms = 3_000;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let ack = ws.next().await.expect("connection_ack frame").unwrap();
+    assert!(
+        matches!(ack, TMessage::Text(_)),
+        "expected a text connection_ack frame, got {ack:?}"
+    );
+
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "1",
+            "type": "subscribe",
+            "payload": { "query": SUBSCRIBE_QUERY }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    // Confirm the subscription's background poll loop actually started
+    // before going quiet -- otherwise the test would trivially "pass" by
+    // never having started anything to detect.
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("subscription should push an initial live-query result")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(first, TMessage::Text(_)));
+
+    // Simulate a frozen/black-holed client: stop driving the stream
+    // entirely for a while -- no `.next()` calls means no automatic pong
+    // replies and no traffic of any kind, without tearing down the TCP
+    // connection (a real black hole: the socket is fine, the peer just
+    // never reads or writes). ws_ping_interval_ms=3s means the server
+    // should give up by ~6s of silence; sleeping well past that before
+    // touching the stream again proves detection happened on its own,
+    // not because we kept polling and let tungstenite auto-pong for us.
+    let started = Instant::now();
+    tokio::time::sleep(Duration::from_secs(9)).await;
+
+    // Resume reading (bounded) to observe the close the server should
+    // already have sent while we were "frozen". By construction
+    // (`run_connection`'s cleanup aborts every operation task on close),
+    // that also stops the subscription's Postgres poll loop.
+    let closed = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(TMessage::Close(_))) | None => return true,
+                Some(Ok(_)) => continue,
+                Some(Err(_)) => return true,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+
+    assert_eq!(
+        (closed, started.elapsed() < Duration::from_secs(30)),
+        (true, true),
+        "server should close a black-holed client's connection within 30s"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn aggregate_selection_count_null_args_errors_cleanly() {
     if !docker_available() {
@@ -632,5 +741,90 @@ async fn json_field_null_path_errors_cleanly() {
                 }
             }]})
         )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    // Reserve the address but do not start Postgres on it yet -- then start
+    // it a few seconds in, exactly like a deploy that starts `envio serve`
+    // before its Postgres dependency is ready.
+    let port = free_port();
+    let mut env = test_env(port);
+    env.startup_retry_budget_ms = 30_000;
+
+    let pg_task = tokio::task::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        TestPg::start_on_port(port)
+    });
+
+    let pool = env.make_pg_pool().expect("pool");
+    let started = Instant::now();
+    // Proves the retry-then-recover behavior itself: `wait_for_pg` only
+    // needs Postgres reachable, not migrated, so this can succeed against
+    // an empty freshly-started container.
+    super::wait_for_pg(&pool, &env.pg_schema, env.startup_retry_budget_ms)
+        .await
+        .expect("wait_for_pg should succeed once Postgres comes up within budget");
+    let retry_elapsed = started.elapsed();
+
+    // Schema readiness (migrations) is a separate deploy-ordering concern
+    // from Postgres reachability -- apply it now, then introspect fresh so
+    // the model actually has tables to serve.
+    apply_fixture(&pool, None).await;
+    let catalog = pg_catalog::introspect(&pool, &env.pg_schema).await.unwrap();
+
+    let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scenarios/test_codegen");
+    let paths = ParsedProjectPaths::new(project_root, "config.yaml").unwrap();
+    let project_schema = ProjectSchema::load(&paths, &env).unwrap();
+    let model = ServerModel::build(project_schema, catalog, &env).unwrap();
+    let state = Arc::new(ServeState {
+        model,
+        pool: pool.clone(),
+        admin_secret: env.admin_secret.clone(),
+        query_timeout: Some(Duration::from_secs(20)),
+        healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
+        ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
+        max_concurrent_requests: env.max_concurrent_requests,
+        request_timeout: Duration::from_millis(env.request_timeout_ms),
+        rate_limit_per_sec: env.rate_limit_per_sec,
+    });
+
+    let http_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(http::serve(state, "127.0.0.1", http_port, async move {
+        let _ = shutdown_rx.await;
+    }));
+
+    let client = reqwest::Client::new();
+    let mut healthy = false;
+    for _ in 0..20 {
+        if let Ok(res) = client
+            .get(format!("http://127.0.0.1:{http_port}/healthz"))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        {
+            if res.status().as_u16() == 200 {
+                healthy = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    let _pg = pg_task.await.unwrap();
+
+    assert_eq!(
+        (retry_elapsed < Duration::from_secs(30), healthy),
+        (true, true),
+        "serve should recover once Postgres starts within the retry budget and become healthy"
     );
 }

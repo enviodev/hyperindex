@@ -140,6 +140,18 @@ async fn execute_stream_operation_inner(
     Ok((out, cursor))
 }
 
+/// Runs every root field concurrently instead of one at a time, then
+/// splices their fragments back in the request's original order (each
+/// fragment is computed independently, so completion order doesn't matter,
+/// only the order they're written to `out` in).
+///
+/// A query with N table root fields can therefore hold up to N pooled
+/// connections at once instead of one at a time -- the same total DB work,
+/// just concurrent instead of serial. That's bounded by the existing pool
+/// safety valves: `ENVIO_SERVE_POOL_MAX_SIZE` caps how many connections
+/// exist at all, and `ENVIO_SERVE_POOL_WAIT_TIMEOUT_MS` turns "pool
+/// exhausted" into a clean per-field error instead of an unbounded wait, so
+/// a single many-root-field request can't monopolize the pool indefinitely.
 async fn execute_operation_inner(
     state: &Arc<ServeState>,
     schema: &RoleSchema,
@@ -149,34 +161,50 @@ async fn execute_operation_inner(
         ir::OperationKind::Query => "query_root",
         ir::OperationKind::Subscription => "subscription_root",
     };
+    let fragments = futures_util::future::join_all(
+        operation
+            .root_fields
+            .iter()
+            .map(|root| execute_root_field(state, schema, root_type_name, root)),
+    )
+    .await;
+
     let mut out = String::with_capacity(256);
     out.push_str("{\"data\":{");
-    let mut first = true;
-    for root in &operation.root_fields {
-        if !first {
+    for (i, fragment) in fragments.into_iter().enumerate() {
+        if i > 0 {
             out.push(',');
         }
-        first = false;
-        match root {
-            ir::RootField::Typename { alias } => {
-                out.push_str(&serde_json::to_string(alias).unwrap());
-                out.push_str(":\"");
-                out.push_str(root_type_name);
-                out.push('"');
-            }
-            ir::RootField::Introspection(intro) => {
-                let value_json = introspection::resolve(&schema.registry, intro)?;
-                out.push_str(&serde_json::to_string(&intro.alias).unwrap());
-                out.push(':');
-                out.push_str(&value_json);
-            }
-            ir::RootField::Table(table_root) => {
-                out.push_str(&serde_json::to_string(&table_root.alias).unwrap());
-                out.push(':');
-                sql::execute_root(state, table_root, &mut out).await?;
-            }
-        }
+        out.push_str(&fragment?);
     }
     out.push_str("}}");
     Ok(out)
+}
+
+/// One root field's `"alias":value` fragment.
+async fn execute_root_field(
+    state: &Arc<ServeState>,
+    schema: &RoleSchema,
+    root_type_name: &str,
+    root: &ir::RootField,
+) -> Result<String, GraphQLError> {
+    match root {
+        ir::RootField::Typename { alias } => Ok(format!(
+            "{}:\"{root_type_name}\"",
+            serde_json::to_string(alias).unwrap()
+        )),
+        ir::RootField::Introspection(intro) => {
+            let value_json = introspection::resolve(&schema.registry, intro)?;
+            Ok(format!(
+                "{}:{value_json}",
+                serde_json::to_string(&intro.alias).unwrap()
+            ))
+        }
+        ir::RootField::Table(table_root) => {
+            let mut out = serde_json::to_string(&table_root.alias).unwrap();
+            out.push(':');
+            sql::execute_root(state, table_root, &mut out).await?;
+            Ok(out)
+        }
+    }
 }

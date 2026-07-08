@@ -1,0 +1,53 @@
+name: Start envio serve
+description: >
+  Start `envio serve` in the background and poll /healthz until it
+  responds (60 x 1s), failing the step if it never comes up. Set
+  `restart: "true"` to first kill a previously started serve process
+  (e.g. to bring it back up with different Hasura-compat env vars).
+
+inputs:
+  working-directory:
+    description: Directory to run `envio serve` from.
+    required: false
+    default: scenarios/test_codegen
+  port:
+    description: Port to serve on.
+    required: false
+    default: "8081"
+  hasura-response-limit:
+    description: Value for ENVIO_HASURA_RESPONSE_LIMIT (empty to unset the limit).
+    required: false
+    default: ""
+  hasura-public-aggregate:
+    description: Value for ENVIO_HASURA_PUBLIC_AGGREGATE (empty to disable aggregates).
+    required: false
+    default: ""
+  restart:
+    description: >
+      Kill a previously started `bin.mjs serve` process before starting
+      this one.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Start envio serve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ENVIO_SERVE_PORT_INPUT: ${{ inputs.port }}
+        ENVIO_HASURA_RESPONSE_LIMIT: ${{ inputs.hasura-response-limit }}
+        ENVIO_HASURA_PUBLIC_AGGREGATE: ${{ inputs.hasura-public-aggregate }}
+        RESTART_INPUT: ${{ inputs.restart }}
+      run: |
+        if [ "$RESTART_INPUT" = "true" ]; then
+          pkill -f "bin.mjs serve" || true
+          sleep 1
+        fi
+        pnpm exec envio serve --port "$ENVIO_SERVE_PORT_INPUT" &
+        for i in {1..60}; do
+          if curl -sSf "http://localhost:$ENVIO_SERVE_PORT_INPUT/healthz" >/dev/null; then echo "envio serve is up"; exit 0; fi
+          sleep 1
+        done
+        echo "envio serve did not become ready"; exit 1
