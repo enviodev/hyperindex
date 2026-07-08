@@ -303,12 +303,15 @@ describe("CrossChainState readiness", () => {
 })
 
 
-describe("CrossChainState two-budget scheduling", () => {
+describe("CrossChainState sequential scheduling", () => {
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addrOf = id =>
     ("0x123456789012345678901234567890123456789" ++ id)->Address.unsafeFromString
 
-  let mkPartition = (~id, ~lfb): FetchState.partition => {
+  // prevQueryRange/prevRangeSize seed the partition's own density
+  // (prevRangeSize / prevQueryRange), which sizes its query's itemsTarget once it
+  // has history. Left 0 (the default) the partition reads as unknown-density.
+  let mkPartition = (~id, ~lfb, ~prevQueryRange=0, ~prevRangeSize=0): FetchState.partition => {
     id,
     latestFetchedBlock: {blockNumber: lfb, blockTimestamp: 0},
     selection: normalSelection,
@@ -316,9 +319,9 @@ describe("CrossChainState two-budget scheduling", () => {
     mergeBlock: None,
     dynamicContract: None,
     mutPendingQueries: [],
-    prevQueryRange: 0,
-    prevPrevQueryRange: 0,
-    prevRangeSize: 0,
+    prevQueryRange,
+    prevPrevQueryRange: prevQueryRange,
+    prevRangeSize,
     latestBlockRangeUpdateBlock: 0,
   }
 
@@ -384,11 +387,10 @@ describe("CrossChainState two-budget scheduling", () => {
   }
 
   Async.it("keeps advancing the frontier when the buffer is full of stuck items", async t => {
-    // Warm chain (density 1.0), single partition far behind head. 150 buffered
-    // items sit at block 200 (above the frontier) → all stuck, readyCount 0
-    // (readyBudget open), prefetchBudget 0 (total buffered already exceeds
-    // target). The gap-closer must still go out — a stuck-full buffer must not
-    // stall frontier progress.
+    // Single partition behind head. 150 buffered items sit at block 200 (above the
+    // frontier at 100) → all stuck, so totalReadyCount is 0 and the free budget
+    // stays open. The query must still go out: the budget is measured on ready
+    // items only, so a stuck-full buffer can't stall frontier progress.
     let stuck = Belt.Array.make(150, 0)->Array.map(_ => mockEvent(~blockNumber=200))
     let cs = makeChain(
       ~chainId=1,
@@ -399,14 +401,14 @@ describe("CrossChainState two-budget scheduling", () => {
     )
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=100)
     let queries = await dispatchedQueries(cm)
-    t.expect(queries->Array.map(q => (q.partitionId, q.isPrefetch))).toEqual([("0", false)])
+    t.expect(queries->Array.map(q => q.partitionId)).toEqual(["0"])
   })
 
-  Async.it("classifies a far-ahead partition as prefetch, the frontier one as gap-closer", async t => {
-    // p0 at the frontier (block 100) → gap-closer; p1 parked >20k ahead (block
-    // 100000) → prefetch, drawn from the separate prefetch budget. Classification
-    // is by block distance from the frontier, not density, so a single chain-wide
-    // density covering both partitions doesn't affect it.
+  Async.it("doesn't fetch partitions parked beyond the chain's reach", async t => {
+    // p0 sits at the frontier; p1 is parked far ahead, past the block the chain's
+    // density-derived target (frontier 100 + 1000/1.0 = block 1100) reaches this
+    // tick. Sequential scheduling has no prefetch budget, so only the in-reach p0
+    // is queried; p1 waits until the frontier advances to it.
     let cs = makeChain(
       ~chainId=1,
       ~knownHeight=1000000,
@@ -415,39 +417,43 @@ describe("CrossChainState two-budget scheduling", () => {
     )
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1000)
     let queries = await dispatchedQueries(cm)
-    // Both partitions get queries (each may chunk); every p0 query is a gap-closer
-    // and every p1 query is a prefetch.
     t.expect({
-      "p0AllGapClosers": queries->Array.every(q => q.partitionId != "0" || !q.isPrefetch),
-      "p1AllPrefetch": queries->Array.every(q => q.partitionId != "1" || q.isPrefetch),
       "p0Dispatched": queries->Array.some(q => q.partitionId == "0"),
       "p1Dispatched": queries->Array.some(q => q.partitionId == "1"),
-    }).toEqual({
-      "p0AllGapClosers": true,
-      "p1AllPrefetch": true,
-      "p0Dispatched": true,
-      "p1Dispatched": true,
-    })
+    }).toEqual({"p0Dispatched": true, "p1Dispatched": false})
   })
 
-  Async.it("still prefetches parked-ahead partitions when the ready buffer is full", async t => {
-    // The buffer already holds `target` ready items at block 50 (<= frontier 100),
-    // so the ready budget is 0 and the frontier gap-closer (p0) is skipped. The
-    // prefetch budget is independent, so the far-ahead partition (p1) is still
-    // warmed — prefetch is not coupled to the ready budget.
-    let ready = Belt.Array.make(5, 0)->Array.map(_ => mockEvent(~blockNumber=50))
+  Async.it("sizes a query from the partition's own density", async t => {
+    // Partition with its own history — 2500 items over 5000 blocks → density 0.5.
+    // The chain density (1.0) puts the target at frontier 0 + 5000/1.0 = block 5000;
+    // the query's itemsTarget is the partition's density across that reach:
+    // round(5000 × 0.5) = 2500, comfortably under the 5000 budget.
     let cs = makeChain(
       ~chainId=1,
       ~knownHeight=1000000,
-      ~partitions=[mkPartition(~id="0", ~lfb=100), mkPartition(~id="1", ~lfb=100000)],
-      ~buffer=ready,
+      ~partitions=[mkPartition(~id="0", ~lfb=0, ~prevQueryRange=5000, ~prevRangeSize=2500)],
       ~density=1.0,
     )
-    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=5)
+    let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=5000)
     let queries = await dispatchedQueries(cm)
-    t.expect({
-      "gapCloserDispatched": queries->Array.some(q => q.partitionId == "0"),
-      "prefetchDispatched": queries->Array.some(q => q.partitionId == "1" && q.isPrefetch),
-    }).toEqual({"gapCloserDispatched": false, "prefetchDispatched": true})
+    t.expect(queries->Array.map(q => q.itemsTarget)).toEqual([2500])
+  })
+
+  Async.it("gives the free budget to the most-behind chain first", async t => {
+    // Chain 1 is far behind (frontier 10 of 1000), chain 2 is ahead (frontier 500).
+    // Furthest-behind is visited first and its cold partition claims the whole free
+    // budget as its itemsTarget, leaving nothing for chain 2 this tick.
+    let a = makeChain(~chainId=1, ~knownHeight=1000, ~partitions=[mkPartition(~id="0", ~lfb=10)])
+    let b = makeChain(~chainId=2, ~knownHeight=1000, ~partitions=[mkPartition(~id="0", ~lfb=500)])
+    let cm = makeCrossChainState(~chainStatesList=[b, a], ~targetBufferSize=100)
+    let dispatched = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      switch action {
+      | Ready(_) => dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
+      | _ => ()
+      }
+      Promise.resolve()
+    })
+    t.expect(dispatched).toEqual([1])
   })
 })

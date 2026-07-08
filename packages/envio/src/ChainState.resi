@@ -47,8 +47,7 @@ let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float
-let reservedReadySize: t => float
-let reservedTotalSize: t => float
+let reservedSize: t => float
 let density: t => option<float>
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
@@ -66,7 +65,7 @@ let hasReadyItem: t => bool
 let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
-let getNextQuery: t => FetchState.nextQuery
+let getQueries: (t, ~chainTargetItems: int, ~budget: int) => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

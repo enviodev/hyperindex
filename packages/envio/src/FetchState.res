@@ -62,28 +62,12 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Owning partition's own event density (items/block), from its last response.
-  // `None` until the partition has two responses of its own (same gate as
-  // chunking — a single sample is too noisy). Read by the scheduler as a precise
-  // override of the chain-level density when available.
-  density: option<float>,
-  // Owning chain and the chain progress % at the query's fromBlock. Set by the
-  // cross-chain scheduler so candidate queries can be pooled and ordered
-  // (furthest-behind first) without allocating a side tuple per query.
-  mutable chainId: int,
-  mutable progress: float,
   // Soft cap on items the source should return for this query (its maxNumLogs),
-  // set by the cross-chain scheduler: the density-derived events expected within
-  // the query's share of the frontier reach, so the buffer stays bounded no
-  // matter how large the natural block range is or how many partitions there are.
+  // set while the queries are generated: the density-derived events expected
+  // within this partition's share of the chain's reach, so the buffer stays
+  // bounded no matter how large the natural block range is or how many
+  // partitions there are.
   mutable itemsTarget: int,
-  // Set by the scheduler at admission: false for a gap-closer (a partition at the
-  // frontier, whose items become ready), true for a prefetch (a partition parked
-  // ahead, whose items stay stuck until the frontier reaches it). The two draw
-  // from different budgets, so the reservation is released from whichever the
-  // query was admitted against — recorded here since the frontier may move before
-  // the response lands.
-  mutable isPrefetch: bool,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
 }
@@ -1376,6 +1360,23 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 // Most parallel in-flight chunk queries a single partition may have at once.
 let maxPendingChunksPerPartition = 10
 
+// Items expected within [fromBlock, toBlock] at the given density, capped at the
+// remaining budget and floored at 1 so a dispatched query never asks for 0.
+let densityItems = (~fromBlock, ~toBlock, ~density, ~remaining) =>
+  Pervasives.min(
+    remaining,
+    Pervasives.max(1, Math.round((toBlock - fromBlock + 1)->Int.toFloat *. density)->Float.toInt),
+  )
+
+// Emit the queries covering an open range and set each one's itemsTarget,
+// decrementing the shared `remaining` budget. `chainTargetBlock` is the reach the
+// cross-chain scheduler picked for this chain: it sizes the item cap (density ×
+// blocks up to it), not a hard query end — a query's toBlock stays at the natural
+// ceiling so a sparse region can still fetch past it, bounded only by itemsTarget.
+// A partition without its own density (fewer than two responses) gets one query
+// sized at the whole remaining budget to discover its density for the next tick;
+// it doesn't draw the budget down, so sibling partitions still get their own such
+// query this tick (the reservation it books throttles the next tick instead).
 @inline
 let pushQueriesForRange = (
   queries: array<query>,
@@ -1388,12 +1389,23 @@ let pushQueriesForRange = (
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
+  ~chainTargetBlock: int,
+  ~remaining: ref<int>,
 ) => {
-  if rangeFromBlock <= knownHeight && maxChunks > 0 {
+  if (
+    rangeFromBlock <= knownHeight &&
+    rangeFromBlock <= chainTargetBlock &&
+    maxChunks > 0 &&
+    remaining.contents > 0
+  ) {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
-      switch maybeChunkRange {
+      let ceiling = switch rangeEndBlock {
+      | Some(eb) => eb
+      | None => knownHeight
+      }
+      switch partitionDensity(partition) {
       | None =>
         queries->Array.push({
           partitionId,
@@ -1401,79 +1413,104 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
-          density: partitionDensity(partition),
-          chainId: 0,
-          progress: 0.,
-          itemsTarget: 0,
-          isPrefetch: false,
+          itemsTarget: remaining.contents,
           addressesByContractName,
         })
-      | Some(chunkRange) =>
-        let maxBlock = switch rangeEndBlock {
-        | Some(eb) => eb
-        | None => knownHeight
-        }
-        let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
-        if rangeFromBlock + chunkSize * 2 - 1 <= maxBlock {
+      | Some(density) =>
+        // Block region to make ready this tick: up to the reach, never past the
+        // natural ceiling. Chunks stay within it; the fall-back single query
+        // sizes its item cap against it but keeps the ceiling as its toBlock.
+        let targetBlock = Pervasives.min(ceiling, chainTargetBlock)
+        switch maybeChunkRange {
+        | Some(chunkRange)
+          if rangeFromBlock + Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8) * 2 - 1 <=
+            targetBlock =>
+          let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
           let chunkFromBlock = ref(rangeFromBlock)
           let chunkIdx = ref(0)
           while (
-            chunkIdx.contents < maxChunks && chunkFromBlock.contents + chunkSize - 1 <= maxBlock
+            chunkIdx.contents < maxChunks &&
+            chunkFromBlock.contents + chunkSize - 1 <= targetBlock &&
+            remaining.contents > 0
           ) {
             let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
+            let itemsTarget = densityItems(
+              ~fromBlock=chunkFromBlock.contents,
+              ~toBlock=chunkToBlock,
+              ~density,
+              ~remaining=remaining.contents,
+            )
             queries->Array.push({
               partitionId,
               fromBlock: chunkFromBlock.contents,
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
-              density: partitionDensity(partition),
-              chainId: 0,
-              progress: 0.,
-              itemsTarget: 0,
-              isPrefetch: false,
+              itemsTarget,
               addressesByContractName,
             })
+            remaining := remaining.contents - itemsTarget
             chunkFromBlock := chunkToBlock + 1
             chunkIdx := chunkIdx.contents + 1
           }
-        } else {
-          // Not enough room for 2 chunks, fall back to a single query
+        | _ =>
+          let itemsTarget = densityItems(
+            ~fromBlock=rangeFromBlock,
+            ~toBlock=targetBlock,
+            ~density,
+            ~remaining=remaining.contents,
+          )
           queries->Array.push({
             partitionId,
             fromBlock: rangeFromBlock,
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
-            density: partitionDensity(partition),
-            chainId: 0,
-            progress: 0.,
-            itemsTarget: 0,
-            isPrefetch: false,
+            itemsTarget,
             addressesByContractName,
           })
+          remaining := remaining.contents - itemsTarget
         }
       }
     }
   }
 }
 
-// Candidate queries span the natural ceiling (head/endBlock/mergeBlock), each
-// carrying its own partition's density (density: option<float>) when that
-// partition has its own history. CrossChainState.checkAndFetch is what bounds
-// each tick: it decides how far past the frontier to reach from the buffer
-// budget and the chain's density (tracked on ChainState, used for the reach
-// decision and as a fallback for candidates without their own), admits only the
-// candidates within that reach, and sets each one's itemsTarget from whichever
-// density it has — the HyperSync/SVM sources enforce that target server-side as
-// a maxNumLogs-style cap so the buffer can't overshoot.
-let getNextQuery = (
-  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
+// Build this chain's queries for one fetch tick. The cross-chain scheduler visits
+// chains furthest-behind first and hands each one a share of the indexer-wide
+// buffer budget: `chainTargetItems` (this chain's item target, including its own
+// in-flight reservation) sizes the reach, `budget` caps the new items this call
+// may dispatch. From `chainDensity` (the chain-level EMA) the reach becomes a
+// block target — `chainTargetBlock` — past the frontier; every partition below it
+// gets queries whose itemsTarget is sized from the partition's own density (or the
+// whole remaining budget when the partition has no density yet). Partitions parked
+// beyond the reach are left for a later tick, so a chain never prefetches past its
+// share. The HyperSync/SVM sources enforce itemsTarget server-side as a
+// maxNumLogs-style cap so the buffer can't overshoot.
+let getQueries = (
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock} as fetchState: t,
+  ~chainDensity: option<float>,
+  ~chainTargetItems: int,
+  ~budget: int,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
   } else {
+    let bufferBlock = fetchState->bufferBlockNumber
+    // Reach for this tick, from the chain-level density. An unknown or zero
+    // density, or a reach past the head, means "fetch all" — bounded only by each
+    // query's itemsTarget — so clamp to the head.
+    let chainTargetBlock = switch chainDensity {
+    | Some(density) if density > 0. =>
+      Pervasives.min(
+        headBlockNumber,
+        bufferBlock + Js.Math.ceil_int(chainTargetItems->Int.toFloat /. density),
+      )
+    | _ => headBlockNumber
+    }
+    let remaining = ref(budget)
+
     let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
       switch endBlock {
@@ -1505,34 +1542,70 @@ let getNextQuery = (
         shouldWaitForNewBlock := false
       }
 
-      let partitionQueriesStart = queries->Array.length
+      // Partitions are sorted asc by latestFetchedBlock, so once one starts past
+      // the reach every later one does too. Skip query creation for them (no
+      // prefetch past the share), but keep scanning so shouldWaitForNewBlock sees
+      // every partition. Stop entirely once the budget is spent.
+      let startBlock = p.latestFetchedBlock.blockNumber + 1
+      if startBlock <= chainTargetBlock && remaining.contents > 0 {
+        let partitionQueriesStart = queries->Array.length
 
-      // Compute queryEndBlock for this partition
-      let queryEndBlock = Utils.Math.minOptInt(endBlock, p.mergeBlock)
-      let queryEndBlock = switch blockLag {
-      | 0 => queryEndBlock
-      | _ =>
-        // Force head block as an endBlock when blockLag is set
-        // because otherwise HyperSync might return bigger range
-        Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
-      }
+        // Compute queryEndBlock for this partition
+        let queryEndBlock = Utils.Math.minOptInt(endBlock, p.mergeBlock)
+        let queryEndBlock = switch blockLag {
+        | 0 => queryEndBlock
+        | _ =>
+          // Force head block as an endBlock when blockLag is set
+          // because otherwise HyperSync might return bigger range
+          Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
+        }
 
-      let maybeChunkRange = getMinHistoryRange(p)
+        let maybeChunkRange = getMinHistoryRange(p)
 
-      // Walk pending queries to find open ranges and create queries for each
-      let cursor = ref(p.latestFetchedBlock.blockNumber + 1)
-      let canContinue = ref(true)
-      let pqIdx = ref(0)
-      while pqIdx.contents < p.mutPendingQueries->Array.length && canContinue.contents {
-        let pq = p.mutPendingQueries->Array.getUnsafe(pqIdx.contents)
+        // Walk pending queries to find open ranges and create queries for each
+        let cursor = ref(startBlock)
+        let canContinue = ref(true)
+        let pqIdx = ref(0)
+        while pqIdx.contents < p.mutPendingQueries->Array.length && canContinue.contents {
+          let pq = p.mutPendingQueries->Array.getUnsafe(pqIdx.contents)
 
-        // Gap before this pending query → create queries for the gap range
-        if pq.fromBlock > cursor.contents {
+          // Gap before this pending query → create queries for the gap range
+          if pq.fromBlock > cursor.contents {
+            pushQueriesForRange(
+              queries,
+              ~partitionId,
+              ~rangeFromBlock=cursor.contents,
+              ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
+              ~knownHeight,
+              ~maybeChunkRange,
+              ~maxChunks=maxPendingChunksPerPartition -
+              pendingCount -
+              (queries->Array.length -
+              partitionQueriesStart),
+              ~partition=p,
+              ~selection=p.selection,
+              ~addressesByContractName=p.addressesByContractName,
+              ~chainTargetBlock,
+              ~remaining,
+            )
+          }
+          switch pq {
+          | {isChunk: true, toBlock: Some(toBlock), fetchedBlock: Some({blockNumber})}
+            if blockNumber < toBlock =>
+            cursor := blockNumber + 1
+          | {isChunk: true, toBlock: Some(toBlock)} => cursor := toBlock + 1
+          | _ => canContinue := false
+          }
+          pqIdx := pqIdx.contents + 1
+        }
+
+        // Tail range after all pending queries
+        if canContinue.contents {
           pushQueriesForRange(
             queries,
             ~partitionId,
             ~rangeFromBlock=cursor.contents,
-            ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
+            ~rangeEndBlock=queryEndBlock,
             ~knownHeight,
             ~maybeChunkRange,
             ~maxChunks=maxPendingChunksPerPartition -
@@ -1542,35 +1615,10 @@ let getNextQuery = (
             ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
+            ~chainTargetBlock,
+            ~remaining,
           )
         }
-        switch pq {
-        | {isChunk: true, toBlock: Some(toBlock), fetchedBlock: Some({blockNumber})}
-          if blockNumber < toBlock =>
-          cursor := blockNumber + 1
-        | {isChunk: true, toBlock: Some(toBlock)} => cursor := toBlock + 1
-        | _ => canContinue := false
-        }
-        pqIdx := pqIdx.contents + 1
-      }
-
-      // Tail range after all pending queries
-      if canContinue.contents {
-        pushQueriesForRange(
-          queries,
-          ~partitionId,
-          ~rangeFromBlock=cursor.contents,
-          ~rangeEndBlock=queryEndBlock,
-          ~knownHeight,
-          ~maybeChunkRange,
-          ~maxChunks=maxPendingChunksPerPartition -
-          pendingCount -
-          (queries->Array.length -
-          partitionQueriesStart),
-          ~partition=p,
-          ~selection=p.selection,
-          ~addressesByContractName=p.addressesByContractName,
-        )
       }
 
       idxRef := idxRef.contents + 1

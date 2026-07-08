@@ -1,18 +1,13 @@
 open Vitest
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so shared fields don't have to be repeated; every
+// other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  density: None,
-  chainId: 0,
-  progress: 0.,
   itemsTarget: 0,
-  isPrefetch: false,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -382,7 +377,19 @@ describe("SourceManager fetchNext", () => {
     ~onNewBlock,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery
+    let action =
+      switch fetchState->FetchState.getQueries(
+        ~chainDensity=None,
+        ~chainTargetItems=1_000_000_000,
+        ~budget=1_000_000_000,
+      ) {
+      // These tests assert dispatch order/coverage, not sizing, so drop the
+      // budget-derived itemsTarget estimate to keep the expected literals simple.
+      | Ready(queries) =>
+        queries->Array.forEach(query => query.itemsTarget = 0)
+        FetchState.Ready(queries)
+      | action => action
+      }
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -505,11 +512,17 @@ describe("SourceManager fetchNext", () => {
       | _ => 0
       }
 
+    let getQueries = fs =>
+      fs->FetchState.getQueries(
+        ~chainDensity=None,
+        ~chainTargetItems=1_000_000_000,
+        ~budget=1_000_000_000,
+      )
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery,
+      "atCap": withPending(10)->getQueries,
       // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
-      "oneSlotLeft": withPending(9)->FetchState.getNextQuery->newQueryCount,
+      "oneSlotLeft": withPending(9)->getQueries->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
 

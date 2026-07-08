@@ -14,23 +14,20 @@ type t = {
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
   mutable numEventsProcessed: float,
-  // Running sums of in-flight queries' reserved items, so the scheduler doesn't
-  // re-sum pending queries every tick. reservedTotalSize covers every in-flight
-  // query (gap-closers and prefetch), against the total-buffer limit;
-  // reservedReadySize covers only gap-closers, against the ready-item target — so
-  // stuck prefetch in flight can't shrink the budget that keeps the frontier
-  // advancing. Both are incremented on dispatch and decremented as responses land.
-  mutable reservedReadySize: float,
-  mutable reservedTotalSize: float,
+  // Running sum of in-flight queries' reserved items, so the scheduler doesn't
+  // re-sum pending queries every tick: incremented as queries are dispatched and
+  // decremented as their responses land. The scheduler credits it back to the
+  // chain's own target (so in-flight work counts toward the share) while drawing
+  // it against the indexer-wide buffer budget.
+  mutable reservedSize: float,
   // Chain-wide event density (items/block), an exponential moving average.
   // Seeded at construction from lifetime progress (numEventsProcessed over the
   // blocks since firstEventBlock), then blended with each batch's own rate as
   // 2:1 new:old so it tracks recent behavior without whipsawing on one small
   // batch. None until firstEventBlock is known (chain hasn't seen an event yet).
-  // The scheduler reads it to size fetch reach/itemsTarget — approximate is
-  // fine, since the source enforces itemsTarget as a hard cap, so an over/under
-  // estimate just truncates or under-fills a response instead of overshooting
-  // the buffer.
+  // The scheduler reads it to size the chain's block reach — approximate is fine,
+  // since per-partition density and the source's hard itemsTarget cap bound the
+  // actual response, so an over/under estimate just reaches a bit far or short.
   mutable density: option<float>,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
@@ -95,8 +92,7 @@ let make = (
   timestampCaughtUpToHeadOrEndblock,
   committedProgressBlockNumber,
   numEventsProcessed,
-  reservedReadySize: 0.,
-  reservedTotalSize: 0.,
+  reservedSize: 0.,
   density: switch fetchState.firstEventBlock {
   | Some(firstEventBlock) if committedProgressBlockNumber > firstEventBlock =>
     Some(numEventsProcessed /. (committedProgressBlockNumber - firstEventBlock)->Int.toFloat)
@@ -358,8 +354,7 @@ let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
 let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
-let reservedReadySize = (cs: t) => cs.reservedReadySize
-let reservedTotalSize = (cs: t) => cs.reservedTotalSize
+let reservedSize = (cs: t) => cs.reservedSize
 let density = (cs: t) => cs.density
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
@@ -380,33 +375,28 @@ let hasReadyItem = (cs: t) =>
 let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
 
 // Mark queries as in flight and reserve their items against the shared budgets in
-// one step, so the counters stay in sync with the pending queries they track.
-// Every query counts against the total-buffer reservation; only gap-closers count
-// against the ready reservation.
+// one step, so the counter stays in sync with the pending queries it tracks.
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   for i in 0 to queries->Array.length - 1 {
     let query = queries->Array.getUnsafe(i)
-    let reserved = query->FetchState.queryReservedSize
-    cs.reservedTotalSize = cs.reservedTotalSize +. reserved
-    if !query.isPrefetch {
-      cs.reservedReadySize = cs.reservedReadySize +. reserved
-    }
+    cs.reservedSize = cs.reservedSize +. query->FetchState.queryReservedSize
   }
 }
 
-// Drop every in-flight query and release their reservations together, keeping the
-// reserved counters coupled to the pending queries they track.
+// Drop every in-flight query and release their reservation together, keeping the
+// reserved counter coupled to the pending queries it tracks.
 let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
-  cs.reservedReadySize = 0.
-  cs.reservedTotalSize = 0.
+  cs.reservedSize = 0.
 }
 
-// Propose the chain's candidate queries against their natural ceiling
-// (head/endBlock/mergeBlock). CrossChainState admits them against the shared
-// buffer budget afterwards.
-let getNextQuery = (cs: t) => cs.fetchState->FetchState.getNextQuery
+// Build this chain's queries for one fetch tick against the block reach implied by
+// its share of the indexer-wide buffer budget. chainTargetItems sizes the reach
+// (from the chain-level density) and budget caps the new items dispatched;
+// CrossChainState computes both and visits chains furthest-behind first.
+let getQueries = (cs: t, ~chainTargetItems, ~budget) =>
+  cs.fetchState->FetchState.getQueries(~chainDensity=cs.density, ~chainTargetItems, ~budget)
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
 // frontier to the source manager.
@@ -508,13 +498,8 @@ let handleQueryResult = (
     )
     ->FetchState.updateKnownHeight(~knownHeight)
 
-  // The query is no longer in flight, so release its reservation from whichever
-  // pools it was admitted against.
-  let reserved = query->FetchState.queryReservedSize
-  cs.reservedTotalSize = Pervasives.max(0., cs.reservedTotalSize -. reserved)
-  if !query.isPrefetch {
-    cs.reservedReadySize = Pervasives.max(0., cs.reservedReadySize -. reserved)
-  }
+  // The query is no longer in flight, so release its reservation.
+  cs.reservedSize = Pervasives.max(0., cs.reservedSize -. query->FetchState.queryReservedSize)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.

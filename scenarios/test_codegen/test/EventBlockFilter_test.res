@@ -362,9 +362,15 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
   }
 
   // Pull the first query the scheduler would dispatch. `updateKnownHeight`
-  // is needed so `getNextQuery` sees a non-zero head.
+  // is needed so `getQueries` sees a non-zero head.
   let firstQuery = (fetchState: FetchState.t) =>
-    switch fetchState->FetchState.updateKnownHeight(~knownHeight=10000)->FetchState.getNextQuery {
+    switch fetchState
+    ->FetchState.updateKnownHeight(~knownHeight=10000)
+    ->FetchState.getQueries(
+      ~chainDensity=None,
+      ~chainTargetItems=1_000_000_000,
+      ~budget=1_000_000_000,
+    ) {
     | Ready([q]) => q
     | Ready(qs) =>
       JsError.throwWithMessage(

@@ -4,22 +4,35 @@ let chainId = 0
 let targetBufferSize = 5000
 let knownHeight = 0
 
-// Spread into expected query literals so the cross-chain scheduler fields
-// (chainId/progress, both 0 outside of CrossChainState) don't have to be
-// repeated everywhere. Every other field is overridden at the call site.
+// Spread into expected query literals so shared fields don't have to be repeated
+// everywhere. Every other field is overridden at the call site. The getNextQuery
+// helper below zeroes itemsTarget on the actual queries, so these coverage-focused
+// assertions don't have to spell out the budget-derived estimate.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  density: None,
-  chainId: 0,
-  progress: 0.,
   itemsTarget: 0,
-  isPrefetch: false,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
+
+// getQueries with an effectively unbounded budget and no chain-level density
+// (reach = head), with the per-query itemsTarget estimate dropped. These tests
+// assert query ranges/coverage, not the budget sizing (covered in
+// CrossChainState_test), so this reproduces the old getNextQuery shape.
+let getQueriesUnbounded = fs =>
+  switch fs->FetchState.getQueries(
+    ~chainDensity=None,
+    ~chainTargetItems=1_000_000_000,
+    ~budget=1_000_000_000,
+  ) {
+  | Ready(queries) =>
+    queries->Array.forEach(query => query.itemsTarget = 0)
+    FetchState.Ready(queries)
+  | action => action
+  }
 
 // Keep for backward compatibility of tests
 type oldQueueItem =
@@ -1726,7 +1739,7 @@ describe("FetchState.registerDynamicContracts", () => {
   )
 })
 
-describe("FetchState.getNextQuery & integration", () => {
+describe("FetchState.getQueries & integration", () => {
   let dc1 = makeDynContractRegistration(~blockNumber=1, ~contractAddress=mockAddress1)
   let dc2 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)
   let dc3 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress3)
@@ -1844,16 +1857,15 @@ describe("FetchState.getNextQuery & integration", () => {
     }
   }
 
-  // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so their queries carry no size
-  // estimate (density is None until a partition has two responses).
+  // The default configuration with ability to overwrite some values. Runs the
+  // unbounded getQueries shim so these tests stay about query ranges/coverage.
   let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10) =>
     switch endBlock {
     | Some(_) => {...fs, endBlock}
     | None => fs
     }
     ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery
+    ->getQueriesUnbounded
 
   it("Emulate first indexer queries with a static event", t => {
     let (fetchState, indexingAddresses) = makeInitial()
@@ -2380,7 +2392,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count).toEqual(3)
 
-    let nextQuery = {...fetchState, knownHeight: 10}->FetchState.getNextQuery
+    let nextQuery = {...fetchState, knownHeight: 10}->getQueriesUnbounded
 
     t.expect(
       nextQuery,
@@ -2830,7 +2842,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
     t.expect(
-      {...fetchState, knownHeight: 2}->FetchState.getNextQuery,
+      {...fetchState, knownHeight: 2}->getQueriesUnbounded,
       ~message=`Should be possible to query wildcard partition,
       if it didn't reach max queue size limit`,
     ).toEqual(
@@ -3157,7 +3169,7 @@ describe("FetchState unit tests for specific cases", () => {
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
       let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
 
-      let queries = switch fetchStateWithDcA->FetchState.getNextQuery {
+      let queries = switch fetchStateWithDcA->getQueriesUnbounded {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3187,7 +3199,7 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
 
-      let queries = switch fetchStateWithDcB->FetchState.getNextQuery {
+      let queries = switch fetchStateWithDcB->getQueriesUnbounded {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3199,7 +3211,7 @@ describe("FetchState unit tests for specific cases", () => {
         fromBlock: 200,
       }
       t.expect(
-        fetchStateWithDcB->FetchState.getNextQuery,
+        fetchStateWithDcB->getQueriesUnbounded,
         ~message=`Create a new partition for the newly registered contract`,
       ).toEqual(Ready([partition2Query, queries->Array.getUnsafe(1)]))
 
@@ -3213,7 +3225,7 @@ describe("FetchState unit tests for specific cases", () => {
         )
 
       t.expect(
-        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery,
+        fetchStateWithBothDcsAndQueryAResponse->getQueriesUnbounded,
         ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
       ).toEqual(
         Ready([
@@ -3650,7 +3662,7 @@ describe("FetchState proposes queries against the natural ceiling", () => {
         knownHeight: 30,
       }
 
-      switch fetchStateWithEndBlock->FetchState.getNextQuery {
+      switch fetchStateWithEndBlock->getQueriesUnbounded {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
@@ -3661,7 +3673,7 @@ describe("FetchState proposes queries against the natural ceiling", () => {
 
       // Test case 2: endBlock=None -> Should use the open-ended head target
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
-      switch fetchStateNoEndBlock->FetchState.getNextQuery {
+      switch fetchStateNoEndBlock->getQueriesUnbounded {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
@@ -3691,7 +3703,7 @@ describe("FetchState proposes queries against the natural ceiling", () => {
         )
         ->FetchState.updateKnownHeight(~knownHeight=30)
 
-      switch fetchStateSmallQueue->FetchState.getNextQuery {
+      switch fetchStateSmallQueue->getQueriesUnbounded {
       | Ready([q]) => t.expect(q.toBlock, ~message="Should use None (fetch to head)").toBe(None)
       | _ => JsError.throwWithMessage("Expected Ready query")
       }
@@ -3747,7 +3759,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ).toEqual([onBlockRegistration])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
-      let nextQuery = fetchState->FetchState.getNextQuery
+      let nextQuery = fetchState->getQueriesUnbounded
       t.expect(
         nextQuery,
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
@@ -3789,7 +3801,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
-      let nextQuery2 = updatedFetchState->FetchState.getNextQuery
+      let nextQuery2 = updatedFetchState->getQueriesUnbounded
       t.expect(
         nextQuery2,
         ~message="Should return NothingToQuery when there are no partitions to query",
@@ -3801,7 +3813,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
 describe("Stale query response should not overwrite block range", () => {
   // The default configuration with ability to overwrite some values
   let getNextQuery = (fs, ~knownHeight=100000) =>
-    fs->FetchState.updateKnownHeight(~knownHeight)->FetchState.getNextQuery
+    fs->FetchState.updateKnownHeight(~knownHeight)->getQueriesUnbounded
 
   it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
     let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100000)
