@@ -436,6 +436,9 @@ let getSourceNewHeight = async (
               }
             })
             sourceState.unsubscribe = Some(unsubscribe)
+            // Count a subscription (re)start rather than every pushed height —
+            // there's no request/response to time here.
+            sourceState->recordRequestStats([{Source.method: "heightSubscription", seconds: 0.}])
           | _ =>
             // Slowdown polling when the chain isn't progressing
             let pollingInterval = if reducedPolling {

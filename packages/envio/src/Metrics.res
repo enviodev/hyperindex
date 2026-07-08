@@ -18,25 +18,31 @@ let renderGauge = (~name, ~help, ~chains: dict<'a>, ~value: 'a => int) => {
   out.contents
 }
 
-// Samples for envio_source_request_total/envio_source_request_seconds_total,
-// aggregated per (source, chain, method) by SourceManager. The HELP/TYPE lines
-// for both metric names are already emitted by prom-client's registry, via
-// Prometheus.SourceRequestCount — still used directly by height-stream sources.
-let renderSourceRequests = (~chainStates: dict<ChainState.t>) => {
-  let out = ref("")
-  chainStates->Utils.Dict.forEach(cs => {
-    cs
-    ->ChainState.sourceManager
-    ->SourceManager.getRequestStatSamples
-    ->Array.forEach(sample => {
-      let labels = `{source="${sample.sourceName}",chainId="${sample.chainId->Int.toString}",method="${sample.method}"}`
-      out :=
-        out.contents ++
-        `\nenvio_source_request_total${labels} ${sample.count->Int.toString}` ++
-        `\nenvio_source_request_seconds_total${labels} ${sample.seconds->Float.toString}`
-    })
+let sourceRequestTotalName = "envio_source_request_total"
+let sourceRequestTotalHelp = "The number of requests made to data sources."
+let sourceRequestSecondsTotalName = "envio_source_request_seconds_total"
+let sourceRequestSecondsTotalHelp = "Cumulative time spent on data source requests."
+
+// Hand-rolls both HELP/TYPE blocks and their samples straight from
+// SourceManager's aggregates — fully our own state, no prom-client registry
+// involved. A leading "\n" on each block since, unlike prom-client's own
+// metrics() output, renderGauge's output right before this doesn't end in one.
+let renderSourceRequests = (~samples: array<SourceManager.requestStatSample>) => {
+  let countOut = ref(
+    `\n# HELP ${sourceRequestTotalName} ${sourceRequestTotalHelp}\n# TYPE ${sourceRequestTotalName} counter`,
+  )
+  let secondsOut = ref(
+    `\n# HELP ${sourceRequestSecondsTotalName} ${sourceRequestSecondsTotalHelp}\n# TYPE ${sourceRequestSecondsTotalName} counter`,
+  )
+  samples->Array.forEach(sample => {
+    let labels = `{source="${sample.sourceName}",chainId="${sample.chainId->Int.toString}",method="${sample.method}"}`
+    countOut :=
+      countOut.contents ++ `\n${sourceRequestTotalName}${labels} ${sample.count->Int.toString}`
+    secondsOut :=
+      secondsOut.contents ++
+      `\n${sourceRequestSecondsTotalName}${labels} ${sample.seconds->Float.toString}`
   })
-  out.contents
+  countOut.contents ++ secondsOut.contents
 }
 
 let collect = async (~state: option<IndexerState.t>) => {
@@ -45,11 +51,15 @@ let collect = async (~state: option<IndexerState.t>) => {
   | None => base
   | Some(state) =>
     let chainStates = state->IndexerState.chainStates
+    let sourceRequestSamples =
+      chainStates
+      ->Dict.valuesToArray
+      ->Array.flatMap(cs => cs->ChainState.sourceManager->SourceManager.getRequestStatSamples)
     `${base}${renderGauge(
         ~name=indexingAddressesName,
         ~help=indexingAddressesHelp,
         ~chains=chainStates,
         ~value=cs => (cs->ChainState.toChainData).numAddresses,
-      )}${renderSourceRequests(~chainStates)}\n`
+      )}${renderSourceRequests(~samples=sourceRequestSamples)}\n`
   }
 }
