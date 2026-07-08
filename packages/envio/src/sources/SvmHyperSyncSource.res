@@ -272,7 +272,6 @@ let make = (
   {chain, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis}: options,
 ): t => {
   let name = "SvmHyperSync"
-  let chainId = chain->ChainMap.Chain.toChainId
 
   // Definitions drive query/decode building; the registrations drive routing
   // (they carry `isWildcard` and become each decoded item's `onEventRegistration`).
@@ -384,8 +383,6 @@ let make = (
       maxNumInstructions: itemsTarget,
     }
 
-    Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
-
     let (resp, transactionStore) = try await client.get(~query) catch {
     | exn =>
       throw(
@@ -405,6 +402,7 @@ let make = (
       )
     }
     let pageFetchTime = pageFetchRef->Performance.secondsSince
+    let requestStats = [{Source.method: "getInstructions", seconds: pageFetchTime}]
 
     let parsingRef = Performance.now()
 
@@ -543,6 +541,7 @@ let make = (
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats,
     }
   }
 
@@ -551,6 +550,7 @@ let make = (
   // wire, so we request `maxSlot + 1`; the caller filters to the exact slots.
   let queryBlockDataRange = async (~fromSlot, ~toSlot) => {
     let blockDatas = []
+    let requestStats = []
     let fromRef = ref(fromSlot)
     let keepGoing = ref(true)
     while keepGoing.contents {
@@ -561,9 +561,12 @@ let make = (
         fields: {block: [Slot, Blockhash, BlockTime]},
         maxNumBlocks: 1000,
       }
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
+      let timerRef = Performance.now()
       // Block-only query; the store page is empty.
       let (resp, _) = await client.get(~query)
+      requestStats
+      ->Array.push({Source.method: "getBlockHashes", seconds: timerRef->Performance.secondsSince})
+      ->ignore
       resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({
@@ -582,12 +585,12 @@ let make = (
         fromRef := resp.nextSlot
       }
     }
-    blockDatas
+    (blockDatas, requestStats)
   }
 
   let getBlockHashes = async (~blockNumbers, ~logger as _) =>
     switch blockNumbers->Array.get(0) {
-    | None => Ok([])
+    | None => {Source.result: Ok([]), requestStats: []}
     | Some(firstSlot) =>
       try {
         let minSlot = ref(firstSlot)
@@ -602,14 +605,19 @@ let make = (
           }
           requested->Utils.Set.add(slot)->ignore
         })
-        let blockDatas = await queryBlockDataRange(
+        let (blockDatas, requestStats) = await queryBlockDataRange(
           ~fromSlot=minSlot.contents,
           ~toSlot=maxSlot.contents,
         )
         // Keep one entry per requested slot; drop duplicates and unrelated slots.
-        Ok(blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)))
+        {
+          Source.result: Ok(
+            blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)),
+          ),
+          requestStats,
+        }
       } catch {
-      | exn => Error(exn)
+      | exn => {Source.result: Error(exn), requestStats: []}
       }
     }
 
@@ -622,16 +630,9 @@ let make = (
     getBlockHashes,
     getHeightOrThrow: async () => {
       let timer = Performance.now()
-      let h = await client.getHeight()
+      let height = await client.getHeight()
       let seconds = timer->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getHeight")
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId,
-        ~method="getHeight",
-        ~seconds,
-      )
-      h
+      {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
   }

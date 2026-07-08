@@ -18,16 +18,38 @@ let renderGauge = (~name, ~help, ~chains: dict<'a>, ~value: 'a => int) => {
   out.contents
 }
 
+// Samples for envio_source_request_total/envio_source_request_seconds_total,
+// aggregated per (source, chain, method) by SourceManager. The HELP/TYPE lines
+// for both metric names are already emitted by prom-client's registry, via
+// Prometheus.SourceRequestCount — still used directly by height-stream sources.
+let renderSourceRequests = (~chainStates: dict<ChainState.t>) => {
+  let out = ref("")
+  chainStates->Utils.Dict.forEach(cs => {
+    cs
+    ->ChainState.sourceManager
+    ->SourceManager.getRequestStatSamples
+    ->Array.forEach(sample => {
+      let labels = `{source="${sample.sourceName}",chainId="${sample.chainId->Int.toString}",method="${sample.method}"}`
+      out :=
+        out.contents ++
+        `\nenvio_source_request_total${labels} ${sample.count->Int.toString}` ++
+        `\nenvio_source_request_seconds_total${labels} ${sample.seconds->Float.toString}`
+    })
+  })
+  out.contents
+}
+
 let collect = async (~state: option<IndexerState.t>) => {
   let base = await PromClient.defaultRegister->PromClient.metrics
   switch state {
   | None => base
   | Some(state) =>
+    let chainStates = state->IndexerState.chainStates
     `${base}${renderGauge(
         ~name=indexingAddressesName,
         ~help=indexingAddressesHelp,
-        ~chains=state->IndexerState.chainStates,
+        ~chains=chainStates,
         ~value=cs => (cs->ChainState.toChainData).numAddresses,
-      )}\n`
+      )}${renderSourceRequests(~chainStates)}\n`
   }
 }

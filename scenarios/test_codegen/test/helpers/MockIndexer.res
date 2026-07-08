@@ -658,7 +658,7 @@ module Source = {
         if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
         }
-        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
+        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve({Source.height, requestStats: []}))
       },
       rejectGetHeightOrThrow: exn => {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
@@ -697,7 +697,9 @@ module Source = {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
-        getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
+        getBlockHashesResolveFns->Array.forEach(
+          resolve => resolve({Source.result: Ok(blockHashes), requestStats: []}),
+        )
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
       heightSubscriptionCalls,
@@ -877,6 +879,7 @@ module Source = {
                     stats: {
                       totalTimeElapsed: 0.,
                     },
+                    requestStats: [],
                   })
                 },
                 reject: reject->Utils.magic,

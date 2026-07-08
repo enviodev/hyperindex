@@ -7,6 +7,11 @@ type blockRangeFetchStats = {
   @as("page fetch time (s)") pageFetchTime?: float,
 }
 
+// A single backend request a source method actually made (cache/dedup hits
+// aren't requests), with the time it took. SourceManager aggregates these
+// per (source, method) into the envio_source_request_* metrics.
+type requestStat = {method: string, seconds: float}
+
 /**
 Thes response returned from a block range fetch
 */
@@ -26,6 +31,14 @@ type blockRangeFetchResponse = {
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
+  requestStats: array<requestStat>,
+}
+
+type getHeightResponse = {height: int, requestStats: array<requestStat>}
+
+type getBlockHashesResponse = {
+  result: result<array<ReorgDetection.blockDataWithTimestamp>, exn>,
+  requestStats: array<requestStat>,
 }
 
 type getItemsRetry =
@@ -51,11 +64,8 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-    ~logger: Pino.t,
-  ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
-  getHeightOrThrow: unit => promise<int>,
+  getBlockHashes: (~blockNumbers: array<int>, ~logger: Pino.t) => promise<getBlockHashesResponse>,
+  getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,

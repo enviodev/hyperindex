@@ -252,11 +252,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="getLogs",
-    )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
       ~client,
       ~fromBlock,
@@ -308,6 +303,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
+    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -472,6 +468,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats,
     }
   }
 
@@ -499,18 +496,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         }
       }
       let seconds = timerRef->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-      )
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-        ~seconds,
-      )
-      height
+      {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
   }

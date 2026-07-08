@@ -1,5 +1,10 @@
 type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
 
+// Cumulative per-method request count/time for a source, aggregated from the
+// requestStat arrays returned by its methods. Rendered into
+// envio_source_request_* by Metrics.renderSourceRequests.
+type requestStatAgg = {mutable count: int, mutable seconds: float}
+
 type sourceState = {
   source: Source.t,
   mutable knownHeight: int,
@@ -9,6 +14,28 @@ type sourceState = {
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
+  requestStats: dict<requestStatAgg>,
+}
+
+let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.requestStat>) => {
+  requestStats->Array.forEach(({method, seconds}) => {
+    switch sourceState.requestStats->Utils.Dict.dangerouslyGetNonOption(method) {
+    | Some(agg) =>
+      agg.count = agg.count + 1
+      agg.seconds = agg.seconds +. seconds
+    | None => sourceState.requestStats->Dict.set(method, {count: 1, seconds})
+    }
+  })
+}
+
+// Flattened (source, method) aggregates for Metrics.renderSourceRequests to
+// inline into the /metrics response.
+type requestStatSample = {
+  sourceName: string,
+  chainId: int,
+  method: string,
+  count: int,
+  seconds: float,
 }
 
 // Encapsulates the fetching logic for a chain's sources.
@@ -45,6 +72,25 @@ type t = {
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    let chainId = sourceState.source.chain->ChainMap.Chain.toChainId
+    sourceState.requestStats->Utils.Dict.forEachWithKey((agg, method) => {
+      samples
+      ->Array.push({
+        sourceName: sourceState.source.name,
+        chainId,
+        method,
+        count: agg.count,
+        seconds: agg.seconds,
+      })
+      ->ignore
+    })
+  })
+  samples
+}
 
 // Partition queries currently in flight on this chain's sources. Summed across
 // chains by CrossChainState to enforce the indexer-wide concurrency budget.
@@ -187,6 +233,7 @@ let make = (
       pendingHeightResolvers: [],
       disabled: false,
       lastFailedAt: None,
+      requestStats: Dict.make(),
     }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
@@ -344,7 +391,9 @@ let getSourceNewHeight = async (
         let h = ref(initialHeight)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
           try {
-            h := (await source.getHeightOrThrow())
+            let res = await source.getHeightOrThrow()
+            sourceState->recordRequestStats(res.requestStats)
+            h := res.height
           } catch {
           | _ => ()
           }
@@ -363,7 +412,9 @@ let getSourceNewHeight = async (
     | None =>
       // No subscription, use REST polling
       try {
-        let height = await source.getHeightOrThrow()
+        let res = await source.getHeightOrThrow()
+        sourceState->recordRequestStats(res.requestStats)
+        let height = res.height
 
         newHeight := height
         if height <= knownHeight {
@@ -690,6 +741,7 @@ let executeQuery = async (
         ~retry,
         ~logger,
       )
+      sourceState->recordRequestStats(response.requestStats)
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
@@ -829,7 +881,8 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
 
     try {
       let res = await source.getBlockHashes(~blockNumbers, ~logger)
-      switch res {
+      sourceState->recordRequestStats(res.requestStats)
+      switch res.result {
       | Ok(data) =>
         sourceState.lastFailedAt = None
         responseRef := Some(data)
