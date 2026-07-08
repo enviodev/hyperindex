@@ -1539,17 +1539,22 @@ let getNextQuery = (
       }
     }
 
-    // chainReserved: everything currently in flight for this chain, across
-    // every partition (not just those in range) — the fresh budget this call
-    // may spend is chainTargetItems minus that.
+    // Each partition's existing pending itemsTarget sum, computed once and
+    // reused both for chainReserved (the call-wide fresh-budget ceiling below)
+    // and for seeding reservedByPartition (the per-partition running total the
+    // water-fill rounds check against) — walking mutPendingQueries twice for
+    // the same sum was pure waste.
+    let existingReservedByPartition = Dict.make()
     let chainReserved = ref(0.)
     for idx in 0 to partitionsCount - 1 {
       let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+      let cost = ref(0.)
       for pqIdx in 0 to p.mutPendingQueries->Array.length - 1 {
-        chainReserved :=
-          chainReserved.contents +. (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget
+        cost := cost.contents +. (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget
       }
+      existingReservedByPartition->Dict.set(partitionId, cost.contents)
+      chainReserved := chainReserved.contents +. cost.contents
     }
 
     // Phase A: gap-fill. Walk each partition's pending queries once,
@@ -1623,14 +1628,11 @@ let getNextQuery = (
     )
 
     // Seed each in-range partition's running reservation with its existing
-    // pending itemsTarget plus any gap-fill just created for it (already in
-    // fs.bucket at this point).
+    // pending itemsTarget (already summed above) plus any gap-fill just
+    // created for it (already in fs.bucket at this point).
     let reservedByPartition = Dict.make()
     fillStates->Array.forEach(fs => {
-      let cost = ref(0.)
-      for pqIdx in 0 to fs.p.mutPendingQueries->Array.length - 1 {
-        cost := cost.contents +. (fs.p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget
-      }
+      let cost = ref(existingReservedByPartition->Dict.getUnsafe(fs.partitionId))
       for i in 0 to fs.bucket->Array.length - 1 {
         cost := cost.contents +. (fs.bucket->Array.getUnsafe(i)).itemsTarget
       }
@@ -1720,14 +1722,17 @@ let getNextQuery = (
       fs.pendingCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
 
     let rangePartitions = ref(fillStates->Array.filter(isInRange))
-    // Defensive bound only — real termination comes from cursor advancing
-    // toward chainTargetBlock/queryEndBlock and chunksUsedThisCall capping at
-    // maxPendingChunksPerPartition each round.
+    // Every partition active in a round either finishes (single-shot, or hits
+    // its ceiling/chainTargetBlock) or advances chunksUsedThisCall, which caps
+    // at maxPendingChunksPerPartition — and all active partitions progress in
+    // the same round together, not one-at-a-time — so no partition survives
+    // past maxPendingChunksPerPartition rounds regardless of how many there
+    // are. +1 for the round that observes the last one finish.
     let roundsRef = ref(0)
     while (
       rangePartitions.contents->Array.length > 0 &&
       rangeBudget.contents > 0. &&
-      roundsRef.contents < 1000
+      roundsRef.contents < maxPendingChunksPerPartition + 1
     ) {
       let n = rangePartitions.contents->Array.length
       // Recomputed from what's actually left each round (not the original

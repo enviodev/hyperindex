@@ -244,6 +244,111 @@ describe("CrossChainState fetch control", () => {
 
     t.expect(dispatched).toEqual([(1, 1)])
   })
+
+  Async.it(
+    "checkAndFetch's waterfall lets the furthest-behind chain drain only what it can use, flowing the remainder to the next chain",
+    async t => {
+      // Chain 1 (furthest behind, so priorityOrder visits it first): a single
+      // known-density partition with a short remaining range (endBlock=20 at
+      // density 10 items/block -> 200 items total across 2 chunks). Its real
+      // consumption is capped by that range, far below whatever share of the
+      // 3000-item pool the waterfall would otherwise hand it.
+      let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+      let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
+      let partition1: FetchState.partition = {
+        id: "0",
+        latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+        selection: normalSelection,
+        addressesByContractName: Dict.fromArray([("MockContract", [address1])]),
+        mergeBlock: None,
+        dynamicContract: None,
+        mutPendingQueries: [],
+        prevQueryRange: 10,
+        prevPrevQueryRange: 10,
+        prevRangeSize: 100, // density = 100 / 10 = 10 items/block
+        latestBlockRangeUpdateBlock: 0,
+      }
+      let indexingAddresses1 =
+        Dict.fromArray([
+          (
+            address1->Address.toString,
+            ({
+              contractName: "MockContract",
+              address: address1,
+              registrationBlock: -1,
+              effectiveStartBlock: 0,
+            }: Internal.indexingContract),
+          ),
+        ])->(Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t)
+      let fetchState1: FetchState.t = {
+        optimizedPartitions: FetchState.OptimizedPartitions.make(
+          ~partitions=[partition1],
+          ~maxAddrInPartition=2,
+          ~nextPartitionIndex=1,
+          ~dynamicContracts=Utils.Set.make(),
+        ),
+        startBlock: 0,
+        endBlock: Some(20),
+        buffer: [],
+        normalSelection,
+        latestOnBlockBlockNumber: 0,
+        maxOnBlockBufferSize: 10000,
+        chainId: 1,
+        contractConfigs: Dict.make(),
+        blockLag: 0,
+        onBlockRegistrations: [],
+        knownHeight: 1000,
+        firstEventBlock: Some(0),
+      }
+      let mockSource1 = MockIndexer.Source.make([], ~chain=#1)
+      let a = ChainState.make(
+        ~chainConfig={...baseChainConfig, id: 1},
+        ~fetchState=fetchState1,
+        ~indexingAddresses=indexingAddresses1,
+        ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
+        ~reorgDetection=ReorgDetection.make(
+          ~chainReorgCheckpoints=[],
+          ~maxReorgDepth=200,
+          ~shouldRollbackOnReorg=false,
+        ),
+        ~committedProgressBlockNumber=-1,
+        ~logger=Logging.getLogger(),
+      )
+
+      // Chain 2 (less behind, visited second): a fresh unknown-density
+      // partition — sizes exactly to whatever budget it's given, so it
+      // directly reflects what chain 1 left behind.
+      let b = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=500)
+
+      let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
+
+      let dispatchedItemsByChain = Dict.make()
+      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+        dispatchedItemsByChain->Utils.Dict.setByInt(
+          chain->ChainMap.Chain.toChainId,
+          switch action {
+          | Ready(queries) =>
+            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget)
+          | _ => 0.
+          },
+        )
+        Promise.resolve()
+      })
+
+      t.expect(
+        (
+          dispatchedItemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(1),
+          dispatchedItemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(2),
+        ),
+        ~message="Chain 1's real range caps it at 200 regardless of its share of the 3000-item pool; chain 2 gets the rest",
+      ).toEqual((Some(200.), Some(2800.)))
+
+      t.expect(
+        (a->ChainState.pendingBudget, b->ChainState.pendingBudget),
+        ~message="Each chain's pendingBudget reflects exactly what it was just dispatched",
+      ).toEqual((200., 2800.))
+    },
+  )
 })
 
 describe("CrossChainState readiness", () => {
