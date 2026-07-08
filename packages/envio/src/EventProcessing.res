@@ -289,11 +289,11 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
-// Off the hot path: bulk-materialise the selected transaction fields for the
-// batch's store-backed (HyperSync) items and write them onto the payloads, so
-// handlers read plain objects. A batch can span chains, each with its own store
-// and field mask, so group items by chain before materialising.
-let materializeBatchTransactions = async (
+// Off the hot path: bulk-materialise the selected transaction and block fields
+// for the batch's store-backed (HyperSync) items and write them onto the
+// payloads, so handlers read plain objects. A batch can span chains, each with
+// its own stores and field masks, so group items by chain before materialising.
+let materializeBatchEvents = async (
   batch: Batch.t,
   ~chainStates: dict<ChainState.t>,
   ~ecosystem,
@@ -352,7 +352,7 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
-      await materializeBatchTransactions(batch, ~chainStates, ~ecosystem=config.ecosystem.name)
+      await materializeBatchEvents(batch, ~chainStates, ~ecosystem=config.ecosystem.name)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 

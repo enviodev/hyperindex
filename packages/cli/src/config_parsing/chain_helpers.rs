@@ -342,7 +342,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
-    #[subenum(HypersyncChain)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Robinhood = 4663,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
