@@ -16,9 +16,10 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Estimated items this in-flight query will add, carried from the query so the
-  // shared buffer budget can account for what's already being fetched.
-  estResponseSize: float,
+  // Items this in-flight query is targeting (server maxNumLogs-style cap), carried
+  // from the query so the shared buffer budget can account for what's already
+  // being fetched.
+  itemsTarget: float,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -62,10 +63,12 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Estimated number of items the query will return, from the partition's
-  // density and the query's block range. Used to size itemsTarget and to
-  // track how much of the chain's per-tick budget the query consumes.
-  estResponseSize: float,
+  // Items this query targets: the server-side maxNumLogs-style cap, and the
+  // unit the chain's per-tick budget is reserved/consumed in. For a partition
+  // with known density this is density × the query's block range; for a
+  // partition with no signal yet it's whatever budget share the query was
+  // sized against.
+  itemsTarget: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
 }
@@ -89,20 +92,18 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
 })
 
 // Floor for a query's itemsTarget. Also used by SourceManager as the floor for
-// its own maxNumLogs-style safety net, and by getNextQuery as the minimum
-// probe size when splitting a chain's leftover budget across partitions with
-// unknown density.
-let minEstResponseSize = 2_000.
+// its own maxNumLogs-style safety net.
+let minItemsTarget = 2_000.
 
-// Estimated items a query will return, from the partition's event density
-// (items/block derived from its last response) and the query's block range.
-// toBlock None is the open-ended tail, capped at chainTargetBlock — the soft
-// per-tick horizon the owning chain wants to reach (see getNextQuery).
-// A partition that responded with no items has density 0, so its queries
-// cost 0 — correct, they don't fill the buffer. Only called for partitions
-// with a known density (prevQueryRange > 0); partitions with no signal yet
-// are sized instead by splitting the chain's leftover budget.
-let calculateEstResponseSize = (p: partition, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
+// itemsTarget for a query over [fromBlock, toBlock], from the partition's event
+// density (items/block derived from its last response). toBlock None is the
+// open-ended tail, capped at chainTargetBlock — the soft per-tick horizon the
+// owning chain wants to reach (see getNextQuery). A partition that responded
+// with no items has density 0, so its queries cost 0 — correct, they don't
+// fill the buffer. Only called for partitions with a known density
+// (prevQueryRange > 0); partitions with no signal yet are sized instead
+// against their even split of the chain's range budget.
+let densityItemsTarget = (p: partition, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
   let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
   (toBlock->Option.getOr(chainTargetBlock) - fromBlock + 1)->Int.toFloat *. density
 }
@@ -1320,7 +1321,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
-      estResponseSize: q.estResponseSize,
+      itemsTarget: q.itemsTarget,
       fetchedBlock: None,
     }
 
@@ -1344,8 +1345,11 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 // Most parallel in-flight chunk queries a single partition may have at once.
 let maxPendingChunksPerPartition = 10
 
-@inline
-let pushQueriesForRange = (
+// Fills a gap range (a hole left between completed/pending chunks, e.g. from an
+// out-of-order partial response) unconditionally against the partition's real
+// density — gaps are already-committed range, not subject to this tick's
+// water-fill budget. Returns the created queries' total itemsTarget.
+let pushGapFillQueries = (
   queries: array<query>,
   ~partitionId: string,
   ~rangeFromBlock: int,
@@ -1357,32 +1361,30 @@ let pushQueriesForRange = (
   ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
-  ~estOverride: option<float>,
 ) => {
+  let cost = ref(0.)
   if rangeFromBlock <= knownHeight && maxChunks > 0 {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
       switch maybeChunkRange {
       | None =>
+        let itemsTarget = densityItemsTarget(
+          partition,
+          ~fromBlock=rangeFromBlock,
+          ~toBlock=rangeEndBlock,
+          ~chainTargetBlock,
+        )
         queries->Array.push({
           partitionId,
           fromBlock: rangeFromBlock,
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
-          estResponseSize: switch estOverride {
-          | Some(est) => est
-          | None =>
-            calculateEstResponseSize(
-              partition,
-              ~fromBlock=rangeFromBlock,
-              ~toBlock=rangeEndBlock,
-              ~chainTargetBlock,
-            )
-          },
+          itemsTarget,
           addressesByContractName,
         })
+        cost := cost.contents +. itemsTarget
       | Some(chunkRange) =>
         let maxBlock = switch rangeEndBlock {
         | Some(eb) => eb
@@ -1396,64 +1398,94 @@ let pushQueriesForRange = (
             chunkIdx.contents < maxChunks && chunkFromBlock.contents + chunkSize - 1 <= maxBlock
           ) {
             let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
+            let itemsTarget = densityItemsTarget(
+              partition,
+              ~fromBlock=chunkFromBlock.contents,
+              ~toBlock=Some(chunkToBlock),
+              ~chainTargetBlock,
+            )
             queries->Array.push({
               partitionId,
               fromBlock: chunkFromBlock.contents,
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
-              estResponseSize: calculateEstResponseSize(
-                partition,
-                ~fromBlock=chunkFromBlock.contents,
-                ~toBlock=Some(chunkToBlock),
-                ~chainTargetBlock,
-              ),
+              itemsTarget,
               addressesByContractName,
             })
+            cost := cost.contents +. itemsTarget
             chunkFromBlock := chunkToBlock + 1
             chunkIdx := chunkIdx.contents + 1
           }
         } else {
           // Not enough room for 2 chunks, fall back to a single query
+          let itemsTarget = densityItemsTarget(
+            partition,
+            ~fromBlock=rangeFromBlock,
+            ~toBlock=rangeEndBlock,
+            ~chainTargetBlock,
+          )
           queries->Array.push({
             partitionId,
             fromBlock: rangeFromBlock,
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
-            estResponseSize: calculateEstResponseSize(
-              partition,
-              ~fromBlock=rangeFromBlock,
-              ~toBlock=rangeEndBlock,
-              ~chainTargetBlock,
-            ),
+            itemsTarget,
             addressesByContractName,
           })
+          cost := cost.contents +. itemsTarget
         }
       }
     }
   }
+  cost.contents
 }
 
-// Candidate queries are sized against chainTargetBlock, the soft per-tick
-// horizon the owning chain wants to reach — derived by ChainState from its
-// share of the indexer-wide buffer budget and its chain-level event density.
-// chainTargetBlock is never used as a hard query end, only to size
-// itemsTarget: the true hard bounds stay endBlock/mergeBlock/the lagged head.
+// Per-partition mutable state threaded through the water-fill rounds below.
+type waterFillState = {
+  partitionId: string,
+  p: partition,
+  mutable cursor: int,
+  mutable chunksUsedThisCall: int,
+  // Existing mutPendingQueries count before this call — fixed for the call,
+  // used with chunksUsedThisCall against maxPendingChunksPerPartition.
+  pendingCount: int,
+  queryEndBlock: option<int>,
+  maybeChunkRange: option<int>,
+  // This partition's own slot in queriesByPartitionIndex — gap-fill and every
+  // water-fill round push here directly, so query order falls out of
+  // idsInAscOrder for free (see getNextQuery) instead of a final sort pass.
+  bucket: array<query>,
+}
+
+// Candidate queries are sized against chainTargetBlock, the soft querying
+// horizon the owning chain wants to reach this tick — derived by ChainState
+// from its share of the indexer-wide buffer budget and its chain-level event
+// density. chainTargetBlock is never used as a hard query end, only to (a)
+// select which partitions are "in range" this tick and (b) size an open-ended
+// query with no other ceiling: the true hard bounds stay
+// endBlock/mergeBlock/the lagged head.
 //
-// Partitions with a known density (prevQueryRange > 0) are sized
-// unconditionally against chainTargetBlock, regardless of rangeBudget.
-// rangeBudget only bounds the fan-out of probe queries for partitions with
-// no density signal yet: whatever's left of it after the known-density
-// queries is split across them (each at least minEstResponseSize), so a
-// burst of newly-registered dynamic contracts can't all probe in the same
-// tick. The HyperSync/SVM sources also enforce itemsTarget server-side via a
-// maxNumLogs-style cap, so a wrong estimate truncates the response instead of
-// overshooting the buffer.
+// In-range partitions evenly split chainTargetItems (this chain's target
+// total footprint — in-flight plus new). A partition already holding more
+// than its even share (from earlier ticks' in-flight queries) is skipped this
+// round so its share flows to the others; the split is recomputed every round
+// against the shrinking set of partitions still with range left, so leftover
+// keeps redistributing until the budget or the range runs out.
+//
+// A partition with a trusted density (two or more responses — see
+// getMinHistoryRange) always emits at least one full-size chunk/query once
+// included in a round, sized by its real density — uncapped, may overshoot
+// that round's share (the server also enforces itemsTarget via a
+// maxNumLogs-style cap, so an overshoot truncates the response rather than
+// the buffer). A partition with no trusted density yet (zero or one
+// response — a single sample is too noisy to size by) emits one query sized
+// exactly to its round's share instead.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
-  ~rangeBudget: float,
+  ~chainTargetItems: float,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1488,7 +1520,12 @@ let getNextQuery = (
       }
     }
 
-    let queries = []
+    // One bucket per partition, in idsInAscOrder order — gap-fill and
+    // water-fill both push into a partition's own bucket, so flattening at
+    // the end (see below) reproduces idsInAscOrder without a sort.
+    let queriesByPartitionIndex: array<
+      array<query>,
+    > = Array.fromInitializer(~length=partitionsCount, _ => [])
 
     // Compute queryEndBlock for this partition
     let computeQueryEndBlock = (p: partition) => {
@@ -1502,55 +1539,58 @@ let getNextQuery = (
       }
     }
 
-    // Whether a partition with no pending queries has any range left to query
-    // at all — mirrors pushQueriesForRange's own gate, so a partition already
-    // at its ceiling (endBlock/mergeBlock/knownHeight) doesn't inflate the
-    // probe split below for partitions that actually get queried.
-    let hasEligibleRange = (p: partition) => {
-      let rangeFromBlock = p.latestFetchedBlock.blockNumber + 1
-      rangeFromBlock <= knownHeight &&
-        switch computeQueryEndBlock(p) {
-        | Some(queryEndBlock) => rangeFromBlock <= queryEndBlock
-        | None => true
-        }
+    // chainReserved: everything currently in flight for this chain, across
+    // every partition (not just those in range) — the fresh budget this call
+    // may spend is chainTargetItems minus that.
+    let chainReserved = ref(0.)
+    for idx in 0 to partitionsCount - 1 {
+      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
+      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+      for pqIdx in 0 to p.mutPendingQueries->Array.length - 1 {
+        chainReserved :=
+          chainReserved.contents +. (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget
+      }
     }
 
-    let processPartition = (partitionId, ~estOverride) => {
+    // Phase A: gap-fill. Walk each partition's pending queries once,
+    // unconditionally filling any hole (e.g. from an out-of-order partial
+    // chunk response) — uncapped, same as before this tick's water-fill was
+    // introduced. This also determines each partition's post-gap cursor and
+    // whether it's blocked on an unresolved single-shot query.
+    let fillStates = []
+    let gapFillCost = ref(0.)
+    for idx in 0 to partitionsCount - 1 {
+      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-
+      let bucket = queriesByPartitionIndex->Array.getUnsafe(idx)
       let pendingCount = p.mutPendingQueries->Array.length
-      let partitionQueriesStart = queries->Array.length
-
       let queryEndBlock = computeQueryEndBlock(p)
-
       let maybeChunkRange = getMinHistoryRange(p)
 
-      // Walk pending queries to find open ranges and create queries for each
       let cursor = ref(p.latestFetchedBlock.blockNumber + 1)
       let canContinue = ref(true)
+      let chunksUsedThisCall = ref(0)
       let pqIdx = ref(0)
-      while pqIdx.contents < p.mutPendingQueries->Array.length && canContinue.contents {
+      while pqIdx.contents < pendingCount && canContinue.contents {
         let pq = p.mutPendingQueries->Array.getUnsafe(pqIdx.contents)
 
-        // Gap before this pending query → create queries for the gap range
         if pq.fromBlock > cursor.contents {
-          pushQueriesForRange(
-            queries,
+          let beforeLen = bucket->Array.length
+          let cost = pushGapFillQueries(
+            bucket,
             ~partitionId,
             ~rangeFromBlock=cursor.contents,
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
             ~knownHeight,
             ~chainTargetBlock,
             ~maybeChunkRange,
-            ~maxChunks=maxPendingChunksPerPartition -
-            pendingCount -
-            (queries->Array.length -
-            partitionQueriesStart),
+            ~maxChunks=maxPendingChunksPerPartition - pendingCount - chunksUsedThisCall.contents,
             ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
-            ~estOverride,
           )
+          chunksUsedThisCall := chunksUsedThisCall.contents + (bucket->Array.length - beforeLen)
+          gapFillCost := gapFillCost.contents +. cost
         }
         switch pq {
         | {isChunk: true, toBlock: Some(toBlock), fetchedBlock: Some({blockNumber})}
@@ -1562,92 +1602,164 @@ let getNextQuery = (
         pqIdx := pqIdx.contents + 1
       }
 
-      // Tail range after all pending queries
       if canContinue.contents {
-        pushQueriesForRange(
-          queries,
-          ~partitionId,
-          ~rangeFromBlock=cursor.contents,
-          ~rangeEndBlock=queryEndBlock,
-          ~knownHeight,
-          ~chainTargetBlock,
-          ~maybeChunkRange,
-          ~maxChunks=maxPendingChunksPerPartition -
-          pendingCount -
-          (queries->Array.length -
-          partitionQueriesStart),
-          ~partition=p,
-          ~selection=p.selection,
-          ~addressesByContractName=p.addressesByContractName,
-          ~estOverride,
-        )
+        fillStates
+        ->Array.push({
+          partitionId,
+          p,
+          cursor: cursor.contents,
+          chunksUsedThisCall: chunksUsedThisCall.contents,
+          pendingCount,
+          queryEndBlock,
+          maybeChunkRange,
+          bucket,
+        })
+        ->ignore
       }
     }
 
-    // Split partitions by density signal. Known-density partitions are sized
-    // unconditionally against chainTargetBlock (pass 1); whatever's left of
-    // rangeBudget after them is spread across the unknown-density ones as a
-    // probe query each (pass 2).
-    let knownIds = []
-    let unknownIds = []
-    for idx in 0 to partitionsCount - 1 {
-      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
-      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-      if p.prevQueryRange > 0 {
-        knownIds->Array.push(partitionId)->ignore
-      } else {
-        unknownIds->Array.push(partitionId)->ignore
+    let rangeBudget = ref(
+      Pervasives.max(0., chainTargetItems -. chainReserved.contents -. gapFillCost.contents),
+    )
+
+    // Seed each in-range partition's running reservation with its existing
+    // pending itemsTarget plus any gap-fill just created for it (already in
+    // fs.bucket at this point).
+    let reservedByPartition = Dict.make()
+    fillStates->Array.forEach(fs => {
+      let cost = ref(0.)
+      for pqIdx in 0 to fs.p.mutPendingQueries->Array.length - 1 {
+        cost := cost.contents +. (fs.p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget
       }
-    }
-
-    knownIds->Array.forEach(partitionId => processPartition(partitionId, ~estOverride=None))
-
-    let consumed = queries->Array.reduce(0., (acc, q) => acc +. q.estResponseSize)
-    let leftover = Pervasives.max(0., rangeBudget -. consumed)
-
-    // Only partitions with no in-flight query and an actual range left to
-    // fetch are eligible for a new probe this tick — one already fetching
-    // will fold its response into prevQueryRange/prevPrevQueryRange and leave
-    // the unknown pool by the next tick, naturally rotating the fan-out
-    // across ticks; one already at its ceiling has nothing to probe at all
-    // and shouldn't dilute the split for the ones that do.
-    let probeCandidates = unknownIds->Array.filter(partitionId => {
-      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-      p.mutPendingQueries->Array.length === 0 && p->hasEligibleRange
+      for i in 0 to fs.bucket->Array.length - 1 {
+        cost := cost.contents +. (fs.bucket->Array.getUnsafe(i)).itemsTarget
+      }
+      reservedByPartition->Dict.set(fs.partitionId, cost.contents)
     })
 
-    if leftover > 0. && probeCandidates->Array.length > 0 {
-      // Cap fan-out to how many minEstResponseSize-sized probes the leftover
-      // affords — at least 1, so a chain with any leftover still makes
-      // progress even when it's tiny.
-      let maxProbeCount = Pervasives.max(1, Math.floor(leftover /. minEstResponseSize)->Float.toInt)
-      let probeIds = if probeCandidates->Array.length <= maxProbeCount {
-        probeCandidates
-      } else {
-        probeCandidates->Array.slice(~start=0, ~end=maxProbeCount)
+    // Emits this round's queries for one partition, given its share of the
+    // range budget. Mutates fs.cursor/chunksUsedThisCall and returns the
+    // itemsTarget consumed.
+    //
+    // Density is trusted only once the chunking heuristic is active
+    // (maybeChunkRange requires prevQueryRange AND prevPrevQueryRange, i.e.
+    // two responses — see getMinHistoryRange) — a single response is noisy
+    // (a first query that happens to land on an unusually dense/sparse block
+    // would otherwise mis-size the very next one), so it's treated the same
+    // as a partition with no signal at all: sized exactly to this round's
+    // share instead of an uncapped, one-sample density estimate.
+    let emitQueries = (fs: waterFillState, ~budget: float) => {
+      let p = fs.p
+      let maxBlock = switch fs.queryEndBlock {
+      | Some(eb) => eb
+      | None => chainTargetBlock
       }
-      let share = Math.ceil(leftover /. probeIds->Array.length->Int.toFloat)
-      probeIds->Array.forEach(partitionId =>
-        processPartition(partitionId, ~estOverride=Some(share))
-      )
+      switch fs.maybeChunkRange {
+      | Some(minHistoryRange) =>
+        // Chunking active: strict chunks with a hard endBlock, uncapped real
+        // density — at least one full chunk this round even if budget falls
+        // short.
+        let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
+        let chunkSize = Js.Math.ceil_int(minHistoryRange->Int.toFloat *. 1.8)
+        let chunkCost = density *. chunkSize->Int.toFloat
+        let maxChunksRemaining =
+          maxPendingChunksPerPartition - fs.pendingCount - fs.chunksUsedThisCall
+        let affordable = if chunkCost > 0. {
+          Math.floor(budget /. chunkCost)->Float.toInt
+        } else {
+          maxChunksRemaining
+        }
+        let numChunks = Pervasives.max(1, Pervasives.min(affordable, maxChunksRemaining))
+        let consumed = ref(0.)
+        let created = ref(0)
+        let chunkFromBlock = ref(fs.cursor)
+        while created.contents < numChunks && chunkFromBlock.contents <= maxBlock {
+          let chunkToBlock = Pervasives.min(chunkFromBlock.contents + chunkSize - 1, maxBlock)
+          let itemsTarget = density *. (chunkToBlock - chunkFromBlock.contents + 1)->Int.toFloat
+          fs.bucket->Array.push({
+            partitionId: fs.partitionId,
+            fromBlock: chunkFromBlock.contents,
+            toBlock: Some(chunkToBlock),
+            isChunk: true,
+            selection: p.selection,
+            itemsTarget,
+            addressesByContractName: p.addressesByContractName,
+          })
+          consumed := consumed.contents +. itemsTarget
+          chunkFromBlock := chunkToBlock + 1
+          created := created.contents + 1
+        }
+        fs.cursor = chunkFromBlock.contents
+        fs.chunksUsedThisCall = fs.chunksUsedThisCall + created.contents
+        consumed.contents
+      | None =>
+        // No trusted density yet (zero or one response): one open query sized
+        // exactly to this round's share.
+        let itemsTarget = Math.round(budget)
+        fs.bucket->Array.push({
+          partitionId: fs.partitionId,
+          fromBlock: fs.cursor,
+          toBlock: fs.queryEndBlock,
+          isChunk: false,
+          selection: p.selection,
+          itemsTarget,
+          addressesByContractName: p.addressesByContractName,
+        })
+        fs.cursor = maxBlock + 1
+        fs.chunksUsedThisCall = fs.chunksUsedThisCall + 1
+        itemsTarget
+      }
     }
 
-    // Known- and unknown-density partitions are processed in two separate
-    // passes above (so pass 2 can see pass 1's consumed budget), which
-    // doesn't preserve idsInAscOrder across the two groups — restore it so a
-    // partition's relative query order matches its position in the partition
-    // list, same as the single-pass walk this replaced.
-    let partitionIndexById = Dict.make()
-    for idx in 0 to partitionsCount - 1 {
-      partitionIndexById->Dict.set(optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx), idx)
+    let isInRange = (fs: waterFillState) =>
+      fs.cursor <= chainTargetBlock &&
+      switch fs.queryEndBlock {
+      | Some(eb) => fs.cursor <= eb
+      | None => true
+      } &&
+      fs.pendingCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
+
+    let rangePartitions = ref(fillStates->Array.filter(isInRange))
+    // Defensive bound only — real termination comes from cursor advancing
+    // toward chainTargetBlock/queryEndBlock and chunksUsedThisCall capping at
+    // maxPendingChunksPerPartition each round.
+    let roundsRef = ref(0)
+    while (
+      rangePartitions.contents->Array.length > 0 &&
+      rangeBudget.contents > 0. &&
+      roundsRef.contents < 1000
+    ) {
+      let n = rangePartitions.contents->Array.length
+      // Recomputed from what's actually left each round (not the original
+      // chainTargetItems): a partition already holding a reservation from
+      // outside this round (e.g. a blocked partition's pending query) has
+      // already shrunk the pool for everyone via rangeBudget, so dividing the
+      // remainder evenly — rather than re-deriving each share from the full
+      // original target — avoids double-crediting that reservation and
+      // starving the other in-range partitions of their fair share.
+      let ipb = rangeBudget.contents /. n->Int.toFloat
+      let next = []
+      rangePartitions.contents->Array.forEach(fs => {
+        let reserved = reservedByPartition->Dict.getUnsafe(fs.partitionId)
+        let budget = Pervasives.min(rangeBudget.contents, ipb -. reserved)
+        if budget > 0. {
+          let consumed = emitQueries(fs, ~budget)
+          reservedByPartition->Dict.set(fs.partitionId, reserved +. consumed)
+          rangeBudget := Pervasives.max(0., rangeBudget.contents -. consumed)
+          if fs->isInRange {
+            next->Array.push(fs)->ignore
+          }
+        }
+      })
+      rangePartitions := next
+      roundsRef := roundsRef.contents + 1
     }
-    let _ =
-      queries->Array.sort((a, b) =>
-        Int.compare(
-          partitionIndexById->Dict.getUnsafe(a.partitionId),
-          partitionIndexById->Dict.getUnsafe(b.partitionId),
-        )
-      )
+
+    // Each partition pushed only into its own bucket (indexed by its
+    // idsInAscOrder position), so flattening reproduces idsInAscOrder order
+    // directly — no sort needed even though water-fill rounds interleave
+    // across partitions.
+    let queries = queriesByPartitionIndex->Array.flat
 
     if queries->Utils.Array.isEmpty {
       if shouldWaitForNewBlock.contents {

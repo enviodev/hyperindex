@@ -14,7 +14,7 @@ type t = {
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
   mutable numEventsProcessed: float,
-  // Running sum of in-flight queries' estResponseSize, kept here so the
+  // Running sum of in-flight queries' itemsTarget, kept here so the
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
@@ -376,7 +376,7 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.estResponseSize)
+    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsTarget)
 }
 
 // Drop every in-flight query and release their reservations together, keeping
@@ -403,8 +403,7 @@ let getNextQuery = (cs: t, ~chainTargetItems: float) => {
     )
   | _ => knownHeight
   }
-  let rangeBudget = Pervasives.max(0., chainTargetItems -. cs.pendingBudget)
-  fetchState->FetchState.getNextQuery(~chainTargetBlock, ~rangeBudget)
+  fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
@@ -508,7 +507,7 @@ let handleQueryResult = (
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
-  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.estResponseSize)
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsTarget)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.
@@ -668,7 +667,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
         cs.chainDensity = Some(
           switch cs.chainDensity {
           | None => batchDensity
-          | Some(oldDensity) => (2. *. oldDensity +. batchDensity) /. 3.
+          | Some(oldDensity) => (oldDensity +. batchDensity) /. 2.
           },
         )
       }

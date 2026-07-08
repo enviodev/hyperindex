@@ -224,7 +224,7 @@ let checkAndFetch = async (
       actionByChain->Utils.Dict.setByInt(chainId, action)
     | Ready(queries) => {
         let consumed =
-          queries->Array.reduce(0., (acc, query: FetchState.query) => acc +. query.estResponseSize)
+          queries->Array.reduce(0., (acc, query: FetchState.query) => acc +. query.itemsTarget)
 
         let partitions = Dict.make()
         queries->Array.forEach((query: FetchState.query) =>
@@ -233,7 +233,7 @@ let checkAndFetch = async (
             {
               "fromBlock": query.fromBlock,
               "targetBlock": query.toBlock,
-              "targetEvents": query.estResponseSize->Math.round->Float.toInt,
+              "targetEvents": query.itemsTarget->Math.round->Float.toInt,
             },
           )
         )

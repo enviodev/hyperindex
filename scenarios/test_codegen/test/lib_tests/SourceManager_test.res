@@ -7,7 +7,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
+  itemsTarget: 0.,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -180,7 +180,7 @@ describe("SourceManager source priority with Live sources", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 5000.,
+    itemsTarget: 5000.,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
@@ -380,7 +380,7 @@ describe("SourceManager fetchNext", () => {
   ) => {
     let action = fetchState->FetchState.getNextQuery(
       ~chainTargetBlock=fetchState.knownHeight,
-      ~rangeBudget=50_000.,
+      ~chainTargetItems=50_000.,
     )
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
@@ -486,7 +486,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      estResponseSize: 5000.,
+      itemsTarget: 5000.,
       fetchedBlock: None,
     }
     // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
@@ -508,10 +508,12 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery(~chainTargetBlock=1000, ~rangeBudget=0.),
-      // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
+      "atCap": withPending(10)->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=0.),
+      // 9 pending (45_000 already reserved): plenty of fresh chainTargetItems
+      // headroom above that, so the two-chunk tail is trimmed down to the one
+      // remaining slot by the chunk cap, not by budget.
       "oneSlotLeft": withPending(9)
-      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~rangeBudget=0.)
+      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=100_000.)
       ->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
@@ -545,7 +547,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 16_667.,
+          itemsTarget: 16_667.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -555,7 +557,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 16_667.,
+          itemsTarget: 16_667.,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -565,7 +567,10 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 16_667.,
+          // Processed last: rangeBudget is whatever's actually left after the
+          // first two partitions each rounded their nominal 16_666.67 share
+          // up to 16_667, leaving 1 less than the nominal share here.
+          itemsTarget: 16_666.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
@@ -1432,7 +1437,7 @@ describe("SourceManager.executeQuery", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 5000.,
+    itemsTarget: 5000.,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
