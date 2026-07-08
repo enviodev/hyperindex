@@ -1539,11 +1539,11 @@ let getNextQuery = (
       }
     }
 
-    // Each partition's existing pending itemsTarget sum, computed once and
-    // reused both for chainReserved (the call-wide fresh-budget ceiling below)
-    // and for seeding reservedByPartition (the per-partition running total the
-    // water-fill rounds check against) — walking mutPendingQueries twice for
-    // the same sum was pure waste.
+    // Each partition's existing in-flight itemsTarget, summed once and reused
+    // both for chainReserved (the call-wide fresh-budget ceiling below) and to
+    // seed each partition's water-fill footprint — so a partition already
+    // holding in-flight queries is counted toward its even share and doesn't
+    // get topped up past the others.
     let existingReservedByPartition = Dict.make()
     let chainReserved = ref(0.)
     for idx in 0 to partitionsCount - 1 {
@@ -1623,13 +1623,19 @@ let getNextQuery = (
       }
     }
 
-    let rangeBudget = ref(
-      Pervasives.max(0., chainTargetItems -. chainReserved.contents -. gapFillCost.contents),
+    // Fresh budget for this call — what's left of chainTargetItems after
+    // existing in-flight queries and this tick's gap-fill. The water-fill
+    // rounds below hand it out; a partition already holding a large share
+    // (seeded below) gets proportionally less so totals stay even.
+    let rangeItemsTarget = Pervasives.max(
+      0.,
+      chainTargetItems -. chainReserved.contents -. gapFillCost.contents,
     )
 
-    // Seed each in-range partition's running reservation with its existing
-    // pending itemsTarget (already summed above) plus any gap-fill just
-    // created for it (already in fs.bucket at this point).
+    // Each in-range partition's running footprint: existing in-flight plus any
+    // gap-fill just pushed into its bucket. The water-fill levels every
+    // partition up toward a shared line, so this seed is what a partition
+    // starts the fill already holding.
     let reservedByPartition = Dict.make()
     fillStates->Array.forEach(fs => {
       let cost = ref(existingReservedByPartition->Dict.getUnsafe(fs.partitionId))
@@ -1721,45 +1727,50 @@ let getNextQuery = (
       } &&
       fs.pendingCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
 
-    let rangePartitions = ref(fillStates->Array.filter(isInRange))
-    // Every partition active in a round either finishes (single-shot, or hits
-    // its ceiling/chainTargetBlock) or advances chunksUsedThisCall, which caps
-    // at maxPendingChunksPerPartition — and all active partitions progress in
-    // the same round together, not one-at-a-time — so no partition survives
-    // past maxPendingChunksPerPartition rounds regardless of how many there
-    // are. +1 for the round that observes the last one finish.
-    let roundsRef = ref(0)
+    // Water-fill. Range membership is fixed by chainTargetBlock/queryEndBlock,
+    // so the in-range partitions are filtered once up front; each round levels
+    // every still-not-filled partition up toward a shared line and keeps only
+    // those still in range for the next round.
+    //
+    // The line is (remaining fresh budget + those partitions' current
+    // footprint) / count: a partition already holding more than the line gets
+    // nothing and drops out (its head start is its whole share), while the
+    // rest are topped up to the line — so leftover from an under-using or
+    // filled partition redistributes to whoever can still use it, and totals
+    // stay even regardless of processing order (the line is fixed before the
+    // round's emits).
+    //
+    // No explicit round cap: a partition survives a round only by advancing
+    // chunksUsedThisCall (capped at maxPendingChunksPerPartition) or by
+    // consuming fresh budget, so the not-filled set drains on its own and the
+    // loop also stops once the whole budget is reserved.
+    let notFilledPartitions = ref(fillStates->Array.filter(isInRange))
+    let reservedFromRange = ref(0.)
     while (
-      rangePartitions.contents->Array.length > 0 &&
-      rangeBudget.contents > 0. &&
-      roundsRef.contents < maxPendingChunksPerPartition + 1
+      notFilledPartitions.contents->Array.length > 0 &&
+        reservedFromRange.contents < rangeItemsTarget
     ) {
-      let n = rangePartitions.contents->Array.length
-      // Fixed for the whole round, from what's left after previous rounds —
-      // every partition's share this round is ipb - reserved, independent of
-      // what any other partition in the SAME round consumes. A partition can
-      // still overshoot its share (a chunked partition forced to take at
-      // least one full chunk), but that no longer steals from whoever's
-      // processed after it: rangeBudget is only re-derived once, from this
-      // round's actual total, after everyone's had their fixed shot.
-      let ipb = rangeBudget.contents /. n->Int.toFloat
+      let n = notFilledPartitions.contents->Array.length
+      let footprintSum = ref(0.)
+      notFilledPartitions.contents->Array.forEach(fs =>
+        footprintSum := footprintSum.contents +. reservedByPartition->Dict.getUnsafe(fs.partitionId)
+      )
+      let line =
+        (rangeItemsTarget -. reservedFromRange.contents +. footprintSum.contents) /. n->Int.toFloat
       let next = []
-      let roundConsumed = ref(0.)
-      rangePartitions.contents->Array.forEach(fs => {
+      notFilledPartitions.contents->Array.forEach(fs => {
         let reserved = reservedByPartition->Dict.getUnsafe(fs.partitionId)
-        let budget = ipb -. reserved
+        let budget = line -. reserved
         if budget > 0. {
           let consumed = emitQueries(fs, ~budget)
           reservedByPartition->Dict.set(fs.partitionId, reserved +. consumed)
-          roundConsumed := roundConsumed.contents +. consumed
+          reservedFromRange := reservedFromRange.contents +. consumed
           if fs->isInRange {
             next->Array.push(fs)->ignore
           }
         }
       })
-      rangeBudget := Pervasives.max(0., rangeBudget.contents -. roundConsumed.contents)
-      rangePartitions := next
-      roundsRef := roundsRef.contents + 1
+      notFilledPartitions := next
     }
 
     // Each partition pushed only into its own bucket (indexed by its

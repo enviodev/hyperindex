@@ -4097,3 +4097,77 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
     ))
   })
 })
+
+describe("FetchState.getNextQuery water-fill redistributes a filled partition's leftover", () => {
+  // Two equal-density partitions, chunk cost 180 (density 10 × chunkSize 18).
+  // "capped" can only fetch one chunk (mergeBlock caps its range), so it fills
+  // after a single 180-item chunk and leaves the rest of its share behind;
+  // "deep" has unbounded range. The freed budget must flow to "deep" across
+  // rounds. Before the water-fill line accounted for each partition's own
+  // already-emitted footprint, "deep" was dropped the moment its running
+  // reservation passed a round's fresh share — so it stopped at 2 chunks and
+  // a third of the 900-item budget went unused.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makeChunkPartition = (~id, ~address, ~mergeBlock): FetchState.partition => {
+    id,
+    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock,
+    dynamicContract: None,
+    mutPendingQueries: [],
+    prevQueryRange: 10,
+    prevPrevQueryRange: 10,
+    prevRangeSize: 100, // density = 100 / 10 = 10 items/block
+    latestBlockRangeUpdateBlock: 0,
+  }
+
+  let fetchState: FetchState.t = {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[
+        makeChunkPartition(~id="deep", ~address=mockAddress0, ~mergeBlock=None),
+        makeChunkPartition(~id="capped", ~address=mockAddress1, ~mergeBlock=Some(18)),
+      ],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=2,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  it("keeps topping up the partition with range left until the whole budget is spent", t => {
+    let byPartition = Dict.make()
+    switch fetchState->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=900.) {
+    | Ready(queries) =>
+      queries->Array.forEach((q: FetchState.query) =>
+        switch byPartition->Dict.get(q.partitionId) {
+        | Some(arr) => arr->Array.push((q.fromBlock, q.itemsTarget))->ignore
+        | None => byPartition->Dict.set(q.partitionId, [(q.fromBlock, q.itemsTarget)])
+        }
+      )
+    | _ => ()
+    }
+
+    t.expect(
+      byPartition,
+      ~message="deep absorbs capped's freed budget: 4 chunks (720 items) vs capped's single 180-item chunk",
+    ).toEqual(
+      Dict.fromArray([
+        ("deep", [(1, 180.), (19, 180.), (37, 180.), (55, 180.)]),
+        ("capped", [(1, 180.)]),
+      ]),
+    )
+  })
+})
