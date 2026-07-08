@@ -1,16 +1,13 @@
 open Vitest
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so the common fields don't have to be repeated;
+// every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
   estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -375,13 +372,16 @@ describe("SourceManager fetchNext", () => {
   // dispatch by computing the action from the chain's own fetch state.
   let fetchNext = (
     sourceManager,
-    ~fetchState,
+    ~fetchState: FetchState.t,
     ~executeQuery,
     ~waitForNewBlock,
     ~onNewBlock,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery
+    let action = fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=fetchState.knownHeight,
+      ~rangeBudget=50_000.,
+    )
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -508,9 +508,11 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery,
+      "atCap": withPending(10)->FetchState.getNextQuery(~chainTargetBlock=1000, ~rangeBudget=0.),
       // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
-      "oneSlotLeft": withPending(9)->FetchState.getNextQuery->newQueryCount,
+      "oneSlotLeft": withPending(9)
+      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~rangeBudget=0.)
+      ->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
 
@@ -543,7 +545,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 20_000. /. 3.,
+          estResponseSize: 16_667.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -553,7 +555,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 20_000. /. 3.,
+          estResponseSize: 16_667.,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -563,7 +565,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 20_000. /. 3.,
+          estResponseSize: 16_667.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,

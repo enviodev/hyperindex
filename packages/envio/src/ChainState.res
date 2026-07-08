@@ -18,6 +18,11 @@ type t = {
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
+  // Chain-wide events/block, used to turn a chain's item budget into a target
+  // block for query sizing. Seeded from cumulative progress on construction,
+  // then smoothed with an EMA on every batch (see applyBatchProgress). None
+  // until the chain has processed at least one event.
+  mutable chainDensity: option<float>,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -70,6 +75,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
   ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~chainDensity=None,
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -82,6 +88,7 @@ let make = (
   committedProgressBlockNumber,
   numEventsProcessed,
   pendingBudget: 0.,
+  chainDensity,
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
@@ -228,6 +235,14 @@ let makeInternal = (
   | Config.CustomSources(sources) => sources
   }
 
+  // Seed chain density from whatever progress this chain already has (from a
+  // resumed DB state, or 0 on a fresh chain) — refined per-batch afterwards.
+  let chainDensity = switch fetchState.firstEventBlock {
+  | Some(firstEventBlock) if progressBlockNumber > firstEventBlock && numEventsProcessed > 0. =>
+    Some(numEventsProcessed /. (progressBlockNumber - firstEventBlock)->Int.toFloat)
+  | _ => None
+  }
+
   make(
     ~chainConfig,
     ~fetchState,
@@ -250,6 +265,7 @@ let makeInternal = (
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     ),
+    ~chainDensity,
     ~logger,
   )
 }
@@ -349,8 +365,7 @@ let contractAddresses = (cs: t, ~contractName) =>
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
-let getProgressPercentageAt = (cs: t, ~blockNumber) =>
-  cs.fetchState->FetchState.getProgressPercentageAt(~blockNumber)
+let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
 let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
@@ -371,10 +386,26 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
-// Propose the chain's candidate queries against their natural ceiling
-// (head/endBlock/mergeBlock). CrossChainState admits them against the shared
-// buffer budget afterwards.
-let getNextQuery = (cs: t) => cs.fetchState->FetchState.getNextQuery
+// Turn this chain's share of the indexer-wide buffer budget into a soft
+// target block (via chain density, or knownHeight when density isn't known
+// yet), then propose queries sized against it. Called by CrossChainState's
+// waterfall, furthest-behind chain first, with chainTargetItems set to
+// whatever budget remains at that point in the waterfall.
+let getNextQuery = (cs: t, ~chainTargetItems: float) => {
+  let fetchState = cs.fetchState
+  let knownHeight = fetchState.knownHeight
+  let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
+  let chainTargetBlock = switch cs.chainDensity {
+  | Some(density) if density > 0. =>
+    Pervasives.min(
+      knownHeight,
+      bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
+    )
+  | _ => knownHeight
+  }
+  let rangeBudget = Pervasives.max(0., chainTargetItems -. cs.pendingBudget)
+  fetchState->FetchState.getNextQuery(~chainTargetBlock, ~rangeBudget)
+}
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
 // frontier to the source manager.
@@ -624,6 +655,22 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
         | Some(_) as firstEventBlock => cs.fetchState = {...cs.fetchState, firstEventBlock}
         | None => ()
         }
+      }
+
+      // Chain-wide density update: seed with the batch's own events/block on
+      // the first update, then smooth incrementally so a run of a few
+      // sparse/dense blocks doesn't swing the target block estimate.
+      let deltaBlocks = chainAfterBatch.progressBlockNumber - cs.committedProgressBlockNumber
+      if deltaBlocks > 0 {
+        let batchDensity =
+          (chainAfterBatch.totalEventsProcessed -. cs.numEventsProcessed) /.
+            deltaBlocks->Int.toFloat
+        cs.chainDensity = Some(
+          switch cs.chainDensity {
+          | None => batchDensity
+          | Some(oldDensity) => (2. *. oldDensity +. batchDensity) /. 3.
+          },
+        )
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber

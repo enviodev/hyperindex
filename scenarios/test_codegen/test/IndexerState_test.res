@@ -1,16 +1,13 @@
 open Vitest
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so the common fields don't have to be repeated;
+// every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
   estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }

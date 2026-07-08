@@ -190,98 +190,71 @@ let totalReservedSize = (crossChainState: t) => {
   total.contents
 }
 
-// Furthest-behind first: order candidate queries by the chain progress % at
-// their fromBlock, so the most behind ranges across all chains are admitted
-// before the rest.
-let compareByProgress = (a: FetchState.query, b: FetchState.query) =>
-  Float.compare(a.progress, b.progress)
-
 // Dispatch a fetch tick across the whole indexer from one shared pool of
-// ~targetBufferSize ready events. Every chain proposes its candidate queries
-// (each carrying an estimated response size) up to its own natural ceiling
-// (head/endBlock/mergeBlock), unconstrained by the shared budget; the
-// candidates are then pooled, ordered by chain progress (furthest-behind first),
-// and admitted until the budget is consumed. So the budget is split per query
-// across chains rather than per chain — a chain that can only use a little
-// leaves the rest for the others automatically.
+// ~targetBufferSize ready events, as a waterfall: visit chains furthest-behind
+// first, hand each the budget remaining at that point (plus its own
+// already-reserved share, since a chain's pending queries aren't "spent" —
+// they're this chain's), let it turn that into queries sized against its own
+// chain-density-derived target block, then subtract what it actually used
+// before moving to the next chain. So a chain that can only use a little
+// (density too low, or already caught up) leaves the rest for the others
+// automatically — unlike a per-query pool, this can starve a near-head chain
+// while an earlier one is deep in backfill, which is the intended tradeoff.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
-  let remaining = Pervasives.max(
-    0,
-    crossChainState.targetBufferSize -
-    crossChainState->totalReadyCount -
-    crossChainState->totalReservedSize->Float.toInt,
+  let remaining = ref(
+    Pervasives.max(
+      0.,
+      crossChainState.targetBufferSize->Int.toFloat -.
+      crossChainState->totalReadyCount->Int.toFloat -.
+      crossChainState->totalReservedSize,
+    ),
   )
 
-  let chainIds = crossChainState.chainIds
   let actionByChain = Dict.make()
-  // Candidate queries from every chain. Each query carries its chain id and the
-  // chain progress % at its fromBlock (the admission sort key), set here so the
-  // pool can be ordered without a side tuple per query.
-  let candidates = []
-  for i in 0 to chainIds->Array.length - 1 {
-    let chainId = chainIds->Array.getUnsafe(i)
-    let cs = crossChainState->getChainState(chainId)
-    switch cs->ChainState.getNextQuery {
+  crossChainState
+  ->priorityOrder
+  ->Array.forEach(cs => {
+    let chainId = (cs->ChainState.chainConfig).id
+    let chainTargetItems = remaining.contents +. cs->ChainState.pendingBudget
+    switch cs->ChainState.getNextQuery(~chainTargetItems) {
     | (WaitingForNewBlock | NothingToQuery) as action =>
       actionByChain->Utils.Dict.setByInt(chainId, action)
-    | Ready(queries) =>
-      // Default to NothingToQuery; replaced below if any candidate is admitted.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
-      queries->Array.forEach(query => {
-        query.chainId = chainId
-        query.progress = cs->ChainState.getProgressPercentageAt(~blockNumber=query.fromBlock)
-        candidates->Array.push(query)
-      })
+    | Ready(queries) => {
+        let consumed =
+          queries->Array.reduce(0., (acc, query: FetchState.query) => acc +. query.estResponseSize)
+
+        let partitions = Dict.make()
+        queries->Array.forEach((query: FetchState.query) =>
+          partitions->Dict.set(
+            query.partitionId,
+            {
+              "fromBlock": query.fromBlock,
+              "targetBlock": query.toBlock,
+              "targetEvents": query.estResponseSize->Math.round->Float.toInt,
+            },
+          )
+        )
+        Logging.trace({
+          "msg": "Started querying",
+          "chainId": chainId,
+          "partitions": partitions,
+        })
+
+        actionByChain->Utils.Dict.setByInt(chainId, FetchState.Ready(queries))
+        // Mark the queries in flight and reserve their size against the shared
+        // budget; released as each response lands in handleQueryResult.
+        cs->ChainState.startFetchingQueries(~queries)
+        remaining := Pervasives.max(0., remaining.contents -. consumed)
+      }
     }
-  }
-
-  candidates->Array.sort(compareByProgress)
-
-  // Admit furthest-behind first until the budget runs out. The condition is
-  // checked before each query, so as long as there's any budget left we admit
-  // the next one even when its estimate alone exceeds the remainder — otherwise a
-  // chain whose only query is bigger than the budget would never make progress.
-  let admittedByChain = Dict.make()
-  let running = ref(0.)
-  let remainingF = remaining->Int.toFloat
-  let idx = ref(0)
-  while running.contents < remainingF && idx.contents < candidates->Array.length {
-    let query = candidates->Array.getUnsafe(idx.contents)
-    admittedByChain->Utils.Dict.push(query.chainId->Int.toString, query)
-    running := running.contents +. query.estResponseSize
-    idx := idx.contents + 1
-  }
-  admittedByChain->Dict.forEachWithKey((queries, chainId) => {
-    let partitions = Dict.make()
-    queries->Array.forEach((query: FetchState.query) =>
-      partitions->Dict.set(
-        query.partitionId,
-        {
-          "fromBlock": query.fromBlock,
-          "targetBlock": query.toBlock,
-          "targetEvents": query.estResponseSize->Math.round->Float.toInt,
-        },
-      )
-    )
-    Logging.trace({
-      "msg": "Started querying",
-      "chainId": chainId->Int.fromString->Option.getUnsafe,
-      "partitions": partitions,
-    })
-    actionByChain->Dict.set(chainId, FetchState.Ready(queries))
-    // Mark the admitted queries in flight and reserve their size against the
-    // shared budget; released as each response lands in handleQueryResult.
-    crossChainState
-    ->getChainState(chainId->Int.fromString->Option.getUnsafe)
-    ->ChainState.startFetchingQueries(~queries)
   })
 
   let promises = []
-  for i in 0 to chainIds->Array.length - 1 {
-    let chainId = chainIds->Array.getUnsafe(i)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let chainId = crossChainState.chainIds->Array.getUnsafe(i)
     switch actionByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
