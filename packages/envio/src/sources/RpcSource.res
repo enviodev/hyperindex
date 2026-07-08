@@ -48,18 +48,16 @@ let getKnownRawBlockWithBackoff = async (
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
+  ~recordRequest: (~method: string, ~seconds: float) => unit,
 ) => {
   let currentBackoff = ref(backoffMsOnFailure)
   let result = ref(None)
 
   while result.contents->Option.isNone {
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="eth_getBlockByNumber",
-    )
+    let timerRef = Performance.now()
     switch await getKnownRawBlock(~client, ~blockNumber) {
     | exception err =>
+      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
       Logging.warn({
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
@@ -69,7 +67,9 @@ let getKnownRawBlockWithBackoff = async (
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
-    | json => result := Some(json)
+    | json =>
+      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
+      result := Some(json)
     }
   }
   result.contents->Option.getOrThrow
@@ -300,8 +300,7 @@ let getNextPage = (
   ~rpcClient: EvmRpcClient.t,
   ~mutSuggestedBlockIntervals,
   ~partitionId,
-  ~sourceName,
-  ~chainId,
+  ~recordRequest: (~method: string, ~seconds: float) => unit,
 ): promise<eventBatchQuery> => {
   //If the query hangs for longer than this, reject this promise to reduce the block interval
   let queryTimoutPromise =
@@ -314,7 +313,7 @@ let getNextPage = (
   let latestFetchedBlockPromise = loadBlock(toBlock)
 
   let queryLogs = ({addresses, topicQuery}: logSelection) => {
-    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
+    let timerRef = Performance.now()
     rpcClient.getLogs({
       fromBlock,
       toBlock,
@@ -326,6 +325,9 @@ let getNextPage = (
         | Multiple(topics) => Nullable.make(topics)
         }
       ),
+    })->Promise.thenResolve(items => {
+      recordRequest(~method="eth_getLogs", ~seconds=timerRef->Performance.secondsSince)
+      items
     })
   }
 
@@ -1035,15 +1037,37 @@ let make = (
     ~headers?,
   )
 
+  // Requests are made from shared, memoized loaders, so they can't be
+  // attributed to a single getItemsOrThrow/getHeightOrThrow/getBlockHashes
+  // call at its call site. Every actual request (cache/dedup hits never reach
+  // recordRequest) pushes here; each method drains whatever is pending when it
+  // returns. Since a push always lands in exactly one drain, per-source totals
+  // stay exact even with concurrent in-flight calls — which call happens to
+  // drain a given entry doesn't matter, since SourceManager aggregates by
+  // (source, method) regardless of which call returned it.
+  let pendingRequestStats: array<Source.requestStat> = []
+  let recordRequest = (~method, ~seconds) => {
+    pendingRequestStats->Array.push({Source.method, seconds})->ignore
+  }
+  let drainRequestStats = () => {
+    let stats = pendingRequestStats->Utils.Array.copy
+    pendingRequestStats->Utils.Array.clearInPlace
+    stats
+  }
+
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_getTransactionByHash",
-        )
-        Rpc.GetTransactionByHash.rawRoute->Rest.fetch(transactionHash, ~client)
+        let timerRef = Performance.now()
+        Rpc.GetTransactionByHash.rawRoute
+        ->Rest.fetch(transactionHash, ~client)
+        ->Promise.thenResolve(res => {
+          recordRequest(
+            ~method="eth_getTransactionByHash",
+            ~seconds=timerRef->Performance.secondsSince,
+          )
+          res
+        })
       },
       ~onError=(am, ~exn) => {
         Logging.error({
@@ -1071,6 +1095,7 @@ let make = (
           ~chain,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
+          ~recordRequest,
         )
       },
       ~onError=(am, ~exn) => {
@@ -1093,12 +1118,16 @@ let make = (
   let makeReceiptLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_getTransactionReceipt",
-        )
-        Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(transactionHash, ~client)
+        let timerRef = Performance.now()
+        Rpc.GetTransactionReceipt.rawRoute
+        ->Rest.fetch(transactionHash, ~client)
+        ->Promise.thenResolve(res => {
+          recordRequest(
+            ~method="eth_getTransactionReceipt",
+            ~seconds=timerRef->Performance.secondsSince,
+          )
+          res
+        })
       },
       ~onError=(am, ~exn) => {
         Logging.error({
@@ -1206,8 +1235,7 @@ let make = (
       ~rpcClient,
       ~mutSuggestedBlockIntervals,
       ~partitionId,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~recordRequest,
     )
 
     let executedBlockInterval = suggestedToBlock - fromBlock + 1
@@ -1356,6 +1384,7 @@ let make = (
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats: drainRequestStats(),
     }
   }
 
@@ -1372,21 +1401,25 @@ let make = (
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      rawBlocks
-      ->Array.map(json => {
-        let b = parseBlockInfo(json)
+      let result =
+        rawBlocks
+        ->Array.map(json => {
+          let b = parseBlockInfo(json)
 
-        (
-          {
-            blockNumber: b.number,
-            blockHash: b.hash,
-            blockTimestamp: b.timestamp,
-          }: ReorgDetection.blockDataWithTimestamp
-        )
-      })
-      ->Ok
+          (
+            {
+              blockNumber: b.number,
+              blockHash: b.hash,
+              blockTimestamp: b.timestamp,
+            }: ReorgDetection.blockDataWithTimestamp
+          )
+        })
+        ->Ok
+      {Source.result, requestStats: drainRequestStats()}
     })
-    ->Promise.catch(exn => exn->Error->Promise.resolve)
+    ->Promise.catch(exn =>
+      {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve
+    )
   }
 
   let createHeightSubscription =
@@ -1408,33 +1441,11 @@ let make = (
         await rpcClient.getHeight()
       } catch {
       | exn =>
-        let seconds = timerRef->Performance.secondsSince
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_blockNumber",
-        )
-        Prometheus.SourceRequestCount.addSeconds(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_blockNumber",
-          ~seconds,
-        )
+        recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
         exn->throw
       }
-      let seconds = timerRef->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-      )
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-        ~seconds,
-      )
-      height
+      recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
+      {height, requestStats: drainRequestStats()}
     },
     getItemsOrThrow,
     ?createHeightSubscription,

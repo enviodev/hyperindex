@@ -27,9 +27,9 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
           blockTimestamp: n,
         },
       )
-      Promise.resolve(Ok(data))
+      Promise.resolve({Source.result: Ok(data), requestStats: []})
     },
-    getHeightOrThrow: () => Promise.resolve(100),
+    getHeightOrThrow: () => Promise.resolve({Source.height: 100, requestStats: []}),
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,

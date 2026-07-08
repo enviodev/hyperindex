@@ -293,6 +293,7 @@ module Make = () => {
           totalTimeElapsed: 0.,
         }: Source.blockRangeFetchStats
       ),
+      requestStats: [],
     }
   }
 

@@ -47,7 +47,7 @@ describe("RpcSource - getHeightOrThrow", () => {
       allEventParams: [],
       lowercaseAddresses: false,
     })
-    let height = await source.getHeightOrThrow()
+    let {height} = await source.getHeightOrThrow()
     t.expect({
       "aboveLowerBound": height > 21994218,
       "belowUpperBound": height < 30000000,

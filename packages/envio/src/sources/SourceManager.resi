@@ -21,6 +21,16 @@ let make: (
 
 let getActiveSource: t => Source.t
 
+type requestStatSample = {
+  sourceName: string,
+  chainId: int,
+  method: string,
+  count: int,
+  seconds: float,
+}
+
+let getRequestStatSamples: t => array<requestStatSample>
+
 let inFlightCount: t => int
 
 let onReorg: (t, ~rollbackTargetBlock: int) => unit

@@ -95,14 +95,7 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
       let timerRef = Performance.now()
       let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
       let seconds = timerRef->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId,
-        ~method="getSlot",
-        ~seconds,
-      )
-      height
+      {Source.height, requestStats: [{Source.method: "getSlot", seconds}]}
     },
     getItemsOrThrow: (
       ~fromBlock as _,
