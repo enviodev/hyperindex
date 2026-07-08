@@ -31,43 +31,45 @@ envio_indexing_addresses{chainId="137"} 0`,
 })
 
 describe("Metrics.renderSourceRequests", () => {
-  it("Hand-rolls both HELP/TYPE blocks with one sample pair per (source, chain, method)", t => {
-    let rendered = Metrics.renderSourceRequests(
-      ~samples=[
-        {SourceManager.sourceName: "HyperSync", chainId: 1, method: "getLogs", count: 3, seconds: 1.5},
-        {
-          SourceManager.sourceName: "RPC (host)",
-          chainId: 137,
-          method: "heightSubscription",
-          count: 1,
-          seconds: 0.,
-        },
-      ],
-    )
+  it(
+    "Hand-rolls both HELP/TYPE blocks with one sample pair per (source, chain, method), omitting zero-second lines",
+    t => {
+      let rendered = Metrics.renderSourceRequests(
+        ~samples=[
+          {
+            SourceManager.sourceName: "HyperSync",
+            chainId: 1,
+            method: "getLogs",
+            count: 3,
+            seconds: 1.5,
+          },
+          {
+            SourceManager.sourceName: "RPC (host)",
+            chainId: 137,
+            method: "heightSubscription",
+            count: 1,
+            seconds: 0.,
+          },
+        ],
+      )
 
-    t.expect(rendered).toBe(
-      `
+      t.expect(rendered).toBe(
+        `
 # HELP envio_source_request_total The number of requests made to data sources.
 # TYPE envio_source_request_total counter
 envio_source_request_total{source="HyperSync",chainId="1",method="getLogs"} 3
 envio_source_request_total{source="RPC (host)",chainId="137",method="heightSubscription"} 1
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
-envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 1.5
-envio_source_request_seconds_total{source="RPC (host)",chainId="137",method="heightSubscription"} 0`,
-    )
-  })
+envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 1.5`,
+      )
+    },
+  )
 
-  it("Renders only the headers when there are no samples", t => {
+  it("Renders nothing when there are no samples", t => {
     let rendered = Metrics.renderSourceRequests(~samples=[])
 
-    t.expect(rendered).toBe(
-      `
-# HELP envio_source_request_total The number of requests made to data sources.
-# TYPE envio_source_request_total counter
-# HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
-# TYPE envio_source_request_seconds_total counter`,
-    )
+    t.expect(rendered).toBe("")
   })
 })
 
