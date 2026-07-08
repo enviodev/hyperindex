@@ -8,6 +8,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
+  density: None,
   chainId: 0,
   progress: 0.,
   itemsTarget: 0,
@@ -426,6 +427,7 @@ describe("SourceManager fetchNext", () => {
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      prevRangeSize: 0,
       latestBlockRangeUpdateBlock: 0,
     }
   }

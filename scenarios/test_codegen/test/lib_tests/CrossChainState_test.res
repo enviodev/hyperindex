@@ -93,6 +93,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     mutPendingQueries: [],
     prevQueryRange: 0,
     prevPrevQueryRange: 0,
+    prevRangeSize: 0,
     latestBlockRangeUpdateBlock: 0,
   }
   let indexingAddresses =
@@ -317,6 +318,7 @@ describe("CrossChainState two-budget scheduling", () => {
     mutPendingQueries: [],
     prevQueryRange: 0,
     prevPrevQueryRange: 0,
+    prevRangeSize: 0,
     latestBlockRangeUpdateBlock: 0,
   }
 

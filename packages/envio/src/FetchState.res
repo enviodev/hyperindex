@@ -44,6 +44,13 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
+  // Item count of the response that set prevQueryRange. Paired with it to derive
+  // this partition's own event density (prevRangeSize / prevQueryRange), read as
+  // an override of the chain-level density when this specific partition has its
+  // own proven history. On merge, combined from the source partitions' own
+  // densities (not reset to 0) so a partition merged from a proven-empty region
+  // still reads as cheap instead of falling back to a coarser chain-wide guess.
+  prevRangeSize: int,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated prevQueryRange. Prevents degradation of the chunking heuristic
   // when parallel query responses arrive out of order.
@@ -55,6 +62,11 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Owning partition's own event density (items/block), from its last response.
+  // `None` until the partition has two responses of its own (same gate as
+  // chunking — a single sample is too noisy). Read by the scheduler as a precise
+  // override of the chain-level density when available.
+  density: option<float>,
   // Owning chain and the chain progress % at the query's fromBlock. Set by the
   // cross-chain scheduler so candidate queries can be pooled and ordered
   // (furthest-behind first) without allocating a side tuple per query.
@@ -106,6 +118,16 @@ let getMinHistoryRange = (p: partition) => {
   | (a, b) => Some(a < b ? a : b)
   }
 }
+
+// A partition's own event density (items/block) from its last response. `None`
+// until it has two responses of history (same gate as chunking): a single sample
+// is too noisy to size fetches against. A partition that responded with no items
+// has density 0 (correct — its queries add nothing to the buffer).
+let partitionDensity = (p: partition) =>
+  switch getMinHistoryRange(p) {
+  | None => None
+  | Some(_) => Some(p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat)
+  }
 
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
@@ -186,6 +208,14 @@ module OptimizedPartitions = {
       let newId = nextPartitionIndexRef.contents->Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       let minRange = getMinQueryRange([p1, p2])
+      // Combine the source partitions' own densities (mean of whichever are
+      // known) rather than assuming 0, so a partition merged out of a
+      // proven-empty region still reads as cheap instead of unknown.
+      let mergedDensity = switch (partitionDensity(p1), partitionDensity(p2)) {
+      | (Some(d1), Some(d2)) => Some((d1 +. d2) /. 2.)
+      | (Some(d), None) | (None, Some(d)) => Some(d)
+      | (None, None) => None
+      }
       {
         id: newId,
         dynamicContract: Some(contractName),
@@ -196,6 +226,10 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
+        prevRangeSize: switch mergedDensity {
+        | Some(density) => (density *. minRange->Int.toFloat)->Float.toInt
+        | None => 0
+        },
         latestBlockRangeUpdateBlock: 0,
       }
     }
@@ -433,6 +467,7 @@ module OptimizedPartitions = {
     optimizedPartitions: t,
     ~query,
     ~knownHeight,
+    ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
     let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
@@ -464,6 +499,7 @@ module OptimizedPartitions = {
         }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
+    let updatedPrevRangeSize = shouldUpdateBlockRange ? itemsCount : p.prevRangeSize
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -485,6 +521,7 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
+        prevRangeSize: updatedPrevRangeSize,
         latestBlockRangeUpdateBlock: shouldUpdateBlockRange
           ? latestFetchedBlock.blockNumber
           : p.latestBlockRangeUpdateBlock,
@@ -889,6 +926,7 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
@@ -1224,6 +1262,7 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
+                        prevRangeSize: p.prevRangeSize,
                         latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
                       })
                     }
@@ -1288,6 +1327,7 @@ let handleQueryResult = (
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
+      ~itemsCount=newItems->Array.length,
       ~latestFetchedBlock,
     ),
     ~mutItems=?{
@@ -1345,6 +1385,7 @@ let pushQueriesForRange = (
   ~knownHeight: int,
   ~maybeChunkRange: option<int>,
   ~maxChunks: int,
+  ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1360,6 +1401,7 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
+          density: partitionDensity(partition),
           chainId: 0,
           progress: 0.,
           itemsTarget: 0,
@@ -1385,6 +1427,7 @@ let pushQueriesForRange = (
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
+              density: partitionDensity(partition),
               chainId: 0,
               progress: 0.,
               itemsTarget: 0,
@@ -1402,6 +1445,7 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
+            density: partitionDensity(partition),
             chainId: 0,
             progress: 0.,
             itemsTarget: 0,
@@ -1414,12 +1458,15 @@ let pushQueriesForRange = (
   }
 }
 
-// Candidate queries span the natural ceiling (head/endBlock/mergeBlock).
-// CrossChainState.checkAndFetch is what bounds each tick: it decides how far past
-// the frontier to reach from the buffer budget and the chain's density (tracked on
-// ChainState), admits only the candidates within that reach, and sets each one's
-// itemsTarget from that density — the HyperSync/SVM sources enforce that target
-// server-side as a maxNumLogs-style cap so the buffer can't overshoot.
+// Candidate queries span the natural ceiling (head/endBlock/mergeBlock), each
+// carrying its own partition's density (density: option<float>) when that
+// partition has its own history. CrossChainState.checkAndFetch is what bounds
+// each tick: it decides how far past the frontier to reach from the buffer
+// budget and the chain's density (tracked on ChainState, used for the reach
+// decision and as a fallback for candidates without their own), admits only the
+// candidates within that reach, and sets each one's itemsTarget from whichever
+// density it has — the HyperSync/SVM sources enforce that target server-side as
+// a maxNumLogs-style cap so the buffer can't overshoot.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
 ) => {
@@ -1492,6 +1539,7 @@ let getNextQuery = (
             pendingCount -
             (queries->Array.length -
             partitionQueriesStart),
+            ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
@@ -1519,6 +1567,7 @@ let getNextQuery = (
           pendingCount -
           (queries->Array.length -
           partitionQueriesStart),
+          ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
         )
@@ -1621,6 +1670,7 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      prevRangeSize: 0,
       latestBlockRangeUpdateBlock: 0,
     })
   }
