@@ -154,6 +154,19 @@ describe("ChainState chain density EMA (per batch)", () => {
     t.expect(cs->ChainState.chainDensity).toEqual(Some(10.))
   })
 
+  it("stays None after a progress-only batch with no events", t => {
+    let cs = makeChainState(
+      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+    )
+    let fetchState = dummyFetchState()
+    // Progressed 10 blocks but processed 0 events — must not seed a 0 density.
+    cs->ChainState.applyBatchProgress(
+      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=0., ~fetchState),
+      ~blockTimestampName="timestamp",
+    )
+    t.expect(cs->ChainState.chainDensity).toEqual(None)
+  })
+
   it("blends with the previous density as (old + new) / 2 on later batches", t => {
     let cs = makeChainState(
       makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),

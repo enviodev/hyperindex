@@ -856,15 +856,20 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       // sparse/dense blocks doesn't swing the target block estimate.
       let deltaBlocks = chainAfterBatch.progressBlockNumber - cs.committedProgressBlockNumber
       if deltaBlocks > 0 {
-        let batchDensity =
-          (chainAfterBatch.totalEventsProcessed -. cs.numEventsProcessed) /.
-            deltaBlocks->Int.toFloat
-        cs.chainDensity = Some(
-          switch cs.chainDensity {
-          | None => batchDensity
-          | Some(oldDensity) => (oldDensity +. batchDensity) /. 2.
-          },
-        )
+        let deltaEvents = chainAfterBatch.totalEventsProcessed -. cs.numEventsProcessed
+        // Don't seed a density before the first event is seen — a progress-only
+        // batch would otherwise set it to 0, matching the resume-seed guard.
+        switch (cs.chainDensity, deltaEvents > 0.) {
+        | (None, false) => ()
+        | _ =>
+          let batchDensity = deltaEvents /. deltaBlocks->Int.toFloat
+          cs.chainDensity = Some(
+            switch cs.chainDensity {
+            | None => batchDensity
+            | Some(oldDensity) => (oldDensity +. batchDensity) /. 2.
+            },
+          )
+        }
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
