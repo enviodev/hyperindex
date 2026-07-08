@@ -247,11 +247,12 @@ let querySpan = (query: FetchState.query, ~reach) =>
 // stuck pile can't balloon.
 //
 // Every chain proposes candidates up to its natural ceiling. From the ready budget
-// and each warm chain's frontier density the scheduler picks one aligned
-// progress-fraction advance (so chains stay level for timestamp-ordered
-// processing) and turns it into a per-chain block reach. Each candidate is a
-// gap-closer (near the frontier) or a prefetch (parked ahead); its itemsTarget is
-// its density times the blocks it covers within the reach, and it draws from the
+// and each warm chain's density (an EMA tracked on ChainState from processed
+// progress) the scheduler picks one aligned progress-fraction advance (so chains
+// stay level for timestamp-ordered processing) and turns it into a per-chain block
+// reach. Each candidate is a gap-closer (near the frontier) or a prefetch (parked
+// ahead); its itemsTarget is the chain's density times the blocks it covers within
+// the reach (split across same-chain, same-class siblings), and it draws from the
 // matching budget. Admission runs furthest-behind first, so the most behind chains
 // claim the budgets first.
 let checkAndFetch = async (
@@ -290,8 +291,9 @@ let checkAndFetch = async (
   let frontierByChain = Dict.make()
   let gapReachByChain = Dict.make()
   let prefetchReachByChain = Dict.make()
-  // Warm chains (frontier density known) and the running Σ(density × range) that
-  // sizes the shared progress advance.
+  // Chains with a known density (the ChainState-tracked EMA) and the running
+  // Σ(density × range) that sizes the shared progress advance.
+  let chainDensityByChain = Dict.make()
   let warmChains = []
   let weightSum = ref(0.)
   for i in 0 to chainIds->Array.length - 1 {
@@ -305,8 +307,9 @@ let checkAndFetch = async (
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
       let range = cs->ChainState.fetchRange
       frontierByChain->Utils.Dict.setByInt(chainId, cs->ChainState.frontierBlockNumber)
-      switch cs->ChainState.frontierDensity {
+      switch cs->ChainState.density {
       | Some(density) if range > 0 =>
+        chainDensityByChain->Utils.Dict.setByInt(chainId, density)
         weightSum := weightSum.contents +. density *. range->Int.toFloat
         warmChains->Array.push((chainId, range))->ignore
       | _ =>
@@ -346,25 +349,39 @@ let checkAndFetch = async (
   // Furthest-behind first, so the most-behind chains claim the budgets first.
   candidates->Array.sort(compareByProgress)
 
-  // Even fallback cap for admitted candidates whose partition has no density yet,
-  // split within each budget class across the density-less candidates in it.
-  let gapDensityLess = ref(0)
-  let prefetchDensityLess = ref(0)
-  candidates->Array.forEach(query =>
-    if query.density->Option.isNone {
-      let frontier =
-        frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
-      if query.fromBlock <= frontier + gapCloserWindow {
-        gapDensityLess := gapDensityLess.contents + 1
+  // Density is chain-wide now, not per partition, so a warm chain's target for
+  // the region a class's reach covers (density × span) has to be split across
+  // however many of that chain's candidates land in the same class this tick —
+  // otherwise N frontier partitions on one chain would each separately claim the
+  // full chain-level estimate. Cold chains (density unknown) keep the old pooled
+  // even-share fallback, split across every cold-chain candidate in the class.
+  let gapCountByChain = Dict.make()
+  let prefetchCountByChain = Dict.make()
+  let gapColdCount = ref(0)
+  let prefetchColdCount = ref(0)
+  candidates->Array.forEach(query => {
+    let frontier =
+      frontierByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0)
+    let isGapCloser = query.fromBlock <= frontier + gapCloserWindow
+    switch chainDensityByChain->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId) {
+    | Some(_) =>
+      let counts = isGapCloser ? gapCountByChain : prefetchCountByChain
+      counts->Utils.Dict.setByInt(
+        query.chainId,
+        counts->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)->Option.getOr(0) + 1,
+      )
+    | None =>
+      if isGapCloser {
+        gapColdCount := gapColdCount.contents + 1
       } else {
-        prefetchDensityLess := prefetchDensityLess.contents + 1
+        prefetchColdCount := prefetchColdCount.contents + 1
       }
     }
-  )
+  })
   let evenShare = (budget, count) =>
     count > 0 ? Js.Math.ceil_int(budget->Int.toFloat /. count->Int.toFloat) : 0
-  let gapEvenShare = evenShare(readyBudget, gapDensityLess.contents)
-  let prefetchEvenShare = evenShare(prefetchBudget, prefetchDensityLess.contents)
+  let gapEvenShare = evenShare(readyBudget, gapColdCount.contents)
+  let prefetchEvenShare = evenShare(prefetchBudget, prefetchColdCount.contents)
 
   let admittedByChain = Dict.make()
   let readyRemaining = ref(readyBudget)
@@ -387,8 +404,15 @@ let checkAndFetch = async (
     if span > 0 {
       let remaining = isGapCloser ? readyRemaining : prefetchRemaining
       if remaining.contents > 0 {
-        let baseTarget = switch query.density {
-        | Some(density) => Math.round(density *. span->Int.toFloat)->Float.toInt
+        let baseTarget = switch chainDensityByChain->Utils.Dict.dangerouslyGetByIntNonOption(
+          query.chainId,
+        ) {
+        | Some(density) =>
+          let count =
+            (isGapCloser ? gapCountByChain : prefetchCountByChain)
+            ->Utils.Dict.dangerouslyGetByIntNonOption(query.chainId)
+            ->Option.getOr(1)
+          Math.round(density *. span->Int.toFloat /. count->Int.toFloat)->Float.toInt
         | None => isGapCloser ? gapEvenShare : prefetchEvenShare
         }
         let admitted = Pervasives.min(remaining.contents, Pervasives.max(1, baseTarget))

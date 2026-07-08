@@ -22,6 +22,16 @@ type t = {
   // advancing. Both are incremented on dispatch and decremented as responses land.
   mutable reservedReadySize: float,
   mutable reservedTotalSize: float,
+  // Chain-wide event density (items/block), an exponential moving average.
+  // Seeded at construction from lifetime progress (numEventsProcessed over the
+  // blocks since firstEventBlock), then blended with each batch's own rate as
+  // 2:1 new:old so it tracks recent behavior without whipsawing on one small
+  // batch. None until firstEventBlock is known (chain hasn't seen an event yet).
+  // The scheduler reads it to size fetch reach/itemsTarget — approximate is
+  // fine, since the source enforces itemsTarget as a hard cap, so an over/under
+  // estimate just truncates or under-fills a response instead of overshooting
+  // the buffer.
+  mutable density: option<float>,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -87,6 +97,11 @@ let make = (
   numEventsProcessed,
   reservedReadySize: 0.,
   reservedTotalSize: 0.,
+  density: switch fetchState.firstEventBlock {
+  | Some(firstEventBlock) if committedProgressBlockNumber > firstEventBlock =>
+    Some(numEventsProcessed /. (committedProgressBlockNumber - firstEventBlock)->Int.toFloat)
+  | _ => None
+  },
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
@@ -345,6 +360,7 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let reservedReadySize = (cs: t) => cs.reservedReadySize
 let reservedTotalSize = (cs: t) => cs.reservedTotalSize
+let density = (cs: t) => cs.density
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
 
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
@@ -355,7 +371,6 @@ let contractAddresses = (cs: t, ~contractName) =>
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let frontierBlockNumber = (cs: t) => cs.fetchState->FetchState.bufferBlockNumber
-let frontierDensity = (cs: t) => cs.fetchState->FetchState.frontierDensity
 let fetchRange = (cs: t) => cs.fetchState->FetchState.fetchRange
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
 let getProgressPercentageAt = (cs: t, ~blockNumber) =>
@@ -646,6 +661,29 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
         | Some(_) as firstEventBlock => cs.fetchState = {...cs.fetchState, firstEventBlock}
         | None => ()
         }
+      }
+
+      // Blend this batch's observed rate (events/blocks advanced) into the
+      // running density estimate, 2:1 new:old. `prevBlock` treats an unset
+      // committedProgressBlockNumber (-1, before this chain's first batch) as
+      // firstEventBlock, so the very first batch's sample uses the same
+      // `committed - firstEventBlock` span convention as the make-time seed
+      // (and fetchRange), instead of double-counting via the -1 sentinel.
+      switch cs.fetchState.firstEventBlock {
+      | Some(firstEventBlock) =>
+        let prevBlock = Pervasives.max(cs.committedProgressBlockNumber, firstEventBlock)
+        let deltaBlocks = chainAfterBatch.progressBlockNumber - prevBlock
+        if deltaBlocks > 0 {
+          let deltaEvents = chainAfterBatch.totalEventsProcessed -. cs.numEventsProcessed
+          let sampleDensity = deltaEvents /. deltaBlocks->Int.toFloat
+          cs.density = Some(
+            switch cs.density {
+            | Some(prevDensity) => (2. *. sampleDensity +. prevDensity) /. 3.
+            | None => sampleDensity
+            },
+          )
+        }
+      | None => ()
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber

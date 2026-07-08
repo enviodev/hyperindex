@@ -44,9 +44,9 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
-  // Item count of the response that set prevQueryRange. Paired with it to derive
-  // the partition's event density (prevRangeSize / prevQueryRange) for sizing
-  // queries against the buffer budget.
+  // Item count of the response that set prevQueryRange. Unread now that density
+  // is tracked chain-wide on ChainState instead of per partition; left in place
+  // to avoid touching every partition-construction site for no behavior change.
   prevRangeSize: int,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated prevQueryRange. Prevents degradation of the chunking heuristic
@@ -59,10 +59,6 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Owning partition's event density (items/block) from its last response, or
-  // `None` until it has two responses. The cross-chain scheduler reads it to size
-  // this query's itemsTarget (density × the block window it's allowed to reach).
-  density: option<float>,
   // Owning chain and the chain progress % at the query's fromBlock. Set by the
   // cross-chain scheduler so candidate queries can be pooled and ordered
   // (furthest-behind first) without allocating a side tuple per query.
@@ -114,16 +110,6 @@ let getMinHistoryRange = (p: partition) => {
   | (a, b) => Some(a < b ? a : b)
   }
 }
-
-// A partition's event density (items/block) from its last response. `None` until
-// it has two responses of history (same gate as chunking): a single sample is
-// too noisy to size fetches against. A partition that responded with no items
-// has density 0 (correct — its queries add nothing to the buffer).
-let partitionDensity = (p: partition) =>
-  switch getMinHistoryRange(p) {
-  | None => None
-  | Some(_) => Some(p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat)
-  }
 
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
@@ -609,59 +595,6 @@ let bufferReadyCount = (fetchState: t) => {
     }
   }
   lo.contents
-}
-
-// Below this fraction of the frontier cluster having a density reading, the
-// cluster estimate is too thin to trust and callers fall back to a fixed reach.
-let minDensityCoverage = 0.2
-
-// Event density (items/block) of the region about to be fetched: the sum of
-// densities over the partitions sitting at the frontier (the back cluster), not
-// every partition — partitions parked far ahead cover a different stretch of the
-// chain and contribute nothing here. Partitions are stored sorted by
-// latestFetchedBlock, so the cluster is the prefix within tooFarBlockRange of the
-// earliest one. When only some cluster partitions have a reading, the known
-// average is projected across the whole cluster; below minDensityCoverage there's
-// too little signal and it returns None (caller uses a fixed reach instead).
-let frontierDensity = ({optimizedPartitions}: t): option<float> => {
-  let ids = optimizedPartitions.idsInAscOrder
-  switch ids->Array.get(0) {
-  | None => None
-  | Some(firstId) =>
-    let clusterMax =
-      (optimizedPartitions.entities->Dict.getUnsafe(firstId)).latestFetchedBlock.blockNumber +
-      OptimizedPartitions.tooFarBlockRange
-    let clusterCount = ref(0)
-    let knownCount = ref(0)
-    let knownSum = ref(0.)
-    let idx = ref(0)
-    let inCluster = ref(true)
-    while idx.contents < ids->Array.length && inCluster.contents {
-      let p = optimizedPartitions.entities->Dict.getUnsafe(ids->Array.getUnsafe(idx.contents))
-      if p.latestFetchedBlock.blockNumber <= clusterMax {
-        clusterCount := clusterCount.contents + 1
-        switch partitionDensity(p) {
-        | Some(density) =>
-          knownCount := knownCount.contents + 1
-          knownSum := knownSum.contents +. density
-        | None => ()
-        }
-        idx := idx.contents + 1
-      } else {
-        inCluster := false
-      }
-    }
-    if (
-      clusterCount.contents === 0 ||
-        knownCount.contents->Int.toFloat /. clusterCount.contents->Int.toFloat < minDensityCoverage
-    ) {
-      None
-    } else {
-      Some(
-        knownSum.contents /. knownCount.contents->Int.toFloat *. clusterCount.contents->Int.toFloat,
-      )
-    }
-  }
 }
 
 // Blocks spanned by the chain's indexed range, used to turn a progress-fraction
@@ -1423,7 +1356,6 @@ let pushQueriesForRange = (
   ~knownHeight: int,
   ~maybeChunkRange: option<int>,
   ~maxChunks: int,
-  ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1439,7 +1371,6 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
-          density: partitionDensity(partition),
           chainId: 0,
           progress: 0.,
           itemsTarget: 0,
@@ -1465,7 +1396,6 @@ let pushQueriesForRange = (
               toBlock: Some(chunkToBlock),
               isChunk: true,
               selection,
-              density: partitionDensity(partition),
               chainId: 0,
               progress: 0.,
               itemsTarget: 0,
@@ -1483,7 +1413,6 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
-            density: partitionDensity(partition),
             chainId: 0,
             progress: 0.,
             itemsTarget: 0,
@@ -1496,12 +1425,12 @@ let pushQueriesForRange = (
   }
 }
 
-// Candidate queries span the natural ceiling (head/endBlock/mergeBlock), each
-// carrying its partition's density. CrossChainState.checkAndFetch is what bounds
-// each tick: it decides how far past the frontier to reach from the buffer budget
-// and the frontier density, admits only the candidates within that reach, and
-// sets each one's itemsTarget from its density — the HyperSync/SVM sources enforce
-// that target server-side as a maxNumLogs-style cap so the buffer can't overshoot.
+// Candidate queries span the natural ceiling (head/endBlock/mergeBlock).
+// CrossChainState.checkAndFetch is what bounds each tick: it decides how far past
+// the frontier to reach from the buffer budget and the chain's density (tracked on
+// ChainState), admits only the candidates within that reach, and sets each one's
+// itemsTarget from that density — the HyperSync/SVM sources enforce that target
+// server-side as a maxNumLogs-style cap so the buffer can't overshoot.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
 ) => {
@@ -1574,7 +1503,6 @@ let getNextQuery = (
             pendingCount -
             (queries->Array.length -
             partitionQueriesStart),
-            ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
@@ -1602,7 +1530,6 @@ let getNextQuery = (
           pendingCount -
           (queries->Array.length -
           partitionQueriesStart),
-          ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
         )

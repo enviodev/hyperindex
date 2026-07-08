@@ -12,7 +12,6 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  density: None,
   chainId: 0,
   progress: 0.,
   itemsTarget: 0,
@@ -3914,70 +3913,7 @@ describe("Stale query response should not overwrite block range", () => {
   })
 })
 
-describe("FetchState.frontierDensity & fetchRange", () => {
-  let normalSelection = makeInitialFs().normalSelection
-  let mockPartition = (
-    ~id,
-    ~lfb,
-    ~prevQueryRange,
-    ~prevPrevQueryRange,
-    ~prevRangeSize,
-  ): FetchState.partition => {
-    id,
-    latestFetchedBlock: {blockNumber: lfb, blockTimestamp: 0},
-    selection: normalSelection,
-    addressesByContractName: Dict.make(),
-    mergeBlock: None,
-    dynamicContract: None,
-    mutPendingQueries: [],
-    prevQueryRange,
-    prevPrevQueryRange,
-    prevRangeSize,
-    latestBlockRangeUpdateBlock: 0,
-  }
-  let fresh = id => mockPartition(~id, ~lfb=100, ~prevQueryRange=0, ~prevPrevQueryRange=0, ~prevRangeSize=0)
-  let fsWith = partitions => {
-    ...makeInitialFs(),
-    optimizedPartitions: FetchState.OptimizedPartitions.make(
-      ~partitions,
-      ~maxAddrInPartition=1000,
-      ~nextPartitionIndex=partitions->Array.length,
-      ~dynamicContracts=Utils.Set.make(),
-    ),
-  }
-
-  it("Sums the frontier-cluster densities and projects across missing coverage", t => {
-    // p0 d=2 (200/100), p1 d=1 (100/100), p2 fresh (no density), all at lfb 100.
-    // p3 parked far ahead (lfb 100000) is outside the cluster and excluded.
-    // coverage 2/3 >= 0.2 -> (2+1)/2 * 3 = 4.5
-    let fs = fsWith([
-      mockPartition(~id="0", ~lfb=100, ~prevQueryRange=100, ~prevPrevQueryRange=100, ~prevRangeSize=200),
-      mockPartition(~id="1", ~lfb=100, ~prevQueryRange=100, ~prevPrevQueryRange=100, ~prevRangeSize=100),
-      fresh("2"),
-      mockPartition(
-        ~id="3",
-        ~lfb=100000,
-        ~prevQueryRange=100,
-        ~prevPrevQueryRange=100,
-        ~prevRangeSize=500,
-      ),
-    ])
-    t.expect(fs->FetchState.frontierDensity).toEqual(Some(4.5))
-  })
-
-  it("Returns None when frontier-cluster coverage is below the floor", t => {
-    // 1 known of 6 cluster partitions = 0.167 < 0.2 -> None
-    let fs = fsWith([
-      mockPartition(~id="0", ~lfb=100, ~prevQueryRange=100, ~prevPrevQueryRange=100, ~prevRangeSize=100),
-      fresh("1"),
-      fresh("2"),
-      fresh("3"),
-      fresh("4"),
-      fresh("5"),
-    ])
-    t.expect(fs->FetchState.frontierDensity).toEqual(None)
-  })
-
+describe("FetchState.fetchRange", () => {
   it("fetchRange is knownHeight minus firstEventBlock, else 0", t => {
     t.expect((
       {...makeInitialFs(~knownHeight=1000), firstEventBlock: Some(400)}->FetchState.fetchRange,

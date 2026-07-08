@@ -49,6 +49,7 @@ let committedProgressBlockNumber: t => int
 let numEventsProcessed: t => float
 let reservedReadySize: t => float
 let reservedTotalSize: t => float
+let density: t => option<float>
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
@@ -58,7 +59,6 @@ let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let frontierBlockNumber: t => int
-let frontierDensity: t => option<float>
 let fetchRange: t => int
 let getProgressPercentage: t => float
 let getProgressPercentageAt: (t, ~blockNumber: int) => float
