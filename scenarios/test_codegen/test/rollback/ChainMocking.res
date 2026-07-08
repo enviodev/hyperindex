@@ -177,9 +177,7 @@ module Make = () => {
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
-        timestamp: blockTimestamp,
         blockNumber,
-        blockHash,
         logIndex,
         transactionIndex,
       })
@@ -283,9 +281,10 @@ module Make = () => {
       knownHeight,
       blockHashes,
       parsedQueueItems,
-      // Mock events carry their transaction inline on the payload, so there's no
-      // page store to merge.
+      // Mock events carry their transaction and block inline on the payload, so
+      // there's no page store to merge.
       transactionStore: None,
+      blockStore: None,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,

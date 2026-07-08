@@ -184,12 +184,12 @@ let parseDecoded = (
   }
 }
 
+// `block` is omitted; it's materialised from the block store at batch prep.
 let toSvmInstruction = (
   instr: SvmHyperSyncClient.ResponseTypes.instruction,
   ~programName,
   ~instructionName,
   ~logs,
-  ~block,
 ): Envio.svmInstruction => {
   programName,
   instructionName,
@@ -204,7 +204,6 @@ let toSvmInstruction = (
   d8: ?instr.d8,
   params: ?(instr.decoded->Option.map(parseDecoded)),
   ?logs,
-  block,
 }
 
 // Probe the discriminator byte-length ordering longest-first. Stops at the
@@ -266,6 +265,19 @@ let toQueryTxField = (field: Internal.svmTransactionField): option<
   | RecentBlockhash => Some(RecentBlockhash)
   | Version => Some(Version)
   | TokenBalances => None
+  }
+
+// Map a selected block field to its HyperSync query column. Slot/Blockhash/
+// BlockTime are requested unconditionally (needed for reorg detection and the
+// item's slot/timestamp), so selecting `slot`/`time`/`hash` adds no extra column.
+let toQueryBlockField = (field: Internal.svmBlockField): option<
+  SvmHyperSyncClient.QueryTypes.blockField,
+> =>
+  switch field {
+  | Slot | Time | Hash => None
+  | Height => Some(BlockHeight)
+  | ParentSlot => Some(ParentSlot)
+  | ParentHash => Some(ParentBlockhash)
   }
 
 let make = (
@@ -344,6 +356,24 @@ let make = (
       }
     )
 
+  // Union of selected block fields across the chain's events. `slot`/`time`/
+  // `hash` are always fetched (as Slot/BlockTime/Blockhash); the rest are added
+  // only when an instruction selected them.
+  let blockQueryFields = {
+    let fields: array<SvmHyperSyncClient.QueryTypes.blockField> = [Slot, Blockhash, BlockTime]
+    let selected = Utils.Set.make()
+    eventConfigs->Array.forEach(cfg =>
+      cfg.selectedBlockFields->Utils.Set.forEach(field => selected->Utils.Set.add(field)->ignore)
+    )
+    selected->Utils.Set.forEach(field =>
+      switch field->toQueryBlockField {
+      | Some(queryField) => fields->Array.push(queryField)->ignore
+      | None => ()
+      }
+    )
+    fields
+  }
+
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -365,7 +395,7 @@ let make = (
     // field list returns no rows (instructions and blocks are exempt), so each
     // opted-into table needs its columns spelled out here.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
-      block: [Slot, Blockhash, BlockTime],
+      block: blockQueryFields,
       transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
       tokenBalance: ?(
@@ -386,7 +416,7 @@ let make = (
 
     Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getInstructions")
 
-    let (resp, transactionStore) = try await client.get(~query) catch {
+    let (resp, transactionStore, blockStore) = try await client.get(~query) catch {
     | exn =>
       throw(
         Source.GetItemsError(
@@ -408,8 +438,9 @@ let make = (
 
     let parsingRef = Performance.now()
 
-    // Per-slot unix timestamp lookup from the response's `blocks` table. Slots
-    // without a block row (rare; usually skipped slots) fall back to `None`.
+    // Per-slot blockTime lookup from the response's `blocks` table, for the
+    // batch's `latestFetchedBlockTimestamp`. Slots without a block row (rare;
+    // usually skipped slots) fall back to `None`.
     let blockTimeBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b => {
       switch b.blockTime {
@@ -482,28 +513,19 @@ let make = (
             )
           )
 
-        let slotKey = instr.slot->Int.toString
-        let blockTime = blockTimeBySlot->Utils.Dict.dangerouslyGetNonOption(slotKey)
         let payload = toSvmInstruction(
           instr,
           ~programName=eventConfig.contractName,
           ~instructionName=eventConfig.name,
           ~logs=eventConfig.includeLogs ? maybeLogs : None,
-          ~block={
-            slot: instr.slot,
-            time: blockTime->Option.getOr(0),
-            hash: "",
-          },
         )
 
         parsedQueueItems
         ->Array.push(
           Internal.Event({
             onEventRegistration,
-            timestamp: blockTime->Option.getOr(0),
             chain,
             blockNumber: instr.slot,
-            blockHash: "",
             logIndex: synthLogIndex(instr),
             // The parent transaction is materialised from the store at batch prep.
             transactionIndex: instr.transactionIndex,
@@ -538,6 +560,8 @@ let make = (
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
+      // Raw blocks kept in Rust; materialised onto the payload at batch prep.
+      blockStore: Some(blockStore),
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
@@ -562,8 +586,8 @@ let make = (
         maxNumBlocks: 1000,
       }
       Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getBlockHashes")
-      // Block-only query; the store page is empty.
-      let (resp, _) = await client.get(~query)
+      // Block-only query; the store pages are empty.
+      let (resp, _, _) = await client.get(~query)
       resp.data.blocks->Array.forEach(b =>
         blockDatas
         ->Array.push({

@@ -1274,6 +1274,29 @@ pub mod svm {
         Version,
     }
 
+    /// Selectable block field names (camelCase), matching the public
+    /// `instruction.block` shape. `slot`/`time`/`hash` are always included,
+    /// so everything here is opt-in on top of that trio.
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        JsonSchema,
+        strum::Display,
+        strum::EnumIter,
+    )]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[strum(serialize_all = "camelCase")]
+    pub enum SvmBlockField {
+        Height,
+        ParentSlot,
+        ParentHash,
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct SvmFieldSelection {
@@ -1282,6 +1305,11 @@ pub mod svm {
                            instruction, as a list of field names. Omit (or pass an \
                            empty list) to include no transaction.")]
         pub transaction_fields: Option<Vec<SvmTransactionField>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Block fields to include on each matched instruction's \
+                           `block`, as a list of field names. `slot`/`time`/`hash` are \
+                           always included; this adds `height`/`parentSlot`/`parentHash`.")]
+        pub block_fields: Option<Vec<SvmBlockField>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Set to `true` to include program logs scoped to each \
                            matched instruction.")]
@@ -1941,6 +1969,7 @@ chains:
                                     SvmTransactionField::Signatures,
                                     SvmTransactionField::FeePayer,
                                 ]),
+                                block_fields: None,
                                 log_fields: None,
                                 token_balance_fields: None,
                             }),

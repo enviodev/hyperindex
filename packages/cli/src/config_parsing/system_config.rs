@@ -988,11 +988,13 @@ impl SystemConfig {
                                 let fs = instr.field_selection.as_ref();
                                 let selected_transaction_fields =
                                     resolve_svm_transaction_fields(fs);
+                                let selected_block_fields = resolve_svm_block_fields(fs);
                                 let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
                                     selected_transaction_fields,
+                                    selected_block_fields,
                                     include_logs,
                                     account_filters: instr
                                         .account_filters
@@ -1803,6 +1805,23 @@ fn resolve_svm_transaction_fields(
     selected
 }
 
+/// Resolve an instruction's selected block fields (camelCase), in declared
+/// order. `slot`/`time`/`hash` are always included by the runtime, so they're
+/// not returned here (they aren't even selectable — see `SvmBlockField`).
+fn resolve_svm_block_fields(fs: Option<&human_config::svm::SvmFieldSelection>) -> Vec<String> {
+    let mut selected: Vec<String> = Vec::new();
+    let Some(fs) = fs else {
+        return selected;
+    };
+    for field in fs.block_fields.iter().flatten() {
+        let name = field.to_string();
+        if !selected.contains(&name) {
+            selected.push(name);
+        }
+    }
+    selected
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -1815,6 +1834,9 @@ pub struct SvmEventKind {
     /// Selected parent-transaction fields (camelCase names matching the public
     /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
     pub selected_transaction_fields: Vec<String>,
+    /// Selected block fields (camelCase, matching `instruction.block`), excluding
+    /// the always-included `slot`. Empty = only `slot`.
+    pub selected_block_fields: Vec<String>,
     pub include_logs: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
