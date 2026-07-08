@@ -29,7 +29,7 @@ let createBatch: (
   ~isRollback: bool,
 ) => Batch.t
 let enterReorgThreshold: t => unit
-let applyBatchProgress: (t, ~batch: Batch.t) => unit
+let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>

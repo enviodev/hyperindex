@@ -191,10 +191,8 @@ let newGravatarEventToBatchItem = (
     Indexer.Transaction.t,
   >,
 ): Internal.item => Internal.Event({
-  timestamp: event.block.timestamp,
   chain: MockConfig.chain1337,
   blockNumber: event.block.number,
-  blockHash: event.block.hash,
   logIndex: event.logIndex,
   transactionIndex: 0,
   onEventRegistration: MockConfig.getOnEventRegistration(~contractName="Gravatar", ~eventName="NewGravatar"),
@@ -208,10 +206,8 @@ let updatedGravatarEventToBatchItem = (
     Indexer.Transaction.t,
   >,
 ): Internal.item => Internal.Event({
-  timestamp: event.block.timestamp,
   chain: MockConfig.chain1337,
   blockNumber: event.block.number,
-  blockHash: event.block.hash,
   logIndex: event.logIndex,
   transactionIndex: 0,
   onEventRegistration: MockConfig.getOnEventRegistration(~contractName="Gravatar", ~eventName="UpdatedGravatar"),

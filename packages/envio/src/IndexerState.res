@@ -362,7 +362,10 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
 
 let applyBatchProgress = (state: t, ~batch: Batch.t) =>
-  state.crossChainState->CrossChainState.applyBatchProgress(~batch)
+  state.crossChainState->CrossChainState.applyBatchProgress(
+    ~batch,
+    ~blockTimestampName=state.config.ecosystem.blockTimestampName,
+  )
 
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.

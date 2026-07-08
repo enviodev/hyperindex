@@ -673,11 +673,9 @@ let makeThrowingGetEventBlock = (
   }
 }
 
-// `number`, `timestamp` and `hash` are always part of the selected block
-// fields, so they can be read from the assembled block at item construction.
+// `number` is always part of the selected block fields, so it can be read
+// from the assembled block for the item's own `blockNumber`.
 @get external getBlockNumber: Internal.eventBlock => int = "number"
-@get external getBlockTimestamp: Internal.eventBlock => int = "timestamp"
-@get external getBlockHash: Internal.eventBlock => string = "hash"
 
 // Field source classification for RPC calls
 type fieldSource = TransactionOnly | ReceiptOnly | Both
@@ -1323,9 +1321,7 @@ let make = (
 
                 Internal.Event({
                   onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-                  timestamp: block->getBlockTimestamp,
                   blockNumber: block->getBlockNumber,
-                  blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
                   transactionIndex: log.transactionIndex,
@@ -1379,8 +1375,9 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      // RPC keeps the transaction inline on the payload; no store page.
+      // RPC keeps the transaction and block inline on the payload; no store pages.
       transactionStore: None,
+      blockStore: None,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },

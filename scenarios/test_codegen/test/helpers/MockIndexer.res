@@ -812,6 +812,7 @@ module Source = {
                               selectedBlockFields: Utils.Set.make(),
                               selectedTransactionFields: Utils.Set.make(),
                               transactionFieldMask: 0.,
+                              blockFieldMask: 0.,
                               sighash: "",
                               topicCount: 1,
                               paramsMetadata: [],
@@ -850,10 +851,8 @@ module Source = {
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
                           }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
-                          timestamp: item.blockNumber,
                           chain,
                           blockNumber: item.blockNumber,
-                          blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
                           transactionIndex: 0,
                           payload: {
@@ -873,6 +872,7 @@ module Source = {
                       },
                     ),
                     transactionStore: None,
+                    blockStore: None,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
@@ -975,6 +975,11 @@ let evmOnEventRegistration = (
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      Utils.Set.fromArray(blockFieldNames)->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],
