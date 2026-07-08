@@ -184,10 +184,8 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
 
   let makeItem = (~to, ~blockNumber): Internal.item =>
     Internal.Event({
-      timestamp: blockNumber * 15,
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
-      blockHash: `0x${blockNumber->Int.toString}`,
       onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       logIndex: 0,
       transactionIndex: 0,
@@ -256,10 +254,8 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
 
   let makeItem = (~srcAddress, ~blockNumber): Internal.item =>
     Internal.Event({
-      timestamp: blockNumber * 15,
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
-      blockHash: `0x${blockNumber->Int.toString}`,
       onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       logIndex: 0,
       transactionIndex: 0,

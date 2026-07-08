@@ -135,13 +135,13 @@ let enterReorgThreshold = (crossChainState: t) => {
 // whole indexer. A chain is marked caught up only once EVERY chain is caught up
 // (reached endblock or fetched/processed to head) with no processable events
 // left — so no chain flips to ready while another is still backfilling.
-let applyBatchProgress = (crossChainState: t, ~batch: Batch.t) => {
+let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainIds = crossChainState.chainIds
 
   let everyChainCaughtUp = ref(true)
   for i in 0 to chainIds->Array.length - 1 {
     let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
-    cs->ChainState.applyBatchProgress(~batch)
+    cs->ChainState.applyBatchProgress(~batch, ~blockTimestampName)
     if !(cs->ChainState.hasProcessedToEndblock || cs->ChainState.isProgressAtHead) {
       everyChainCaughtUp := false
     }

@@ -252,11 +252,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="getLogs",
-    )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
       ~client,
       ~fromBlock,
@@ -308,6 +303,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
+    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -415,10 +411,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
       Internal.Event({
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-        timestamp: block.time,
         chain,
         blockNumber: block.height,
-        blockHash: block.id,
         logIndex: receiptIndex,
         // Fuel carries the transaction inline on the payload; the store key is
         // unused (Fuel identifies transactions by hash, kept on the payload).
@@ -465,13 +459,15 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
-      // Fuel keeps transaction on the payload; no store page.
+      // Fuel keeps transaction and block on the payload; no store pages.
       transactionStore: None,
+      blockStore: None,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats,
     }
   }
 
@@ -499,18 +495,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         }
       }
       let seconds = timerRef->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-      )
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-        ~seconds,
-      )
-      height
+      {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
   }

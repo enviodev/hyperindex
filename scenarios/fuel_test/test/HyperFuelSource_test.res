@@ -25,6 +25,7 @@ let mkRegistration = (
     simulateParamsSchema: %raw(`"Not relevat"`),
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
+    blockFieldMask: 0.,
   }: Internal.fuelEventConfig :> Internal.eventConfig),
   isWildcard,
   filterByAddresses: false,

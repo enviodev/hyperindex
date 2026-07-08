@@ -55,7 +55,7 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
         endpointUrl,
         apiToken: Some(apiToken),
       })
-      let height = await source.getHeightOrThrow()
+      let {height} = await source.getHeightOrThrow()
 
       let headers = capturedHeaders.contents->Option.getOrThrow
       t.expect((

@@ -5,15 +5,16 @@ use napi_derive::napi;
 
 use super::borsh_decoder::DecodedInstructionJson;
 
+/// Lean per-slot block header the response carries to ReScript, used for reorg
+/// detection and each item's slot/time. Selectable fields (height, parents) are
+/// kept raw in the `BlockStore` and materialised on demand, so they aren't
+/// duplicated here.
 #[napi(object)]
 #[derive(Default, Clone)]
 pub struct Block {
     pub slot: i64,
     pub blockhash: String,
-    pub parent_slot: Option<i64>,
-    pub parent_blockhash: Option<String>,
     pub block_time: Option<i64>,
-    pub block_height: Option<i64>,
 }
 
 #[napi(object)]
@@ -128,22 +129,16 @@ fn u32_to_i64(v: u32) -> i64 {
     v as i64
 }
 
-impl TryFrom<simple::Block> for Block {
-    type Error = anyhow::Error;
-    fn try_from(b: simple::Block) -> Result<Self> {
+impl Block {
+    /// Build the lean header from a borrowed raw block, without taking
+    /// ownership — used when the raw block is also retained (owned) in the
+    /// `BlockStore` for on-demand field materialisation, so only the header's
+    /// own fields are cloned rather than the whole raw struct.
+    pub(crate) fn from_raw(b: &simple::Block) -> Result<Self> {
         Ok(Self {
             slot: u64_to_i64(b.slot, "block.slot")?,
-            blockhash: b.blockhash,
-            parent_slot: b
-                .parent_slot
-                .map(|v| u64_to_i64(v, "block.parent_slot"))
-                .transpose()?,
-            parent_blockhash: b.parent_blockhash,
+            blockhash: b.blockhash.clone(),
             block_time: b.block_time,
-            block_height: b
-                .block_height
-                .map(|v| u64_to_i64(v, "block.block_height"))
-                .transpose()?,
         })
     }
 }
@@ -233,7 +228,10 @@ impl TryFrom<simple::SolanaResponse> for QueryResponse {
             response_bytes: i64::try_from(r.response_bytes)
                 .with_context(|| format!("response_bytes {} overflows i64", r.response_bytes))?,
             data: QueryResponseData {
-                blocks: try_map(r.blocks)?,
+                // The caller takes `r.blocks` before this conversion runs (the
+                // raw blocks go into the `BlockStore`) and fills this in
+                // afterwards from `Block::from_raw`, so it's always empty here.
+                blocks: Vec::new(),
                 instructions: try_map(r.instructions)?,
                 logs: try_map(r.logs)?,
                 balances: try_map(r.balances)?,

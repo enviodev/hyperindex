@@ -979,13 +979,24 @@ export type SvmInstructionParams = {
   readonly extraAccounts: readonly string[];
 };
 
-/** Block context for a matched instruction. */
+/** Permissive fallback shape for an instruction's `block`. The generated
+ * per-instruction type narrows this to `slot`/`hash` (always present) and
+ * `time` (always present but possibly `undefined`), plus the selected
+ * `field_selection.block_fields`. */
 export type SvmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   readonly slot: number;
-  readonly time: number;
-  /** Always empty for now — reserved for the future reorg-guard route. */
+  /** Unix block time (seconds). Absent when HyperSync/Solana doesn't report a
+   * block time for this slot. */
+  readonly time?: number;
+  /** Block hash. */
   readonly hash: string;
+  /** Block height. Select via `field_selection.block_fields`. */
+  readonly height?: number;
+  /** Parent slot. Select via `field_selection.block_fields`. */
+  readonly parentSlot?: number;
+  /** Parent block hash. Select via `field_selection.block_fields`. */
+  readonly parentHash?: string;
 };
 
 export type SvmTokenBalance = {
@@ -1016,6 +1027,7 @@ export type SvmLog = {
 export type SvmInstruction<
   Params extends SvmInstructionParams = SvmInstructionParams,
   Tx = SvmTransaction,
+  Block = SvmInstructionBlock,
 > = {
   /** Program name as declared under `programs[].name` in `config.yaml`. */
   readonly programName: string;
@@ -1041,7 +1053,12 @@ export type SvmInstruction<
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
-  readonly block: SvmInstructionBlock;
+  /** The block this instruction's slot belongs to. Carries `slot`/`hash`
+   * (always present) and `time` (always present but possibly `undefined`),
+   * plus the fields selected via this instruction's
+   * `field_selection.block_fields`; unselected fields are typed as
+   * `FieldNotSelected<...>`. */
+  readonly block: Block;
 };
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
@@ -1315,7 +1332,8 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                       Config,
                       SvmInstruction<
                         SvmParamsFromProgramTable<Programs[P][I]>,
-                        Programs[P][I]["transaction"]
+                        Programs[P][I]["transaction"],
+                        Programs[P][I]["block"]
                       >
                     >,
                   ) => Promise<void>,

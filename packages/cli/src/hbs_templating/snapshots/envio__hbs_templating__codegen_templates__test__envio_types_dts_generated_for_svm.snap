@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3481
 expression: project_template.envio_types_dts
 ---
 /**
@@ -131,6 +132,40 @@ declare module "envio" {
              * ```
              */
             readonly tokenBalances: FieldNotSelected<"Field 'tokenBalances' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.token_balance_fields in config.yaml.">;
+          }; readonly block: {
+            /** The slot field. */
+            readonly slot: number;
+            /** The time field. */
+            readonly time: number | undefined;
+            /** The hash field. */
+            readonly hash: string;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   block_fields:
+             *     - height
+             * ```
+             */
+            readonly height: FieldNotSelected<"Field 'height' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.block_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   block_fields:
+             *     - parentSlot
+             * ```
+             */
+            readonly parentSlot: FieldNotSelected<"Field 'parentSlot' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.block_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   block_fields:
+             *     - parentHash
+             * ```
+             */
+            readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.block_fields in config.yaml.">;
           } };
           "UpdateMetadataAccountV2": { readonly args: { readonly data: ({ readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }) | null; readonly update_authority: (string) | null; readonly primary_sale_happened: (boolean) | null; readonly is_mutable: (boolean) | null }; readonly accounts: { readonly metadata: string; readonly update_authority: string }; readonly transaction: {
             /**
@@ -224,6 +259,40 @@ declare module "envio" {
              * ```
              */
             readonly tokenBalances: FieldNotSelected<"Field 'tokenBalances' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.token_balance_fields in config.yaml.">;
+          }; readonly block: {
+            /** The slot field. */
+            readonly slot: number;
+            /** The time field. */
+            readonly time: number | undefined;
+            /** The hash field. */
+            readonly hash: string;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   block_fields:
+             *     - height
+             * ```
+             */
+            readonly height: FieldNotSelected<"Field 'height' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.block_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   block_fields:
+             *     - parentSlot
+             * ```
+             */
+            readonly parentSlot: FieldNotSelected<"Field 'parentSlot' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.block_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   block_fields:
+             *     - parentHash
+             * ```
+             */
+            readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.block_fields in config.yaml.">;
           } };
         };
       } };

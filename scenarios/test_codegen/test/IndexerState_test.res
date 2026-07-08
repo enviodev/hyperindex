@@ -77,10 +77,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem = Internal.Event({
-          timestamp: currentTime.contents,
           chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
-          blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
           transactionIndex: 0,
           onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
@@ -187,10 +185,8 @@ describe("IndexerState", () => {
         let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
-          timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
-          blockHash: "0x0",
           logIndex: 0,
           transactionIndex: 0,
           onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
@@ -297,10 +293,8 @@ describe("IndexerState", () => {
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[
                     Internal.Event({
-                      timestamp: blockNumber * 15,
                       chain: ChainMap.Chain.makeUnsafe(~chainId),
                       blockNumber,
-                      blockHash: `0x${blockNumber->Int.toString}`,
                       logIndex: 0,
                       transactionIndex: 0,
                       onEventRegistration: "Mock onEventRegistration"->(
@@ -380,10 +374,8 @@ describe("IndexerState", () => {
           ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
           ~newItems=[
             Internal.Event({
-              timestamp: 15 * 15,
               chain,
               blockNumber: 15,
-              blockHash: "0x15",
               logIndex: 0,
               transactionIndex: 0,
               onEventRegistration: "Mock onEventRegistration"->(Utils.magic: string => Internal.onEventRegistration),
@@ -392,6 +384,7 @@ describe("IndexerState", () => {
           ],
           ~knownHeight=cs->ChainState.knownHeight,
           ~transactionStore=None,
+          ~blockStore=None,
         )
 
         state->IndexerState.applyBatchProgress(~batch)

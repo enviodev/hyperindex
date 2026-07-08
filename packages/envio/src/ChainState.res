@@ -28,6 +28,9 @@ type t = {
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
   transactionStore: TransactionStore.t,
+  // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
+  // prune / rollback lifecycle as the transaction store.
+  blockStore: BlockStore.t,
 }
 
 // Per-chain shape returned by the status API.
@@ -74,6 +77,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
   ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
   logger,
@@ -90,6 +94,7 @@ let make = (
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
+  blockStore,
 }
 
 let makeInternal = (
@@ -252,6 +257,10 @@ let makeInternal = (
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
     ~transactionStore=TransactionStore.make(
+      ~ecosystem=config.ecosystem.name,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
+    ~blockStore=BlockStore.make(
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     ),
@@ -442,21 +451,189 @@ let isAtHeadWithoutEndBlock = (cs: t) =>
 // --- State transitions. The chain state is mutated only through these; each
 // owns a cohesive update so callers don't juggle individual fields. ---
 
-// Apply a fetch response: register any new dynamic contracts, append the items
-// to the buffer and advance the known head.
-// Materialise the chain store's selected transaction fields onto a batch's
-// items at batch prep (the persistent-store path).
-let materializeBatchItems = (cs: t, ~items: array<Internal.item>) =>
-  cs.transactionStore->TransactionStore.materializeItems(~items)
+// Per-store grouping data a single pass over `items` produces (see
+// `groupBatchItems`), fed into `TransactionStore`/`BlockStore`'s `materialize`.
+type transactionGroups = {
+  txBlockNumbers: array<int>,
+  transactionIndices: array<int>,
+  transactionMasks: array<float>,
+  payloadGroups: array<array<Internal.eventPayload>>,
+  anyTransactionFieldSelected: bool,
+}
+type blockGroups = {
+  blockBlockNumbers: array<int>,
+  blockMasks: array<float>,
+  blockItemGroups: array<array<Internal.eventItem>>,
+}
 
-// Materialise a fetch-response page's transactions onto its items before
-// contract-register handlers read them. `None` pages (RPC/Fuel/Simulate keep the
-// transaction inline) are a no-op.
-let materializePageItems = (~items: array<Internal.item>, ~page: option<TransactionStore.t>) =>
-  switch page {
-  | Some(store) => store->TransactionStore.materializeItems(~items)
-  | None => Promise.resolve()
+// Walk `items` once to build both the transaction-store and block-store
+// grouping data, instead of `TransactionStore`/`BlockStore` each re-walking the
+// same batch independently. Items already arrive in (blockNumber, logIndex)
+// order, so a (blockNumber, transactionIndex) run and a blockNumber-only run
+// each stay adjacent; every item is checked against both, in the same pass.
+// `includeBlocks` skips the block side entirely for Fuel, which carries the
+// block inline and has no store.
+let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
+  transactionGroups,
+  blockGroups,
+) => {
+  let txBlockNumbers = []
+  let transactionIndices = []
+  let transactionMasks = []
+  let payloadGroups = []
+  let anyTransactionFieldSelected = ref(false)
+
+  let blockBlockNumbers = []
+  let blockMasks = []
+  let blockItemGroups = []
+
+  items->Array.forEach(item =>
+    switch item {
+    | Internal.Event(_) =>
+      let eventItem = item->Internal.castUnsafeEventItem
+      let {blockNumber} = eventItem
+
+      switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
+      | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
+      | None =>
+        let {transactionIndex} = eventItem
+        let mask = eventItem.onEventRegistration.eventConfig.transactionFieldMask
+        if mask != 0. {
+          anyTransactionFieldSelected := true
+        }
+        let last = payloadGroups->Array.length - 1
+        if (
+          last >= 0 &&
+          txBlockNumbers->Array.getUnsafe(last) == blockNumber &&
+          transactionIndices->Array.getUnsafe(last) == transactionIndex
+        ) {
+          payloadGroups->Array.getUnsafe(last)->Array.push(eventItem.payload)
+          transactionMasks->Array.setUnsafe(
+            last,
+            FieldMask.orMask(transactionMasks->Array.getUnsafe(last), mask),
+          )
+        } else {
+          txBlockNumbers->Array.push(blockNumber)
+          transactionIndices->Array.push(transactionIndex)
+          transactionMasks->Array.push(mask)
+          payloadGroups->Array.push([eventItem.payload])
+        }
+      }
+
+      if includeBlocks {
+        switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
+        | Some(_) => () // RPC/simulate/Fuel carry the block inline.
+        | None =>
+          let mask = eventItem.onEventRegistration.eventConfig.blockFieldMask
+          let last = blockItemGroups->Array.length - 1
+          if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
+            blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)
+            blockMasks->Array.setUnsafe(
+              last,
+              FieldMask.orMask(blockMasks->Array.getUnsafe(last), mask),
+            )
+          } else {
+            blockBlockNumbers->Array.push(blockNumber)
+            blockMasks->Array.push(mask)
+            blockItemGroups->Array.push([eventItem])
+          }
+        }
+      }
+    | Internal.Block(_) => ()
+    }
+  )
+
+  (
+    {
+      txBlockNumbers,
+      transactionIndices,
+      transactionMasks,
+      payloadGroups,
+      anyTransactionFieldSelected: anyTransactionFieldSelected.contents,
+    },
+    {blockBlockNumbers, blockMasks, blockItemGroups},
+  )
+}
+
+// Materialise a `TransactionStore` against precomputed groups (see
+// `groupBatchItems`). Store-backed items always get a transaction object — the
+// selected fields, or `{}` when nothing was selected — so `event.transaction`
+// is never `undefined` (matching the inline sources).
+let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGroups) => {
+  if g.payloadGroups->Utils.Array.notEmpty {
+    if g.anyTransactionFieldSelected {
+      let txs = await store->TransactionStore.materialize(
+        ~blockNumbers=g.txBlockNumbers,
+        ~transactionIndices=g.transactionIndices,
+        ~masks=g.transactionMasks,
+      )
+      g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
+        let tx = txs->Array.getUnsafe(i)
+        payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+      })
+    } else {
+      g.payloadGroups->Array.forEach(payloads =>
+        payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(%raw(`{}`)))
+      )
+    }
   }
+}
+
+// Materialise a `BlockStore` against precomputed groups (see `groupBatchItems`).
+let applyBlockGroups = async (store: BlockStore.t, g: blockGroups) => {
+  if g.blockItemGroups->Utils.Array.notEmpty {
+    let blocks = await store->BlockStore.materialize(
+      ~blockNumbers=g.blockBlockNumbers,
+      ~masks=g.blockMasks,
+    )
+    g.blockItemGroups->Array.forEachWithIndex((group, i) => {
+      let block = blocks->Array.getUnsafe(i)
+      group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
+    })
+  }
+}
+
+let includeBlocksForEcosystem = (ecosystem: Ecosystem.name) =>
+  switch ecosystem {
+  | Evm | Svm => true
+  | Fuel => false
+  }
+
+// Materialise the chain stores' selected transaction and block fields onto a
+// batch's items at batch prep (the persistent-store path). A single pass over
+// `items` (`groupBatchItems`) builds both stores' selection masks before the
+// two independent materialize calls run concurrently.
+let materializeBatchItems = async (cs: t, ~items: array<Internal.item>, ~ecosystem) => {
+  let (txGroups, blockGroups) =
+    items->groupBatchItems(~includeBlocks=ecosystem->includeBlocksForEcosystem)
+  let _ = await Promise.all2((
+    cs.transactionStore->applyTransactionGroups(txGroups),
+    cs.blockStore->applyBlockGroups(blockGroups),
+  ))
+}
+
+// Materialise a fetch-response page's transactions and blocks onto its items
+// before contract-register handlers read them. `None` pages (RPC/Fuel/Simulate
+// keep them inline) are a no-op.
+let materializePageItems = async (
+  ~items: array<Internal.item>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
+  ~ecosystem,
+) => {
+  let (txGroups, blockGroups) =
+    items->groupBatchItems(~includeBlocks=ecosystem->includeBlocksForEcosystem)
+  let _ = await Promise.all2((
+    switch transactionStore {
+    | Some(store) => store->applyTransactionGroups(txGroups)
+    | None => Promise.resolve()
+    },
+    switch blockStore {
+    | Some(store) => store->applyBlockGroups(blockGroups)
+    | None => Promise.resolve()
+    },
+  ))
+}
 
 let handleQueryResult = (
   cs: t,
@@ -465,12 +642,17 @@ let handleQueryResult = (
   ~newItemsWithDcs,
   ~latestFetchedBlock,
   ~knownHeight,
-  ~transactionStore as page: option<TransactionStore.t>,
+  ~transactionStore as txPage: option<TransactionStore.t>,
+  ~blockStore as blockPage: option<BlockStore.t>,
 ) => {
-  // Merge this response's page into the chain store in lockstep with appending
-  // its items to the buffer. Inline-transaction sources contribute no page.
-  switch page {
+  // Merge this response's pages into the chain stores in lockstep with appending
+  // its items to the buffer. Inline sources contribute no page.
+  switch txPage {
   | Some(page) => cs.transactionStore->TransactionStore.merge(page)
+  | None => ()
+  }
+  switch blockPage {
+  | Some(page) => cs.blockStore->BlockStore.merge(page)
   | None => ()
   }
 
@@ -606,8 +788,9 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
 // Commit a processed batch's progress for this chain (progress block, events
 // processed, head/safe-checkpoint tracking, first event block). Emits the
 // per-chain progress metrics. Readiness is decided by CrossChainState once every
-// chain is caught up (see markReady).
-let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
+// chain is caught up (see markReady). `blockTimestampName` is the ecosystem's
+// block-timestamp field, read off the payload block for the latency metric.
+let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainId = cs.chainConfig.id
 
   switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
@@ -625,15 +808,27 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
         )
       }
 
-      // Calculate and set latency metrics
-      switch batch->Batch.findLastEventItem(~chainId) {
-      | Some(eventItem) => {
-          let blockTimestampMs = eventItem.timestamp * 1000
-          Prometheus.ProgressLatency.set(
-            ~latencyMs=Date.now()->Float.toInt - blockTimestampMs,
-            ~chainId,
-          )
-        }
+      // Calculate and set latency metrics. The payload block is materialised or
+      // inline by processing time; its timestamp may still be absent (e.g. an
+      // SVM slot with no block row) — the metric is skipped then.
+      switch batch
+      ->Batch.findLastEventItem(~chainId)
+      ->Option.flatMap(eventItem =>
+        eventItem.payload
+        ->Internal.getPayloadBlock
+        ->Nullable.toOption
+      )
+      ->Option.flatMap(block =>
+        block
+        ->(Utils.magic: Internal.eventBlock => dict<unknown>)
+        ->Utils.Dict.dangerouslyGetNonOption(blockTimestampName)
+      ) {
+      | Some(blockTimestamp) =>
+        let blockTimestampMs = blockTimestamp->(Utils.magic: unknown => int) * 1000
+        Prometheus.ProgressLatency.set(
+          ~latencyMs=Date.now()->Float.toInt - blockTimestampMs,
+          ~chainId,
+        )
       | None => ()
       }
 
@@ -650,8 +845,9 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t) => {
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
-      // Processed blocks' transactions are no longer needed.
+      // Processed blocks' transactions and blocks are no longer needed.
       cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
+      cs.blockStore->BlockStore.prune(chainAfterBatch.progressBlockNumber)
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
       | Some(safeCheckpointTracking) =>
@@ -730,6 +926,7 @@ let rollback = (
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
+    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -744,6 +941,7 @@ let rollback = (
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
+      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

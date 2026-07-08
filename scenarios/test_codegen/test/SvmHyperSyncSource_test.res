@@ -2,8 +2,9 @@ open Vitest
 
 // Regression coverage for SvmHyperSyncSource.getItemsOrThrow response
 // parsing, driven through a mocked napi client (no network):
-//   1. `instruction.block.time` must carry the slot's blockTime from the
-//      response's blocks table (reported as arriving `undefined` downstream).
+//   1. `instruction.block` is omitted on the item; it's materialised from the
+//      block store at batch prep, which this test doesn't exercise — see
+//      BlockStore_test.res.
 //   2. The query must spell out transaction/log columns when an event config
 //      opts in — the server returns no rows for a table whose field list is
 //      empty, so omitting them silently drops `instruction.transaction`.
@@ -13,8 +14,10 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
 let blockTime = 1778064393
 let slot = 417950033
+let blockHash = "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB"
 
 let makeEventConfig = (
+  ~selectedBlockFields: array<Internal.svmBlockField>=[],
   ~selectedTransactionFields=[
     Internal.Signatures,
     FeePayer,
@@ -43,6 +46,12 @@ let makeEventConfig = (
     includeLogs: false,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    selectedBlockFields: Utils.Set.fromArray(selectedBlockFields),
+    blockFieldMask: Svm.eventBlockFieldMask(
+      Utils.Set.fromArray(
+        selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
+      ),
+    ),
     accountFilters: [],
     isInner: None,
     accounts: [],
@@ -66,7 +75,7 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
     blocks: [
       {
         slot,
-        blockhash: "99K5yyU2jLxLDeRCJ9YSSMy6VBJTNcnePWUH9uCHAWCB",
+        blockhash: blockHash,
         blockTime,
       },
     ],
@@ -93,10 +102,14 @@ let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
-    // The real Rust client builds the store from raw transactions; the mock
-    // returns an empty page (transaction materialisation is covered by the Rust
-    // unit tests). This test asserts the item shape and the query columns.
-    Promise.resolve((mockResponse, TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false)))
+    // The real Rust client builds the stores from raw transactions/blocks; the
+    // mock returns empty pages (materialisation is covered by the Rust unit
+    // tests). This test asserts the item shape and the query columns.
+    Promise.resolve((
+      mockResponse,
+      TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+    ))
   },
 }
 
@@ -131,7 +144,7 @@ let makeSource = (~onEventRegistrations=[makeReg()]) => {
 let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
-  Async.it("joins blockTime onto items and requests opted-in table columns", async t => {
+  Async.it("omits block on the item and requests opted-in table columns", async t => {
     let source = makeSource()
     let reg = makeReg()
 
@@ -154,10 +167,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
 
     let item = switch response.parsedQueueItems {
-    | [Internal.Event({timestamp, blockNumber, payload})] =>
+    | [Internal.Event({blockNumber, payload})] =>
       let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
       Some({
-        "timestamp": timestamp,
         "blockNumber": blockNumber,
         "block": instruction.block,
       })
@@ -169,9 +181,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "query": capturedQueries->Array.getUnsafe(0),
     }).toEqual({
       "item": Some({
-        "timestamp": blockTime,
         "blockNumber": slot,
-        "block": ({slot, time: blockTime, hash: ""}: Envio.svmInstructionBlock),
+        // `block` is omitted here; it's materialised from the store at batch
+        // prep, which this test doesn't run.
+        "block": None,
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.
@@ -232,6 +245,83 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
       t.expect(query.fields->Option.flatMap(fields => fields.transaction)).toEqual(None)
+    },
+  )
+
+  // Selected block fields are added to the query's block columns on top of the
+  // always-fetched slot/blockhash/blockTime trio.
+  Async.it("requests the selected block fields' columns", async t => {
+    let reg = makeReg(~eventConfig=makeEventConfig(~selectedBlockFields=[Height, ParentHash]))
+    let source = makeSource(~onEventRegistrations=[reg])
+
+    let _ = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~contractNameByAddress,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~selection={
+        onEventRegistrations: [reg],
+        dependsOnAddresses: true,
+      },
+      ~itemsTarget=5000,
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+    let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
+    t.expect(fields.block).toEqual(Some([Slot, Blockhash, BlockTime, BlockHeight, ParentBlockhash]))
+  })
+
+  // Token balances are keyed by account in the store, so the query must always
+  // carry `account` alongside whatever columns opted the table in — matches
+  // the Rust store's field_table.rs Table<(slot, txIndex, account)> key.
+  Async.it(
+    "requests tokenBalance columns with account included, and skips the transaction table",
+    async t => {
+      let reg = makeReg(~eventConfig=makeEventConfig(~selectedTransactionFields=[TokenBalances]))
+      let source = makeSource(~onEventRegistrations=[reg])
+
+      let _ = await source.getItemsOrThrow(
+        ~fromBlock=slot - 10,
+        ~toBlock=Some(slot + 10),
+        ~addressesByContractName=Dict.fromArray([
+          ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+        ]),
+        ~contractNameByAddress,
+        ~knownHeight=slot + 1000,
+        ~partitionId="0",
+        ~selection={
+          onEventRegistrations: [reg],
+          dependsOnAddresses: true,
+        },
+        ~itemsTarget=5000,
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      )
+
+      let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
+      let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
+      let expectedTokenBalance: option<array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>> = Some([
+        Slot,
+        TransactionIndex,
+        Account,
+        Mint,
+        Owner,
+        PreAmount,
+        PostAmount,
+      ])
+      t.expect({
+        "tokenBalance": fields.tokenBalance,
+        "transaction": fields.transaction,
+      }).toEqual({
+        "tokenBalance": expectedTokenBalance,
+        "transaction": None,
+      })
     },
   )
 })

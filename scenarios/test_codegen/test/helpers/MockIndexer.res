@@ -658,7 +658,7 @@ module Source = {
         if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
         }
-        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
+        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve({Source.height, requestStats: []}))
       },
       rejectGetHeightOrThrow: exn => {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
@@ -697,7 +697,9 @@ module Source = {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
-        getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
+        getBlockHashesResolveFns->Array.forEach(
+          resolve => resolve({Source.result: Ok(blockHashes), requestStats: []}),
+        )
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
       heightSubscriptionCalls,
@@ -810,6 +812,7 @@ module Source = {
                               selectedBlockFields: Utils.Set.make(),
                               selectedTransactionFields: Utils.Set.make(),
                               transactionFieldMask: 0.,
+                              blockFieldMask: 0.,
                               sighash: "",
                               topicCount: 1,
                               paramsMetadata: [],
@@ -848,10 +851,8 @@ module Source = {
                             getEventFiltersOrThrow: _ =>
                               JsError.throwWithMessage("Not implemented"),
                           }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
-                          timestamp: item.blockNumber,
                           chain,
                           blockNumber: item.blockNumber,
-                          blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
                           transactionIndex: 0,
                           payload: {
@@ -871,12 +872,14 @@ module Source = {
                       },
                     ),
                     transactionStore: None,
+                    blockStore: None,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
                     stats: {
                       totalTimeElapsed: 0.,
                     },
+                    requestStats: [],
                   })
                 },
                 reject: reject->Utils.magic,
@@ -972,6 +975,11 @@ let evmOnEventRegistration = (
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      Utils.Set.fromArray(blockFieldNames)->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
     sighash: id,
     topicCount: 1,
     paramsMetadata: [],

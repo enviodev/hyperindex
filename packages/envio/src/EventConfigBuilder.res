@@ -401,6 +401,11 @@ let buildEvmEventConfig = (
     selectedBlockFields,
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      selectedBlockFields->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
     sighash,
     topicCount,
     paramsMetadata: params,
@@ -460,7 +465,11 @@ let buildEvmOnEventRegistration = (
   }
 }
 
-// ============== Build SVM instruction config ==============
+// ============== Build SVM instruction event config ==============
+
+// Always-included block fields (slot, time, hash) are prepended at runtime so
+// they're always present regardless of config.
+let alwaysIncludedSvmBlockFields: array<Internal.svmBlockField> = [Slot, Time, Hash]
 
 let buildSvmInstructionEventConfig = (
   ~contractName: string,
@@ -470,6 +479,7 @@ let buildSvmInstructionEventConfig = (
   ~discriminatorByteLen: int,
   ~includeLogs: bool,
   ~transactionFields: array<Internal.svmTransactionField>=[],
+  ~blockFields: array<Internal.svmBlockField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~accounts: array<string>=[],
@@ -487,6 +497,12 @@ let buildSvmInstructionEventConfig = (
     Utils.Set.fromArray(transactionFields)->(
       Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
     )
+  let selectedBlockFields = Utils.Set.fromArray(
+    Array.concat(alwaysIncludedSvmBlockFields, blockFields),
+  )
+  let blockFieldMask = Svm.eventBlockFieldMask(
+    selectedBlockFields->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>),
+  )
   {
     id: switch discriminator {
     | Some(d) => d
@@ -502,6 +518,8 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    selectedBlockFields,
+    blockFieldMask,
     accountFilters,
     isInner,
     accounts,
@@ -578,9 +596,11 @@ let buildFuelEventConfig = (
     contractName,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    // Fuel keeps the transaction inline on the payload; nothing to materialise.
+    // Fuel keeps the transaction and block inline on the payload; nothing to
+    // materialise.
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
+    blockFieldMask: 0.,
     kind: fuelKind,
   }
 }

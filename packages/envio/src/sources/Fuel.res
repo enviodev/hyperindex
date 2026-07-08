@@ -54,11 +54,14 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
+    let header = payload.block->(Utils.magic: Internal.eventBlock => {"id": string, "time": int})
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
       ~params=payload.params,
       ~srcAddress=payload.srcAddress,
+      ~blockHash=header["id"],
+      ~blockTimestamp=header["time"],
       ~cleanUpRawEventFieldsInPlace,
     )
   },

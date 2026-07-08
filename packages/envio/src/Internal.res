@@ -166,6 +166,19 @@ let allSvmTransactionFields: array<svmTransactionField> = [
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
+// All SVM block fields. `slot`/`time`/`hash` are always included; the rest are
+// selectable via `field_selection.block_fields` (see `allSvmBlockFields`).
+type svmBlockField =
+  | @as("slot") Slot
+  | @as("time") Time
+  | @as("hash") Hash
+  | @as("height") Height
+  | @as("parentSlot") ParentSlot
+  | @as("parentHash") ParentHash
+
+let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
+let svmBlockFieldSchema = S.enum(allSvmBlockFields)
+
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
@@ -295,8 +308,8 @@ type genericEvent<'params, 'block, 'transaction> = {
   block: 'block,
 }
 
-// Opaque internally — block-level values needed by the runtime
-// (blockNumber, timestamp, blockHash) live on the item instead.
+// Opaque internally — the block number needed by the runtime lives on the
+// item instead.
 type event
 
 // Opaque payload an item carries. A source builds an ecosystem-specific
@@ -311,6 +324,11 @@ type eventPayload
 // store-backed ecosystems (HyperSync) and present inline otherwise.
 @get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
 @set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
+
+// Generic access to the payload's `block`: written/enriched at batch prep for
+// store-backed ecosystems (EVM/SVM HyperSync) and present inline otherwise.
+@get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
+@set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -411,6 +429,12 @@ type eventConfig = private {
   // so each transaction decodes only the fields its event selected. `0.` when
   // nothing is selected or the ecosystem carries the transaction inline (Fuel).
   transactionFieldMask: float,
+  // Selected block fields precompiled to the block-store selection bitmask (bit
+  // per ecosystem field code). `0.` for ecosystems that carry the block fully
+  // inline (RPC/Fuel). The EVM selection always includes number/timestamp/hash,
+  // so an EVM mask always has their bits set; SVM stamps slot/time/hash inline
+  // from the response and its mask is the user's selection alone.
+  blockFieldMask: float,
 }
 
 type fuelEventKind =
@@ -474,6 +498,10 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
+  /** Block fields selected via `field_selection.block_fields` (`slot` is always
+   included and excluded from this set). Drives the block query columns;
+   precompiled to `blockFieldMask` for store materialisation. */
+  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
@@ -559,10 +587,8 @@ type dcs = array<indexingAddress>
 type eventItem = private {
   kind: [#0],
   onEventRegistration: onEventRegistration,
-  timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
-  blockHash: string,
   logIndex: int,
   // Within-block transaction index — the key into the per-chain transaction
   // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
@@ -614,10 +640,8 @@ type item =
   | @as(0)
   Event({
       onEventRegistration: onEventRegistration,
-      timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
-      blockHash: string,
       logIndex: int,
       transactionIndex: int,
       payload: eventPayload,

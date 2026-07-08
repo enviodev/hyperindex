@@ -36,7 +36,7 @@ let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
 let runQuery = async (~client: HyperSyncClient.t) => {
-  let (res, _store) = await client.getEventItems(
+  let (res, _txStore, _blockStore) = await client.getEventItems(
     ~query={
       fromBlock,
       toBlockExclusive: toBlock + 1,
