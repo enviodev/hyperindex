@@ -47,18 +47,38 @@ external materialize: (
 
 // Items arrive in (block, logIndex) order, so events sharing a block are
 // adjacent; extending the current run avoids hashing a key per item. Items
-// that already carry an inline block (RPC/simulate/Fuel) are skipped.
+// that already carry an inline block (RPC/simulate/Fuel) are skipped. Each
+// group's mask is the OR of its items' individual masks.
 let groupByBlock = (items: array<Internal.item>): (
   array<int>,
   array<float>,
   array<array<Internal.eventItem>>,
-) =>
-  items->FieldMask.groupAdjacent(
-    ~hasInline=payload => payload->Internal.getPayloadBlock->Nullable.toOption->Option.isSome,
-    ~key=eventItem => eventItem.blockNumber,
-    ~sameKey=(a, b) => a == b,
-    ~mask=eventItem => eventItem.onEventRegistration.eventConfig.blockFieldMask,
+) => {
+  let blockNumbers = []
+  let masks = []
+  let groups = []
+  items->Array.forEach(item =>
+    switch item {
+    | Internal.Event(_) =>
+      let eventItem = item->Internal.castUnsafeEventItem
+      if eventItem.payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone {
+        let blockNumber = eventItem.blockNumber
+        let mask = eventItem.onEventRegistration.eventConfig.blockFieldMask
+        let last = groups->Array.length - 1
+        if last >= 0 && blockNumbers->Array.getUnsafe(last) == blockNumber {
+          groups->Array.getUnsafe(last)->Array.push(eventItem)
+          masks->Array.setUnsafe(last, FieldMask.orMask(masks->Array.getUnsafe(last), mask))
+        } else {
+          blockNumbers->Array.push(blockNumber)
+          masks->Array.push(mask)
+          groups->Array.push([eventItem])
+        }
+      }
+    | Internal.Block(_) => ()
+    }
   )
+  (blockNumbers, masks, groups)
+}
 
 // Every ecosystem's field selection always includes its always-included trio,
 // so every mask has bits set and every materialised block carries at least

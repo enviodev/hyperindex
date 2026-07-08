@@ -64,10 +64,10 @@ let materializeItems = async (store: t, ~items: array<Internal.item>) => {
   // transactionIndex) are adjacent regardless of event. Group them by extending
   // the current run rather than hashing a string key per item. A key recurring
   // non-adjacently just splits into two groups (one redundant decode) — never
-  // incorrect. Inlined rather than going through `FieldMask.groupAdjacent`: a
-  // generic key would need a tuple per item (extra allocation) and a second
-  // pass to unzip it back into `blockNumbers`/`transactionIndices` for
-  // `materialize`, on what's a per-batch hot path.
+  // incorrect. Inlined (rather than a generic keyed grouping helper) since a
+  // two-field key would need a tuple per item plus a second pass to unzip it
+  // back into `blockNumbers`/`transactionIndices` for `materialize`, on what's
+  // a per-batch hot path.
   let blockNumbers = []
   let transactionIndices = []
   let masks = []

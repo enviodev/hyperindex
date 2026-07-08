@@ -143,13 +143,6 @@ impl Block {
     }
 }
 
-impl TryFrom<simple::Block> for Block {
-    type Error = anyhow::Error;
-    fn try_from(b: simple::Block) -> Result<Self> {
-        Self::from_raw(&b)
-    }
-}
-
 impl TryFrom<simple::Instruction> for Instruction {
     type Error = anyhow::Error;
     fn try_from(i: simple::Instruction) -> Result<Self> {
@@ -235,7 +228,10 @@ impl TryFrom<simple::SolanaResponse> for QueryResponse {
             response_bytes: i64::try_from(r.response_bytes)
                 .with_context(|| format!("response_bytes {} overflows i64", r.response_bytes))?,
             data: QueryResponseData {
-                blocks: try_map(r.blocks)?,
+                // The caller takes `r.blocks` before this conversion runs (the
+                // raw blocks go into the `BlockStore`) and fills this in
+                // afterwards from `Block::from_raw`, so it's always empty here.
+                blocks: Vec::new(),
                 instructions: try_map(r.instructions)?,
                 logs: try_map(r.logs)?,
                 balances: try_map(r.balances)?,
