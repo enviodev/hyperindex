@@ -1490,21 +1490,38 @@ let getNextQuery = (
 
     let queries = []
 
-    let processPartition = (partitionId, ~estOverride) => {
-      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-
-      let pendingCount = p.mutPendingQueries->Array.length
-      let partitionQueriesStart = queries->Array.length
-
-      // Compute queryEndBlock for this partition
+    // Compute queryEndBlock for this partition
+    let computeQueryEndBlock = (p: partition) => {
       let queryEndBlock = Utils.Math.minOptInt(endBlock, p.mergeBlock)
-      let queryEndBlock = switch blockLag {
+      switch blockLag {
       | 0 => queryEndBlock
       | _ =>
         // Force head block as an endBlock when blockLag is set
         // because otherwise HyperSync might return bigger range
         Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
       }
+    }
+
+    // Whether a partition with no pending queries has any range left to query
+    // at all — mirrors pushQueriesForRange's own gate, so a partition already
+    // at its ceiling (endBlock/mergeBlock/knownHeight) doesn't inflate the
+    // probe split below for partitions that actually get queried.
+    let hasEligibleRange = (p: partition) => {
+      let rangeFromBlock = p.latestFetchedBlock.blockNumber + 1
+      rangeFromBlock <= knownHeight &&
+        switch computeQueryEndBlock(p) {
+        | Some(queryEndBlock) => rangeFromBlock <= queryEndBlock
+        | None => true
+        }
+    }
+
+    let processPartition = (partitionId, ~estOverride) => {
+      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+
+      let pendingCount = p.mutPendingQueries->Array.length
+      let partitionQueriesStart = queries->Array.length
+
+      let queryEndBlock = computeQueryEndBlock(p)
 
       let maybeChunkRange = getMinHistoryRange(p)
 
@@ -1588,13 +1605,15 @@ let getNextQuery = (
     let consumed = queries->Array.reduce(0., (acc, q) => acc +. q.estResponseSize)
     let leftover = Pervasives.max(0., rangeBudget -. consumed)
 
-    // Only partitions with no in-flight query are eligible for a new probe
-    // this tick — one already fetching will fold its response into
-    // prevQueryRange/prevPrevQueryRange and leave the unknown pool by the
-    // next tick, naturally rotating the fan-out across ticks.
+    // Only partitions with no in-flight query and an actual range left to
+    // fetch are eligible for a new probe this tick — one already fetching
+    // will fold its response into prevQueryRange/prevPrevQueryRange and leave
+    // the unknown pool by the next tick, naturally rotating the fan-out
+    // across ticks; one already at its ceiling has nothing to probe at all
+    // and shouldn't dilute the split for the ones that do.
     let probeCandidates = unknownIds->Array.filter(partitionId => {
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-      p.mutPendingQueries->Array.length === 0
+      p.mutPendingQueries->Array.length === 0 && p->hasEligibleRange
     })
 
     if leftover > 0. && probeCandidates->Array.length > 0 {
@@ -1612,6 +1631,23 @@ let getNextQuery = (
         processPartition(partitionId, ~estOverride=Some(share))
       )
     }
+
+    // Known- and unknown-density partitions are processed in two separate
+    // passes above (so pass 2 can see pass 1's consumed budget), which
+    // doesn't preserve idsInAscOrder across the two groups — restore it so a
+    // partition's relative query order matches its position in the partition
+    // list, same as the single-pass walk this replaced.
+    let partitionIndexById = Dict.make()
+    for idx in 0 to partitionsCount - 1 {
+      partitionIndexById->Dict.set(optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx), idx)
+    }
+    let _ =
+      queries->Array.sort((a, b) =>
+        Int.compare(
+          partitionIndexById->Dict.getUnsafe(a.partitionId),
+          partitionIndexById->Dict.getUnsafe(b.partitionId),
+        )
+      )
 
     if queries->Utils.Array.isEmpty {
       if shouldWaitForNewBlock.contents {

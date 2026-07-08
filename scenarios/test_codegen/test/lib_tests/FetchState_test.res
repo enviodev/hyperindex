@@ -2155,20 +2155,20 @@ describe("FetchState.getNextQuery & integration", () => {
       makeIntermidiateDcMerge(),
     )
 
-    let expectedPartition2Query: FetchState.query = {
+    let makePartition2Query = (~estResponseSize): FetchState.query => {
       ...defaultQuery,
       partitionId: "2",
-      estResponseSize: 10000.,
+      estResponseSize,
       fromBlock: 3,
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
       isChunk: false,
     }
-    let expectedPartition0Query: FetchState.query = {
+    let makePartition0Query = (~estResponseSize): FetchState.query => {
       ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 10000.,
+      estResponseSize,
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([
@@ -2183,18 +2183,23 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Since the partition "0" reached the maxAddrNumber,
       there's no point to continue merging partitions,
       so we have two queries concurrently`,
-    ).toEqual(Ready([expectedPartition2Query, expectedPartition0Query]))
+    ).toEqual(
+      Ready([makePartition2Query(~estResponseSize=5000.), makePartition0Query(~estResponseSize=5000.)]),
+    )
+    // Partition "0" is above the target block, so it's the only eligible
+    // unknown-density partition here and gets the whole budget.
+    let partition2QuerySolo = makePartition2Query(~estResponseSize=10000.)
     t.expect(
       updatedFetchState->getNextQuery(~knownHeight=10),
       ~message=`Even if a single partition reached block height,
       we finish fetching other partitions until waiting for the new block first`,
-    ).toEqual(Ready([expectedPartition2Query]))
+    ).toEqual(Ready([partition2QuerySolo]))
 
-    updatedFetchState->FetchState.startFetchingQueries(~queries=[expectedPartition2Query])
+    updatedFetchState->FetchState.startFetchingQueries(~queries=[partition2QuerySolo])
     t.expect(
       updatedFetchState->getNextQuery(~knownHeight=11),
       ~message=`Should skip fetching queries`,
-    ).toEqual(Ready([expectedPartition0Query]))
+    ).toEqual(Ready([makePartition0Query(~estResponseSize=10000.)]))
   })
 
   it("Emulate partition merging cases", t => {
@@ -2214,7 +2219,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2224,7 +2229,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           FetchState.partitionId: "0",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([
@@ -2248,7 +2253,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           toBlock: Some(10),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2258,7 +2263,7 @@ describe("FetchState.getNextQuery & integration", () => {
         {
           ...defaultQuery,
           FetchState.partitionId: "0",
-          estResponseSize: 10000.,
+          estResponseSize: 5000.,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([
