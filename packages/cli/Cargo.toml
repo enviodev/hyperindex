@@ -62,7 +62,6 @@ tar = "0.4"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 axum = { version = "0.8", features = ["ws"] }
-tower = { version = "0.5", features = ["limit", "timeout", "util"] }
 socket2 = "0.5"
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"

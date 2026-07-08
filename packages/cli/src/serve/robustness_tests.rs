@@ -24,12 +24,7 @@
 //!   otherwise alive) is closed within 30s instead of leaking a subscription
 //!   poll loop forever;
 //! - `envio serve` started before Postgres is reachable retries within its
-//!   startup budget and becomes healthy once Postgres comes up;
-//! - `ENVIO_SERVE_RATE_LIMIT_PER_SEC` actually rejects requests over the
-//!   configured per-IP rate with 429;
-//! - `ENVIO_SERVE_REQUEST_TIMEOUT_MS` (the HTTP middleware layer) sheds a
-//!   request with a clean 503 independently of the client-side query
-//!   timeout.
+//!   startup budget and becomes healthy once Postgres comes up.
 
 use super::env_config::ServeEnv;
 use super::model::ServerModel;
@@ -60,9 +55,6 @@ fn test_env(pg_port: u16) -> ServeEnv {
         startup_retry_budget_ms: 60_000,
         healthz_timeout_ms: 2_000,
         ws_ping_interval_ms: 15_000,
-        max_concurrent_requests: 64,
-        request_timeout_ms: 130_000,
-        rate_limit_per_sec: None,
     }
 }
 
@@ -126,9 +118,6 @@ async fn boot(
         query_timeout,
         healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
-        max_concurrent_requests: env.max_concurrent_requests,
-        request_timeout: Duration::from_millis(env.request_timeout_ms),
-        rate_limit_per_sec: env.rate_limit_per_sec,
     });
 
     let port = {
@@ -174,23 +163,6 @@ impl TestServer {
             .expect("request should get an HTTP response");
         let status = res.status().as_u16();
         let body: serde_json::Value = res.json().await.expect("JSON body");
-        (status, body)
-    }
-
-    /// Like `graphql`, but for responses the overload/rate-limit middleware
-    /// produces -- those are plain text, not the `{"errors": [...]}` GraphQL
-    /// shape, so parsing them as JSON would panic.
-    async fn graphql_raw(&self, query: &str, timeout: Duration) -> (u16, String) {
-        let res = reqwest::Client::new()
-            .post(format!("http://127.0.0.1:{}/v1/graphql", self.port))
-            .header("content-type", "application/json")
-            .body(serde_json::json!({ "query": query }).to_string())
-            .timeout(timeout)
-            .send()
-            .await
-            .expect("request should get an HTTP response");
-        let status = res.status().as_u16();
-        let body = res.text().await.expect("text body");
         (status, body)
     }
 
@@ -381,63 +353,6 @@ async fn shutdown_signal_stops_the_server() {
         (serve_result.is_ok(), new_request.is_err()),
         (true, true),
         "server should exit cleanly and stop accepting connections"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn rate_limit_returns_429_once_exceeded() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
-        return;
-    }
-    let pg = TestPg::start();
-    let mut env = test_env(pg.port);
-    env.rate_limit_per_sec = Some(2);
-    let server = boot(env, Some(Duration::from_secs(20)), None).await;
-
-    let mut statuses = Vec::new();
-    for _ in 0..5 {
-        let (status, _) = server
-            .graphql_raw(SIMPLE_QUERY, Duration::from_secs(10))
-            .await;
-        statuses.push(status);
-    }
-
-    assert!(
-        statuses.contains(&429),
-        "expected at least one 429 once ENVIO_SERVE_RATE_LIMIT_PER_SEC=2 is exceeded, got {statuses:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn request_timeout_middleware_returns_503_before_the_query_timeout() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
-        return;
-    }
-    let pg = TestPg::start();
-    let mut env = test_env(pg.port);
-    // Tower's HTTP-level request timeout fires well before the (much
-    // longer) client-side query timeout, so the middleware layer -- not
-    // `with_query_timeout` -- is what's under test here.
-    env.request_timeout_ms = 500;
-    let server = boot(env, Some(Duration::from_secs(20)), None).await;
-
-    pg.docker("pause");
-    let started = Instant::now();
-    let (status, body) = server
-        .graphql_raw(SIMPLE_QUERY, Duration::from_secs(10))
-        .await;
-    let elapsed = started.elapsed();
-    pg.docker("unpause");
-
-    assert_eq!(
-        (
-            status,
-            body.contains("ENVIO_SERVE_REQUEST_TIMEOUT_MS"),
-            elapsed < Duration::from_secs(5)
-        ),
-        (503, true, true)
     );
 }
 
@@ -789,9 +704,6 @@ async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
         query_timeout: Some(Duration::from_secs(20)),
         healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
-        max_concurrent_requests: env.max_concurrent_requests,
-        request_timeout: Duration::from_millis(env.request_timeout_ms),
-        rate_limit_per_sec: env.rate_limit_per_sec,
     });
 
     let http_port = {

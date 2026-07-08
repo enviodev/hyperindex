@@ -52,18 +52,6 @@ pub struct ServeEnv {
     /// are pinged; a connection that sends no pong/traffic within 2x this
     /// interval is treated as dead and closed.
     pub ws_ping_interval_ms: u64,
-    /// ENVIO_SERVE_MAX_CONCURRENT_REQUESTS. Caps in-flight HTTP requests
-    /// (tower ConcurrencyLimitLayer); requests above the cap are queued by
-    /// tower and time out via ENVIO_SERVE_REQUEST_TIMEOUT_MS instead of
-    /// piling unboundedly onto the Postgres pool.
-    pub max_concurrent_requests: usize,
-    /// ENVIO_SERVE_REQUEST_TIMEOUT_MS. Whole-HTTP-request bound (tower
-    /// TimeoutLayer), independent of the GraphQL query timeout.
-    pub request_timeout_ms: u64,
-    /// ENVIO_SERVE_RATE_LIMIT_PER_SEC. Optional per-IP request rate limit;
-    /// unset disables it (matches Hasura OSS, which has no built-in rate
-    /// limiting).
-    pub rate_limit_per_sec: Option<u32>,
 }
 
 /// deadpool_postgres::Config defaults to `cpu_core_count * 2` with no upper
@@ -227,29 +215,6 @@ impl ServeEnv {
                 Some(v) => v
                     .parse::<u64>()
                     .context("Invalid ENVIO_SERVE_WS_PING_INTERVAL_MS")?,
-            },
-            max_concurrent_requests: match r.var("ENVIO_SERVE_MAX_CONCURRENT_REQUESTS") {
-                None => default_pool_max_size() * 8,
-                Some(v) => v
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|n| *n > 0)
-                    .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_MAX_CONCURRENT_REQUESTS"))?,
-            },
-            request_timeout_ms: match r.var("ENVIO_SERVE_REQUEST_TIMEOUT_MS") {
-                None => 130_000,
-                Some(v) => v
-                    .parse::<u64>()
-                    .context("Invalid ENVIO_SERVE_REQUEST_TIMEOUT_MS")?,
-            },
-            rate_limit_per_sec: match r.var("ENVIO_SERVE_RATE_LIMIT_PER_SEC") {
-                None => None,
-                Some(v) => Some(
-                    v.parse::<u32>()
-                        .ok()
-                        .filter(|n| *n > 0)
-                        .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_RATE_LIMIT_PER_SEC"))?,
-                ),
             },
         })
     }

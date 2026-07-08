@@ -47,12 +47,6 @@ pub struct ServeState {
     /// How often idle WebSocket connections get a protocol-level ping; a
     /// connection that sends no pong/traffic within 2x this gets closed.
     pub ws_ping_interval: std::time::Duration,
-    /// Caps in-flight HTTP requests (tower ConcurrencyLimitLayer).
-    pub max_concurrent_requests: usize,
-    /// Whole-HTTP-request bound (tower TimeoutLayer).
-    pub request_timeout: std::time::Duration,
-    /// Optional per-IP requests/sec cap; None disables rate limiting.
-    pub rate_limit_per_sec: Option<u32>,
 }
 
 pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
@@ -82,9 +76,6 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
             .map(|ms| std::time::Duration::from_millis(ms + 5_000)),
         healthz_timeout: std::time::Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: std::time::Duration::from_millis(env.ws_ping_interval_ms),
-        max_concurrent_requests: env.max_concurrent_requests,
-        request_timeout: std::time::Duration::from_millis(env.request_timeout_ms),
-        rate_limit_per_sec: env.rate_limit_per_sec,
     });
 
     http::serve(state, &args.host, args.port, shutdown_signal()).await
