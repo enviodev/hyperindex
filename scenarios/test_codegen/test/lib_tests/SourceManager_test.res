@@ -567,10 +567,11 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          // Processed last: rangeBudget is whatever's actually left after the
-          // first two partitions each rounded their nominal 16_666.67 share
-          // up to 16_667, leaving 1 less than the nominal share here.
-          itemsTarget: 16_666.,
+          // Each partition's share is fixed for the round (16_666.67,
+          // independent of what the others consume), so all 3 identical
+          // partitions round to the same 16_667 regardless of processing
+          // order.
+          itemsTarget: 16_667.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,

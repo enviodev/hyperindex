@@ -1735,27 +1735,29 @@ let getNextQuery = (
       roundsRef.contents < maxPendingChunksPerPartition + 1
     ) {
       let n = rangePartitions.contents->Array.length
-      // Recomputed from what's actually left each round (not the original
-      // chainTargetItems): a partition already holding a reservation from
-      // outside this round (e.g. a blocked partition's pending query) has
-      // already shrunk the pool for everyone via rangeBudget, so dividing the
-      // remainder evenly — rather than re-deriving each share from the full
-      // original target — avoids double-crediting that reservation and
-      // starving the other in-range partitions of their fair share.
+      // Fixed for the whole round, from what's left after previous rounds —
+      // every partition's share this round is ipb - reserved, independent of
+      // what any other partition in the SAME round consumes. A partition can
+      // still overshoot its share (a chunked partition forced to take at
+      // least one full chunk), but that no longer steals from whoever's
+      // processed after it: rangeBudget is only re-derived once, from this
+      // round's actual total, after everyone's had their fixed shot.
       let ipb = rangeBudget.contents /. n->Int.toFloat
       let next = []
+      let roundConsumed = ref(0.)
       rangePartitions.contents->Array.forEach(fs => {
         let reserved = reservedByPartition->Dict.getUnsafe(fs.partitionId)
-        let budget = Pervasives.min(rangeBudget.contents, ipb -. reserved)
+        let budget = ipb -. reserved
         if budget > 0. {
           let consumed = emitQueries(fs, ~budget)
           reservedByPartition->Dict.set(fs.partitionId, reserved +. consumed)
-          rangeBudget := Pervasives.max(0., rangeBudget.contents -. consumed)
+          roundConsumed := roundConsumed.contents +. consumed
           if fs->isInRange {
             next->Array.push(fs)->ignore
           }
         }
       })
+      rangeBudget := Pervasives.max(0., rangeBudget.contents -. roundConsumed.contents)
       rangePartitions := next
       roundsRef := roundsRef.contents + 1
     }
