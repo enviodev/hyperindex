@@ -91,16 +91,11 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   result
 })
 
-// itemsTarget for a query over [fromBlock, toBlock], from the partition's event
-// density (items/block derived from its last response). toBlock None is the
-// open-ended tail, capped at chainTargetBlock — the soft per-tick horizon the
-// owning chain wants to reach (see getNextQuery). A partition that responded
-// with no items has density 0, so its queries cost 0 — correct, they don't
-// fill the buffer. Only called for partitions with a known density
-// (prevQueryRange > 0); partitions with no signal yet are sized instead
-// against their even split of the chain's range budget.
-let densityItemsTarget = (p: partition, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
-  let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
+// itemsTarget for a query over [fromBlock, toBlock] at the given event density
+// (items/block). toBlock None is the open-ended tail, capped at
+// chainTargetBlock — the soft per-tick horizon the owning chain wants to reach
+// (see getNextQuery).
+let densityItemsTarget = (~density, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
   // Floor at 1: the reservation must equal the server-side cap SourceManager
   // sends, and a 0 cap would ask the backend for nothing.
   Pervasives.max(
@@ -1358,9 +1353,13 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 let maxPendingChunksPerPartition = 10
 
 // Fills a gap range (a hole left between completed/pending chunks, e.g. from an
-// out-of-order partial response) unconditionally against the partition's real
-// density — gaps are already-committed range, not subject to this tick's
-// water-fill budget. Returns the created queries' total itemsTarget.
+// out-of-order partial response) unconditionally — gaps are already-committed
+// range, not subject to this tick's water-fill budget. Priced by the
+// partition's trusted density when it has one; otherwise by the "available
+// density" — the partition's equal-divide budget spread over its remaining
+// range this tick — so a small gap reserves proportionally little instead of a
+// noisy one-sample estimate. Chunks only on a trusted POSITIVE density, same
+// rule as the water-fill. Returns the created queries' total itemsTarget.
 let pushGapFillQueries = (
   queries: array<query>,
   ~partitionId: string,
@@ -1371,6 +1370,7 @@ let pushGapFillQueries = (
   ~maybeChunkRange: option<int>,
   ~maxChunks: int,
   ~partition: partition,
+  ~partitionBudget: float,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1379,10 +1379,14 @@ let pushGapFillQueries = (
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
-      switch maybeChunkRange {
-      | None =>
+      let trustedDensity = partition->getTrustedDensity
+      let maxBlock = switch rangeEndBlock {
+      | Some(eb) => eb
+      | None => chainTargetBlock
+      }
+      let pushSingleQuery = (~density, ~isChunk) => {
         let itemsTarget = densityItemsTarget(
-          partition,
+          ~density,
           ~fromBlock=rangeFromBlock,
           ~toBlock=rangeEndBlock,
           ~chainTargetBlock,
@@ -1392,16 +1396,14 @@ let pushGapFillQueries = (
           fromBlock: rangeFromBlock,
           toBlock: rangeEndBlock,
           selection,
-          isChunk: false,
+          isChunk,
           itemsTarget,
           addressesByContractName,
         })
         cost := cost.contents +. itemsTarget->Int.toFloat
-      | Some(chunkRange) =>
-        let maxBlock = switch rangeEndBlock {
-        | Some(eb) => eb
-        | None => chainTargetBlock
-        }
+      }
+      switch (trustedDensity, maybeChunkRange) {
+      | (Some(density), Some(chunkRange)) if density > 0. =>
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
         if rangeFromBlock + chunkSize * 2 - 1 <= maxBlock {
           let chunkFromBlock = ref(rangeFromBlock)
@@ -1411,7 +1413,7 @@ let pushGapFillQueries = (
           ) {
             let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
             let itemsTarget = densityItemsTarget(
-              partition,
+              ~density,
               ~fromBlock=chunkFromBlock.contents,
               ~toBlock=Some(chunkToBlock),
               ~chainTargetBlock,
@@ -1431,23 +1433,12 @@ let pushGapFillQueries = (
           }
         } else {
           // Not enough room for 2 chunks, fall back to a single query
-          let itemsTarget = densityItemsTarget(
-            partition,
-            ~fromBlock=rangeFromBlock,
-            ~toBlock=rangeEndBlock,
-            ~chainTargetBlock,
-          )
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock,
-            toBlock: rangeEndBlock,
-            selection,
-            isChunk: rangeEndBlock !== None,
-            itemsTarget,
-            addressesByContractName,
-          })
-          cost := cost.contents +. itemsTarget->Int.toFloat
+          pushSingleQuery(~density, ~isChunk=rangeEndBlock !== None)
         }
+      | (Some(density), _) => pushSingleQuery(~density, ~isChunk=false)
+      | (None, _) =>
+        let remainingRange = Pervasives.max(1, chainTargetBlock - rangeFromBlock + 1)
+        pushSingleQuery(~density=partitionBudget /. remainingRange->Int.toFloat, ~isChunk=false)
       }
     }
   }
@@ -1604,6 +1595,7 @@ let getNextQuery = (
             ~maybeChunkRange,
             ~maxChunks=maxPendingChunksPerPartition - pendingCount - chunksUsedThisCall.contents,
             ~partition=p,
+            ~partitionBudget=chainTargetItems /. partitionsCount->Int.toFloat,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
