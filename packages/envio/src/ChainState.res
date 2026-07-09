@@ -385,7 +385,8 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsTarget)
+    cs.pendingBudget +.
+    queries->Array.reduce(0., (acc, query) => acc +. query.itemsTarget->Int.toFloat)
 }
 
 // Drop every in-flight query and release their reservations together, keeping
@@ -395,24 +396,93 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
-// Turn this chain's share of the indexer-wide buffer budget into a soft
-// target block (via chain density, or knownHeight when density isn't known
-// yet), then propose queries sized against it. Called by CrossChainState's
-// waterfall, furthest-behind chain first, with chainTargetItems set to
-// whatever budget remains at that point in the waterfall.
-let getNextQuery = (cs: t, ~chainTargetItems: float) => {
+// The last block this chain can fetch right now: the head, or endBlock when
+// it's below the head.
+let fetchCeiling = (cs: t) => {
   let fetchState = cs.fetchState
-  let knownHeight = fetchState.knownHeight
+  switch fetchState.endBlock {
+  | Some(endBlock) => Pervasives.min(endBlock, fetchState.knownHeight)
+  | None => fetchState.knownHeight
+  }
+}
+
+// This chain's share of the indexer-wide buffer budget turned into a soft
+// target block: via chain density, or the fetch ceiling when density isn't
+// known yet.
+let targetBlock = (cs: t, ~chainTargetItems: float) => {
+  let fetchState = cs.fetchState
+  let fetchCeiling = cs->fetchCeiling
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
-  let chainTargetBlock = switch cs.chainDensity {
+  switch cs.chainDensity {
   | Some(density) if density > 0. =>
     Pervasives.min(
-      knownHeight,
+      fetchCeiling,
       bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
     )
-  | _ => knownHeight
+  | _ => fetchCeiling
   }
-  fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
+}
+
+// Block range that cross-chain progress alignment maps fractions over: from
+// the first block that can hold this chain's events to the last block it will
+// fetch.
+let progressRange = (cs: t) => {
+  let fetchState = cs.fetchState
+  let lower = fetchState.firstEventBlock->Option.getOr(fetchState.startBlock)
+  let upper = switch fetchState.endBlock {
+  | Some(endBlock) => endBlock
+  | None => fetchState.knownHeight
+  }
+  (lower, upper)
+}
+
+// A degenerate range (chain already at or past its last block) maps to 1 so it
+// never constrains the other chains.
+let progressAtBlock = (cs: t, ~blockNumber) => {
+  let (lower, upper) = cs->progressRange
+  upper <= lower
+    ? 1.
+    : Pervasives.min(1., (blockNumber - lower)->Int.toFloat /. (upper - lower)->Int.toFloat)
+}
+
+let blockAtProgress = (cs: t, ~progress) => {
+  let (lower, upper) = cs->progressRange
+  lower + Math.ceil(progress *. (upper - lower)->Int.toFloat)->Float.toInt
+}
+
+// Propose queries sized against this chain's target block. Called by
+// CrossChainState's waterfall, furthest-behind chain first, with
+// chainTargetItems set to whatever budget remains at that point and
+// maxTargetBlock set to the most-behind chain's progress mapped onto this
+// chain, so a chain with budget can't run further ahead than the chain the
+// whole pool is prioritizing.
+let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
+  let chainTargetBlock = cs->targetBlock(~chainTargetItems)
+  let chainTargetBlock = switch maxTargetBlock {
+  | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
+  | None => chainTargetBlock
+  }
+  // When the target block is clamped (head/endBlock/cross-chain alignment) a
+  // known-density chain can't use the whole handed budget — cap the fresh part
+  // at what the clamped range actually costs (in-flight reservations stay on
+  // top: they're already accounted and shouldn't crowd out new partitions), so
+  // the waterfall's leftover flows to the next chain in the same tick instead
+  // of being held by an oversized probe.
+  let chainTargetItems = switch cs.chainDensity {
+  | Some(density) if density > 0. =>
+    let rangeCost =
+      density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
+    // 3x headroom when the query reaches the head/endBlock directly: a
+    // slightly denser-than-expected range would otherwise truncate at the
+    // server cap and force an immediate catch-up query for the last blocks.
+    let rangeCost = chainTargetBlock >= cs->fetchCeiling ? rangeCost *. 3. : rangeCost
+    Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
+  | _ =>
+    // No density signal yet: bound the probe so one unknown chain doesn't
+    // hold the whole pool while it takes its first measurements.
+    Pervasives.min(chainTargetItems, 5_000. +. cs.pendingBudget)
+  }
+  cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
@@ -689,7 +759,7 @@ let handleQueryResult = (
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
-  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsTarget)
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsTarget->Int.toFloat)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.
