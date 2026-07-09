@@ -396,19 +396,30 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
+// The last block this chain can fetch right now: the head, or endBlock when
+// it's below the head.
+let fetchCeiling = (cs: t) => {
+  let fetchState = cs.fetchState
+  switch fetchState.endBlock {
+  | Some(endBlock) => Pervasives.min(endBlock, fetchState.knownHeight)
+  | None => fetchState.knownHeight
+  }
+}
+
 // This chain's share of the indexer-wide buffer budget turned into a soft
-// target block: via chain density, or knownHeight when density isn't known yet.
+// target block: via chain density, or the fetch ceiling when density isn't
+// known yet.
 let targetBlock = (cs: t, ~chainTargetItems: float) => {
   let fetchState = cs.fetchState
-  let knownHeight = fetchState.knownHeight
+  let fetchCeiling = cs->fetchCeiling
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
   switch cs.chainDensity {
   | Some(density) if density > 0. =>
     Pervasives.min(
-      knownHeight,
+      fetchCeiling,
       bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
     )
-  | _ => knownHeight
+  | _ => fetchCeiling
   }
 }
 
@@ -461,12 +472,15 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   | Some(density) if density > 0. =>
     let rangeCost =
       density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
-    // 2x headroom when the query reaches the head directly: a slightly
-    // denser-than-expected range would otherwise truncate at the server cap
-    // and force an immediate catch-up query for the last few blocks.
-    let rangeCost = chainTargetBlock >= cs.fetchState.knownHeight ? rangeCost *. 2. : rangeCost
+    // 3x headroom when the query reaches the head/endBlock directly: a
+    // slightly denser-than-expected range would otherwise truncate at the
+    // server cap and force an immediate catch-up query for the last blocks.
+    let rangeCost = chainTargetBlock >= cs->fetchCeiling ? rangeCost *. 3. : rangeCost
     Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
-  | _ => chainTargetItems
+  | _ =>
+    // No density signal yet: bound the probe so one unknown chain doesn't
+    // hold the whole pool while it takes its first measurements.
+    Pervasives.min(chainTargetItems, 5_000. +. cs.pendingBudget)
   }
   cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
 }
