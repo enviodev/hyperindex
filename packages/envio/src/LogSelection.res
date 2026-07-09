@@ -66,7 +66,15 @@ let make = (~addresses, ~topicSelections) => {
 let materializeTopicFilter = (filter: Internal.topicFilter, ~addresses: array<Address.t>) =>
   switch filter {
   | Values(values) => values
-  | ContractAddresses(_) => addresses->Array.map(TopicFilter.fromAddress)
+  | ContractAddresses(_) =>
+    // Log topics from sources are always lowercase hex, regardless of the
+    // `address_format` config, so addresses must be lowercased here the same
+    // way `EventConfigBuilder.getTopicEncoder` does for "address" params -
+    // otherwise checksummed addresses (`address_format: checksum`) would
+    // materialize into topics that never match.
+    addresses->Array.map(address =>
+      address->Address.Evm.fromAddressLowercaseOrThrow->TopicFilter.fromAddress
+    )
   }
 
 let materializeTopicSelections = (
