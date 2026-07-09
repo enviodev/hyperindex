@@ -459,13 +459,13 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   // of being held by an oversized probe.
   let chainTargetItems = switch cs.chainDensity {
   | Some(density) if density > 0. =>
-    Pervasives.min(
-      chainTargetItems,
-      Math.ceil(
-        density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat,
-      ) +.
-      cs.pendingBudget,
-    )
+    let rangeCost =
+      density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
+    // 2x headroom when the query reaches the head directly: a slightly
+    // denser-than-expected range would otherwise truncate at the server cap
+    // and force an immediate catch-up query for the last few blocks.
+    let rangeCost = chainTargetBlock >= cs.fetchState.knownHeight ? rangeCost *. 2. : rangeCost
+    Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
   | _ => chainTargetItems
   }
   cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
