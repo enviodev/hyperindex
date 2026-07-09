@@ -6,7 +6,9 @@ let decodeLogs = async (
   ~eventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   ~logs: array<(array<string>, string)>,
 ): array<Nullable.t<dict<Internal.eventParams>>> => {
-  let logJsons = logs->Array.map(((topics, data)) =>
+  // logIndex must be unique per log within the block — the client dedups a
+  // page's items by (blockNumber, logIndex).
+  let logJsons = logs->Array.mapWithIndex(((topics, data), i) =>
     JSON.Object(
       Dict.fromArray([
         ("address", JSON.String("0x000000000000000000000000000000000000abcd")),
@@ -16,7 +18,7 @@ let decodeLogs = async (
         ("transactionHash", JSON.String("0xabc")),
         ("transactionIndex", JSON.String("0x0")),
         ("blockHash", JSON.String("0xb01")),
-        ("logIndex", JSON.String("0x0")),
+        ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
         ("removed", JSON.Boolean(false)),
       ]),
     )
@@ -27,8 +29,18 @@ let decodeLogs = async (
     | _ => JSON.Null
     }
   )
-  let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~allEventParams=eventParams)
-  let items = try await client.getLogs({fromBlock: 0, toBlock: 0, topics: []}) catch {
+  let client = EvmRpcClient.make(
+    ~url=mock.url,
+    ~checksumAddresses=false,
+    ~syncConfig=EvmChain.getSyncConfig({}),
+    ~allEventParams=eventParams,
+  )
+  let {items} = try await client.getNextPage({
+    fromBlock: 0,
+    toBlockCeiling: 0,
+    logSelections: [{topics: []}],
+    partitionId: "0",
+  }) catch {
   | exn =>
     mock.close()
     throw(exn)

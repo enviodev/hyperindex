@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// The resolved (env-overridden, defaulted) sync-tuning knobs a `RpcSource`
-/// passes in at construction — mirrors ReScript's `Config.sourceSync`, minus
-/// the fields (`fallbackStallTimeout`, `pollingInterval`) that stay JS-side
+/// The sync-tuning knobs a `RpcSource` resolves in `EvmChain.getSyncConfig`
+/// (ReScript's `Config.sourceSync`) and passes in at construction, minus the
+/// fields (`fallbackStallTimeout`, `pollingInterval`) that stay JS-side
 /// scheduling concerns unrelated to paging.
 #[derive(Clone, Copy)]
 pub struct SyncConfig {
@@ -13,40 +13,6 @@ pub struct SyncConfig {
     pub interval_ceiling: u64,
     pub backoff_millis: u64,
     pub query_timeout_millis: u64,
-}
-
-impl SyncConfig {
-    pub const fn default_initial_block_interval() -> u64 {
-        10_000
-    }
-    pub const fn default_backoff_multiplicative() -> f64 {
-        0.8
-    }
-    pub const fn default_acceleration_additive() -> u64 {
-        500
-    }
-    pub const fn default_interval_ceiling() -> u64 {
-        10_000
-    }
-    pub const fn default_backoff_millis() -> u64 {
-        2_000
-    }
-    pub const fn default_query_timeout_millis() -> u64 {
-        20_000
-    }
-}
-
-impl Default for SyncConfig {
-    fn default() -> Self {
-        Self {
-            initial_block_interval: Self::default_initial_block_interval(),
-            backoff_multiplicative: Self::default_backoff_multiplicative(),
-            acceleration_additive: Self::default_acceleration_additive(),
-            interval_ceiling: Self::default_interval_ceiling(),
-            backoff_millis: Self::default_backoff_millis(),
-            query_timeout_millis: Self::default_query_timeout_millis(),
-        }
-    }
 }
 
 /// Per-partition adaptive block interval (AIMD), keyed by partition id. The
@@ -126,6 +92,17 @@ pub fn shrink(executed_interval: u64, backoff_multiplicative: f64) -> u64 {
 mod tests {
     use super::*;
 
+    fn test_config() -> SyncConfig {
+        SyncConfig {
+            initial_block_interval: 10_000,
+            backoff_multiplicative: 0.8,
+            acceleration_additive: 500,
+            interval_ceiling: 10_000,
+            backoff_millis: 2_000,
+            query_timeout_millis: 20_000,
+        }
+    }
+
     #[test]
     fn shrink_floors_at_one() {
         assert_eq!(shrink(10_000, 0.8), 8_000);
@@ -137,9 +114,8 @@ mod tests {
     fn suggested_interval_defaults_to_initial_and_clamps_to_ceiling() {
         let state = IntervalState::new();
         let cfg = SyncConfig {
-            initial_block_interval: 10_000,
             interval_ceiling: 5_000,
-            ..SyncConfig::default()
+            ..test_config()
         };
         assert_eq!(state.suggested_interval("0", &cfg), (5_000, 5_000));
     }
@@ -147,10 +123,7 @@ mod tests {
     #[test]
     fn grow_caps_at_source_max() {
         let state = IntervalState::new();
-        let cfg = SyncConfig {
-            acceleration_additive: 500,
-            ..SyncConfig::default()
-        };
+        let cfg = test_config();
         state.grow("0", 9_800, &cfg, 10_000);
         assert_eq!(state.suggested_interval("0", &cfg).0, 10_000);
 
@@ -169,7 +142,7 @@ mod tests {
     #[test]
     fn partitions_are_independent() {
         let state = IntervalState::new();
-        let cfg = SyncConfig::default();
+        let cfg = test_config();
         state.set_partition("a", 2_000);
         state.set_partition("b", 3_000);
         assert_eq!(state.suggested_interval("a", &cfg).0, 2_000);

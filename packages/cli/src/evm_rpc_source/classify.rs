@@ -1,9 +1,4 @@
 //! Provider error-message classification for the RPC paging retry decision.
-//! Ported from ReScript's `RpcSource.getSuggestedBlockIntervalFromExn` /
-//! `isResponseTooLargeError` — these only ever ran against JSON-RPC error
-//! messages, which now originate in Rust (`RpcError::JsonRpc`), so the
-//! classification moves here with them instead of round-tripping the string
-//! back across the napi boundary.
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -31,50 +26,46 @@ pub fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
-struct RangeRegexes {
-    // Unknown provider: "retry with the range 123-456"
-    suggested_range: Regex,
-    // QuickNode, 1RPC, Blast: "limited to a 1000 blocks range"
-    block_range_limit: Regex,
-    // Alchemy: "up to a 500 block range"
-    alchemy_range: Regex,
-    // Cloudflare: "Max range: 3500"
-    cloudflare_range: Regex,
-    // Thirdweb: "Maximum allowed number of requested blocks is 3500"
-    thirdweb_range: Regex,
-    // BlockPI: "limited to 2000 block"
-    blockpi_range: Regex,
-    // Base: "block range too large" - fixed 2000 block limit
-    base_range: Regex,
-    // evm-rpc.sei-apis.com: "block range too large (2000), maximum allowed is 1000 blocks"
-    max_allowed_blocks: Regex,
-    // Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
-    blast_paid: Regex,
-    // Chainstack: "Block range limit exceeded" - 10000 block limit
-    chainstack: Regex,
-    // Coinbase: "please limit the query to at most 1000 blocks"
-    coinbase: Regex,
-    // PublicNode: "maximum block range: 2000"
-    public_node: Regex,
-    // Hyperliquid: "query exceeds max block range 1000"
-    hyperliquid: Regex,
-}
-
-static RANGE_REGEXES: LazyLock<RangeRegexes> = LazyLock::new(|| RangeRegexes {
-    suggested_range: Regex::new(r"retry with the range (\d+)-(\d+)").unwrap(),
-    block_range_limit: Regex::new(r"limited to a (\d+) blocks range").unwrap(),
-    alchemy_range: Regex::new(r"up to a (\d+) block range").unwrap(),
-    cloudflare_range: Regex::new(r"Max range: (\d+)").unwrap(),
-    thirdweb_range: Regex::new(r"Maximum allowed number of requested blocks is (\d+)").unwrap(),
-    blockpi_range: Regex::new(r"limited to (\d+) block").unwrap(),
-    base_range: Regex::new(r"block range too large").unwrap(),
-    max_allowed_blocks: Regex::new(r"maximum allowed is (\d+) blocks").unwrap(),
-    blast_paid: Regex::new(r"exceeds the range allowed for your plan \(\d+ > (\d+)\)").unwrap(),
-    chainstack: Regex::new(r"Block range limit exceeded\.").unwrap(),
-    coinbase: Regex::new(r"please limit the query to at most (\d+) blocks").unwrap(),
-    public_node: Regex::new(r"maximum block range: (\d+)").unwrap(),
-    hyperliquid: Regex::new(r"query exceeds max block range (\d+)").unwrap(),
+// Unknown provider: "retry with the range 123-456"
+static SUGGESTED_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"retry with the range (\d+)-(\d+)").unwrap());
+// QuickNode, 1RPC, Blast: "limited to a 1000 blocks range"
+static BLOCK_RANGE_LIMIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"limited to a (\d+) blocks range").unwrap());
+// Alchemy: "up to a 500 block range"
+static ALCHEMY_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"up to a (\d+) block range").unwrap());
+// Cloudflare: "Max range: 3500"
+static CLOUDFLARE_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Max range: (\d+)").unwrap());
+// Thirdweb: "Maximum allowed number of requested blocks is 3500"
+static THIRDWEB_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Maximum allowed number of requested blocks is (\d+)").unwrap());
+// BlockPI: "limited to 2000 block"
+static BLOCKPI_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"limited to (\d+) block").unwrap());
+// Base: "block range too large" - fixed 2000 block limit
+static BASE_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"block range too large").unwrap());
+// evm-rpc.sei-apis.com: "block range too large (2000), maximum allowed is 1000 blocks"
+static MAX_ALLOWED_BLOCKS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"maximum allowed is (\d+) blocks").unwrap());
+// Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
+static BLAST_PAID: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"exceeds the range allowed for your plan \(\d+ > (\d+)\)").unwrap()
 });
+// Chainstack: "Block range limit exceeded" - 10000 block limit
+static CHAINSTACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Block range limit exceeded\.").unwrap());
+// Coinbase: "please limit the query to at most 1000 blocks"
+static COINBASE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"please limit the query to at most (\d+) blocks").unwrap());
+// PublicNode: "maximum block range: 2000"
+static PUBLIC_NODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"maximum block range: (\d+)").unwrap());
+// Hyperliquid: "query exceeds max block range 1000"
+static HYPERLIQUID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"query exceeds max block range (\d+)").unwrap());
 
 fn extract_positive_u64(re: &Regex, message: &str) -> Option<u64> {
     let n: u64 = re.captures(message)?.get(1)?.as_str().parse().ok()?;
@@ -83,47 +74,45 @@ fn extract_positive_u64(re: &Regex, message: &str) -> Option<u64> {
 
 /// Returns `Some((suggested block interval, is the provider's structural max))`.
 pub fn suggested_block_interval_from_message(message: &str) -> Option<(u64, bool)> {
-    let r = &*RANGE_REGEXES;
-
-    if let Some(caps) = r.suggested_range.captures(message) {
+    if let Some(caps) = SUGGESTED_RANGE.captures(message) {
         let from: u64 = caps.get(1)?.as_str().parse().ok()?;
         let to: u64 = caps.get(2)?.as_str().parse().ok()?;
         return (to >= from).then(|| (to - from + 1, false));
     }
-    if let Some(n) = extract_positive_u64(&r.block_range_limit, message) {
+    if let Some(n) = extract_positive_u64(&BLOCK_RANGE_LIMIT, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.alchemy_range, message) {
+    if let Some(n) = extract_positive_u64(&ALCHEMY_RANGE, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.cloudflare_range, message) {
+    if let Some(n) = extract_positive_u64(&CLOUDFLARE_RANGE, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.thirdweb_range, message) {
+    if let Some(n) = extract_positive_u64(&THIRDWEB_RANGE, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.blockpi_range, message) {
+    if let Some(n) = extract_positive_u64(&BLOCKPI_RANGE, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.max_allowed_blocks, message) {
+    if let Some(n) = extract_positive_u64(&MAX_ALLOWED_BLOCKS, message) {
         return Some((n, true));
     }
-    if r.base_range.is_match(message) {
+    if BASE_RANGE.is_match(message) {
         return Some((2000, true));
     }
-    if let Some(n) = extract_positive_u64(&r.blast_paid, message) {
+    if let Some(n) = extract_positive_u64(&BLAST_PAID, message) {
         return Some((n, true));
     }
-    if r.chainstack.is_match(message) {
+    if CHAINSTACK.is_match(message) {
         return Some((10000, true));
     }
-    if let Some(n) = extract_positive_u64(&r.coinbase, message) {
+    if let Some(n) = extract_positive_u64(&COINBASE, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.public_node, message) {
+    if let Some(n) = extract_positive_u64(&PUBLIC_NODE, message) {
         return Some((n, true));
     }
-    if let Some(n) = extract_positive_u64(&r.hyperliquid, message) {
+    if let Some(n) = extract_positive_u64(&HYPERLIQUID, message) {
         return Some((n, true));
     }
     None

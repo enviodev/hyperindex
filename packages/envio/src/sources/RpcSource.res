@@ -102,14 +102,10 @@ type logSelection = {
   topicQuery: Rpc.GetLogs.topicQuery,
 }
 
-// Paging, dedup, the query-timeout race, and the AIMD-suggested-interval state
-// (backoff-multiplicative shrink, additive acceleration, per-partition with a
-// source-wide max ceiling) all live in `EvmRpcClient.getNextPage` (Rust) now —
-// this file just builds the request and turns the retry decision Rust encodes
-// in the napi error's message back into a `Source.getItemsRetry`.
-//
-// Payload shape: `{"kind":"Retry","attemptedToBlock":int,"errorMessage":
-// string|null,"requestStats":[{"method":string,"seconds":float}],"retry":
+// `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
+// payload describing the retry decision:
+// `{"kind":"Retry","attemptedToBlock":int,"errorMessage":string|null,
+// "requestStats":[{"method":string,"seconds":float}],"retry":
 // {"tag":"WithSuggestedToBlock","toBlock":int} |
 // {"tag":"WithBackoff","message":string,"backoffMillis":int}}`.
 let parseGetNextPageRetryError = (exn: exn): option<(
@@ -787,13 +783,8 @@ let make = (
     ~url,
     ~allEventParams,
     ~checksumAddresses=!lowercaseAddresses,
+    ~syncConfig,
     ~headers?,
-    ~initialBlockInterval=syncConfig.initialBlockInterval,
-    ~backoffMultiplicative=syncConfig.backoffMultiplicative,
-    ~accelerationAdditive=syncConfig.accelerationAdditive,
-    ~intervalCeiling=syncConfig.intervalCeiling,
-    ~backoffMillis=syncConfig.backoffMillis,
-    ~queryTimeoutMillis=syncConfig.queryTimeoutMillis,
   )
 
   // Requests are made from shared, memoized loaders, so they can't be

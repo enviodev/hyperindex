@@ -2,25 +2,12 @@ type cfg = {
   url: string,
   httpReqTimeoutMillis?: int,
   headers?: dict<string>,
-  // Sync-tuning knobs for the paging AIMD state that now lives in Rust (see
-  // `getNextPage` below). Omitted by callers (like the low-level napi tests)
-  // that only ever use `getHeight`/`getLogs`.
-  initialBlockInterval?: int,
-  backoffMultiplicative?: float,
-  accelerationAdditive?: int,
-  intervalCeiling?: int,
-  backoffMillis?: int,
-  queryTimeoutMillis?: int,
-}
-
-// `addresses` omitted matches any address (a wildcard selection). Each `topics`
-// position is `null` (match any) or a list of accepted topic hashes; the
-// single-match case is a one-element list.
-type getLogsParams = {
-  fromBlock: int,
-  toBlock: int,
-  addresses?: array<Address.t>,
-  topics: array<Nullable.t<array<string>>>,
+  initialBlockInterval: int,
+  backoffMultiplicative: float,
+  accelerationAdditive: int,
+  intervalCeiling: int,
+  backoffMillis: int,
+  queryTimeoutMillis: int,
 }
 
 // Decoded `params` keyed by contract name, matching the HyperSync decoder's
@@ -30,8 +17,9 @@ type rpcEventItem = {
   params: Nullable.t<dict<Internal.eventParams>>,
 }
 
-// Same shape as `getLogsParams` minus `fromBlock`/`toBlock` — `getNextPage`
-// applies one shared range (that it decides internally) across every selection.
+// `addresses` omitted matches any address (a wildcard selection). Each `topics`
+// position is `null` (match any) or a list of accepted topic hashes; the
+// single-match case is a one-element list.
 type logSelectionInput = {
   addresses?: array<Address.t>,
   topics: array<Nullable.t<array<string>>>,
@@ -50,14 +38,9 @@ type nextPageResponse = {
   requestStats: array<Source.requestStat>,
 }
 
+// The caller provides a range; Rust decides the actual `toBlock` and returns it.
 type t = {
   getHeight: unit => promise<int>,
-  getLogs: getLogsParams => promise<array<rpcEventItem>>,
-  // Paging, dedup, the query-timeout race, and the AIMD-suggested interval
-  // state all live in the Rust client now — this just asks for a range and
-  // Rust decides the actual `toBlock`. On failure, throws a napi error whose
-  // message encodes the retry decision (see `RpcSource.res`'s
-  // `parseGetNextPageRetryError`).
   getNextPage: nextPageParams => promise<nextPageResponse>,
 }
 
@@ -101,34 +84,28 @@ let coerceErrorOrThrow = exn =>
 let make = (
   ~url,
   ~checksumAddresses,
+  ~syncConfig: Config.sourceSync,
   ~httpReqTimeoutMillis=?,
   ~headers=?,
   ~allEventParams=[],
-  ~initialBlockInterval=?,
-  ~backoffMultiplicative=?,
-  ~accelerationAdditive=?,
-  ~intervalCeiling=?,
-  ~backoffMillis=?,
-  ~queryTimeoutMillis=?,
 ) => {
   let client = Core.getAddon().evmRpcClient->classNew(
     {
       url,
       ?httpReqTimeoutMillis,
       ?headers,
-      ?initialBlockInterval,
-      ?backoffMultiplicative,
-      ?accelerationAdditive,
-      ?intervalCeiling,
-      ?backoffMillis,
-      ?queryTimeoutMillis,
+      initialBlockInterval: syncConfig.initialBlockInterval,
+      backoffMultiplicative: syncConfig.backoffMultiplicative,
+      accelerationAdditive: syncConfig.accelerationAdditive,
+      intervalCeiling: syncConfig.intervalCeiling,
+      backoffMillis: syncConfig.backoffMillis,
+      queryTimeoutMillis: syncConfig.queryTimeoutMillis,
     },
     allEventParams,
     ~checksumAddresses,
   )
   {
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
-    getLogs: params => client.getLogs(params)->Promise.catch(coerceErrorOrThrow),
     getNextPage: params => client.getNextPage(params)->Promise.catch(coerceErrorOrThrow),
   }
 }

@@ -21,25 +21,14 @@ pub struct EvmRpcClientConfig {
     pub http_req_timeout_millis: Option<i64>,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
-    // Optional so low-level tests can construct a client that only ever calls
-    // `get_logs`/`get_height` without wiring up a full sourceSync record.
-    pub initial_block_interval: Option<i64>,
-    pub backoff_multiplicative: Option<f64>,
-    pub acceleration_additive: Option<i64>,
-    pub interval_ceiling: Option<i64>,
-    pub backoff_millis: Option<i64>,
-    pub query_timeout_millis: Option<i64>,
-}
-
-#[napi(object)]
-pub struct GetLogsParams {
-    pub from_block: i64,
-    pub to_block: i64,
-    pub addresses: Option<Vec<String>>,
-    /// One entry per topic position. `None` matches any value; `Some(values)`
-    /// matches any of the listed topic hashes (a one-element list is an exact
-    /// match). The JS side flattens its `Single | Multiple | Null` filter here.
-    pub topics: Vec<Option<Vec<String>>>,
+    // Resolved (defaulted, env-overridden) by ReScript's `EvmChain.getSyncConfig`
+    // — that's the single source of defaults, so these are required here.
+    pub initial_block_interval: i64,
+    pub backoff_multiplicative: f64,
+    pub acceleration_additive: i64,
+    pub interval_ceiling: i64,
+    pub backoff_millis: i64,
+    pub query_timeout_millis: i64,
 }
 
 /// A log returned from `eth_getLogs`, with hex quantities decoded to integers.
@@ -112,7 +101,9 @@ impl RawLog {
 #[napi(object)]
 pub struct LogSelectionInput {
     pub addresses: Option<Vec<String>>,
-    /// One entry per topic position, same shape as `GetLogsParams.topics`.
+    /// One entry per topic position. `None` matches any value; `Some(values)`
+    /// matches any of the listed topic hashes (a one-element list is an exact
+    /// match). The JS side flattens its `Single | Multiple | Null` filter here.
     pub topics: Vec<Option<Vec<String>>>,
 }
 
@@ -125,9 +116,9 @@ pub struct RequestStat {
 #[napi(object)]
 pub struct NextPageParams {
     pub from_block: i64,
-    /// The outer bound the caller wants (already clamped to `knownHeight`
-    /// JS-side) — the actual `toBlock` used for the query is decided here from
-    /// the partition's current AIMD-suggested interval and returned below.
+    /// Upper bound on the query range; the actual `toBlock` is decided
+    /// internally from the partition's AIMD-suggested interval and returned
+    /// on `NextPageResponse`.
     pub to_block_ceiling: i64,
     pub log_selections: Vec<LogSelectionInput>,
     pub partition_id: String,
@@ -168,30 +159,22 @@ impl EvmRpcClient {
             .context("build decoder")
             .map_err(map_err)?;
         let sync_config = SyncConfig {
-            initial_block_interval: cfg
-                .initial_block_interval
-                .filter(|v| *v >= 0)
-                .map_or(SyncConfig::default_initial_block_interval(), |v| v as u64),
-            backoff_multiplicative: cfg
-                .backoff_multiplicative
-                .filter(|v| *v > 0.0)
-                .unwrap_or(SyncConfig::default_backoff_multiplicative()),
-            acceleration_additive: cfg
-                .acceleration_additive
-                .filter(|v| *v >= 0)
-                .map_or(SyncConfig::default_acceleration_additive(), |v| v as u64),
-            interval_ceiling: cfg
-                .interval_ceiling
-                .filter(|v| *v > 0)
-                .map_or(SyncConfig::default_interval_ceiling(), |v| v as u64),
-            backoff_millis: cfg
-                .backoff_millis
-                .filter(|v| *v >= 0)
-                .map_or(SyncConfig::default_backoff_millis(), |v| v as u64),
-            query_timeout_millis: cfg
-                .query_timeout_millis
-                .filter(|v| *v > 0)
-                .map_or(SyncConfig::default_query_timeout_millis(), |v| v as u64),
+            initial_block_interval: u64::try_from(cfg.initial_block_interval)
+                .context("initialBlockInterval must be non-negative")
+                .map_err(map_err)?,
+            backoff_multiplicative: cfg.backoff_multiplicative,
+            acceleration_additive: u64::try_from(cfg.acceleration_additive)
+                .context("accelerationAdditive must be non-negative")
+                .map_err(map_err)?,
+            interval_ceiling: u64::try_from(cfg.interval_ceiling)
+                .context("intervalCeiling must be non-negative")
+                .map_err(map_err)?,
+            backoff_millis: u64::try_from(cfg.backoff_millis)
+                .context("backoffMillis must be non-negative")
+                .map_err(map_err)?,
+            query_timeout_millis: u64::try_from(cfg.query_timeout_millis)
+                .context("queryTimeoutMillis must be non-negative")
+                .map_err(map_err)?,
         };
         Ok(EvmRpcClient {
             inner,
@@ -210,35 +193,13 @@ impl EvmRpcClient {
             .map_err(map_err)
     }
 
-    #[napi]
-    pub async fn get_logs(&self, params: GetLogsParams) -> napi::Result<Vec<RpcEventItem>> {
-        // Hex-formatting a negative i64 yields a two's-complement quantity, which
-        // would silently widen the queried range; reject it at the boundary.
-        if params.from_block < 0 || params.to_block < 0 {
-            return Err(map_err(anyhow::anyhow!(
-                "block bounds must be non-negative, got from_block={}, to_block={}",
-                params.from_block,
-                params.to_block,
-            )));
-        }
-        self.fetch_logs_raw(
-            params.from_block,
-            params.to_block,
-            params.addresses,
-            params.topics,
-        )
-        .await
-        .map_err(rpc_error_to_napi)
-    }
-
-    /// Ports ReScript's `getNextPage`: decides the actual `toBlock` from this
-    /// partition's AIMD-suggested interval, fans out one `eth_getLogs` per
-    /// selection, dedups the merged results by `(blockNumber, logIndex)`, and
-    /// races the whole thing against `queryTimeoutMillis`. On success, grows
-    /// the partition's interval when the full suggested range was applied. On
-    /// failure (timeout, RPC error, or a "too many logs" style response),
-    /// shrinks/backs off and throws a structured retry decision that the JS
-    /// caller (`RpcSource.res`) turns back into a `Source.getItemsRetry`.
+    /// Decides the actual `toBlock` from this partition's AIMD-suggested
+    /// interval, fans out one `eth_getLogs` per selection, dedups the merged
+    /// results by `(blockNumber, logIndex)`, and races the whole thing against
+    /// `queryTimeoutMillis`. On success, grows the partition's interval when
+    /// the full suggested range was applied. On failure (timeout, RPC error,
+    /// or a "too many logs" style response), shrinks/backs off and throws a
+    /// structured retry decision (see `retry_decision_to_napi`).
     #[napi]
     pub async fn get_next_page(&self, params: NextPageParams) -> napi::Result<NextPageResponse> {
         if params.from_block < 0 || params.to_block_ceiling < 0 {
@@ -301,10 +262,7 @@ impl EvmRpcClient {
                     request_stats,
                 ))
             }
-            // Losing the timeout race doesn't cancel the in-flight requests in
-            // ReScript's original implementation (JS promises aren't cancellable);
-            // here, dropping the timed-out future does cancel them — a
-            // deliberate, more correct change in behavior.
+            // Dropping the timed-out future cancels the in-flight requests.
             Err(_elapsed) => Err(self.retry_error(
                 &params.partition_id,
                 from_block,
@@ -317,8 +275,7 @@ impl EvmRpcClient {
     }
 
     /// Builds the structured retry decision for a failed page fetch, updating
-    /// the AIMD state as a side effect, and encodes it as a JSON payload in
-    /// the napi error's message for `RpcSource.res` to parse back.
+    /// the AIMD state as a side effect.
     fn retry_error(
         &self,
         partition_id: &str,
@@ -463,7 +420,11 @@ impl EvmRpcClient {
                 .collect::<anyhow::Result<Vec<_>>>()
         })
         .await
-        .map_err(|e| RpcError::Other(anyhow::anyhow!("get_logs worker join failure: {e}")))?
+        .map_err(|e| {
+            RpcError::Other(anyhow::anyhow!(
+                "eth_getLogs decode worker join failure: {e}"
+            ))
+        })?
         .map_err(RpcError::Other)
     }
 }
@@ -480,9 +441,7 @@ enum RetryDecision {
 
 /// Encodes the paging retry decision as a JSON payload in the napi error's
 /// message: `{"kind":"Retry","attemptedToBlock":...,"errorMessage":...,
-/// "requestStats":[...],"retry":{"tag":...}}`. `RpcSource.res` parses it back
-/// into a `Source.getItemsRetry` and pushes `requestStats` into its own
-/// per-source metrics before re-throwing `Source.GetItemsError`.
+/// "requestStats":[...],"retry":{"tag":...}}`.
 fn retry_decision_to_napi(
     attempted_to_block: u64,
     error_message: Option<&str>,
