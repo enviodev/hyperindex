@@ -110,7 +110,7 @@ impl Schema {
         let schema_string = std::fs::read_to_string(&schema_path).context(format!(
             "Failed to read schema file at {}. Please ensure that the schema file is \
              placed correctly in the directory.",
-            &schema_path.to_str().unwrap_or("bad file path"),
+            schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
         Self::from_string(&schema_string)
@@ -811,7 +811,7 @@ impl Field {
                     }
                     let precision = get_positive_integer(arg_value).context(format!(
                         "Parsing precision.digits directive on BigInt field with field name {}",
-                        &field.name
+                        field.name
                     ))?;
                     pg_type_modifications.big_int_precision = Some(precision);
                 }
@@ -828,14 +828,14 @@ impl Field {
                                     Some(get_positive_integer(arg_value).context(format!(
                                         "Parsing numeric.precision directive on BigDecimal with \
                                          field name {}",
-                                        &field.name
+                                        field.name
                                     ))?);
                             }
                             "scale" => {
                                 scale = Some(get_positive_integer(arg_value).context(format!(
                                     "Parsing numeric.scale directive on BigDecimal with field \
                                      name {}",
-                                    &field.name
+                                    field.name
                                 ))?);
                             }
                             unknown_param => {
