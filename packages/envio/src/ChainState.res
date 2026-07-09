@@ -396,6 +396,12 @@ let resetPendingQueries = (cs: t) => {
   cs.pendingBudget = 0.
 }
 
+let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
+
+// Block span over which a batch fully replaces the chain density estimate;
+// smaller batches blend in proportionally.
+let densityBlendWindow = 10_000.
+
 // The last block this chain can fetch right now: the head, or endBlock when
 // it's below the head.
 let fetchCeiling = (cs: t) => {
@@ -437,12 +443,16 @@ let progressRange = (cs: t) => {
 }
 
 // A degenerate range (chain already at or past its last block) maps to 1 so it
-// never constrains the other chains.
+// never constrains the other chains. Clamped at 0 for the initial -1 fetch
+// frontier — the only possible blockNumber below the range's lower bound.
 let progressAtBlock = (cs: t, ~blockNumber) => {
   let (lower, upper) = cs->progressRange
   upper <= lower
     ? 1.
-    : Pervasives.min(1., (blockNumber - lower)->Int.toFloat /. (upper - lower)->Int.toFloat)
+    : Pervasives.max(
+        0.,
+        Pervasives.min(1., (blockNumber - lower)->Int.toFloat /. (upper - lower)->Int.toFloat),
+      )
 }
 
 let blockAtProgress = (cs: t, ~progress) => {
@@ -472,10 +482,14 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   | Some(density) if density > 0. =>
     let rangeCost =
       density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
-    // 3x headroom when the query reaches the head/endBlock directly: a
+    // 3x headroom only for a chain already caught up once and polling the
+    // head: there a single query covers the whole remaining range, and a
     // slightly denser-than-expected range would otherwise truncate at the
     // server cap and force an immediate catch-up query for the last blocks.
-    let rangeCost = chainTargetBlock >= cs->fetchCeiling ? rangeCost *. 3. : rangeCost
+    // During backfill the range never fits one query anyway, so headroom
+    // would just hold budget away from other chains.
+    let rangeCost =
+      chainTargetBlock >= cs->fetchCeiling && cs->isReady ? rangeCost *. 3. : rangeCost
     Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
   | _ =>
     // No density signal yet: bound the probe so one unknown chain doesn't
@@ -520,8 +534,6 @@ let getHighestBlockBelowThreshold = (cs: t): int => {
 }
 
 let isActivelyIndexing = (cs: t) => cs.fetchState->FetchState.isActivelyIndexing
-
-let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
@@ -922,8 +934,9 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       // Chain-wide density update: seed with the batch's own events/block on
-      // the first update, then smooth incrementally so a run of a few
-      // sparse/dense blocks doesn't swing the target block estimate.
+      // the first update, then blend weighted by the batch's block span — a
+      // few sparse/dense blocks barely nudge the estimate, while a
+      // window-sized batch replaces it.
       let deltaBlocks = chainAfterBatch.progressBlockNumber - cs.committedProgressBlockNumber
       if deltaBlocks > 0 {
         let deltaEvents = chainAfterBatch.totalEventsProcessed -. cs.numEventsProcessed
@@ -936,7 +949,9 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
           cs.chainDensity = Some(
             switch cs.chainDensity {
             | None => batchDensity
-            | Some(oldDensity) => (oldDensity +. batchDensity) /. 2.
+            | Some(oldDensity) =>
+              let alpha = Pervasives.min(1., deltaBlocks->Int.toFloat /. densityBlendWindow)
+              oldDensity *. (1. -. alpha) +. batchDensity *. alpha
             },
           )
         }

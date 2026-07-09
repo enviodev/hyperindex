@@ -223,50 +223,58 @@ let checkAndFetch = async (
   ->priorityOrder
   ->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    let chainTargetItems = remaining.contents +. cs->ChainState.pendingBudget
-    let maxTargetBlock = switch maxProgress.contents {
-    | None =>
-      // The most-behind chain sets the alignment line for everyone after it.
-      maxProgress :=
-        Some(
-          cs->ChainState.progressAtBlock(
-            ~blockNumber=cs->ChainState.targetBlock(~chainTargetItems),
-          ),
-        )
-      None
-    | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress))
-    }
-    switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
-    | (WaitingForNewBlock | NothingToQuery) as action =>
-      actionByChain->Utils.Dict.setByInt(chainId, action)
-    | Ready(queries) => {
-        let consumed =
-          queries->Array.reduce(0., (acc, query: FetchState.query) =>
-            acc +. query.itemsTarget->Int.toFloat
+    if cs->ChainState.knownHeight == 0 {
+      // No height yet — nothing to size a budget or an alignment line
+      // against. Skip without consuming budget or claiming leadership, so a
+      // chain whose source hasn't reported doesn't unconstrain everyone else.
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
+    } else {
+      let chainTargetItems = remaining.contents +. cs->ChainState.pendingBudget
+      let maxTargetBlock = switch maxProgress.contents {
+      | None =>
+        // The most-behind chain sets the alignment line for everyone after it.
+        maxProgress :=
+          Some(
+            cs->ChainState.progressAtBlock(
+              ~blockNumber=cs->ChainState.targetBlock(~chainTargetItems),
+            ),
           )
+        None
+      | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress))
+      }
+      switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
+      | (WaitingForNewBlock | NothingToQuery) as action =>
+        actionByChain->Utils.Dict.setByInt(chainId, action)
+      | Ready(queries) => {
+          let consumed =
+            queries->Array.reduce(0., (acc, query: FetchState.query) =>
+              acc +. query.itemsTarget->Int.toFloat
+            )
 
-        let partitions = Dict.make()
-        queries->Array.forEach((query: FetchState.query) =>
-          partitions->Dict.set(
-            query.partitionId,
-            {
-              "fromBlock": query.fromBlock,
-              "targetBlock": query.toBlock,
-              "targetEvents": query.itemsTarget,
-            },
+          let partitions = Dict.make()
+          queries->Array.forEach((query: FetchState.query) =>
+            partitions->Dict.set(
+              query.partitionId,
+              {
+                "fromBlock": query.fromBlock,
+                "targetBlock": query.toBlock,
+                "targetEvents": query.itemsTarget,
+              },
+            )
           )
-        )
-        Logging.trace({
-          "msg": "Started querying",
-          "chainId": chainId,
-          "partitions": partitions,
-        })
+          Logging.trace({
+            "msg": "Started querying",
+            "chainId": chainId,
+            "partitions": partitions,
+          })
 
-        actionByChain->Utils.Dict.setByInt(chainId, FetchState.Ready(queries))
-        // Mark the queries in flight and reserve their size against the shared
-        // budget; released as each response lands in handleQueryResult.
-        cs->ChainState.startFetchingQueries(~queries)
-        remaining := Pervasives.max(0., remaining.contents -. consumed)
+          actionByChain->Utils.Dict.setByInt(chainId, FetchState.Ready(queries))
+          // Mark the queries in flight and reserve their size against the
+          // shared budget; released as each response lands in
+          // handleQueryResult.
+          cs->ChainState.startFetchingQueries(~queries)
+          remaining := Pervasives.max(0., remaining.contents -. consumed)
+        }
       }
     }
   })

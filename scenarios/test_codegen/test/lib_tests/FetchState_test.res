@@ -4171,3 +4171,139 @@ describe("FetchState.getNextQuery water-fill redistributes a filled partition's 
     )
   })
 })
+
+describe("FetchState.waterLevel", () => {
+  it("finds the level where top-ups sum exactly to the budget", t => {
+    t.expect({
+      "evenSplitWhenEqual": FetchState.waterLevel(~budget=900., ~footprints=[0., 0., 0.]),
+      // 1500 sits above the level, so the whole 500 goes to the empty glass.
+      "unevenSkipsTheFullGlass": FetchState.waterLevel(~budget=500., ~footprints=[0., 1500.]),
+      // Both below the final level: (1000 + 100 + 200) / 2.
+      "floodsAll": FetchState.waterLevel(~budget=1000., ~footprints=[100., 200.]),
+      "single": FetchState.waterLevel(~budget=5., ~footprints=[45.]),
+    }).toEqual({
+      "evenSplitWhenEqual": 300.,
+      "unevenSkipsTheFullGlass": 500.,
+      "floodsAll": 650.,
+      "single": 50.,
+    })
+  })
+})
+
+describe("FetchState.getNextQuery water-fill with uneven in-flight reservations", () => {
+  // Partition "1" already holds a 1500-item in-flight chunk — far above this
+  // tick's 500-item fresh budget. Its footprint must not inflate the level
+  // handed to partition "0": before the exact waterLevel, the round's line
+  // was the mean ((500 + 1500) / 2 = 1000), so "0" was handed twice the
+  // fresh budget and the chain overshot what CrossChainState subtracts from
+  // the shared pool.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makePartition = (~id, ~address, ~knownDensity, ~pendingItemsTarget): FetchState.partition => {
+    id,
+    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: switch pendingItemsTarget {
+    | Some(itemsTarget) => [
+        {
+          fromBlock: 1,
+          toBlock: Some(100),
+          isChunk: true,
+          itemsTarget,
+          fetchedBlock: None,
+        },
+      ]
+    | None => []
+    },
+    prevQueryRange: knownDensity ? 10 : 0,
+    prevPrevQueryRange: knownDensity ? 10 : 0,
+    prevRangeSize: knownDensity ? 100 : 0, // density = 100 / 10 = 10 items/block
+    latestBlockRangeUpdateBlock: 0,
+  }
+
+  let makeFetchState = (partitions): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions,
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=2,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 10000,
+    firstEventBlock: Some(0),
+  }
+
+  it("hands a known-density partition only the fresh budget, not the mean footprint", t => {
+    let fetchState = makeFetchState([
+      makePartition(~id="0", ~address=mockAddress0, ~knownDensity=true, ~pendingItemsTarget=None),
+      makePartition(
+        ~id="1",
+        ~address=mockAddress1,
+        ~knownDensity=true,
+        ~pendingItemsTarget=Some(1500),
+      ),
+    ])
+    let byPartition = Dict.make()
+    switch fetchState->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.) {
+    | Ready(queries) =>
+      queries->Array.forEach((q: FetchState.query) =>
+        switch byPartition->Dict.get(q.partitionId) {
+        | Some(arr) => arr->Array.push((q.fromBlock, q.itemsTarget))->ignore
+        | None => byPartition->Dict.set(q.partitionId, [(q.fromBlock, q.itemsTarget)])
+        }
+      )
+    | _ => ()
+    }
+
+    // Fresh budget = 2000 - 1500 reserved = 500. Level = 500 (partition "1"
+    // sits above it). Partition "0": 2 affordable chunks + 1 forced chunk for
+    // the 140-item leftover — the only overshoot is the min-one-chunk
+    // quantization, not the reservation-inflated mean.
+    t.expect(byPartition).toEqual(
+      Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]),
+    )
+  })
+
+  it("sizes an unknown-density probe to the whole leftover instead of a diluted even split", t => {
+    let fetchState = makeFetchState([
+      makePartition(~id="0", ~address=mockAddress0, ~knownDensity=false, ~pendingItemsTarget=None),
+      makePartition(
+        ~id="1",
+        ~address=mockAddress1,
+        ~knownDensity=true,
+        ~pendingItemsTarget=Some(1500),
+      ),
+    ])
+
+    // Fresh budget = 500, level = 500: the probe takes all of it. Before
+    // probes were sized by their allotment, this was 500 / 2 in-range
+    // partitions = 250, stranding the other half.
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.),
+    ).toEqual(
+      FetchState.Ready([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: None,
+          isChunk: false,
+          itemsTarget: 500,
+          selection: normalSelection,
+          addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+        },
+      ]),
+    )
+  })
+})

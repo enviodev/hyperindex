@@ -1451,6 +1451,31 @@ let pushGapFillQueries = (
   cost.contents
 }
 
+// The level every partition ends at when `budget` is poured across partitions
+// already holding `footprints`: the unique L with Σ max(0, L - fᵢ) = budget.
+// Partitions above L get nothing (their head start is their share); the rest
+// are topped up exactly to L, so the pour equals the budget no matter how
+// uneven the footprints are.
+let waterLevel = (~budget: float, ~footprints: array<float>) => {
+  let sorted = footprints->Array.toSorted(Float.compare)
+  let n = sorted->Array.length
+  let prefix = ref(0.)
+  let level = ref(None)
+  let idx = ref(0)
+  while level.contents == None && idx.contents < n {
+    let i = idx.contents
+    prefix := prefix.contents +. sorted->Array.getUnsafe(i)
+    // The level if only the i+1 lowest footprints receive water — correct once
+    // it doesn't reach the next footprint up.
+    let candidate = (budget +. prefix.contents) /. (i + 1)->Int.toFloat
+    if i == n - 1 || candidate <= sorted->Array.getUnsafe(i + 1) {
+      level := Some(candidate)
+    }
+    idx := idx.contents + 1
+  }
+  level.contents->Option.getOr(0.)
+}
+
 // Per-partition mutable state threaded through the water-fill rounds below.
 type waterFillState = {
   partitionId: string,
@@ -1476,21 +1501,24 @@ type waterFillState = {
 // query with no other ceiling: the true hard bounds stay
 // endBlock/mergeBlock/the lagged head.
 //
-// In-range partitions evenly split chainTargetItems (this chain's target
-// total footprint — in-flight plus new). A partition already holding more
-// than its even share (from earlier ticks' in-flight queries) is skipped this
-// round so its share flows to the others; the split is recomputed every round
-// against the shrinking set of partitions still with range left, so leftover
-// keeps redistributing until the budget or the range runs out.
+// In-range partitions share chainTargetItems (this chain's target total
+// footprint — in-flight plus new) by water-fill: each round pours exactly the
+// remaining fresh budget at the level computed by waterLevel, so a partition
+// already holding more than the level (from earlier ticks' in-flight queries)
+// gets nothing and its implicit share flows to the others, while totals stay
+// even and the pour never exceeds the budget. Rounds repeat only because
+// emits are quantized: a partition may consume less than its allotment (range
+// or chunk-cap runs out) or slightly more (min one chunk), and the leftover
+// re-pours over whoever still has range left.
 //
 // A partition with a trusted positive density (two or more responses — see
 // getMinHistoryRange) always emits at least one full-size chunk/query once
-// included in a round, sized by its real density — uncapped, may overshoot
-// that round's share (the server also enforces itemsTarget via a
+// given an allotment, sized by its real density — may overshoot the
+// allotment by at most one chunk (the server also enforces itemsTarget via a
 // maxNumLogs-style cap, so an overshoot truncates the response rather than
 // the buffer). Any other partition (no signal, one noisy sample, or a
-// density-0 estimate) emits one open-ended probe sized at the even split of
-// this tick's fresh budget instead.
+// density-0 estimate) emits one open-ended probe sized exactly at its
+// allotment instead.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
@@ -1666,13 +1694,8 @@ let getNextQuery = (
 
     let inRangeStates = fillStates->Array.filter(isInRange)
 
-    let probeItemsTarget = Pervasives.max(
-      1,
-      Math.round(rangeItemsTarget /. inRangeStates->Array.length->Int.toFloat)->Float.toInt,
-    )
-
-    // Emits this round's queries for one partition, given its share of the
-    // range budget. Mutates fs.cursor/chunksUsedThisCall and returns the
+    // Emits this round's queries for one partition, given its water-fill
+    // allotment. Mutates fs.cursor/chunksUsedThisCall and returns the
     // itemsTarget consumed.
     //
     // Chunks require a POSITIVE trusted density: density 0 prices every chunk
@@ -1724,59 +1747,53 @@ let getNextQuery = (
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + created.contents
         consumed.contents
       | _ =>
+        let itemsTarget = Pervasives.max(1, Math.round(budget)->Float.toInt)
         fs.bucket->Array.push({
           partitionId: fs.partitionId,
           fromBlock: fs.cursor,
           toBlock: fs.queryEndBlock,
           isChunk: false,
           selection: p.selection,
-          itemsTarget: probeItemsTarget,
+          itemsTarget,
           addressesByContractName: p.addressesByContractName,
         })
         fs.cursor = maxBlock + 1
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + 1
-        probeItemsTarget->Int.toFloat
+        itemsTarget->Int.toFloat
       }
     }
 
     // Water-fill. Range membership is fixed by chainTargetBlock/queryEndBlock,
-    // so the in-range partitions are filtered once up front; each round levels
-    // every still-not-filled partition up toward a shared line and keeps only
-    // those still in range for the next round.
-    //
-    // The line is (remaining fresh budget + those partitions' current
-    // footprint) / count: a partition already holding more than the line gets
-    // nothing and drops out (its head start is its whole share), while the
-    // rest are topped up to the line — so leftover from an under-using or
-    // filled partition redistributes to whoever can still use it, and totals
-    // stay even regardless of processing order (the line is fixed before the
-    // round's emits).
+    // so the in-range partitions are filtered once up front; each round pours
+    // the remaining fresh budget at the waterLevel of the still-not-filled
+    // partitions' footprints and keeps only those still in range for the next
+    // round. Allotments sum to exactly the poured budget, so the outcome is
+    // order-independent and never exceeds it — the only overshoot left is the
+    // min-one-chunk quantization in emitQueries, bounded by one chunk per
+    // partition per round.
     //
     // No explicit round cap: a partition survives a round only by advancing
     // chunksUsedThisCall (capped at maxPendingChunksPerPartition) or by
-    // consuming fresh budget, so the not-filled set drains on its own and the
-    // loop also stops once the whole budget is reserved.
+    // consuming fresh budget (every emit consumes at least 1), so the
+    // not-filled set drains on its own and the loop also stops once the whole
+    // budget is poured.
     let notFilledPartitions = ref(inRangeStates)
-    let reservedFromRange = ref(0.)
-    while (
-      notFilledPartitions.contents->Array.length > 0 &&
-        reservedFromRange.contents < rangeItemsTarget
-    ) {
-      let n = notFilledPartitions.contents->Array.length
-      let footprintSum = ref(0.)
-      notFilledPartitions.contents->Array.forEach(fs =>
-        footprintSum := footprintSum.contents +. reservedByPartition->Dict.getUnsafe(fs.partitionId)
+    let remainingBudget = ref(rangeItemsTarget)
+    while notFilledPartitions.contents->Array.length > 0 && remainingBudget.contents > 0. {
+      let level = waterLevel(
+        ~budget=remainingBudget.contents,
+        ~footprints=notFilledPartitions.contents->Array.map(fs =>
+          reservedByPartition->Dict.getUnsafe(fs.partitionId)
+        ),
       )
-      let line =
-        (rangeItemsTarget -. reservedFromRange.contents +. footprintSum.contents) /. n->Int.toFloat
       let next = []
       notFilledPartitions.contents->Array.forEach(fs => {
         let reserved = reservedByPartition->Dict.getUnsafe(fs.partitionId)
-        let budget = line -. reserved
+        let budget = level -. reserved
         if budget > 0. {
           let consumed = emitQueries(fs, ~budget)
           reservedByPartition->Dict.set(fs.partitionId, reserved +. consumed)
-          reservedFromRange := reservedFromRange.contents +. consumed
+          remainingBudget := remainingBudget.contents -. consumed
           if fs->isInRange {
             next->Array.push(fs)->ignore
           }

@@ -167,7 +167,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     t.expect(cs->ChainState.chainDensity).toEqual(None)
   })
 
-  it("blends with the previous density as (old + new) / 2 on later batches", t => {
+  it("blends with the previous density weighted by the batch's block span", t => {
     let cs = makeChainState(
       makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
     )
@@ -178,12 +178,22 @@ describe("ChainState chain density EMA (per batch)", () => {
     )
     t.expect(cs->ChainState.chainDensity, ~message="seeded at 10 events/block").toEqual(Some(10.))
 
-    // Second batch: (300 - 100) events over (20 - 10) blocks = 20 events/block.
-    // EMA: (old=10 + new=20) / 2 = 15.
+    // Second batch: 100_000 events over 5_000 blocks = 20 events/block. Half a
+    // densityBlendWindow -> alpha 0.5: 10 * 0.5 + 20 * 0.5 = 15.
     cs->ChainState.applyBatchProgress(
-      ~batch=makeBatch(~progressBlockNumber=20, ~totalEventsProcessed=300., ~fetchState),
+      ~batch=makeBatch(~progressBlockNumber=5010, ~totalEventsProcessed=100_100., ~fetchState),
       ~blockTimestampName="timestamp",
     )
-    t.expect(cs->ChainState.chainDensity).toEqual(Some(15.))
+    t.expect(cs->ChainState.chainDensity, ~message="half-window batch blends 50/50").toEqual(
+      Some(15.),
+    )
+
+    // Third batch: 250_000 events over 10_000 blocks = 25 events/block. A full
+    // densityBlendWindow -> alpha 1: replaces the old density entirely.
+    cs->ChainState.applyBatchProgress(
+      ~batch=makeBatch(~progressBlockNumber=15010, ~totalEventsProcessed=350_100., ~fetchState),
+      ~blockTimestampName="timestamp",
+    )
+    t.expect(cs->ChainState.chainDensity, ~message="full-window batch replaces").toEqual(Some(25.))
   })
 })

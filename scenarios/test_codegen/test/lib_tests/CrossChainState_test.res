@@ -78,7 +78,14 @@ let makeChainState = (
 // getNextQuery actually produces a Ready query (unlike the onBlock-only helper
 // above). The partition has no response yet, so each query estimates at the
 // default size.
-let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
+let makeFetchingChainState = (
+  ~chainId,
+  ~knownHeight,
+  ~latestFetchedBlock,
+  ~endBlock=None,
+  ~chainDensity=None,
+  ~caughtUpOnce=false,
+) => {
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
@@ -109,7 +116,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
       ~dynamicContracts=Utils.Set.make(),
     ),
     startBlock: 0,
-    endBlock: None,
+    endBlock,
     buffer: [],
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
@@ -133,6 +140,8 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
       ~shouldRollbackOnReorg=false,
     ),
     ~committedProgressBlockNumber=-1,
+    ~chainDensity,
+    ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
     ~logger=Logging.getLogger(),
   )
 }
@@ -347,6 +356,64 @@ describe("CrossChainState fetch control", () => {
       ).toEqual((200., 2800.))
     },
   )
+
+  Async.it(
+    "checkAndFetch skips a chain with no known height without claiming leadership or budget",
+    async t => {
+      // Chain 1 has no height yet (its source hasn't reported): it must wait
+      // for a new block instead of setting the alignment line from a
+      // degenerate progress range and letting every other chain run
+      // unconstrained on a stale line.
+      let a = makeFetchingChainState(~chainId=1, ~knownHeight=0, ~latestFetchedBlock=0)
+      let b = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=500)
+      let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
+
+      let actionsByChain = Dict.make()
+      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+        actionsByChain->Utils.Dict.setByInt(
+          chain->ChainMap.Chain.toChainId,
+          switch action {
+          | WaitingForNewBlock => "waitingForNewBlock"
+          | NothingToQuery => "nothingToQuery"
+          | Ready(queries) =>
+            "ready:" ++
+            queries
+            ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
+            ->Float.toString
+          },
+        )
+        Promise.resolve()
+      })
+
+      t.expect(
+        actionsByChain,
+        ~message="Chain 1 waits for its first block; chain 2 becomes the leader and gets the full pool",
+      ).toEqual(Dict.fromArray([("1", "waitingForNewBlock"), ("2", "ready:3000")]))
+    },
+  )
+
+  it("getNextQuery gives 3x head headroom only to a chain that has caught up once", t => {
+    let makeChain = (~caughtUpOnce) =>
+      makeFetchingChainState(
+        ~chainId=1,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=0,
+        ~endBlock=Some(20),
+        ~chainDensity=Some(10.),
+        ~caughtUpOnce,
+      )
+    let itemsTarget = cs =>
+      switch cs->ChainState.getNextQuery(~chainTargetItems=3000.) {
+      | Ready([q]) => q.itemsTarget
+      | _ => JsError.throwWithMessage("expected a single ready query")
+      }
+
+    // Range cost to the 20-block endBlock ceiling at density 10 = 200 items.
+    t.expect(
+      (makeChain(~caughtUpOnce=false)->itemsTarget, makeChain(~caughtUpOnce=true)->itemsTarget),
+      ~message="Backfill is capped at the plain range cost; a caught-up chain polling the head gets 3x",
+    ).toEqual((200, 600))
+  })
 })
 
 describe("CrossChainState readiness", () => {
