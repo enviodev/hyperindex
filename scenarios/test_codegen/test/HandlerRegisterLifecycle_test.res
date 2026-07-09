@@ -80,30 +80,47 @@ describe("HandlerRegister — duplicate registrations compare resolved where", (
 describe("HandlerRegister — onBlock validation at registration", () => {
   let noopBlockHandler = async (_: Internal.onBlockArgs) => ()
 
-  it("throws for a chainId that is not in the config", t => {
+  // A minimal chains object: the predicates below only read `chain.id`.
+  let getChainsObject = (config: Config.t) =>
+    config.chainMap
+    ->ChainMap.values
+    ->Array.map(chainConfig => (
+      chainConfig.id->Int.toString,
+      {"id": chainConfig.id}->(Utils.magic: {"id": int} => unknown),
+    ))
+    ->Dict.fromArray
+
+  it("throws when where is not a function", t => {
     t.expect(() =>
       HandlerRegister.registerOnBlock(
-        ~name="unknownChain",
-        ~chainId=424242,
-        ~interval=1,
-        ~startBlock=None,
-        ~endBlock=None,
+        ~name="badWhere",
+        ~where=%raw(`{block: {number: {_gte: 10}}}`),
         ~handler=noopBlockHandler,
+        ~getChainsObject,
       )
     ).toThrowError(
-      `The onBlock handler "unknownChain" is registered for chain 424242 which is not in the config.`,
+      `\`indexer.onBlock("badWhere")\` expected \`where\` to be a function or omitted, but got object.`,
     )
+  })
+
+  it("throws when where returns a filter with unknown fields", t => {
+    t.expect(() =>
+      HandlerRegister.registerOnBlock(
+        ~name="typoFilter",
+        ~where=%raw(`() => ({block: {number: {_gt: 10}}})`),
+        ~handler=noopBlockHandler,
+        ~getChainsObject,
+      )
+    ).toThrowError(`\`indexer.onBlock("typoFilter")\` \`where\` returned an invalid filter`)
   })
 
   it("throws when startBlock is below the chain start block", t => {
     t.expect(() =>
       HandlerRegister.registerOnBlock(
         ~name="tooEarly",
-        ~chainId=137,
-        ~interval=1,
-        ~startBlock=Some(0),
-        ~endBlock=None,
+        ~where=%raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 0}}} : false`),
         ~handler=noopBlockHandler,
+        ~getChainsObject,
       )
     ).toThrowError(
       `The start block for onBlock handler "tooEarly" is less than the chain start block (1). This is not supported yet.`,

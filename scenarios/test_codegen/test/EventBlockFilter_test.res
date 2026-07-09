@@ -128,6 +128,12 @@ describe("parseWhereOrThrow — static `where` with block filter (EVM)", () => {
       parseEvm(~eventFilters=Some(%raw(`{blocks: {number: {_gte: 10}}}`)))->ignore
     ).toThrowError(`Unknown field "blocks"`)
   })
+
+  it("rejects unknown fields inside `block` (typo catches)", t => {
+    t.expect(() =>
+      parseEvm(~eventFilters=Some(%raw(`{block: {numbre: {_gte: 10}}}`)))->ignore
+    ).toThrowError("`block` filter is invalid")
+  })
 })
 
 describe("parseWhereOrThrow — dynamic `where` callback (EVM)", () => {
@@ -165,13 +171,10 @@ describe("parseWhereOrThrow — Fuel block.height", () => {
     t.expect(startBlock).toEqual(Some(42))
   })
 
-  it("Fuel ignores `block.number` — typed API forbids it, runtime stays permissive", t => {
-    // `FuelOnEventWhereFilter` types out `block.number`, so typed users
-    // can't reach this path; the runtime still accepts the shape and
-    // surfaces `None` rather than throwing, which keeps untyped or JSON
-    // callers from seeing a cryptic schema error.
-    let {startBlock} = parseFuel(~eventFilters=Some(%raw(`{block: {number: {_gte: 42}}}`)))
-    t.expect(startBlock).toEqual(None)
+  it("Fuel rejects `block.number` — the block filter is keyed by height", t => {
+    t.expect(() =>
+      parseFuel(~eventFilters=Some(%raw(`{block: {number: {_gte: 42}}}`)))->ignore
+    ).toThrowError("`block` filter is invalid")
   })
 })
 

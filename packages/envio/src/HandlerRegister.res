@@ -120,11 +120,6 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-// Defer a callback until registration is active so it sees the registration's
-// config, which may be a narrowed version of the generated one (TestIndexer
-// runs with a per-test chain subset).
-let withConfig = (fn: Config.t => unit) => withRegistration(r => fn(r.config))
-
 let startRegistration = (~config: Config.t) => {
   let r = {
     config,
@@ -462,55 +457,168 @@ let setContractRegister = (
   })
 }
 
+// Shape of the user-returned `{_gte?, _lte?, _every?}` filter chunk after
+// the ecosystem-specific wrapper is stripped. Shared across all ecosystems —
+// the outer `block.number` / `block.height` / `slot` unwrap lives on each
+// ecosystem's `onBlockFilterSchema`, and the inner range fields are the
+// same everywhere.
+type blockRange = {
+  _gte: option<int>,
+  _lte: option<int>,
+  _every: int,
+}
+
+// `S.strict` rejects unknown fields so typos like `_gt` / `_evry` surface
+// with a readable schema error pointing at the offending key, instead of
+// silently registering a broken filter. `_every` defaults to 1 inside the
+// schema so the caller always sees a plain `int`, and `intMin(1)` rejects
+// zero/negative strides — `(blockNumber - startBlock) % 0` would crash and
+// any negative stride would never match.
+let blockRangeSchema: S.t<blockRange> = S.object(s => {
+  _gte: s.field("_gte", S.option(S.int)),
+  _lte: s.field("_lte", S.option(S.int)),
+  _every: s.field("_every", S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
+})->S.strict
+
+let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
+
+// Two-stage parse: first the ecosystem-specific outer schema unwraps the
+// wrapper (`block.number` / `block.height` / `slot`) and surfaces the
+// inner chunk as raw `unknown`; then the shared `blockRangeSchema`
+// validates the `{_gte?, _lte?, _every?}` fields. Keeping the inner
+// validation in one place means typos and shape mismatches surface with
+// the same user-friendly error regardless of ecosystem.
+let extractRange = (filter: unknown, ~name, ~ecosystem: Ecosystem.t): blockRange =>
+  try {
+    switch filter->S.parseOrThrow(ecosystem.onBlockFilterSchema) {
+    | None => defaultBlockRange
+    | Some(inner) => inner->S.parseOrThrow(blockRangeSchema)
+    }
+  } catch {
+  | S.Raised(exn) =>
+    JsError.throwWithMessage(
+      `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
+        ->Utils.prettifyExn
+        ->(Utils.magic: exn => string)}`,
+    )
+  }
+
+// Mirrors `Envio.onBlockWhereArgs` without depending on the module.
+type onBlockWhereArgs = {chain: unknown}
+
+// `where` is evaluated once per configured chain at registration time.
+// Decoded ranges/stride feed directly into the per-chain registration store
+// so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
+// math in `FetchState` stays untouched. Deferred via `withRegistration` so
+// the per-chain loop sees the registration's config, which may be a narrowed
+// version of the generated one (TestIndexer runs with a per-test chain
+// subset). `where` arrives unvalidated (`unknown`) straight from the user's
+// options object.
 let registerOnBlock = (
-  ~name,
-  ~chainId,
-  ~interval,
-  ~startBlock,
-  ~endBlock,
+  ~name: string,
+  ~where: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~getChainsObject: Config.t => dict<unknown>,
 ) => {
   withRegistration(registration => {
-    let chainConfig =
-      registration.config.chainMap
-      ->ChainMap.values
-      ->Array.find(chainConfig => chainConfig.id === chainId)
-    switch chainConfig {
-    | None =>
+    let config = registration.config
+    let ecosystem = config.ecosystem
+    let chainsDict = getChainsObject(config)
+    let logger = Logging.createChild(~params={"onBlock": name})
+
+    // `where` must be a function (unlike onEvent, which also accepts a static
+    // value). A static value would have to be evaluated against every chain
+    // independently, which has no useful semantic for block handlers.
+    // Normalize undefined/null to None up front so the per-chain loop below
+    // can't accidentally call `null` as a predicate.
+    let where = switch where {
+    | w if w === %raw(`undefined`) || w === %raw(`null`) => None
+    | w if typeof(w) === #function => Some(w->(Utils.magic: unknown => onBlockWhereArgs => unknown))
+    | w =>
       JsError.throwWithMessage(
-        `The onBlock handler "${name}" is registered for chain ${chainId->Int.toString} which is not in the config.`,
+        `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
+            w,
+          ) :> string)}.`,
       )
-    | Some(chainConfig) =>
-      if startBlock->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
+    }
+
+    let matchedAny = ref(false)
+
+    config.chainMap
+    ->ChainMap.values
+    ->Array.forEach(chainConfig => {
+      let chainId = chainConfig.id
+      let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
+
+      // Predicate returns `true` → match with no filter; `false` → skip;
+      // any plain object → structured filter. `undefined`/`null` returns
+      // are rejected — the TS type excludes `void`, so a missing return is
+      // a user bug we surface early rather than silently match-all.
+      let result = switch where {
+      | None => %raw(`true`)
+      | Some(predicate) => predicate({chain: chainObj})
+      }
+
+      let (shouldRegister, range) = if result === %raw(`true`) {
+        (true, defaultBlockRange)
+      } else if result === %raw(`false`) {
+        (false, defaultBlockRange)
+      } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
+        (true, extractRange(result, ~name, ~ecosystem))
+      } else {
+        // Reject numbers, strings, functions, arrays, undefined, null —
+        // anything that isn't bool or a plain object would silently
+        // misregister.
         JsError.throwWithMessage(
-          `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
+          `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
+              result,
+            ) :> string)}. Expected boolean or a filter object.`,
         )
       }
-      switch chainConfig.endBlock {
-      | Some(chainEndBlock) =>
-        if endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
+
+      if shouldRegister {
+        matchedAny := true
+        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
           JsError.throwWithMessage(
-            `The end block for onBlock handler "${name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
+            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
           )
         }
-      | None => ()
+        switch chainConfig.endBlock {
+        | Some(chainEndBlock) =>
+          if range._lte->Option.getOr(chainEndBlock) > chainEndBlock {
+            JsError.throwWithMessage(
+              `The end block for onBlock handler "${name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
+            )
+          }
+        | None => ()
+        }
+        let pending = registration->getPendingChainRegistrations(~chainId)
+        pending.onBlockRegistrations
+        ->Array.push(
+          (
+            {
+              index: pending.onBlockRegistrations->Array.length,
+              name,
+              startBlock: range._gte,
+              endBlock: range._lte,
+              interval: range._every,
+              chainId,
+              handler,
+            }: Internal.onBlockRegistration
+          ),
+        )
+        ->ignore
       }
-      let pending = registration->getPendingChainRegistrations(~chainId)
-      pending.onBlockRegistrations
-      ->Array.push(
-        (
-          {
-            index: pending.onBlockRegistrations->Array.length,
-            name,
-            startBlock,
-            endBlock,
-            interval,
-            chainId,
-            handler,
-          }: Internal.onBlockRegistration
-        ),
+    })
+
+    // Catches misconfigured `where` predicates that return `false` for every
+    // configured chain — the handler would otherwise never fire with no hint.
+    // Includes the ecosystem-specific method name so SVM users see "onSlot"
+    // and don't get confused looking for a "Block handler" they never wrote.
+    if !matchedAny.contents {
+      logger->Logging.childWarn(
+        `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
       )
-      ->ignore
     }
   })
 }

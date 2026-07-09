@@ -5,7 +5,6 @@ type chainRegistrations = {
 type registrationsByChainId = dict<chainRegistrations>
 
 let startRegistration: (~config: Config.t) => unit
-let withConfig: (Config.t => unit) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: (~config: Config.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
@@ -39,11 +38,17 @@ let getContractRegister: (
 let isWildcard: (~contractName: string, ~eventName: string) => bool
 let hasRegistration: (~contractName: string, ~eventName: string) => bool
 
+type blockRange = {
+  _gte: option<int>,
+  _lte: option<int>,
+  _every: int,
+}
+let blockRangeSchema: S.t<blockRange>
+let defaultBlockRange: blockRange
+
 let registerOnBlock: (
   ~name: string,
-  ~chainId: int,
-  ~interval: int,
-  ~startBlock: option<int>,
-  ~endBlock: option<int>,
+  ~where: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~getChainsObject: Config.t => dict<unknown>,
 ) => unit
