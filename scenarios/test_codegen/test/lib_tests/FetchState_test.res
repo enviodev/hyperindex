@@ -3909,7 +3909,7 @@ describe("Stale query response should not overwrite block range", () => {
         ~indexingAddresses,
         ~query=q1,
         ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
-        ~newItems=[],
+        ~newItems=[mockEvent(~blockNumber=100)],
       )
 
     let p1 = fs1.optimizedPartitions.entities->Dict.getUnsafe("0")
@@ -3937,7 +3937,7 @@ describe("Stale query response should not overwrite block range", () => {
         ~indexingAddresses,
         ~query=q2,
         ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000 * 15},
-        ~newItems=[],
+        ~newItems=[mockEvent(~blockNumber=600)],
       )
 
     let p2 = fs2.optimizedPartitions.entities->Dict.getUnsafe("0")

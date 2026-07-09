@@ -547,7 +547,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          itemsTarget: 10_000.,
+          itemsTarget: 16_667.,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -557,7 +557,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          itemsTarget: 10_000.,
+          itemsTarget: 16_667.,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -567,11 +567,9 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          // Each partition's share is fixed for the round (16_666.67,
-          // independent of what the others consume) and identical across all 3,
-          // but an unknown-density probe is capped at maxItemsTarget, so they
-          // all land on 10_000 regardless of processing order.
-          itemsTarget: 10_000.,
+          // Every unknown-density probe gets the same even split of the fresh
+          // budget (round(50_000 / 3)), regardless of processing order.
+          itemsTarget: 16_667.,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
