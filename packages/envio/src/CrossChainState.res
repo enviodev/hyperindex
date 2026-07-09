@@ -198,8 +198,12 @@ let totalReservedSize = (crossChainState: t) => {
 // chain-density-derived target block, then subtract what it actually used
 // before moving to the next chain. So a chain that can only use a little
 // (density too low, or already caught up) leaves the rest for the others
-// automatically — unlike a per-query pool, this can starve a near-head chain
-// while an earlier one is deep in backfill, which is the intended tradeoff.
+// automatically. A chain visited after the budget ran out simply doesn't
+// query this round — the leader's reservations release as its responses land,
+// so the next tick redistributes. Chains that do get budget are additionally
+// capped at the most-behind chain's target progress mapped onto their own
+// range, so no chain runs further ahead than the chain the pool is
+// prioritizing.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -214,17 +218,32 @@ let checkAndFetch = async (
   )
 
   let actionByChain = Dict.make()
+  let maxProgress = ref(None)
   crossChainState
   ->priorityOrder
   ->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     let chainTargetItems = remaining.contents +. cs->ChainState.pendingBudget
-    switch cs->ChainState.getNextQuery(~chainTargetItems) {
+    let maxTargetBlock = switch maxProgress.contents {
+    | None =>
+      // The most-behind chain sets the alignment line for everyone after it.
+      maxProgress :=
+        Some(
+          cs->ChainState.progressAtBlock(
+            ~blockNumber=cs->ChainState.targetBlock(~chainTargetItems),
+          ),
+        )
+      None
+    | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress))
+    }
+    switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
     | (WaitingForNewBlock | NothingToQuery) as action =>
       actionByChain->Utils.Dict.setByInt(chainId, action)
     | Ready(queries) => {
         let consumed =
-          queries->Array.reduce(0., (acc, query: FetchState.query) => acc +. query.itemsTarget->Int.toFloat)
+          queries->Array.reduce(0., (acc, query: FetchState.query) =>
+            acc +. query.itemsTarget->Int.toFloat
+          )
 
         let partitions = Dict.make()
         queries->Array.forEach((query: FetchState.query) =>

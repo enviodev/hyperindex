@@ -202,6 +202,12 @@ module OptimizedPartitions = {
       let newId = nextPartitionIndexRef.contents->Int.toString
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       let minRange = getMinQueryRange([p1, p2])
+      // The merged partition indexes both parents' addresses, so its expected
+      // event rate is the sum of their densities. Parents without a trusted
+      // density contribute 0; if none has one, prevRangeSize stays 0 and the
+      // partition probes for a fresh signal instead of chunking.
+      let inheritedDensity =
+        p1->getTrustedDensity->Option.getOr(0.) +. p2->getTrustedDensity->Option.getOr(0.)
       {
         id: newId,
         dynamicContract: Some(contractName),
@@ -212,7 +218,7 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
-        prevRangeSize: 0,
+        prevRangeSize: (inheritedDensity *. minRange->Int.toFloat)->Math.ceil->Float.toInt,
         latestBlockRangeUpdateBlock: 0,
       }
     }
