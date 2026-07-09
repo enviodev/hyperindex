@@ -76,7 +76,7 @@ pub async fn run_init_args(
                 )
                 .context(format!(
                     "Failed initializing Fuel template {} at path {:?}",
-                    &template, &parsed_project_paths.project_root,
+                    template, parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Svm {
@@ -90,7 +90,7 @@ pub async fn run_init_args(
                 )
                 .context(format!(
                     "Failed initializing Svm template {} at path {:?}",
-                    &template, &parsed_project_paths.project_root,
+                    template, parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Evm {
@@ -104,7 +104,7 @@ pub async fn run_init_args(
                 )
                 .context(format!(
                     "Failed initializing Evm template {} at path {:?}",
-                    &template, &parsed_project_paths.project_root,
+                    template, parsed_project_paths.project_root,
                 ))?;
         }
         Ecosystem::Fuel {
@@ -169,7 +169,7 @@ pub async fn run_init_args(
                 .context(format!(
                     "Failed initializing blank template for Contract Import with language {} at \
                      path {:?}",
-                    &init_config.language, &parsed_project_paths.project_root,
+                    init_config.language, parsed_project_paths.project_root,
                 ))?;
 
             auto_schema_handler_template
@@ -233,7 +233,7 @@ pub async fn run_init_args(
                 .context(format!(
                     "Failed initializing blank template for Contract Import with language {} at \
                      path {:?}",
-                    &init_config.language, &parsed_project_paths.project_root,
+                    init_config.language, parsed_project_paths.project_root,
                 ))?;
 
             auto_schema_handler_template

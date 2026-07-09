@@ -1094,7 +1094,7 @@ impl SystemConfig {
                 "Failed to resolve config path {0} (--config {1} resolved relative to \
                  --directory {2}). Make sure the file exists. Note that --config and \
                  ENVIO_CONFIG are interpreted relative to --directory.",
-                &project_paths.config.to_str().unwrap_or("{unknown}"),
+                project_paths.config.to_str().unwrap_or("{unknown}"),
                 project_paths.config_relative_to_root().display(),
                 project_paths.project_root.display(),
             ))?;
