@@ -4,7 +4,8 @@ type chainRegistrations = {
 }
 type registrationsByChainId = dict<chainRegistrations>
 
-let startRegistration: (~ecosystem: Ecosystem.t) => unit
+let startRegistration: (~config: Config.t) => unit
+let withConfig: (Config.t => unit) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: (~config: Config.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
@@ -35,7 +36,6 @@ let getContractRegister: (
   ~contractName: string,
   ~eventName: string,
 ) => option<Internal.contractRegister>
-let getOnEventWhere: (~contractName: string, ~eventName: string) => option<JSON.t>
 let isWildcard: (~contractName: string, ~eventName: string) => bool
 let hasRegistration: (~contractName: string, ~eventName: string) => bool
 

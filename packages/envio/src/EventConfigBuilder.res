@@ -243,9 +243,13 @@ let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
   } else {
     switch abiType {
     | "address" =>
-      TopicFilter.fromAddress->(
-        Utils.magic: (Address.t => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
+      // Lowercase before encoding so mixed-case (checksummed) user input
+      // still matches the lowercase hex topics returned by sources.
+
+      (
+        (value: string) =>
+          value->String.toLowerCase->Address.unsafeFromString->TopicFilter.fromAddress
+      )->(Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
 
     | "bool" =>
       TopicFilter.fromBool->(Utils.magic: (bool => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
@@ -413,31 +417,26 @@ let buildEvmEventConfig = (
 }
 
 // Enrich an EVM definition into a per-(event,chain) registration: resolve the
-// registered `where` (with `probeChainId`) into the lazy `getEventFiltersOrThrow`
-// closure + address filters, and override `startBlock` with `where.block._gte`.
+// registered `where` for this chain into `resolvedWhere` + address filters,
+// and override `startBlock` with `where.block._gte`.
 let buildEvmOnEventRegistration = (
   ~eventConfig: Internal.evmEventConfig,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
-  ~eventFilters: option<JSON.t>,
-  ~probeChainId: int,
+  ~where: option<JSON.t>,
+  ~chainId: int,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
   let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
 
-  let {
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    addressFilterParamGroups,
-    startBlock: whereStartBlock,
-  } = LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
+  let {resolvedWhere, filterByAddresses, addressFilterParamGroups} = LogSelection.parseWhereOrThrow(
+    ~where,
     ~sighash=eventConfig.sighash,
     ~params=indexedParams->Array.map(p => p.name),
     ~contractName=eventConfig.contractName,
-    ~probeChainId,
+    ~chainId,
     ~onEventBlockFilterSchema,
     ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
     ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
@@ -447,7 +446,7 @@ let buildEvmOnEventRegistration = (
   // `where.block.number._gte` overrides the contract-level startBlock when
   // present (an explicit per-event opt-in that wins over `config.yaml`);
   // otherwise the contract/chain value passes through.
-  let resolvedStartBlock = switch whereStartBlock {
+  let resolvedStartBlock = switch resolvedWhere.startBlock {
   | Some(_) as sb => sb
   | None => startBlock
   }
@@ -457,7 +456,7 @@ let buildEvmOnEventRegistration = (
     isWildcard,
     handler,
     contractRegister,
-    getEventFiltersOrThrow,
+    resolvedWhere,
     filterByAddresses,
     clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups, ~isWildcard),
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),

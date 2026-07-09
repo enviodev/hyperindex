@@ -1,7 +1,7 @@
 open Vitest
 
 // Tests for the per-event `startBlock` extracted from `where.block` on the
-// `onEvent` filter. The parser lives in `LogSelection.parseEventFiltersOrThrow`
+// `onEvent` filter. The parser lives in `LogSelection.parseWhereOrThrow`
 // and composes the ecosystem-specific `onEventBlockFilterSchema` (strips
 // `block.number` on EVM, `block.height` on Fuel) with the shared
 // `eventBlockRangeSchema` (strict, `_gte`-only). These tests drive the parser
@@ -12,22 +12,30 @@ open Vitest
 
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
-  LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
+type parsed = {startBlock: option<int>, filterByAddresses: bool}
+
+let parse = (~eventFilters: option<JSON.t>, ~probeChainId, ~onEventBlockFilterSchema) => {
+  let p = LogSelection.parseWhereOrThrow(
+    ~where=eventFilters,
     ~sighash=transferSighash,
     ~params=["from", "to"],
     ~contractName="ERC20",
+    ~chainId=probeChainId,
+    ~onEventBlockFilterSchema,
+  )
+  {startBlock: p.resolvedWhere.startBlock, filterByAddresses: p.filterByAddresses}
+}
+
+let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
+  parse(
+    ~eventFilters,
     ~probeChainId,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
 let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
-  LogSelection.parseEventFiltersOrThrow(
+  parse(
     ~eventFilters,
-    ~sighash=transferSighash,
-    ~params=["from", "to"],
-    ~contractName="ERC20",
     ~probeChainId,
     ~onEventBlockFilterSchema=Fuel.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
@@ -60,7 +68,7 @@ describe("eventBlockRangeSchema (strict, _gte-only)", () => {
   })
 })
 
-describe("parseEventFiltersOrThrow — static `where` with block filter (EVM)", () => {
+describe("parseWhereOrThrow — static `where` with block filter (EVM)", () => {
   it("extracts startBlock from a bare block filter", t => {
     let {startBlock, filterByAddresses} = parseEvm(
       ~eventFilters=Some(%raw(`{block: {number: {_gte: 1000}}}`)),
@@ -122,7 +130,7 @@ describe("parseEventFiltersOrThrow — static `where` with block filter (EVM)", 
   })
 })
 
-describe("parseEventFiltersOrThrow — dynamic `where` callback (EVM)", () => {
+describe("parseWhereOrThrow — dynamic `where` callback (EVM)", () => {
   it("extracts startBlock from the probe result for the configured chain", t => {
     // The callback is evaluated once at build time against `probeChainId`
     // so the probe exercises the branch this event config is built for.
@@ -151,7 +159,7 @@ describe("parseEventFiltersOrThrow — dynamic `where` callback (EVM)", () => {
   })
 })
 
-describe("parseEventFiltersOrThrow — Fuel block.height", () => {
+describe("parseWhereOrThrow — Fuel block.height", () => {
   it("extracts startBlock from `block.height._gte`", t => {
     let {startBlock} = parseFuel(~eventFilters=Some(%raw(`{block: {height: {_gte: 42}}}`)))
     t.expect(startBlock).toEqual(Some(42))
@@ -171,7 +179,7 @@ describe("parseEventFiltersOrThrow — Fuel block.height", () => {
 // real codegen'd event module carries the `block` sibling of `params`.
 // Running this test as a value also verifies that the optional fields'
 // shape is preserved end-to-end — the ReScript record unwrapped to JSON
-// matches exactly what `LogSelection.parseEventFiltersOrThrow` expects.
+// matches exactly what `LogSelection.parseWhereOrThrow` expects.
 describe("Generated onEventWhereFilter — block field exists on EVM events", () => {
   it("compiles a `Filter` with combined params + block.number._gte", t => {
     let fromFilter: Indexer.EventFiltersTest.Transfer.whereParams = {
@@ -231,8 +239,8 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters,
-      ~probeChainId=1,
+      ~where=eventFilters,
+      ~chainId=1,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )
@@ -281,8 +289,8 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters=Some(whereFn),
-      ~probeChainId=137,
+      ~where=Some(whereFn),
+      ~chainId=137,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -296,8 +304,8 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters=Some(whereFn),
-      ~probeChainId=1,
+      ~where=Some(whereFn),
+      ~chainId=1,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -330,8 +338,8 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~isWildcard=false,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
-      ~probeChainId=1,
+      ~where=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
+      ~chainId=1,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )

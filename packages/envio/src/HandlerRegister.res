@@ -22,18 +22,25 @@ type chainRegistrations = {
 // The finished registration state returned by `finishRegistration`.
 type registrationsByChainId = dict<chainRegistrations>
 
-type pendingRegistrations = {onBlockByChainId: dict<array<Internal.onBlockRegistration>>}
+// Incrementally built during registration: every `indexer.onEvent` /
+// `.contractRegister` call resolves its `where` per chain right away and
+// stores the resulting registration here, keyed by "Contract.Event", so
+// invalid configuration throws at the user's registration call site.
+type pendingChainRegistrations = {
+  onEventRegistrations: dict<Internal.onEventRegistration>,
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+}
 
 type activeRegistration = {
-  ecosystem: Ecosystem.t,
-  registrations: pendingRegistrations,
+  config: Config.t,
+  registrationsByChainId: dict<pendingChainRegistrations>,
   mutable finished: bool,
 }
 
 // Stashed on `globalThis` so a duplicate envio module instance — e.g. when the
 // CLI's `bin.mjs` resolves envio from one path but the user's handlers resolve
 // it from `node_modules/envio` — shares one registry. Without this, each copy
-// keeps its own dict and `buildOnEventRegistrations` reads empty state.
+// keeps its own dict and `finishRegistration` reads empty state.
 //
 // Version-gated: the record shapes below can evolve between envio versions,
 // so the guard uses strict full-version equality. On mismatch we throw with
@@ -113,12 +120,15 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-let startRegistration = (~ecosystem) => {
+// Defer a callback until registration is active so it sees the registration's
+// config, which may be a narrowed version of the generated one (TestIndexer
+// runs with a per-test chain subset).
+let withConfig = (fn: Config.t => unit) => withRegistration(r => fn(r.config))
+
+let startRegistration = (~config: Config.t) => {
   let r = {
-    ecosystem,
-    registrations: {
-      onBlockByChainId: Dict.make(),
-    },
+    config,
+    registrationsByChainId: Dict.make(),
     finished: false,
   }
   activeRegistration.contents = Some(r)
@@ -131,24 +141,30 @@ let startRegistration = (~ecosystem) => {
   }
 }
 
-// Enrich one event definition into its (event, chain) registration using
-// whatever handler/contractRegister/where the user registered for it. Shared
-// by chain startup (`buildOnEventRegistrations`), `simulate`, and test
-// helpers so the three stay in sync instead of re-deriving the per-ecosystem
-// dispatch each place.
-let buildOnEventRegistration = (
+let getPendingChainRegistrations = (r: activeRegistration, ~chainId: int) => {
+  let key = chainId->Int.toString
+  switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(pending) => pending
+  | None =>
+    let fresh = {
+      onEventRegistrations: Dict.make(),
+      onBlockRegistrations: [],
+    }
+    r.registrationsByChainId->Dict.set(key, fresh)
+    fresh
+  }
+}
+
+let buildOnEventRegistrationWith = (
   ~config: Config.t,
   ~chainId: int,
   ~eventConfig: Internal.eventConfig,
+  ~isWildcard: bool,
+  ~handler: option<Internal.handler>,
+  ~contractRegister: option<Internal.contractRegister>,
+  ~where: option<JSON.t>,
   ~startBlock=?,
 ): Internal.onEventRegistration => {
-  let contractName = eventConfig.contractName
-  let eventName = eventConfig.name
-  let t = get(~contractName, ~eventName)
-  let isWildcard = t.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
-  let handler = t.handler
-  let contractRegister = t.contractRegister
-
   switch config.ecosystem.name {
   | Fuel =>
     (EventConfigBuilder.buildFuelOnEventRegistration(
@@ -174,116 +190,329 @@ let buildOnEventRegistration = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
-      ~eventFilters=t.eventOptions->Option.flatMap(v => v.where),
-      ~probeChainId=chainId,
+      ~where,
+      ~chainId,
       ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   }
 }
 
-// Enrich a chain's static event definitions with the registered
-// handler/contractRegister/where (validating them along the way) to produce
-// the onEventRegistrations ChainState indexes off. Runs once per chain when
-// registration finishes, so a bad `where`/duplicate event throws during
-// startup with a stack trace pointing here instead of surfacing later from
-// inside ChainState's construction. Events without a handler/contractRegister
-// get added to `notRegisteredEventsByContract` (event names grouped by
-// contract name) so the caller can report them once for the whole indexer
-// instead of per chain.
-let buildOnEventRegistrations = (
-  ~chainConfig: Config.chain,
+// Enrich one event definition into its (event, chain) registration using
+// whatever handler/contractRegister/where the user registered for it. Shared
+// by the incremental per-chain sync below, `simulate`, and test helpers so
+// they stay in sync instead of re-deriving the per-ecosystem dispatch each
+// place.
+let buildOnEventRegistration = (
   ~config: Config.t,
-  ~notRegisteredEventsByContract: dict<Utils.Set.t<string>>,
-): array<Internal.onEventRegistration> => {
-  // We don't need the router itself, but only validation logic,
-  // since now event router is created for selection of events
-  // and validation doesn't work correctly in routers.
-  // Ideally to split it into two different parts.
-  let eventRouter = EventRouter.empty()
+  ~chainId: int,
+  ~eventConfig: Internal.eventConfig,
+  ~startBlock=?,
+): Internal.onEventRegistration => {
+  let t = get(~contractName=eventConfig.contractName, ~eventName=eventConfig.name)
+  buildOnEventRegistrationWith(
+    ~config,
+    ~chainId,
+    ~eventConfig,
+    ~isWildcard=t.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false),
+    ~handler=t.handler,
+    ~contractRegister=t.contractRegister,
+    ~where=t.eventOptions->Option.flatMap(v => v.where),
+    ~startBlock?,
+  )
+}
 
-  let onEventRegistrations: array<Internal.onEventRegistration> = []
+let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).handler
 
-  chainConfig.contracts->Array.forEach(contract => {
-    let contractName = contract.name
+let getContractRegister = (~contractName, ~eventName) =>
+  get(~contractName, ~eventName).contractRegister
 
-    contract.events->Array.forEach(eventConfig => {
-      let eventName = eventConfig.name
+let isWildcard = (~contractName, ~eventName) =>
+  get(~contractName, ~eventName).eventOptions
+  ->Option.flatMap(value => value.wildcard)
+  ->Option.getOr(false)
 
-      let onEventRegistration = buildOnEventRegistration(
-        ~config,
-        ~chainId=chainConfig.id,
-        ~eventConfig,
-        ~startBlock=?contract.startBlock,
-      )
-      let {isWildcard, handler, contractRegister} = onEventRegistration
+let hasRegistration = (~contractName, ~eventName) => {
+  let r = get(~contractName, ~eventName)
+  r.handler->Option.isSome || r.contractRegister->Option.isSome
+}
 
-      // Should validate the events
-      eventRouter->EventRouter.addOrThrow(
-        eventConfig.id,
-        (),
-        ~contractName,
-        ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
-        ~eventName,
-        ~isWildcard,
-      )
+type eventNamespace = {contractName: string, eventName: string}
 
-      // Filter out events without a handler/contractRegister so they aren't
-      // fetched or dispatched (unless raw events are enabled).
-      let shouldBeIncluded = if config.enableRawEvents {
-        true
-      } else {
-        let isRegistered = contractRegister->Option.isSome || handler->Option.isSome
-        if !isRegistered {
-          let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
-            contractName,
-          ) {
-          | Some(set) => set
-          | None => {
-              let set = Utils.Set.make()
-              notRegisteredEventsByContract->Dict.set(contractName, set)
-              set
-            }
-          }
-          eventNames->Utils.Set.add(eventName)->ignore
-        }
-        isRegistered
-      }
+let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
+  let fullMsg = msg ++ " for " ++ contractName ++ "." ++ eventName
+  Logging.createChildFrom(~logger, ~params={contractName, eventName})->Logging.childError(fullMsg)
+  JsError.throwWithMessage(fullMsg)
+}
 
-      // Check if event has Static([]) filters (from a dynamic where
-      // callback returning `false` / SkipAll for this chain).
-      // If so, skip it entirely - it should never be fetched
-      let shouldSkip = try {
-        let getEventFiltersOrThrow = (
-          onEventRegistration->(
-            Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration
+// `where` equality is checked per chain on the resolved structure (see
+// `syncOnEventRegistrations`), so registration options only need to agree on
+// `wildcard` here — two callbacks that resolve to identical filters count as
+// identical options even when the function references differ.
+let eventOptionsMatch = (
+  existing: option<Internal.eventOptions<JSON.t>>,
+  incoming: option<Internal.eventOptions<JSON.t>>,
+) => {
+  switch (existing, incoming) {
+  | (None, None) => true
+  | (Some(a), Some(b)) => a.wildcard === b.wildcard
+  | _ => false
+  }
+}
+
+let getResolvedWhere = (reg: Internal.onEventRegistration) =>
+  (
+    reg->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration)
+  ).resolvedWhere
+
+// Resolve the registration for every configured chain that defines the event
+// and store it in the pending per-chain registry. When the chain already
+// holds a registration for this event, the resolved `where` structures must
+// deep-compare equal (`Values` by hex arrays, `ContractAddresses` by contract
+// name, plus `startBlock`) — otherwise it's a conflicting duplicate
+// registration. Both live registrations and `preRegistered` callbacks
+// replayed by `startRegistration` run through this single code path.
+let syncOnEventRegistrations = (
+  r: activeRegistration,
+  ~contractName,
+  ~eventName,
+  ~where: option<JSON.t>,
+  ~duplicateMsg,
+  ~logger,
+) => {
+  let config = r.config
+  let t = get(~contractName, ~eventName)
+  let isWildcard = t.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+  let key = getKey(~contractName, ~eventName)
+
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig => {
+    chainConfig.contracts->Array.forEach(contract => {
+      if contract.name === contractName {
+        switch contract.events->Array.find(e => e.name === eventName) {
+        | None => ()
+        | Some(eventConfig) =>
+          let newRegistration = buildOnEventRegistrationWith(
+            ~config,
+            ~chainId=chainConfig.id,
+            ~eventConfig,
+            ~isWildcard,
+            ~handler=t.handler,
+            ~contractRegister=t.contractRegister,
+            ~where,
+            ~startBlock=?contract.startBlock,
           )
-        ).getEventFiltersOrThrow
-
-        // Check for non-evm chains
-        if (
-          getEventFiltersOrThrow->(Utils.magic: (ChainMap.Chain.t => Internal.eventFilters) => bool)
-        ) {
-          switch getEventFiltersOrThrow(ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)) {
-          | Static([]) => true
-          | _ => false
+          let pending = r->getPendingChainRegistrations(~chainId=chainConfig.id)
+          switch pending.onEventRegistrations->Utils.Dict.dangerouslyGetNonOption(key) {
+          | Some(existing) if config.ecosystem.name === Evm =>
+            if !(existing->getResolvedWhere == newRegistration->getResolvedWhere) {
+              raiseDuplicateRegistration(~contractName, ~eventName, ~msg=duplicateMsg, ~logger)
+            }
+          | _ => ()
           }
-        } else {
-          false
+          pending.onEventRegistrations->Dict.set(key, newRegistration)
         }
-      } catch {
-      // Can throw when filter is invalid
-      // Don't skip an event in this case. Let it throw in a better place - source code
-      | _ => false
-      }
-
-      if shouldBeIncluded && !shouldSkip {
-        onEventRegistrations->Array.push(onEventRegistration)
       }
     })
   })
+}
 
-  onEventRegistrations
+let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
+  switch eventOptions {
+  | Some(value) =>
+    let value = value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
+    let t = get(~contractName, ~eventName)
+    switch t.eventOptions {
+    | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
+    | Some(existingValue) =>
+      if !eventOptionsMatch(Some(existingValue), Some(value)) {
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
+          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
+          ~logger,
+        )
+      }
+    }
+  | None => ()
+  }
+}
+
+let setHandler = (
+  ~contractName,
+  ~eventName,
+  handler,
+  ~eventOptions,
+  ~logger=Logging.getLogger(),
+) => {
+  withRegistration(registration => {
+    let t = get(~contractName, ~eventName)
+    let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
+    let incomingEventOptions =
+      eventOptions->Option.map(v =>
+        v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
+      )
+    switch t.handler {
+    | None =>
+      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+      let t = get(~contractName, ~eventName)
+      set(
+        ~contractName,
+        ~eventName,
+        {
+          ...t,
+          handler: Some(newHandler),
+        },
+      )
+    | Some(prevHandler) =>
+      if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
+        let composedHandler: Internal.handler = async args => {
+          await prevHandler(args)
+          await newHandler(args)
+        }
+        set(
+          ~contractName,
+          ~eventName,
+          {
+            ...t,
+            handler: Some(composedHandler),
+          },
+        )
+      } else {
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
+          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
+          ~logger,
+        )
+      }
+    }
+    registration->syncOnEventRegistrations(
+      ~contractName,
+      ~eventName,
+      ~where=incomingEventOptions->Option.flatMap(v => v.where),
+      ~duplicateMsg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
+      ~logger,
+    )
+  })
+}
+
+let setContractRegister = (
+  ~contractName,
+  ~eventName,
+  contractRegister,
+  ~eventOptions,
+  ~logger=Logging.getLogger(),
+) => {
+  withRegistration(registration => {
+    let t = get(~contractName, ~eventName)
+    let newContractRegister =
+      contractRegister->(
+        Utils.magic: Internal.genericContractRegister<
+          Internal.genericContractRegisterArgs<'event, 'context>,
+        > => Internal.contractRegister
+      )
+    let incomingEventOptions =
+      eventOptions->Option.map(v =>
+        v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
+      )
+    switch t.contractRegister {
+    | None =>
+      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
+      let t = get(~contractName, ~eventName)
+      set(
+        ~contractName,
+        ~eventName,
+        {
+          ...t,
+          contractRegister: Some(newContractRegister),
+        },
+      )
+    | Some(prevContractRegister) =>
+      if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
+        let composedContractRegister: Internal.contractRegister = async args => {
+          await prevContractRegister(args)
+          await newContractRegister(args)
+        }
+        set(
+          ~contractName,
+          ~eventName,
+          {
+            ...t,
+            contractRegister: Some(composedContractRegister),
+          },
+        )
+      } else {
+        raiseDuplicateRegistration(
+          ~contractName,
+          ~eventName,
+          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
+          ~logger,
+        )
+      }
+    }
+    registration->syncOnEventRegistrations(
+      ~contractName,
+      ~eventName,
+      ~where=incomingEventOptions->Option.flatMap(v => v.where),
+      ~duplicateMsg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
+      ~logger,
+    )
+  })
+}
+
+let registerOnBlock = (
+  ~name,
+  ~chainId,
+  ~interval,
+  ~startBlock,
+  ~endBlock,
+  ~handler: Internal.onBlockArgs => promise<unit>,
+) => {
+  withRegistration(registration => {
+    let chainConfig =
+      registration.config.chainMap
+      ->ChainMap.values
+      ->Array.find(chainConfig => chainConfig.id === chainId)
+    switch chainConfig {
+    | None =>
+      JsError.throwWithMessage(
+        `The onBlock handler "${name}" is registered for chain ${chainId->Int.toString} which is not in the config.`,
+      )
+    | Some(chainConfig) =>
+      if startBlock->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
+        JsError.throwWithMessage(
+          `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
+        )
+      }
+      switch chainConfig.endBlock {
+      | Some(chainEndBlock) =>
+        if endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
+          JsError.throwWithMessage(
+            `The end block for onBlock handler "${name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
+          )
+        }
+      | None => ()
+      }
+      let pending = registration->getPendingChainRegistrations(~chainId)
+      pending.onBlockRegistrations
+      ->Array.push(
+        (
+          {
+            index: pending.onBlockRegistrations->Array.length,
+            name,
+            startBlock,
+            endBlock,
+            interval,
+            chainId,
+            handler,
+          }: Internal.onBlockRegistration
+        ),
+      )
+      ->ignore
+    }
+  })
 }
 
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
@@ -296,17 +525,103 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
       ->ChainMap.values
       ->Array.forEach(chainConfig => {
         let key = chainConfig.id->Int.toString
+        let pending = r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key)
+
+        // We don't need the router itself, but only validation logic,
+        // since now event router is created for selection of events
+        // and validation doesn't work correctly in routers.
+        // Ideally to split it into two different parts.
+        let eventRouter = EventRouter.empty()
+
+        let onEventRegistrations: array<Internal.onEventRegistration> = []
+
+        chainConfig.contracts->Array.forEach(contract => {
+          let contractName = contract.name
+
+          contract.events->Array.forEach(
+            eventConfig => {
+              let eventName = eventConfig.name
+              let registration =
+                pending->Option.flatMap(
+                  pending =>
+                    pending.onEventRegistrations->Utils.Dict.dangerouslyGetNonOption(
+                      getKey(~contractName, ~eventName),
+                    ),
+                )
+
+              // Should validate the events
+              eventRouter->EventRouter.addOrThrow(
+                eventConfig.id,
+                (),
+                ~contractName,
+                ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
+                ~eventName,
+                ~isWildcard=switch registration {
+                | Some(registration) => registration.isWildcard
+                | None => isWildcard(~contractName, ~eventName)
+                },
+              )
+
+              let registration = switch registration {
+              | Some(_) as registration => registration
+              | None =>
+                // No entry in the incremental store, but the persistent dict
+                // may still hold a handler: handler modules are import-cached,
+                // so a repeated registration cycle in the same process (tests
+                // restarting the indexer) never re-runs the `indexer.onEvent`
+                // calls. Rebuild from the dict in that case. Events without a
+                // handler/contractRegister aren't fetched or dispatched
+                // (unless raw events are enabled).
+                if hasRegistration(~contractName, ~eventName) || config.enableRawEvents {
+                  Some(
+                    buildOnEventRegistration(
+                      ~config,
+                      ~chainId=chainConfig.id,
+                      ~eventConfig,
+                      ~startBlock=?contract.startBlock,
+                    ),
+                  )
+                } else {
+                  let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
+                    contractName,
+                  ) {
+                  | Some(set) => set
+                  | None => {
+                      let set = Utils.Set.make()
+                      notRegisteredEventsByContract->Dict.set(contractName, set)
+                      set
+                    }
+                  }
+                  eventNames->Utils.Set.add(eventName)->ignore
+                  None
+                }
+              }
+
+              switch registration {
+              | Some(registration) =>
+                // A `where` that resolved to no topic selections (`false` for
+                // this chain) drops the chain's registration entirely — the
+                // event should never be fetched here.
+                let isDroppedByWhere =
+                  config.ecosystem.name === Evm &&
+                    (registration->getResolvedWhere).topicSelections->Utils.Array.isEmpty
+                if !isDroppedByWhere {
+                  onEventRegistrations->Array.push(registration)
+                }
+              | None => ()
+              }
+            },
+          )
+        })
+
         registrationsByChainId->Dict.set(
           key,
           {
-            onEventRegistrations: buildOnEventRegistrations(
-              ~chainConfig,
-              ~config,
-              ~notRegisteredEventsByContract,
-            ),
-            onBlockRegistrations: r.registrations.onBlockByChainId
-            ->Utils.Dict.dangerouslyGetNonOption(key)
-            ->Option.getOr([]),
+            onEventRegistrations,
+            onBlockRegistrations: switch pending {
+            | Some(pending) => pending.onBlockRegistrations
+            | None => []
+            },
           },
         )
       })
@@ -353,221 +668,4 @@ let throwIfFinishedRegistration = (~methodName) => {
     )
   | _ => ()
   }
-}
-
-let registerOnBlock = (
-  ~name,
-  ~chainId,
-  ~interval,
-  ~startBlock,
-  ~endBlock,
-  ~handler: Internal.onBlockArgs => promise<unit>,
-) => {
-  withRegistration(registration => {
-    let onBlockByChainId = registration.registrations.onBlockByChainId
-    let key = chainId->Int.toString
-    let index =
-      onBlockByChainId
-      ->Utils.Dict.dangerouslyGetNonOption(key)
-      ->Option.mapOr(0, configs => configs->Array.length)
-    onBlockByChainId->Utils.Dict.push(
-      key,
-      (
-        {
-          index,
-          name,
-          startBlock,
-          endBlock,
-          interval,
-          chainId,
-          handler,
-        }: Internal.onBlockRegistration
-      ),
-    )
-  })
-}
-
-let getHandler = (~contractName, ~eventName) => get(~contractName, ~eventName).handler
-
-let getContractRegister = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).contractRegister
-
-let getOnEventWhere = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions->Option.flatMap(value => value.where)
-
-let isWildcard = (~contractName, ~eventName) =>
-  get(~contractName, ~eventName).eventOptions
-  ->Option.flatMap(value => value.wildcard)
-  ->Option.getOr(false)
-
-let hasRegistration = (~contractName, ~eventName) => {
-  let r = get(~contractName, ~eventName)
-  r.handler->Option.isSome || r.contractRegister->Option.isSome
-}
-
-type eventNamespace = {contractName: string, eventName: string}
-
-let raiseDuplicateRegistration = (~contractName, ~eventName, ~msg, ~logger) => {
-  let fullMsg = msg ++ " for " ++ contractName ++ "." ++ eventName
-  Logging.createChildFrom(~logger, ~params={contractName, eventName})->Logging.childError(fullMsg)
-  JsError.throwWithMessage(fullMsg)
-}
-
-// Compare two raw `where` configs as the user passed them (object/array/bool/function).
-// At registration time we haven't parsed the config into `Internal.eventFilters` yet,
-// so structural equality on the raw JSON shape is what users actually wrote. For a
-// dynamic callback (a function value) structural equality is meaningless, so fall
-// back to referential equality on the function reference.
-let whereMatch = (a: option<JSON.t>, b: option<JSON.t>) => {
-  switch (a, b) {
-  | (None, None) => true
-  | (Some(a), Some(b)) =>
-    if typeof(a) === #function || typeof(b) === #function {
-      a === b
-    } else {
-      a == b
-    }
-  | _ => false
-  }
-}
-
-let eventOptionsMatch = (
-  existing: option<Internal.eventOptions<JSON.t>>,
-  incoming: option<Internal.eventOptions<JSON.t>>,
-) => {
-  switch (existing, incoming) {
-  | (None, None) => true
-  | (Some(a), Some(b)) => a.wildcard === b.wildcard && whereMatch(a.where, b.where)
-  | _ => false
-  }
-}
-
-let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
-  switch eventOptions {
-  | Some(value) =>
-    let value = value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
-    let t = get(~contractName, ~eventName)
-    switch t.eventOptions {
-    | None => set(~contractName, ~eventName, {...t, eventOptions: Some(value)})
-    | Some(existingValue) =>
-      if !eventOptionsMatch(Some(existingValue), Some(value)) {
-        raiseDuplicateRegistration(
-          ~contractName,
-          ~eventName,
-          ~msg="Cannot register handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
-          ~logger,
-        )
-      }
-    }
-  | None => ()
-  }
-}
-
-let setHandler = (
-  ~contractName,
-  ~eventName,
-  handler,
-  ~eventOptions,
-  ~logger=Logging.getLogger(),
-) => {
-  withRegistration(_registration => {
-    let t = get(~contractName, ~eventName)
-    let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
-    switch t.handler {
-    | None =>
-      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
-      let t = get(~contractName, ~eventName)
-      set(
-        ~contractName,
-        ~eventName,
-        {
-          ...t,
-          handler: Some(newHandler),
-        },
-      )
-    | Some(prevHandler) =>
-      let incomingEventOptions =
-        eventOptions->Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
-        )
-      if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
-        let composedHandler: Internal.handler = async args => {
-          await prevHandler(args)
-          await newHandler(args)
-        }
-        set(
-          ~contractName,
-          ~eventName,
-          {
-            ...t,
-            handler: Some(composedHandler),
-          },
-        )
-      } else {
-        raiseDuplicateRegistration(
-          ~contractName,
-          ~eventName,
-          ~msg="Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
-          ~logger,
-        )
-      }
-    }
-  })
-}
-
-let setContractRegister = (
-  ~contractName,
-  ~eventName,
-  contractRegister,
-  ~eventOptions,
-  ~logger=Logging.getLogger(),
-) => {
-  withRegistration(_registration => {
-    let t = get(~contractName, ~eventName)
-    let newContractRegister =
-      contractRegister->(
-        Utils.magic: Internal.genericContractRegister<
-          Internal.genericContractRegisterArgs<'event, 'context>,
-        > => Internal.contractRegister
-      )
-    switch t.contractRegister {
-    | None =>
-      setEventOptions(~contractName, ~eventName, ~eventOptions, ~logger)
-      let t = get(~contractName, ~eventName)
-      set(
-        ~contractName,
-        ~eventName,
-        {
-          ...t,
-          contractRegister: Some(newContractRegister),
-        },
-      )
-    | Some(prevContractRegister) =>
-      let incomingEventOptions =
-        eventOptions->Option.map(v =>
-          v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
-        )
-      if eventOptionsMatch(t.eventOptions, incomingEventOptions) {
-        let composedContractRegister: Internal.contractRegister = async args => {
-          await prevContractRegister(args)
-          await newContractRegister(args)
-        }
-        set(
-          ~contractName,
-          ~eventName,
-          {
-            ...t,
-            contractRegister: Some(composedContractRegister),
-          },
-        )
-      } else {
-        raiseDuplicateRegistration(
-          ~contractName,
-          ~eventName,
-          ~msg="Cannot register a second contractRegister with different options. Make sure all handlers for the same event use identical options (wildcard, where)",
-          ~logger,
-        )
-      }
-    }
-  })
 }

@@ -58,15 +58,17 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   startBlock: None,
   handler: None,
   contractRegister: None,
-  getEventFiltersOrThrow: _ =>
-    Static([
+  resolvedWhere: {
+    topicSelections: [
       {
         topic0: [pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe],
-        topic1: [],
-        topic2: [],
-        topic3: [],
+        topic1: Values([]),
+        topic2: Values([]),
+        topic3: Values([]),
       },
-    ]),
+    ],
+    startBlock: None,
+  },
 }
 
 // Match the on-chain ABI so the hypersync-client decoder doesn't raise

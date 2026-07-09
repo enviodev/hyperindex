@@ -372,94 +372,100 @@ let getGlobalIndexer = (): 'indexer => {
   // math at `FetchState.res:619` stays untouched.
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let config = Config.load()
-    let ecosystem = config.ecosystem
-    let raw =
-      rawOptions->(
-        Utils.magic: 'a => {
-          "name": string,
-          "where": option<Envio.onBlockWhereArgs<unknown> => unknown>,
-        }
-      )
-    let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
-    let (chains, _) = buildChainsObject(~config)
-    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
-    let name = raw["name"]
-    let logger = Logging.createChild(~params={"onBlock": name})
+    // Deferred until registration is active so the per-chain loop sees the
+    // registration's config, which may be a narrowed version of the generated
+    // one (TestIndexer runs with a per-test chain subset).
+    HandlerRegister.withConfig(config => {
+      let ecosystem = config.ecosystem
+      let raw =
+        rawOptions->(
+          Utils.magic: 'a => {
+            "name": string,
+            "where": option<Envio.onBlockWhereArgs<unknown> => unknown>,
+          }
+        )
+      let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
+      let (chains, _) = buildChainsObject(~config)
+      let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
+      let name = raw["name"]
+      let logger = Logging.createChild(~params={"onBlock": name})
 
-    // `where` must be a function (unlike onEvent, which also accepts a static
-    // value). A static value would have to be evaluated against every chain
-    // independently, which has no useful semantic for block handlers.
-    // Normalize undefined/null to None up front so the per-chain loop below
-    // can't accidentally call `null` as a predicate (ReScript treats a JS
-    // `null` value as `Some(null)` when the field is typed as option).
-    let where = switch raw["where"]->(Utils.magic: option<'a> => unknown) {
-    | w if w === %raw(`undefined`) || w === %raw(`null`) => None
-    | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
-    | w =>
-      JsError.throwWithMessage(
-        `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
-            w,
-          ) :> string)}.`,
-      )
-    }
-
-    let matchedAny = ref(false)
-
-    config.chainMap
-    ->ChainMap.values
-    ->Array.forEach(chainConfig => {
-      let chainId = chainConfig.id
-      let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
-
-      // Predicate returns `true` → match with no filter; `false` → skip;
-      // any plain object → structured filter. `undefined`/`null` returns
-      // are rejected — the TS type excludes `void`, so a missing return is
-      // a user bug we surface early rather than silently match-all.
-      let result = switch where {
-      | None => %raw(`true`)
-      | Some(predicate) => predicate({chain: chainObj})
-      }
-
-      let (shouldRegister, range) = if result === %raw(`true`) {
-        (true, defaultBlockRange)
-      } else if result === %raw(`false`) {
-        (false, defaultBlockRange)
-      } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
-        (true, extractRange(result, ~name, ~ecosystem))
-      } else {
-        // Reject numbers, strings, functions, arrays, undefined, null —
-        // anything that isn't bool or a plain object would silently
-        // misregister.
+      // `where` must be a function (unlike onEvent, which also accepts a static
+      // value). A static value would have to be evaluated against every chain
+      // independently, which has no useful semantic for block handlers.
+      // Normalize undefined/null to None up front so the per-chain loop below
+      // can't accidentally call `null` as a predicate (ReScript treats a JS
+      // `null` value as `Some(null)` when the field is typed as option).
+      let where = switch raw["where"]->(Utils.magic: option<'a> => unknown) {
+      | w if w === %raw(`undefined`) || w === %raw(`null`) => None
+      | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
+      | w =>
         JsError.throwWithMessage(
-          `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
-              result,
-            ) :> string)}. Expected boolean or a filter object.`,
+          `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
+              w,
+            ) :> string)}.`,
         )
       }
 
-      if shouldRegister {
-        matchedAny := true
-        HandlerRegister.registerOnBlock(
-          ~name,
-          ~chainId,
-          ~interval=range._every,
-          ~startBlock=range._gte,
-          ~endBlock=range._lte,
-          ~handler=typedHandler,
+      let matchedAny = ref(false)
+
+      config.chainMap
+      ->ChainMap.values
+      ->Array.forEach(chainConfig => {
+        let chainId = chainConfig.id
+        let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
+
+        // Predicate returns `true` → match with no filter; `false` → skip;
+        // any plain object → structured filter. `undefined`/`null` returns
+        // are rejected — the TS type excludes `void`, so a missing return is
+        // a user bug we surface early rather than silently match-all.
+        let result = switch where {
+        | None => %raw(`true`)
+        | Some(predicate) => predicate({chain: chainObj})
+        }
+
+        let (shouldRegister, range) = if result === %raw(`true`) {
+          (true, defaultBlockRange)
+        } else if result === %raw(`false`) {
+          (false, defaultBlockRange)
+        } else if (
+          typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`)
+        ) {
+          (true, extractRange(result, ~name, ~ecosystem))
+        } else {
+          // Reject numbers, strings, functions, arrays, undefined, null —
+          // anything that isn't bool or a plain object would silently
+          // misregister.
+          JsError.throwWithMessage(
+            `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
+                result,
+              ) :> string)}. Expected boolean or a filter object.`,
+          )
+        }
+
+        if shouldRegister {
+          matchedAny := true
+          HandlerRegister.registerOnBlock(
+            ~name,
+            ~chainId,
+            ~interval=range._every,
+            ~startBlock=range._gte,
+            ~endBlock=range._lte,
+            ~handler=typedHandler,
+          )
+        }
+      })
+
+      // Catches misconfigured `where` predicates that return `false` for every
+      // configured chain — the handler would otherwise never fire with no hint.
+      // Includes the ecosystem-specific method name so SVM users see "onSlot"
+      // and don't get confused looking for a "Block handler" they never wrote.
+      if !matchedAny.contents {
+        logger->Logging.childWarn(
+          `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
         )
       }
     })
-
-    // Catches misconfigured `where` predicates that return `false` for every
-    // configured chain — the handler would otherwise never fire with no hint.
-    // Includes the ecosystem-specific method name so SVM users see "onSlot"
-    // and don't get confused looking for a "Block handler" they never wrote.
-    if !matchedAny.contents {
-      logger->Logging.childWarn(
-        `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
-      )
-    }
   }
 
   // Ecosystem-specific surface: EVM/Fuel expose event + block handlers; SVM
@@ -506,8 +512,7 @@ let getGlobalIndexer = (): 'indexer => {
   let get = (~prop: string) =>
     switch prop {
     | "name" => Config.load().name->(Utils.magic: string => unknown)
-    | "description" =>
-      Config.load().description->(Utils.magic: option<string> => unknown)
+    | "description" => Config.load().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
         let (_, chainIds) = buildChainsObject(~config=Config.load())
         chainIds->(Utils.magic: array<int> => unknown)

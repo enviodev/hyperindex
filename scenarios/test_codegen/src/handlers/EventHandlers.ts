@@ -464,16 +464,35 @@ indexer.onEvent(
   },
   async (_) => {},
 );
+// Registered a second time with a distinct-but-equal-resolving `where`
+// callback: duplicate registrations compare the resolved filter structure,
+// not the function reference, so this composes instead of throwing.
+indexer.onEvent(
+  {
+    contract: "EventFiltersTest",
+    event: "EmptyFiltersArray",
+    wildcard: true,
+    where: ({ chain }) => {
+      if (chain.id !== 100 && chain.id !== 137) {
+        return false;
+      }
+      return { params: [] };
+    },
+  },
+  async (_) => {},
+);
+// `where` keeps the event on chain 137 but drops it on chain 100 — used to
+// assert that a `false` where removes the chain's registration entirely.
 indexer.onEvent(
   {
     contract: "EventFiltersTest",
     event: "WithExcessField",
     wildcard: true,
     where: ({ chain }) => {
-      if (chain.id !== 100 && chain.id !== 137) {
+      if (chain.id !== 137) {
         return false;
       }
-      return { params: { from: ZERO_ADDRESS, to: ZERO_ADDRESS } };
+      return { params: { from: ZERO_ADDRESS } };
     },
   },
   async (_) => {},

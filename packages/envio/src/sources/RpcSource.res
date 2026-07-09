@@ -412,7 +412,7 @@ type selectionConfig = {
   ) => array<logSelection>,
 }
 
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
+let getSelectionConfig = (selection: FetchState.selection) => {
   let evmOnEventRegistrations =
     selection.onEventRegistrations->(
       Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
@@ -436,33 +436,23 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   // re-applies it). Pure-wildcard events carry no address constraint, so they're
   // pooled and resolved once.
   let noAddressTopicSelections = []
-  let staticByContract = Dict.make()
-  let dynamicByContract = Dict.make()
-  let dynamicWildcardByContract = Dict.make()
+  let byContract = Dict.make()
+  let wildcardByContract = Dict.make()
   let contractNames = Utils.Set.make()
 
   evmOnEventRegistrations->Array.forEach(reg => {
     let contractName = reg.eventConfig.contractName
-    let {isWildcard, dependsOnAddresses, getEventFiltersOrThrow} = reg
-    let eventFilters = getEventFiltersOrThrow(chain)
+    let {isWildcard, dependsOnAddresses, resolvedWhere} = reg
     if dependsOnAddresses {
       contractNames->Utils.Set.add(contractName)->ignore
-      switch eventFilters {
-      | Internal.Static(topicSelections) =>
-        staticByContract->Utils.Dict.pushMany(contractName, topicSelections)
-      | Dynamic(fn) =>
-        (isWildcard ? dynamicWildcardByContract : dynamicByContract)->Utils.Dict.push(
-          contractName,
-          fn,
-        )
-      }
+      (isWildcard ? wildcardByContract : byContract)->Utils.Dict.pushMany(
+        contractName,
+        resolvedWhere.topicSelections,
+      )
     } else {
       noAddressTopicSelections
       ->Array.pushMany(
-        switch eventFilters {
-        | Static(s) => s
-        | Dynamic(fn) => fn([])
-        },
+        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
       )
       ->ignore
     }
@@ -491,30 +481,30 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         | None
         | Some([]) => ()
         | Some(addresses) =>
-          // Static + dynamic non-wildcard filters, scoped to this contract's addresses.
-          let addressedTopicSelections = []
-          switch staticByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(s) => addressedTopicSelections->Array.pushMany(s)->ignore
-          | None => ()
-          }
-          switch dynamicByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(fns) =>
-            fns->Array.forEach(fn =>
-              addressedTopicSelections->Array.pushMany(fn(addresses))->ignore
-            )
-          | None => ()
-          }
-          logSelections
-          ->Array.pushMany(toLogSelections(~addresses=Some(addresses), addressedTopicSelections))
-          ->ignore
-
-          // Dynamic wildcard-by-address filters fold the address into the topics,
-          // so they still match any address.
-          switch dynamicWildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(fns) =>
+          // Non-wildcard filters, scoped to this contract's addresses.
+          switch byContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(topicSelections) =>
             logSelections
             ->Array.pushMany(
-              toLogSelections(~addresses=None, fns->Array.flatMap(fn => fn(addresses))),
+              toLogSelections(
+                ~addresses=Some(addresses),
+                topicSelections->LogSelection.materializeTopicSelections(~addresses),
+              ),
+            )
+            ->ignore
+          | None => ()
+          }
+
+          // Wildcard-by-address filters fold the address into the topics,
+          // so they still match any address.
+          switch wildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(topicSelections) =>
+            logSelections
+            ->Array.pushMany(
+              toLogSelections(
+                ~addresses=None,
+                topicSelections->LogSelection.materializeTopicSelections(~addresses),
+              ),
             )
             ->ignore
           | None => ()
@@ -530,8 +520,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) =>
-  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
+let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
@@ -1021,7 +1010,7 @@ let make = (
   }
   let name = `RPC (${urlHost})`
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
+  let getSelectionConfig = memoGetSelectionConfig()
 
   // Per-partition adaptive block interval (AIMD), keyed by partitionId. The
   // `max` key holds a source-wide ceiling that only ever tightens, set by

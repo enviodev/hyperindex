@@ -78,7 +78,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // (populating the global `HandlerRegister` registry as a side effect) and
 // returns the resulting per-chain registrations.
 let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
-  HandlerRegister.startRegistration(~ecosystem=config.ecosystem)
+  HandlerRegister.startRegistration(~config)
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers)
