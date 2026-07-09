@@ -399,8 +399,9 @@ let resetPendingQueries = (cs: t) => {
 let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 
 // Block span over which a batch fully replaces the chain density estimate;
-// smaller batches blend in proportionally.
-let densityBlendWindow = 10_000.
+// smaller batches blend in proportionally, so a few sparse/dense blocks only
+// nudge it.
+let densityBlendWindow = 100.
 
 // The last block this chain can fetch right now: the head, or endBlock when
 // it's below the head.
