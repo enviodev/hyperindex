@@ -117,6 +117,15 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
+// Density (items/block) from the last response, trusted only after two
+// responses — a single sample is too noisy to size the next query by.
+let getTrustedDensity = (p: partition) => {
+  switch (p.prevQueryRange, p.prevPrevQueryRange) {
+  | (0, _) | (_, 0) => None
+  | (prevQueryRange, _) => Some(p.prevRangeSize->Int.toFloat /. prevQueryRange->Int.toFloat)
+  }
+}
+
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
   for i in 0 to partitions->Array.length - 1 {
@@ -1684,12 +1693,8 @@ let getNextQuery = (
       | Some(eb) => eb
       | None => chainTargetBlock
       }
-      let density = switch fs.maybeChunkRange {
-      | Some(_) => p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
-      | None => 0.
-      }
-      switch fs.maybeChunkRange {
-      | Some(minHistoryRange) if density > 0. =>
+      switch (fs.maybeChunkRange, p->getTrustedDensity) {
+      | (Some(minHistoryRange), Some(density)) if density > 0. =>
         // Chunking active: strict chunks with a hard endBlock, uncapped real
         // density — at least one full chunk this round even if budget falls
         // short.
