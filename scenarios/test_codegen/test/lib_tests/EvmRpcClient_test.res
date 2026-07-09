@@ -154,10 +154,12 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~syncConfig,
       ~allEventParams=[
         {
+          id: 3,
           sighash: transferSighash,
           topicCount: 3,
           eventName: "Transfer",
           contractName: "ERC20",
+          isWildcard: false,
           params: transferParams,
         },
       ],
@@ -168,6 +170,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       toBlockCeiling: 100,
       logSelections: [{topics: [Nullable.make([transferSighash])]}],
       partitionId: "0",
+      contractNameByAddress: Dict.fromArray([
+        ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "ERC20"),
+      ]),
     })
     // Lock down the outgoing request contract (hex block bounds + topic nesting)
     // alongside the decoded response.
@@ -176,14 +181,10 @@ describe("EvmRpcClient - getNextPage via napi", () => {
 
     t.expect((
       toBlock,
-      items->Array.map(({log, params}) => {
-        let decoded =
-          params
-          ->Nullable.toOption
-          ->Option.getUnsafe
-          ->Dict.getUnsafe("ERC20")
-          ->(Utils.magic: Internal.eventParams => {..})
+      items->Array.map(({log, onEventRegistrationId, params}) => {
+        let decoded = params->(Utils.magic: Internal.eventParams => {..})
         {
+          "onEventRegistrationId": onEventRegistrationId,
           "blockNumber": log.blockNumber,
           "transactionIndex": log.transactionIndex,
           "logIndex": log.logIndex,
@@ -198,6 +199,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       100,
       [
         {
+          "onEventRegistrationId": 3,
           "blockNumber": 100,
           "transactionIndex": 1,
           "logIndex": 2,
@@ -211,7 +213,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ))
   })
 
-  Async.it("Leaves params null when no registered signature matches", async t => {
+  Async.it("Drops items when no registered signature matches", async t => {
     let mock = await MockRpcServer.makeRaw(
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"result":[{"address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","topics":["0x0000000000000000000000000000000000000000000000000000000000000009"],"data":"0x","blockNumber":"0x1","transactionHash":"0xabc","transactionIndex":"0x0","blockHash":"0xb01","logIndex":"0x0","removed":false}]}`,
@@ -222,10 +224,12 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~syncConfig,
       ~allEventParams=[
         {
+          id: 3,
           sighash: transferSighash,
           topicCount: 3,
           eventName: "Transfer",
           contractName: "ERC20",
+          isWildcard: false,
           params: transferParams,
         },
       ],
@@ -236,12 +240,11 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       toBlockCeiling: 1,
       logSelections: [{topics: []}],
       partitionId: "0",
+      contractNameByAddress: Dict.make(),
     })
     mock.close()
 
-    t.expect(items->Array.map(({params}) => params->Nullable.toOption->Option.isNone)).toEqual([
-      true,
-    ])
+    t.expect(items->Array.length).toEqual(0)
   })
 
   Async.it("Surfaces a classified provider error via the retry-decision payload", async t => {
@@ -257,6 +260,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         toBlockCeiling: 5000,
         logSelections: [{topics: []}],
         partitionId: "0",
+        contractNameByAddress: Dict.make(),
       })
       None
     } catch {

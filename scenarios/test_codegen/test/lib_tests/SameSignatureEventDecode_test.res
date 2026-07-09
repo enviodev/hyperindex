@@ -59,21 +59,28 @@ let transferLog = (
 describe("Same-signature event across contracts with different param names", () => {
   Async.it("decodes the shared Transfer under each contract's own param names", async t => {
     // Full production path: collect the decoder inputs for both contracts and
-    // decode the shared Transfer log through EvmRpcClient. The decoder returns
-    // params keyed by contract name so each contract's router can pick its own
-    // names instead of the first-registered contract's.
+    // route+decode the shared Transfer log through EvmRpcClient. Routing picks
+    // the owning contract's registration, so each contract's params come back
+    // under its own names instead of the first-registered contract's.
+    tokenA.id = 0
+    tokenB.id = 1
     let allEventParams = EvmChain.collectEventParams([tokenA, tokenB])
 
-    let decoded = await NativeDecoder.decodeLogs(~eventParams=allEventParams, ~logs=[transferLog])
-    let paramsByContractName = decoded[0]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe
+    let decodeAs = async contractName => {
+      let decoded = await NativeDecoder.decodeLogs(
+        ~eventParams=allEventParams,
+        ~logs=[transferLog],
+        ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, contractName)]),
+      )
+      let item = decoded[0]->Option.getUnsafe
+      (item.onEventRegistrationId, item.params)
+    }
 
     t
-    .expect(paramsByContractName)
-    .toEqual(
-      {
-        "TokenA": {"from": fromAddr, "to": toAddr, "value": value},
-        "TokenB": {"src": fromAddr, "dst": toAddr, "wad": value},
-      }->Utils.magic,
-    )
+    .expect((await decodeAs("TokenA"), await decodeAs("TokenB")))
+    .toEqual((
+      (0, {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic),
+      (1, {"src": fromAddr, "dst": toAddr, "wad": value}->Utils.magic),
+    ))
   })
 })

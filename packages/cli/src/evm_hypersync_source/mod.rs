@@ -107,6 +107,7 @@ impl EvmHypersyncClient {
     pub async fn get_event_items(
         &self,
         mut query: Query,
+        contract_name_by_address: std::collections::HashMap<String, String>,
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
         // get_event_items always reads address/data/topic0..3/logIndex off the
         // log to decode params and flatten the JS-side shape. Force-add them
@@ -168,6 +169,7 @@ impl EvmHypersyncClient {
                 &requested_transaction_fields,
                 &transaction_store,
                 &block_store,
+                &contract_name_by_address,
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -218,18 +220,16 @@ pub struct QueryResponse {
 pub struct EventItem {
     pub log_index: i64,
     pub src_address: String,
-    pub topic0: String,
-    pub topic_count: i64,
     /// Block this log belongs to. The block itself is carried once, deduplicated,
     /// in `EventItemsResponse.blocks` — the caller joins on this number.
     pub block_number: i64,
     /// Key into the per-chain `TransactionStore` (paired with the block number);
     /// the transaction itself is materialised field-by-field on demand.
     pub transaction_index: i64,
-    /// `None` when the log's topic0/topic-count doesn't match any signature
-    /// passed to the client constructor (e.g. wildcard indexers that select
-    /// more sighashes than they decode).
-    pub params: Option<ParamValue>,
+    /// The registration this log routed to, as passed to the client
+    /// constructor. Logs that route nowhere never cross the boundary.
+    pub on_event_registration_id: i64,
+    pub params: ParamValue,
 }
 
 /// The always-needed block fields, surfaced per block number so the consumer can
@@ -319,6 +319,7 @@ fn process_response(
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
+    contract_name_by_address: &std::collections::HashMap<String, String>,
 ) -> std::result::Result<(Vec<EventItem>, Vec<BlockHeader>), ConvertError> {
     // The server returns one block per number; items reference them by number,
     // so keep them owned and track which numbers are present for coverage.
@@ -418,21 +419,29 @@ fn process_response(
 
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
     for log in logs.into_iter().flatten() {
-        // Propagate genuine decode errors (malformed bytes, ABI mismatch) up to
-        // the JS caller instead of silently coercing them into `None` — `None`
-        // is reserved for "topic0/count doesn't match a registered signature".
-        let params = decoder.decode_simple(&log).context("decode event params")?;
-        let (log_index, src_address, topic0, topic_count, block_number, transaction_index) =
+        let (log_index, src_address, block_number, transaction_index) =
             flatten_log_for_js(&log, should_checksum).context("mapping log")?;
-        items.push(EventItem {
-            log_index,
-            src_address,
-            topic0,
-            topic_count,
-            block_number,
-            transaction_index,
-            params,
-        });
+        // Propagate genuine decode errors (malformed bytes, ABI mismatch) up to
+        // the JS caller instead of silently coercing them into a drop — a drop
+        // is reserved for logs that route to no registration.
+        let routed = decoder
+            .route_and_decode_simple(
+                &log,
+                contract_name_by_address
+                    .get(&src_address)
+                    .map(String::as_str),
+            )
+            .context("decode event params")?;
+        if let Some(routed) = routed {
+            items.push(EventItem {
+                log_index,
+                src_address,
+                block_number,
+                transaction_index,
+                on_event_registration_id: routed.id,
+                params: routed.params,
+            });
+        }
     }
 
     Ok((items, out_blocks))
@@ -441,9 +450,7 @@ fn process_response(
 fn flatten_log_for_js(
     log: &hypersync_client::simple_types::Log,
     should_checksum: bool,
-) -> Result<(i64, String, String, i64, i64, i64)> {
-    use hypersync_client::format::Hex;
-
+) -> Result<(i64, String, i64, i64)> {
     let log_index: i64 = u64::from(log.log_index.context("log.logIndex missing")?)
         .try_into()
         .context("log.logIndex overflow")?;
@@ -451,20 +458,6 @@ fn flatten_log_for_js(
         log.address.as_ref().context("log.address missing")?,
         should_checksum,
     );
-    let topic0 = log
-        .topics
-        .first()
-        .context("log.topics empty")?
-        .as_ref()
-        .context("log.topics[0] missing")?
-        .encode_hex();
-    let topic_count: i64 = log
-        .topics
-        .iter()
-        .filter(|t| t.is_some())
-        .count()
-        .try_into()
-        .context("topic_count overflow")?;
     // block_number + transaction_index are force-selected (see
     // `ensure_required_log_fields`) so they're always present, independent of
     // the user's field selection — they key the transaction store.
@@ -477,14 +470,7 @@ fn flatten_log_for_js(
     )
     .try_into()
     .context("log.transactionIndex overflow")?;
-    Ok((
-        log_index,
-        src_address,
-        topic0,
-        topic_count,
-        block_number,
-        transaction_index,
-    ))
+    Ok((log_index, src_address, block_number, transaction_index))
 }
 
 /// Failure modes specific to event-items conversion. `MissingFields` is the
@@ -653,6 +639,25 @@ mod tests {
         DecoderCore::from_params(Vec::new(), false).unwrap()
     }
 
+    // Routes `full_log` (zero topic0, one topic, empty data) to a wildcard
+    // registration so success-path tests still produce an item now that
+    // unrouted logs are dropped.
+    fn zero_event_decoder() -> DecoderCore {
+        DecoderCore::from_params(
+            vec![crate::evm_hypersync_source::types::EventParamsInput {
+                id: 0,
+                sighash: format!("0x{}", "00".repeat(32)),
+                topic_count: 1,
+                event_name: "Zero".to_string(),
+                contract_name: "Zero".to_string(),
+                is_wildcard: true,
+                params: vec![],
+            }],
+            false,
+        )
+        .unwrap()
+    }
+
     fn full_log(block_number: u64) -> simple_types::Log {
         simple_types::Log {
             log_index: Some(0.into()),
@@ -679,6 +684,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -706,6 +712,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -738,6 +745,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -763,7 +771,7 @@ mod tests {
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
-            &empty_decoder(),
+            &zero_event_decoder(),
             false,
             &[
                 BlockField::Number,
@@ -774,6 +782,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -800,6 +809,7 @@ mod tests {
             &[TransactionField::Hash],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -830,6 +840,7 @@ mod tests {
             &[TransactionField::Hash],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -861,12 +872,13 @@ mod tests {
             vec![vec![block]],
             vec![vec![tx]],
             vec![vec![full_log(7)]],
-            &empty_decoder(),
+            &zero_event_decoder(),
             false,
             &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
             &[TransactionField::BlockNumber],
             &store,
             &BlockStore::new_evm(false),
+            &Default::default(),
         )
         .expect("expected success when block and transaction join");
 

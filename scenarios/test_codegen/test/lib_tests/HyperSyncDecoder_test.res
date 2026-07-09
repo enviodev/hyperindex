@@ -28,14 +28,13 @@ let decodeSingle = async (
   )
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
   let decoded = await NativeDecoder.decodeLogs(
-    ~eventParams=[{sighash, topicCount, eventName, contractName: "TestContract", params}],
+    ~eventParams=[
+      {id: 0, sighash, topicCount, eventName, contractName: "TestContract", isWildcard: false, params},
+    ],
     ~logs=[log],
+    ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
   )
-  decoded[0]
-  ->Option.getUnsafe
-  ->Nullable.toOption
-  ->Option.getUnsafe
-  ->Dict.getUnsafe("TestContract")
+  (decoded[0]->Option.getUnsafe).params
 }
 
 let allIndexedLog = (
@@ -61,10 +60,12 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let decoded = await NativeDecoder.decodeLogs(
       ~eventParams=[
         {
+          id: 0,
           sighash,
           topicCount: 4,
           eventName: "Transfer",
           contractName: "TestContract",
+          isWildcard: false,
           params: [
             {name: "from", abiType: "address", indexed: true},
             {name: "to", abiType: "address", indexed: true},
@@ -72,10 +73,12 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           ],
         },
         {
+          id: 1,
           sighash,
           topicCount: 1,
           eventName: "Transfer",
           contractName: "TestContract",
+          isWildcard: false,
           params: [
             {name: "from", abiType: "address", indexed: false},
             {name: "to", abiType: "address", indexed: false},
@@ -84,14 +87,10 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
       ],
       ~logs=[allIndexedLog, noneIndexedLog],
+      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
     )
 
-    let pick = i =>
-      decoded[i]
-      ->Option.getUnsafe
-      ->Nullable.toOption
-      ->Option.getUnsafe
-      ->Dict.getUnsafe("TestContract")
+    let pick = i => (decoded[i]->Option.getUnsafe).params
     let paramsAll = pick(0)
     let paramsNone = pick(1)
 
@@ -129,21 +128,19 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let decoded = await NativeDecoder.decodeLogs(
       ~eventParams=[
         {
+          id: 0,
           sighash: toEventSelector("event Empty()"),
           topicCount: 1,
           eventName: "Empty",
           contractName: "TestContract",
+          isWildcard: false,
           params: [],
         },
       ],
       ~logs=[([toEventSelector("event Empty()")], "0x")],
+      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
     )
-    let result =
-      decoded[0]
-      ->Option.getUnsafe
-      ->Nullable.toOption
-      ->Option.getUnsafe
-      ->Dict.getUnsafe("TestContract")
+    let result = (decoded[0]->Option.getUnsafe).params
     t.expect(result).toEqual(%raw(`{}`))
   })
 

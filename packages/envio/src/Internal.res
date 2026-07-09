@@ -555,6 +555,11 @@ type svmInstructionEventConfig = {
 // must stay directly constructable), and the evm→base cast in sources is sound
 // by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
+  // Chain-scoped sequential id — the registration's index in the chain's
+  // onEventRegistrations array, assigned when registration finishes (-1 until
+  // then). Crosses the napi boundary so Rust-routed items resolve back by
+  // array index.
+  mutable id: int,
   eventConfig: eventConfig,
   handler: option<handler>,
   contractRegister: option<contractRegister>,

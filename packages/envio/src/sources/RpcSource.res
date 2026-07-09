@@ -735,7 +735,9 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
+  // The chain's registrations, indexed by their sequential id — Rust routes
+  // each log and echoes the id back on the item.
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
@@ -748,7 +750,7 @@ let make = (
     syncConfig,
     url,
     chain,
-    eventRouter,
+    onEventRegistrations,
     allEventParams,
     lowercaseAddresses,
     ?ws,
@@ -964,6 +966,7 @@ let make = (
         ),
       }),
       partitionId,
+      contractNameByAddress,
     }) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {
@@ -997,32 +1000,16 @@ let make = (
     ->Promise.thenResolve(parseBlockInfo)
 
     let parsedQueueItems = await items
-    ->Array.filterMap(({log, params: maybeDecodedEvent}: EvmRpcClient.rpcEventItem) => {
-      let topic0 = log.topics[0]->Option.getOr("0x0")
-      let routedAddress = if lowercaseAddresses {
-        log.address->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        log.address->Address.Evm.fromAddressOrThrow
-      }
-
-      switch eventRouter->EventRouter.get(
-        ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
-        ~contractNameByAddress,
-        ~contractAddress=routedAddress,
-      ) {
-      | None => None
-      | Some(onEventRegistration) =>
-        let eventConfig =
-          onEventRegistration.eventConfig->(
-            Utils.magic: Internal.eventConfig => Internal.evmEventConfig
-          )
-        switch maybeDecodedEvent
-        ->Nullable.toOption
-        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
-        | Some(decoded) =>
-          Some(
-            (
-              async () => {
+    ->Array.map(({log, onEventRegistrationId, params: decoded}: EvmRpcClient.rpcEventItem) => {
+      // Routed on the Rust side; `log.address` comes back already normalized
+      // to the client's casing.
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationId)
+      let eventConfig =
+        onEventRegistration.eventConfig->(
+          Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+        )
+      (
+        async () => {
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
                   log->getEventTransactionOrThrow(
@@ -1074,16 +1061,12 @@ let make = (
                     params: decoded,
                     block,
                     transaction,
-                    srcAddress: routedAddress,
+                    srcAddress: log.address,
                     logIndex: log.logIndex,
                   }->Evm.fromPayload,
                 })
-              }
-            )(),
-          )
-        | None => None
         }
-      }
+      )()
     })
     ->Promise.all
 

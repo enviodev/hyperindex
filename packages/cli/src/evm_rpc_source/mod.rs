@@ -10,9 +10,12 @@ mod client;
 mod interval;
 
 use crate::evm_hypersync_source::decode::DecoderCore;
-use crate::evm_hypersync_source::types::{EventParamsInput, Log as DecoderLog, ParamValue};
+use crate::evm_hypersync_source::types::{
+    encode_address, EventParamsInput, Log as DecoderLog, ParamValue,
+};
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
+use hypersync_client::format::Hex;
 use interval::{IntervalState, SyncConfig};
 
 #[napi(object)]
@@ -51,9 +54,10 @@ pub struct RpcLog {
 #[napi(object)]
 pub struct RpcEventItem {
     pub log: RpcLog,
-    /// Decoded params keyed by contract name, or `None` when no registered event
-    /// signature matches the log's topic0/topic-count (or decoding failed).
-    pub params: Option<ParamValue>,
+    /// The registration this log routed to, as passed to the client
+    /// constructor. Logs that route nowhere are dropped before the boundary.
+    pub on_event_registration_id: i64,
+    pub params: ParamValue,
 }
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
@@ -72,7 +76,9 @@ struct RawLog {
 }
 
 impl RawLog {
-    fn into_rpc_log(self) -> anyhow::Result<RpcLog> {
+    /// `address` is normalized (lowercase or checksummed per the client config)
+    /// so it matches both the routing index keys and the JS-side address type.
+    fn into_rpc_log(self, address: String) -> anyhow::Result<RpcLog> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
                 .try_into()
@@ -82,11 +88,17 @@ impl RawLog {
             block_number: to_i64(&self.block_number).context("log.blockNumber")?,
             transaction_index: to_i64(&self.transaction_index).context("log.transactionIndex")?,
             log_index: to_i64(&self.log_index).context("log.logIndex")?,
-            address: self.address,
+            address,
             topics: self.topics,
             transaction_hash: self.transaction_hash,
             block_hash: self.block_hash,
         })
+    }
+
+    fn normalized_address(&self, should_checksum: bool) -> anyhow::Result<String> {
+        let address = hypersync_client::format::Address::decode_hex(&self.address)
+            .context("decode log.address hex")?;
+        Ok(encode_address(&address, should_checksum))
     }
 
     fn to_decoder_log(&self) -> DecoderLog {
@@ -122,6 +134,10 @@ pub struct NextPageParams {
     pub to_block_ceiling: i64,
     pub log_selections: Vec<LogSelectionInput>,
     pub partition_id: String,
+    /// The partition's address → contract-name index used to route each log
+    /// to its registration. Keys use the client's address normalization
+    /// (lowercase or checksummed).
+    pub contract_name_by_address: HashMap<String, String>,
 }
 
 #[napi(object)]
@@ -239,10 +255,16 @@ impl EvmRpcClient {
             .min(to_block_ceiling)
             .max(from_block);
 
+        let contract_name_by_address = std::sync::Arc::new(params.contract_name_by_address);
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
         let page_result = tokio::time::timeout(
             timeout,
-            self.fetch_page(from_block, to_block, &params.log_selections),
+            self.fetch_page(
+                from_block,
+                to_block,
+                &params.log_selections,
+                &contract_name_by_address,
+            ),
         )
         .await;
 
@@ -360,6 +382,7 @@ impl EvmRpcClient {
         from_block: u64,
         to_block: u64,
         selections: &[LogSelectionInput],
+        contract_name_by_address: &std::sync::Arc<HashMap<String, String>>,
     ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
         if selections.is_empty() {
             return Ok((Vec::new(), Vec::new()));
@@ -373,6 +396,7 @@ impl EvmRpcClient {
                     to_block as i64,
                     selection.addresses.clone(),
                     selection.topics.clone(),
+                    contract_name_by_address.clone(),
                 )
                 .await;
             (result, started.elapsed().as_secs_f64())
@@ -415,6 +439,7 @@ impl EvmRpcClient {
         to_block: i64,
         addresses: Option<Vec<String>>,
         topics: Vec<Option<Vec<String>>>,
+        contract_name_by_address: std::sync::Arc<HashMap<String, String>>,
     ) -> Result<Vec<RpcEventItem>, RpcError> {
         let mut filter = json!({
             "fromBlock": format!("0x{:x}", from_block),
@@ -430,14 +455,29 @@ impl EvmRpcClient {
         let decoder = self.decoder.clone();
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
+            let should_checksum = decoder.checksummed_addresses();
             raw_logs
                 .into_iter()
-                .map(|raw| {
-                    let params = decoder.decode_napi(&raw.to_decoder_log()).ok().flatten();
-                    Ok(RpcEventItem {
-                        log: raw.into_rpc_log()?,
-                        params,
-                    })
+                .filter_map(|raw| {
+                    let address = match raw.normalized_address(should_checksum) {
+                        Ok(address) => address,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    // Decode failures are skipped like unrouted logs (matching
+                    // the pre-routing behavior where undecodable params made
+                    // the JS side drop the item).
+                    let routed = decoder
+                        .route_and_decode_napi(
+                            &raw.to_decoder_log(),
+                            contract_name_by_address.get(&address).map(String::as_str),
+                        )
+                        .ok()
+                        .flatten()?;
+                    Some(raw.into_rpc_log(address).map(|log| RpcEventItem {
+                        log,
+                        on_event_registration_id: routed.id,
+                        params: routed.params,
+                    }))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
         })

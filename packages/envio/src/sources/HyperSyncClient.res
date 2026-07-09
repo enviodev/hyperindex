@@ -231,10 +231,13 @@ type queryResponse = {
 
 module Decoder = {
   type eventParamsInput = {
+    // Chain-scoped sequential registration id, echoed back on routed items.
+    id: int,
     sighash: string,
     topicCount: int,
     eventName: string,
     contractName: string,
+    isWildcard: bool,
     params: array<Internal.paramMeta>,
   }
 }
@@ -243,15 +246,16 @@ module EventItems = {
   type item = {
     logIndex: int,
     srcAddress: Address.t,
-    topic0: EvmTypes.Hex.t,
-    topicCount: int,
     // Number of the block this log belongs to; the block itself is resolved from
     // `response.blocks`, deduplicated across items sharing a block.
     blockNumber: int,
     // Key (with the block number) into the transaction store; the transaction
     // is resolved from the store on demand.
     transactionIndex: int,
-    params: Nullable.t<dict<Internal.eventParams>>,
+    // Routed on the Rust side: the registration's chain-scoped id. Logs that
+    // route to no registration never cross the boundary.
+    onEventRegistrationId: int,
+    params: Internal.eventParams,
   }
 
   // The always-needed block fields, one per block number. The block's remaining
@@ -275,9 +279,10 @@ module EventItems = {
 type t = {
   get: (~query: query) => promise<queryResponse>,
   // Returns the response plus page stores owning this page's raw transactions
-  // and blocks.
+  // and blocks. Routing needs the partition's address → contract-name index.
   getEventItems: (
     ~query: query,
+    ~contractNameByAddress: dict<string>,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }

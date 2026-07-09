@@ -51,6 +51,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
 }
 
 let pairCreatedRegistration: Internal.evmOnEventRegistration = {
+  id: 0,
   eventConfig: (pairCreatedEventConfig :> Internal.eventConfig),
   isWildcard: false,
   filterByAddresses: false,
@@ -82,10 +83,12 @@ let pairCreatedAbi: array<Internal.paramMeta> = [
 ]
 
 let pairCreatedEventParams: HyperSyncClient.Decoder.eventParamsInput = {
+  id: 0,
   sighash: pairCreatedTopic0,
   topicCount: 3,
   eventName: "PairCreated",
   contractName: "UniswapV2Factory",
+  isWildcard: false,
   params: pairCreatedAbi,
 }
 
@@ -97,14 +100,12 @@ let makeSelection = (): FetchState.selection => {
   dependsOnAddresses: true,
 }
 
-let makeEventRouter = () => [pairCreatedRegistration]->EventRouter.fromEvmEventModsOrThrow(~chain)
-
 let makeHyperSyncSource = () =>
   HyperSyncSource.make({
     chain,
     endpointUrl: "https://eth.hypersync.xyz",
     allEventParams: [pairCreatedEventParams],
-    eventRouter: makeEventRouter(),
+    onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
     lowercaseAddresses: true,
@@ -117,7 +118,7 @@ let makeRpcSource = () =>
   RpcSource.make({
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
     chain,
-    eventRouter: makeEventRouter(),
+    onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
     allEventParams: [pairCreatedEventParams],

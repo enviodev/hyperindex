@@ -803,6 +803,7 @@ module Source = {
                       item => {
                         Internal.Event({
                           onEventRegistration: ({
+                            id: 0,
                             eventConfig: ({
                               id: "MockEvent",
                               contractName: "MockContract",
@@ -987,6 +988,7 @@ let evmOnEventRegistration = (
     paramsMetadata: [],
   }
   {
+    id: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses,

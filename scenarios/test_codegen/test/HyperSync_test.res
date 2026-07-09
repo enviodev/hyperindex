@@ -36,6 +36,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         transaction: [Hash],
       },
       ~maxNumLogs=5000,
+      ~contractNameByAddress=Dict.make(),
     )
 
     Console.log(page)

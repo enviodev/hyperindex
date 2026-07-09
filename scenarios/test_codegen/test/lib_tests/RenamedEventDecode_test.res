@@ -28,10 +28,12 @@ describe("Renamed event decoding (issue #1285)", () => {
     let decoded = await NativeDecoder.decodeLogs(
       ~eventParams=[
         {
+          id: 5,
           sighash: onChainSighash,
           topicCount: 1,
           eventName: "ApprovalRenamed",
           contractName: "TestContract",
+          isWildcard: false,
           params: [
             {name: "owner", abiType: "address", indexed: false},
             {name: "value", abiType: "uint256", indexed: false},
@@ -39,17 +41,15 @@ describe("Renamed event decoding (issue #1285)", () => {
         },
       ],
       ~logs=[approvalLog],
+      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
     )
-    let paramsByContractName = decoded[0]->Option.getUnsafe->Nullable.toOption
+    let item = decoded[0]->Option.getUnsafe
 
     t
-    .expect(paramsByContractName)
-    .toEqual(
-      Some(
-        {"TestContract": {"owner": owner, "value": value}}->(
-          Utils.magic: {..} => dict<Internal.eventParams>
-        ),
-      ),
-    )
+    .expect((item.onEventRegistrationId, item.params))
+    .toEqual((
+      5,
+      {"owner": owner, "value": value}->(Utils.magic: {..} => Internal.eventParams),
+    ))
   })
 })

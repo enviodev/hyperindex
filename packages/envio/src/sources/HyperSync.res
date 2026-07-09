@@ -110,6 +110,7 @@ module GetLogs = {
     ~logSelections: array<LogSelection.t>,
     ~fieldSelection,
     ~maxNumLogs,
+    ~contractNameByAddress,
   ): logsQueryPage => {
     let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
       topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
@@ -131,7 +132,7 @@ module GetLogs = {
       ~maxNumLogs,
     )
 
-    let (res, transactionStore, blockStore) = switch await client.getEventItems(~query) {
+    let (res, transactionStore, blockStore) = switch await client.getEventItems(~query, ~contractNameByAddress) {
     | res => res
     | exception exn =>
       reraisIfRateLimited(exn)

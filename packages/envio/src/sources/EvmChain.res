@@ -47,10 +47,12 @@ let collectEventParams = (onEventRegistrations: array<Internal.evmOnEventRegistr
     let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
     result
     ->Array.push({
-      HyperSyncClient.Decoder.sighash: event.sighash,
+      HyperSyncClient.Decoder.id: reg.id,
+      sighash: event.sighash,
       topicCount: event.topicCount,
       eventName: event.name,
       contractName: event.contractName,
+      isWildcard: reg.isWildcard,
       params: event.paramsMetadata,
     })
     ->ignore
@@ -65,7 +67,11 @@ let makeSources = (
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
-  let eventRouter = onEventRegistrations->EventRouter.fromEvmEventModsOrThrow(~chain)
+  // The id <-> array-index invariant is what lets sources resolve Rust-routed
+  // items back to their registration, so enforce it here where the clients and
+  // the lookup array are built (test configs bypass HandlerRegister's
+  // assignment).
+  onEventRegistrations->Array.forEachWithIndex((reg, i) => reg.id = i)
 
   let allEventParams = collectEventParams(onEventRegistrations)
 
@@ -75,7 +81,7 @@ let makeSources = (
         chain,
         endpointUrl,
         allEventParams,
-        eventRouter,
+        onEventRegistrations,
         apiToken: Env.envioApiToken,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
@@ -92,7 +98,7 @@ let makeSources = (
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
-      eventRouter,
+      onEventRegistrations,
       allEventParams,
       lowercaseAddresses,
       ?ws,

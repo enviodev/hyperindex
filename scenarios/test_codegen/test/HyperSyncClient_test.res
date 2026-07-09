@@ -16,12 +16,19 @@ let transferParams: array<Internal.paramMeta> = [
 ]
 
 let transferEventParam: HyperSyncClient.Decoder.eventParamsInput = {
+  id: 42,
   sighash: transferSighash,
   topicCount: 3,
   eventName: "Transfer",
   contractName: "ERC20",
+  isWildcard: false,
   params: transferParams,
 }
+
+// Client is created with lowercase addresses, so routing keys must be lowercase.
+let contractNameByAddress = Dict.fromArray([
+  (usdcAddress->Address.toString->String.toLowerCase, "ERC20"),
+])
 
 let makeClient = (~eventParams) =>
   HyperSyncClient.make(
@@ -37,6 +44,7 @@ let toBlock = 23_500_004
 
 let runQuery = async (~client: HyperSyncClient.t) => {
   let (res, _txStore, _blockStore) = await client.getEventItems(
+    ~contractNameByAddress,
     ~query={
       fromBlock,
       toBlockExclusive: toBlock + 1,
@@ -65,10 +73,7 @@ describe("HyperSync client getEventItems (live)", () => {
 
     let summary = {
       "hasItems": res.items->Array.length > 0,
-      "everyTopic0IsTransfer": res.items->Array.every(item =>
-        item.topic0->EvmTypes.Hex.toString == transferSighash
-      ),
-      "everyTopicCountIsThree": res.items->Array.every(item => item.topicCount == 3),
+      "everyItemRouted": res.items->Array.every(item => item.onEventRegistrationId == 42),
       "everySrcAddressIsUsdc": res.items->Array.every(item =>
         item.srcAddress->Address.toString->String.toLowerCase ==
           usdcAddress->Address.toString->String.toLowerCase
@@ -77,19 +82,12 @@ describe("HyperSync client getEventItems (live)", () => {
         let n = item.blockNumber
         n >= fromBlock && n <= toBlock
       }),
-      "everyParamsDecoded": res.items->Array.every(item =>
-        switch item.params->Nullable.toOption {
-        | Some(paramsByContractName) =>
-          let obj =
-            paramsByContractName
-            ->Dict.getUnsafe("ERC20")
-            ->(Utils.magic: Internal.eventParams => {..})
-          obj["from"]->typeof == #string &&
-          obj["to"]->typeof == #string &&
-          obj["value"]->typeof == #bigint
-        | None => false
-        }
-      ),
+      "everyParamsDecoded": res.items->Array.every(item => {
+        let obj = item.params->(Utils.magic: Internal.eventParams => {..})
+        obj["from"]->typeof == #string &&
+        obj["to"]->typeof == #string &&
+        obj["value"]->typeof == #bigint
+      }),
       "nextBlockPastRequest": res.nextBlock > fromBlock,
       "archiveHeightAheadOfNext": res.archiveHeight->Option.getOr(0) >= res.nextBlock,
     }
@@ -98,8 +96,7 @@ describe("HyperSync client getEventItems (live)", () => {
       .expect(summary)
       .toEqual({
         "hasItems": true,
-        "everyTopic0IsTransfer": true,
-        "everyTopicCountIsThree": true,
+        "everyItemRouted": true,
         "everySrcAddressIsUsdc": true,
         "everyBlockInRange": true,
         "everyParamsDecoded": true,
@@ -115,25 +112,20 @@ describe("HyperSync client getEventItems (live)", () => {
     t.expect(height > toBlock).toEqual(true)
   })
 
-  Async.it("leaves params null when topic0 doesn't match any registered sig", async t => {
+  Async.it("drops items whose topic0 doesn't match any registered sig", async t => {
     let unrelatedEventParam: HyperSyncClient.Decoder.eventParamsInput = {
+      id: 0,
       sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
       topicCount: 1,
       eventName: "Unrelated",
       contractName: "Unrelated",
+      isWildcard: false,
       params: [],
     }
     let client = makeClient(~eventParams=[unrelatedEventParam])
     let res = await runQuery(~client)
 
-    t
-      .expect({
-        "hasItems": res.items->Array.length > 0,
-        "everyParamsNull": res.items->Array.every(item =>
-          item.params->Nullable.toOption->Option.isNone
-        ),
-      })
-      .toEqual({"hasItems": true, "everyParamsNull": true})
+    t.expect(res.items->Array.length).toEqual(0)
   })
 })
 

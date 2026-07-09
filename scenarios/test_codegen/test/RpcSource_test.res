@@ -26,7 +26,7 @@ describe("RpcSource - name", () => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
-      eventRouter: EventRouter.empty(),
+      onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       allEventParams: [],
@@ -41,7 +41,7 @@ describe("RpcSource - getHeightOrThrow", () => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
-      eventRouter: EventRouter.empty(),
+      onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       allEventParams: [],
@@ -997,16 +997,18 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
           {
+            id: 0,
             sighash,
             topicCount: 1,
             eventName: eventConfig.eventConfig.name,
             contractName: eventConfig.eventConfig.contractName,
+            isWildcard: false,
             params: [],
           },
         ],
@@ -1135,16 +1137,18 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
           {
+            id: 0,
             sighash,
             topicCount: 1,
             eventName: eventConfig.eventConfig.name,
             contractName: eventConfig.eventConfig.contractName,
+            isWildcard: false,
             params: [],
           },
         ],
@@ -1397,15 +1401,17 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
           {
+            id: 0,
             sighash,
             topicCount: 1,
             eventName: eventConfig.eventConfig.name,
             contractName: eventConfig.eventConfig.contractName,
+            isWildcard: false,
             params: [],
           },
         ],
@@ -1540,15 +1546,17 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
           {
+            id: 0,
             sighash,
             topicCount: 1,
             eventName: eventConfig.eventConfig.name,
             contractName: eventConfig.eventConfig.contractName,
+            isWildcard: false,
             params: [],
           },
         ],
@@ -1628,15 +1636,17 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
           {
+            id: 0,
             sighash,
             topicCount: 1,
             eventName: eventConfig.eventConfig.name,
             contractName: eventConfig.eventConfig.contractName,
+            isWildcard: false,
             params: [],
           },
         ],
@@ -1794,12 +1804,28 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventA, eventB]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventA, eventB],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
-          {sighash, topicCount: 1, eventName: eventA.eventConfig.name, contractName: "ContractA", params: []},
-          {sighash, topicCount: 1, eventName: eventB.eventConfig.name, contractName: "ContractB", params: []},
+          {
+            id: 0,
+            sighash,
+            topicCount: 1,
+            eventName: eventA.eventConfig.name,
+            contractName: "ContractA",
+            isWildcard: false,
+            params: [],
+          },
+          {
+            id: 1,
+            sighash,
+            topicCount: 1,
+            eventName: eventB.eventConfig.name,
+            contractName: "ContractB",
+            isWildcard: false,
+            params: [],
+          },
         ],
         lowercaseAddresses: false,
       })

@@ -128,7 +128,9 @@ type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
-  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
+  // The chain's registrations, indexed by their sequential id — Rust routes
+  // each log and echoes the id back on the item.
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
@@ -142,7 +144,7 @@ let make = (
     chain,
     endpointUrl,
     allEventParams,
-    eventRouter,
+    onEventRegistrations,
     apiToken,
     clientTimeoutMillis,
     lowercaseAddresses,
@@ -179,8 +181,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~msg="Failed to instantiate the hypersync client, please double check your ABI",
     )
   }
-
-  exception UndefinedValue
 
   let makeEventBatchQueueItem = (
     item: HyperSyncClient.EventItems.item,
@@ -240,6 +240,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~logSelections,
       ~fieldSelection=selectionConfig.fieldSelection,
       ~maxNumLogs=itemsTarget,
+      ~contractNameByAddress,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(
@@ -309,63 +310,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
-    let handleDecodeFailure = (
-      ~onEventRegistration: Internal.evmOnEventRegistration,
-      ~logIndex,
-      ~blockNumber,
-      ~chainId,
-      ~exn,
-    ) => {
-      if !onEventRegistration.isWildcard {
-        //Wildcard events can be parsed as undefined if the number of topics
-        //don't match the event with the given topic0
-        //Non wildcard events should be expected to be parsed
-        let msg = `Event ${onEventRegistration.eventConfig.name} was unexpectedly parsed as undefined`
-        let logger = Logging.createChildFrom(
-          ~logger,
-          ~params={
-            "chainId": chainId,
-            "blockNumber": blockNumber,
-            "logIndex": logIndex,
-            "decoder": "hypersync-client",
-          },
-        )
-        exn->ErrorHandling.mkLogAndRaise(~msg, ~logger)
-      }
-    }
-
+    // Routing and decoding happen on the Rust side; each item carries its
+    // registration's id and only routed items cross the boundary.
     pageUnsafe.items->Array.forEach(item => {
-      let chainId = chain->ChainMap.Chain.toChainId
-      let maybeEventConfig =
-        eventRouter->EventRouter.get(
-          ~tag=EventRouter.getEvmEventId(
-            ~sighash=item.topic0->EvmTypes.Hex.toString,
-            ~topicCount=item.topicCount,
-          ),
-          ~contractNameByAddress,
-          ~contractAddress=item.srcAddress,
-        )
-
-      switch maybeEventConfig {
-      | None => () //ignore events that aren't registered
-      | Some(onEventRegistration) =>
-        switch item.params
-        ->Nullable.toOption
-        ->Option.flatMap(Dict.get(_, onEventRegistration.eventConfig.contractName)) {
-        | Some(params) =>
-          parsedQueueItems
-          ->Array.push(makeEventBatchQueueItem(item, ~params, ~onEventRegistration))
-          ->ignore
-        | None =>
-          handleDecodeFailure(
-            ~onEventRegistration,
-            ~logIndex=item.logIndex,
-            ~blockNumber=item.blockNumber,
-            ~chainId,
-            ~exn=UndefinedValue,
-          )
-        }
-      }
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationId)
+      parsedQueueItems
+      ->Array.push(makeEventBatchQueueItem(item, ~params=item.params, ~onEventRegistration))
+      ->ignore
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince

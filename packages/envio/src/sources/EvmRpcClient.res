@@ -10,11 +10,12 @@ type cfg = {
   queryTimeoutMillis: int,
 }
 
-// Decoded `params` keyed by contract name, matching the HyperSync decoder's
-// shape so the caller routes by address then picks its contract's params.
+// Routed on the Rust side: only logs that resolved to a registration cross
+// the boundary, each carrying its registration's chain-scoped id.
 type rpcEventItem = {
   log: Rpc.GetLogs.log,
-  params: Nullable.t<dict<Internal.eventParams>>,
+  onEventRegistrationId: int,
+  params: Internal.eventParams,
 }
 
 // `addresses` omitted matches any address (a wildcard selection). Each `topics`
@@ -30,6 +31,9 @@ type nextPageParams = {
   toBlockCeiling: int,
   logSelections: array<logSelectionInput>,
   partitionId: string,
+  // The partition's address → contract-name index used for routing. Keys use
+  // the client's address normalization (lowercase or checksummed).
+  contractNameByAddress: dict<string>,
 }
 
 type nextPageResponse = {

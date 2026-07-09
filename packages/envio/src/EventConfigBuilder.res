@@ -452,6 +452,7 @@ let buildEvmOnEventRegistration = (
   }
 
   {
+    id: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     handler,
@@ -536,6 +537,7 @@ let buildSvmOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.svmOnEventRegistration => {
+  id: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,
@@ -613,6 +615,7 @@ let buildFuelOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
+  id: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,

@@ -1,17 +1,22 @@
+// The fixed address every crafted log is emitted from; map it in
+// `contractNameByAddress` to route logs to a non-wildcard registration.
+let mockAddress = "0x000000000000000000000000000000000000abcd"
+
 // Decodes logs through the production path: feed crafted logs to a mock
-// eth_getLogs endpoint and let EvmRpcClient decode them with the shared
-// DecoderCore. Returns params per log (keyed by contract name), mirroring the
-// shape the old standalone decoder's decodeLogs returned.
+// eth_getLogs endpoint and let EvmRpcClient route+decode them with the shared
+// DecoderCore. Returns only the routed items, each carrying its registration
+// id and flat decoded params.
 let decodeLogs = async (
   ~eventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   ~logs: array<(array<string>, string)>,
-): array<Nullable.t<dict<Internal.eventParams>>> => {
+  ~contractNameByAddress=Dict.make(),
+): array<EvmRpcClient.rpcEventItem> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
   let logJsons = logs->Array.mapWithIndex(((topics, data), i) =>
     JSON.Object(
       Dict.fromArray([
-        ("address", JSON.String("0x000000000000000000000000000000000000abcd")),
+        ("address", JSON.String(mockAddress)),
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
@@ -40,11 +45,12 @@ let decodeLogs = async (
     toBlockCeiling: 0,
     logSelections: [{topics: []}],
     partitionId: "0",
+    contractNameByAddress,
   }) catch {
   | exn =>
     mock.close()
     throw(exn)
   }
   mock.close()
-  items->Array.map(item => item.params)
+  items
 }

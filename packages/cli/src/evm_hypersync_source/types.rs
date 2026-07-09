@@ -291,10 +291,14 @@ pub struct ParamMeta {
 
 #[napi(object)]
 pub struct EventParamsInput {
+    /// Chain-scoped sequential registration id; returned on every routed item
+    /// so JS resolves the registration by array index.
+    pub id: i64,
     pub sighash: String,
     pub topic_count: i32,
     pub event_name: String,
     pub contract_name: String,
+    pub is_wildcard: bool,
     pub params: Vec<ParamMeta>,
 }
 
