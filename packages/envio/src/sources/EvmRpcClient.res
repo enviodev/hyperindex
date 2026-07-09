@@ -1,4 +1,17 @@
-type cfg = {url: string, httpReqTimeoutMillis?: int, headers?: dict<string>}
+type cfg = {
+  url: string,
+  httpReqTimeoutMillis?: int,
+  headers?: dict<string>,
+  // Sync-tuning knobs for the paging AIMD state that now lives in Rust (see
+  // `getNextPage` below). Omitted by callers (like the low-level napi tests)
+  // that only ever use `getHeight`/`getLogs`.
+  initialBlockInterval?: int,
+  backoffMultiplicative?: float,
+  accelerationAdditive?: int,
+  intervalCeiling?: int,
+  backoffMillis?: int,
+  queryTimeoutMillis?: int,
+}
 
 // `addresses` omitted matches any address (a wildcard selection). Each `topics`
 // position is `null` (match any) or a list of accepted topic hashes; the
@@ -17,9 +30,35 @@ type rpcEventItem = {
   params: Nullable.t<dict<Internal.eventParams>>,
 }
 
+// Same shape as `getLogsParams` minus `fromBlock`/`toBlock` — `getNextPage`
+// applies one shared range (that it decides internally) across every selection.
+type logSelectionInput = {
+  addresses?: array<Address.t>,
+  topics: array<Nullable.t<array<string>>>,
+}
+
+type nextPageParams = {
+  fromBlock: int,
+  toBlockCeiling: int,
+  logSelections: array<logSelectionInput>,
+  partitionId: string,
+}
+
+type nextPageResponse = {
+  items: array<rpcEventItem>,
+  toBlock: int,
+  requestStats: array<Source.requestStat>,
+}
+
 type t = {
   getHeight: unit => promise<int>,
   getLogs: getLogsParams => promise<array<rpcEventItem>>,
+  // Paging, dedup, the query-timeout race, and the AIMD-suggested interval
+  // state all live in the Rust client now — this just asks for a range and
+  // Rust decides the actual `toBlock`. On failure, throws a napi error whose
+  // message encodes the retry decision (see `RpcSource.res`'s
+  // `parseGetNextPageRetryError`).
+  getNextPage: nextPageParams => promise<nextPageResponse>,
 }
 
 @send
@@ -59,15 +98,37 @@ let coerceErrorOrThrow = exn =>
   | None => exn->throw
   }
 
-let make = (~url, ~checksumAddresses, ~httpReqTimeoutMillis=?, ~headers=?, ~allEventParams=[]) => {
-  let client =
-    Core.getAddon().evmRpcClient->classNew(
-      {url, ?httpReqTimeoutMillis, ?headers},
-      allEventParams,
-      ~checksumAddresses,
-    )
+let make = (
+  ~url,
+  ~checksumAddresses,
+  ~httpReqTimeoutMillis=?,
+  ~headers=?,
+  ~allEventParams=[],
+  ~initialBlockInterval=?,
+  ~backoffMultiplicative=?,
+  ~accelerationAdditive=?,
+  ~intervalCeiling=?,
+  ~backoffMillis=?,
+  ~queryTimeoutMillis=?,
+) => {
+  let client = Core.getAddon().evmRpcClient->classNew(
+    {
+      url,
+      ?httpReqTimeoutMillis,
+      ?headers,
+      ?initialBlockInterval,
+      ?backoffMultiplicative,
+      ?accelerationAdditive,
+      ?intervalCeiling,
+      ?backoffMillis,
+      ?queryTimeoutMillis,
+    },
+    allEventParams,
+    ~checksumAddresses,
+  )
   {
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
     getLogs: params => client.getLogs(params)->Promise.catch(coerceErrorOrThrow),
+    getNextPage: params => client.getNextPage(params)->Promise.catch(coerceErrorOrThrow),
   }
 }
