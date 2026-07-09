@@ -88,17 +88,17 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                         })?;
 
                         //ensure the dir exists or is created
-                        fs::create_dir_all(&output_dir_path).context(format!(
-                            "create_dir_all failed at {}",
-                            &output_dir_path_str,
-                        ))?;
+                        fs::create_dir_all(&output_dir_path)
+                            .context(
+                                format!("create_dir_all failed at {}", output_dir_path_str,),
+                            )?;
 
                         //append the filename
                         let output_file_path = output_dir_path.join(file_stem);
 
                         //Write the file
                         fs::write(&output_file_path, rendered_file)
-                            .context(format!("file write failed at {}", &output_dir_path_str))?;
+                            .context(format!("file write failed at {}", output_dir_path_str))?;
                     }
                 }
                 DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(
