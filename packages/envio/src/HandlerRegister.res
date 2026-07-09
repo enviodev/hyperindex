@@ -37,50 +37,11 @@ type activeRegistration = {
   mutable finished: bool,
 }
 
-// Stashed on `globalThis` so a duplicate envio module instance — e.g. when the
-// CLI's `bin.mjs` resolves envio from one path but the user's handlers resolve
-// it from `node_modules/envio` — shares one registry. Without this, each copy
-// keeps its own dict and `finishRegistration` reads empty state.
-//
-// Version-gated: the record shapes below can evolve between envio versions,
-// so the guard uses strict full-version equality. On mismatch we throw with
-// a deduplication hint instead of silently mixing shapes across builds.
-type registryShape = {
-  version: string,
-  eventRegistrations: dict<eventRegistration>,
-  activeRegistration: ref<option<activeRegistration>>,
-  preRegistered: array<activeRegistration => unit>,
-}
-
-// Record type with `mutable` so assignment typechecks; ReScript keeps the
-// field name verbatim in the generated JS so the globalThis slot is
-// `__envioRegistry`.
-type globalThis = {mutable __envioRegistry: Nullable.t<registryShape>}
-@val external globalThis: globalThis = "globalThis"
-
-%%private(
-  let registry: registryShape = {
-    let version = Utils.EnvioPackage.value.version
-    switch globalThis.__envioRegistry->Nullable.toOption {
-    | Some(existing) if existing.version === version => existing
-    | Some(existing) =>
-      JsError.throwWithMessage(
-        `Multiple incompatible envio versions loaded in the same process: ${existing.version} and ${version}. Deduplicate the 'envio' dependency in your project.`,
-      )
-    | None =>
-      let fresh = {
-        version,
-        eventRegistrations: Dict.make(),
-        activeRegistration: ref(None),
-        preRegistered: [],
-      }
-      globalThis.__envioRegistry = Nullable.make(fresh)
-      fresh
-    }
-  }
-)
-
-let eventRegistrations = registry.eventRegistrations
+// Registration state lives in the process-wide `EnvioGlobal` record (shared
+// across duplicate envio module instances); the slots are opaque there, so
+// cast them to the real types once here.
+let eventRegistrations =
+  EnvioGlobal.value.eventRegistrations->(Utils.magic: dict<unknown> => dict<eventRegistration>)
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
@@ -95,7 +56,8 @@ let set = (~contractName, ~eventName, registration) => {
   eventRegistrations->Dict.set(getKey(~contractName, ~eventName), registration)
 }
 
-let activeRegistration = registry.activeRegistration
+let getActiveRegistration = () =>
+  EnvioGlobal.value.activeRegistration->(Utils.magic: option<unknown> => option<activeRegistration>)
 
 // Might happen for tests when the handler file
 // is imported by a non-envio process (eg mocha)
@@ -104,10 +66,13 @@ let activeRegistration = registry.activeRegistration
 // Theoretically we could keep preRegistration without an explicit start
 // but I want it to be this way, so for the actual indexer run
 // an error is thrown with the exact stack trace where the handler was registered.
-let preRegistered = registry.preRegistered
+let preRegistered =
+  EnvioGlobal.value.preRegistered->(
+    Utils.magic: array<unknown> => array<activeRegistration => unit>
+  )
 
 let withRegistration = (fn: activeRegistration => unit) => {
-  switch activeRegistration.contents {
+  switch getActiveRegistration() {
   | None => preRegistered->Array.push(fn)
   | Some(r) =>
     if r.finished {
@@ -126,7 +91,7 @@ let startRegistration = (~config: Config.t) => {
     registrationsByChainId: Dict.make(),
     finished: false,
   }
-  activeRegistration.contents = Some(r)
+  EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
   while preRegistered->Array.length > 0 {
     // Loop + cleanup in one go
     switch preRegistered->Array.pop {
@@ -624,7 +589,7 @@ let registerOnBlock = (
 }
 
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
-  switch activeRegistration.contents {
+  switch getActiveRegistration() {
   | Some(r) => {
       r.finished = true
       let notRegisteredEventsByContract: dict<Utils.Set.t<string>> = Dict.make()
@@ -759,7 +724,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
 }
 
 let isPendingRegistration = () => {
-  switch activeRegistration.contents {
+  switch getActiveRegistration() {
   | Some(r) => !r.finished
   | None => false
   }
@@ -769,7 +734,7 @@ let isPendingRegistration = () => {
 // `.onSlot` so the user sees a method-specific error at the call site, instead
 // of hitting the generic `withRegistration` throw deep inside `setHandler` etc.
 let throwIfFinishedRegistration = (~methodName) => {
-  switch activeRegistration.contents {
+  switch getActiveRegistration() {
   | Some({finished: true}) =>
     JsError.throwWithMessage(
       `Cannot call \`indexer.${methodName}\` after the indexer has started. Make sure all handlers are registered at the top level of your handler module.`,

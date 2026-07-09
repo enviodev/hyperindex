@@ -39,15 +39,24 @@ let stateSchema = S.union([
   })),
 ])
 
-let indexerStateRef: ref<option<IndexerState.t>> = ref(None)
+// Runtime state lives in the process-wide `EnvioGlobal` record (shared
+// across duplicate envio module instances); the slots are opaque there, so
+// cast them to the real types here.
+let getIndexerState = () =>
+  EnvioGlobal.value.indexerState->(Utils.magic: option<unknown> => option<IndexerState.t>)
+let setIndexerState = (state: IndexerState.t) =>
+  EnvioGlobal.value.indexerState = Some(state->(Utils.magic: IndexerState.t => unknown))
 
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
 // endBlock, isRealtime, dynamic contract addresses) once it's ready.
-let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
+let getGlobalPersistence = () =>
+  EnvioGlobal.value.persistence->(Utils.magic: option<unknown> => option<Persistence.t>)
+let setGlobalPersistence = (persistence: Persistence.t) =>
+  EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
 let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
-  switch globalPersistenceRef.contents {
+  switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
     | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
@@ -105,7 +114,7 @@ let buildChainsObject = (~config: Config.t) => {
       {
         enumerable: true,
         get: () => {
-          switch indexerStateRef.contents {
+          switch getIndexerState() {
           | Some(state) => state->IndexerState.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
@@ -139,7 +148,7 @@ let buildChainsObject = (~config: Config.t) => {
         {
           enumerable: true,
           get: () => {
-            switch indexerStateRef.contents {
+            switch getIndexerState() {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainState = state->IndexerState.getChainState(~chain)
@@ -493,7 +502,7 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
     let _ =
-      Metrics.collect(~state=indexerStateRef.contents)->Promise.thenResolve(metrics =>
+      Metrics.collect(~state=getIndexerState())->Promise.thenResolve(metrics =>
         res->endWithData(metrics)
       )
   })
@@ -586,7 +595,7 @@ let start = async (
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config)
   }
-  globalPersistenceRef := Some(persistence)
+  setGlobalPersistence(persistence)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -633,7 +642,7 @@ let start = async (
 
   if !isTest {
     startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
-      switch indexerStateRef.contents {
+      switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {
           let chains =
@@ -663,7 +672,7 @@ let start = async (
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => state)
   }
-  indexerStateRef := Some(state)
+  setIndexerState(state)
   state->IndexerLoop.start
   await runUntilFatalError
 }
