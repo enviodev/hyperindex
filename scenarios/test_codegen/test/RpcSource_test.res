@@ -737,7 +737,7 @@ describe("RpcSource - getSelectionConfig", () => {
     let selectionConfig = {
       dependsOnAddresses: true,
       onEventRegistrations: [(MockIndexer.evmOnEventRegistration() :> Internal.onEventRegistration)],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(
@@ -759,7 +759,7 @@ describe("RpcSource - getSelectionConfig", () => {
         (MockIndexer.evmOnEventRegistration(~id="1", ~isWildcard=true) :> Internal.onEventRegistration),
         (MockIndexer.evmOnEventRegistration(~id="2", ~isWildcard=true) :> Internal.onEventRegistration),
       ],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(~addressesByContractName=Dict.make()),
@@ -782,7 +782,7 @@ describe("RpcSource - getSelectionConfig", () => {
           ~dependsOnAddresses=true,
         ) :> Internal.onEventRegistration),
       ],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(
@@ -791,7 +791,7 @@ describe("RpcSource - getSelectionConfig", () => {
     ).toEqual([
       {
         addresses: None,
-        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+        topicQuery: [Single("event 2"), Single(mockAddress0->TopicFilter.fromAddress->EvmTypes.Hex.toString)],
       },
     ])
   })
@@ -806,7 +806,7 @@ describe("RpcSource - getSelectionConfig", () => {
           ~dependsOnAddresses=true,
         ) :> Internal.onEventRegistration),
       ],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(
@@ -815,7 +815,7 @@ describe("RpcSource - getSelectionConfig", () => {
     ).toEqual([
       {
         addresses: Some([mockAddress0]),
-        topicQuery: [Single("event 2"), Single(mockAddress0->Address.toString)],
+        topicQuery: [Single("event 2"), Single(mockAddress0->TopicFilter.fromAddress->EvmTypes.Hex.toString)],
       },
     ])
   })
@@ -827,29 +827,29 @@ describe("RpcSource - getSelectionConfig", () => {
         (MockIndexer.evmOnEventRegistration(
           ~id="1",
           ~isWildcard=true,
-          ~eventFilters=Static([
+          ~eventFilters=[
             {
               topic0: ["1"->EvmTypes.Hex.fromStringUnsafe],
-              topic1: ["a"->EvmTypes.Hex.fromStringUnsafe],
-              topic2: [],
-              topic3: [],
+              topic1: Values(["a"->EvmTypes.Hex.fromStringUnsafe]),
+              topic2: Values([]),
+              topic3: Values([]),
             },
-          ]),
+          ],
         ) :> Internal.onEventRegistration),
         (MockIndexer.evmOnEventRegistration(
           ~id="2",
           ~isWildcard=true,
-          ~eventFilters=Static([
+          ~eventFilters=[
             {
               topic0: ["2"->EvmTypes.Hex.fromStringUnsafe],
-              topic1: ["b"->EvmTypes.Hex.fromStringUnsafe],
-              topic2: [],
-              topic3: [],
+              topic1: Values(["b"->EvmTypes.Hex.fromStringUnsafe]),
+              topic2: Values([]),
+              topic3: Values([]),
             },
-          ]),
+          ],
         ) :> Internal.onEventRegistration),
       ],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(~addressesByContractName=Dict.make()),
@@ -872,23 +872,23 @@ describe("RpcSource - getSelectionConfig", () => {
         (MockIndexer.evmOnEventRegistration(
           ~id="w",
           ~isWildcard=true,
-          ~eventFilters=Static([
+          ~eventFilters=[
             {
               topic0: ["w"->EvmTypes.Hex.fromStringUnsafe],
-              topic1: ["a"->EvmTypes.Hex.fromStringUnsafe],
-              topic2: [],
-              topic3: [],
+              topic1: Values(["a"->EvmTypes.Hex.fromStringUnsafe]),
+              topic2: Values([]),
+              topic3: Values([]),
             },
             {
               topic0: ["w"->EvmTypes.Hex.fromStringUnsafe],
-              topic1: [],
-              topic2: ["b"->EvmTypes.Hex.fromStringUnsafe],
-              topic3: [],
+              topic1: Values([]),
+              topic2: Values(["b"->EvmTypes.Hex.fromStringUnsafe]),
+              topic3: Values([]),
             },
-          ]),
+          ],
         ) :> Internal.onEventRegistration),
       ],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(~addressesByContractName=Dict.make()),
@@ -909,7 +909,7 @@ describe("RpcSource - getSelectionConfig", () => {
       let _ = {
         dependsOnAddresses: true,
         onEventRegistrations: [],
-      }->RpcSource.getSelectionConfig(~chain)
+      }->RpcSource.getSelectionConfig
       JsError.throwWithMessage("Should have thrown")
     } catch {
     | Source.GetItemsError(UnsupportedSelection({message})) =>
@@ -927,7 +927,7 @@ describe("RpcSource - getSelectionConfig", () => {
         (MockIndexer.evmOnEventRegistration(~id="1") :> Internal.onEventRegistration),
         (MockIndexer.evmOnEventRegistration(~id="2", ~dependsOnAddresses=true) :> Internal.onEventRegistration),
       ],
-    }->RpcSource.getSelectionConfig(~chain)
+    }->RpcSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionsOrThrow(
@@ -940,7 +940,7 @@ describe("RpcSource - getSelectionConfig", () => {
       },
       {
         addresses: Some([mockAddress0]),
-        topicQuery: [Single("2"), Single(mockAddress0->Address.toString)],
+        topicQuery: [Single("2"), Single(mockAddress0->TopicFilter.fromAddress->EvmTypes.Hex.toString)],
       },
     ])
   })
@@ -1569,24 +1569,24 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       let eventConfig = MockIndexer.evmOnEventRegistration(
         // `id` must equal the router key derived at lookup — `sighash_topicCount`
         ~id=`${sighash}_1`,
-        ~eventFilters=Static([
+        ~eventFilters=[
           {
             topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: [
+            topic1: Values([
               "0x0000000000000000000000000000000000000000000000000000000000000001"->EvmTypes.Hex.fromStringUnsafe,
-            ],
-            topic2: [],
-            topic3: [],
+            ]),
+            topic2: Values([]),
+            topic3: Values([]),
           },
           {
             topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: [],
-            topic2: [
+            topic1: Values([]),
+            topic2: Values([
               "0x0000000000000000000000000000000000000000000000000000000000000002"->EvmTypes.Hex.fromStringUnsafe,
-            ],
-            topic3: [],
+            ]),
+            topic3: Values([]),
           },
-        ]),
+        ],
       )
 
       let logJson = JSON.Object(
@@ -1686,7 +1686,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       let eventConfig = MockIndexer.evmOnEventRegistration(
         ~id=`${sighash}_1`,
         ~isWildcard=true,
-        ~eventFilters=Static([]),
+        ~eventFilters=[],
       )
 
       // Echo the requested block number so `latestFetchedBlockNumber` reflects
@@ -1782,28 +1782,28 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
       let eventA = MockIndexer.evmOnEventRegistration(
         ~contractName="ContractA",
         ~id=`${sighash}_1`,
-        ~eventFilters=Static([
+        ~eventFilters=[
           {
             topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: [filterTopic1->EvmTypes.Hex.fromStringUnsafe],
-            topic2: [],
-            topic3: [],
+            topic1: Values([filterTopic1->EvmTypes.Hex.fromStringUnsafe]),
+            topic2: Values([]),
+            topic3: Values([]),
           },
-        ]),
+        ],
       )
       // Unfiltered, but pin topic0 to the bare sighash (MockIndexer otherwise
       // derives it from `id`, which we set to the router key `sighash_1`).
       let eventB = MockIndexer.evmOnEventRegistration(
         ~contractName="ContractB",
         ~id=`${sighash}_1`,
-        ~eventFilters=Static([
+        ~eventFilters=[
           {
             topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: [],
-            topic2: [],
-            topic3: [],
+            topic1: Values([]),
+            topic2: Values([]),
+            topic3: Values([]),
           },
-        ]),
+        ],
       )
 
       // A log emitted by ContractA's address, carrying only topic0 (so it does

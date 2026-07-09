@@ -90,8 +90,11 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // range chunk is validated by `eventBlockRangeSchema` in
   // `LogSelection.res` which rejects `_lte`/`_every` (use `onBlock` for
   // stride- and endBlock-based block handlers).
+  // `S.strict` on the inner object rejects unknown `block` fields (e.g. a
+  // `numbre` typo or `block: {timestamp: ...}`) instead of silently
+  // ignoring them.
   onEventBlockFilterSchema: S.object(s =>
-    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
+    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))->S.strict))
   ),
   logger,
   // The payload carries `transaction` by batch prep (HyperSync) or inline

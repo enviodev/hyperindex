@@ -11,7 +11,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
       let selectionConfig = {
         dependsOnAddresses: true,
         onEventRegistrations: [(MockIndexer.evmOnEventRegistration() :> Internal.onEventRegistration)],
-      }->HyperSyncSource.getSelectionConfig(~chain)
+      }->HyperSyncSource.getSelectionConfig
 
       t.expect(selectionConfig).toEqual({
         fieldSelection: {
@@ -67,7 +67,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
             ~transactionFieldNames=([Hash, GasPrice]: array<Internal.evmTransactionField>),
           ) :> Internal.onEventRegistration),
         ],
-      }->HyperSyncSource.getSelectionConfig(~chain)
+      }->HyperSyncSource.getSelectionConfig
 
       t.expect(selectionConfig).toEqual({
         fieldSelection: {
@@ -88,7 +88,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           ~transactionFieldNames=([TransactionIndex, Hash]: array<Internal.evmTransactionField>),
         ) :> Internal.onEventRegistration),
       ],
-    }->HyperSyncSource.getSelectionConfig(~chain)
+    }->HyperSyncSource.getSelectionConfig
 
     t.expect(selectionConfig.fieldSelection).toEqual({
       block: [],
@@ -112,7 +112,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           ~transactionFieldNames=([GasPrice]: array<Internal.evmTransactionField>),
         ) :> Internal.onEventRegistration),
       ],
-    }->HyperSyncSource.getSelectionConfig(~chain)
+    }->HyperSyncSource.getSelectionConfig
 
     t.expect(selectionConfig).toEqual({
       fieldSelection: {
@@ -137,7 +137,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           ~isWildcard=true,
         ) :> Internal.onEventRegistration),
       ],
-    }->HyperSyncSource.getSelectionConfig(~chain)
+    }->HyperSyncSource.getSelectionConfig
 
     t.expect(
       selectionConfig.getLogSelectionOrThrow(~addressesByContractName=Dict.make()),
@@ -173,7 +173,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
             ~dependsOnAddresses=true,
           ) :> Internal.onEventRegistration),
         ],
-      }->HyperSyncSource.getSelectionConfig(~chain)
+      }->HyperSyncSource.getSelectionConfig
 
       t.expect(
         selectionConfig.getLogSelectionOrThrow(
@@ -196,7 +196,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           topicSelections: [
             {
               topic0: ["event 2"->EvmTypes.Hex.fromStringUnsafe],
-              topic1: [mockAddress0->Utils.magic],
+              topic1: [mockAddress0->TopicFilter.fromAddress],
               topic2: [],
               topic3: [],
             },
