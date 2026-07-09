@@ -734,7 +734,7 @@ let executeQuery = async (
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
-        ~itemsTarget=query.itemsTarget->Math.ceil->Float.toInt,
+        ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,
       )

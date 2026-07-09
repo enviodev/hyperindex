@@ -19,7 +19,7 @@ type pendingQuery = {
   // Items this in-flight query is targeting (server maxNumLogs-style cap), carried
   // from the query so the shared buffer budget can account for what's already
   // being fetched.
-  itemsTarget: float,
+  itemsTarget: int,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -68,7 +68,7 @@ type query = {
   // with known density this is density × the query's block range; for a
   // partition with no signal yet it's whatever budget share the query was
   // sized against.
-  itemsTarget: float,
+  itemsTarget: int,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
 }
@@ -104,8 +104,10 @@ let densityItemsTarget = (p: partition, ~fromBlock, ~toBlock, ~chainTargetBlock)
   // Floor at 1: the reservation must equal the server-side cap SourceManager
   // sends, and a 0 cap would ask the backend for nothing.
   Pervasives.max(
-    1.,
-    (toBlock->Option.getOr(chainTargetBlock) - fromBlock + 1)->Int.toFloat *. density,
+    1,
+    ((toBlock->Option.getOr(chainTargetBlock) - fromBlock + 1)->Int.toFloat *. density)
+    ->Math.ceil
+    ->Float.toInt,
   )
 }
 
@@ -1394,7 +1396,7 @@ let pushGapFillQueries = (
           itemsTarget,
           addressesByContractName,
         })
-        cost := cost.contents +. itemsTarget
+        cost := cost.contents +. itemsTarget->Int.toFloat
       | Some(chunkRange) =>
         let maxBlock = switch rangeEndBlock {
         | Some(eb) => eb
@@ -1423,7 +1425,7 @@ let pushGapFillQueries = (
               itemsTarget,
               addressesByContractName,
             })
-            cost := cost.contents +. itemsTarget
+            cost := cost.contents +. itemsTarget->Int.toFloat
             chunkFromBlock := chunkToBlock + 1
             chunkIdx := chunkIdx.contents + 1
           }
@@ -1444,7 +1446,7 @@ let pushGapFillQueries = (
             itemsTarget,
             addressesByContractName,
           })
-          cost := cost.contents +. itemsTarget
+          cost := cost.contents +. itemsTarget->Int.toFloat
         }
       }
     }
@@ -1561,7 +1563,8 @@ let getNextQuery = (
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
       let cost = ref(0.)
       for pqIdx in 0 to p.mutPendingQueries->Array.length - 1 {
-        cost := cost.contents +. (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget
+        cost :=
+          cost.contents +. (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsTarget->Int.toFloat
       }
       existingReservedByPartition->Dict.set(partitionId, cost.contents)
       chainReserved := chainReserved.contents +. cost.contents
@@ -1650,7 +1653,7 @@ let getNextQuery = (
     fillStates->Array.forEach(fs => {
       let cost = ref(existingReservedByPartition->Dict.getUnsafe(fs.partitionId))
       for i in 0 to fs.bucket->Array.length - 1 {
-        cost := cost.contents +. (fs.bucket->Array.getUnsafe(i)).itemsTarget
+        cost := cost.contents +. (fs.bucket->Array.getUnsafe(i)).itemsTarget->Int.toFloat
       }
       reservedByPartition->Dict.set(fs.partitionId, cost.contents)
     })
@@ -1665,28 +1668,19 @@ let getNextQuery = (
 
     let inRangeStates = fillStates->Array.filter(isInRange)
 
-    // Size for an unknown-density probe: the even split of this tick's fresh
-    // budget across in-range partitions, floored at 1 so the reservation (and
-    // the server cap derived from it) never asks for nothing.
     let probeItemsTarget = Pervasives.max(
-      1.,
-      Math.round(rangeItemsTarget /. inRangeStates->Array.length->Int.toFloat),
+      1,
+      Math.round(rangeItemsTarget /. inRangeStates->Array.length->Int.toFloat)->Float.toInt,
     )
 
     // Emits this round's queries for one partition, given its share of the
     // range budget. Mutates fs.cursor/chunksUsedThisCall and returns the
     // itemsTarget consumed.
     //
-    // Density-priced chunk emission only for a trusted POSITIVE density.
-    // Trusted means the chunking heuristic is active (maybeChunkRange requires
-    // prevQueryRange AND prevPrevQueryRange, i.e. two responses — see
-    // getMinHistoryRange): a single response is noisy (a first query that
-    // happens to land on an unusually dense/sparse block would otherwise
-    // mis-size the very next one). Positive because density 0 prices every
-    // chunk at ~nothing, letting a partition flood its full chunk pipeline
-    // with hard-bounded queries that crawl 1.8× per two responses — an
-    // open-ended probe instead gets the server's full scan range in one
-    // response.
+    // Chunks require a POSITIVE trusted density: density 0 prices every chunk
+    // at ~nothing, letting a partition flood its full chunk pipeline with
+    // hard-bounded queries that crawl 1.8× per two responses — an open-ended
+    // probe instead gets the server's full scan range in one response.
     let emitQueries = (fs: waterFillState, ~budget: float) => {
       let p = fs.p
       let maxBlock = switch fs.queryEndBlock {
@@ -1710,8 +1704,10 @@ let getNextQuery = (
         while created.contents < numChunks && chunkFromBlock.contents <= maxBlock {
           let chunkToBlock = Pervasives.min(chunkFromBlock.contents + chunkSize - 1, maxBlock)
           let itemsTarget = Pervasives.max(
-            1.,
-            density *. (chunkToBlock - chunkFromBlock.contents + 1)->Int.toFloat,
+            1,
+            (density *. (chunkToBlock - chunkFromBlock.contents + 1)->Int.toFloat)
+            ->Math.ceil
+            ->Float.toInt,
           )
           fs.bucket->Array.push({
             partitionId: fs.partitionId,
@@ -1722,7 +1718,7 @@ let getNextQuery = (
             itemsTarget,
             addressesByContractName: p.addressesByContractName,
           })
-          consumed := consumed.contents +. itemsTarget
+          consumed := consumed.contents +. itemsTarget->Int.toFloat
           chunkFromBlock := chunkToBlock + 1
           created := created.contents + 1
         }
@@ -1730,21 +1726,18 @@ let getNextQuery = (
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + created.contents
         consumed.contents
       | _ =>
-        // No trusted positive density: one open-ended probe at the even
-        // split of the fresh budget — never chunks.
-        let itemsTarget = probeItemsTarget
         fs.bucket->Array.push({
           partitionId: fs.partitionId,
           fromBlock: fs.cursor,
           toBlock: fs.queryEndBlock,
           isChunk: false,
           selection: p.selection,
-          itemsTarget,
+          itemsTarget: probeItemsTarget,
           addressesByContractName: p.addressesByContractName,
         })
         fs.cursor = maxBlock + 1
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + 1
-        itemsTarget
+        probeItemsTarget->Int.toFloat
       }
     }
 

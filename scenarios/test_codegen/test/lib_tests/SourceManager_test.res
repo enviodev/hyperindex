@@ -7,7 +7,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  itemsTarget: 0.,
+  itemsTarget: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -180,7 +180,7 @@ describe("SourceManager source priority with Live sources", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    itemsTarget: 5000.,
+    itemsTarget: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
@@ -486,7 +486,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      itemsTarget: 5000.,
+      itemsTarget: 5000,
       fetchedBlock: None,
     }
     // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
@@ -547,7 +547,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "2",
-          itemsTarget: 16_667.,
+          itemsTarget: 16_667,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -557,7 +557,7 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          itemsTarget: 16_667.,
+          itemsTarget: 16_667,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -569,7 +569,7 @@ describe("SourceManager fetchNext", () => {
           partitionId: "1",
           // Every unknown-density probe gets the same even split of the fresh
           // budget (round(50_000 / 3)), regardless of processing order.
-          itemsTarget: 16_667.,
+          itemsTarget: 16_667,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
@@ -1436,7 +1436,7 @@ describe("SourceManager.executeQuery", () => {
   let mockQuery = (): FetchState.query => {
     ...defaultQuery,
     partitionId: "0",
-    itemsTarget: 5000.,
+    itemsTarget: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,

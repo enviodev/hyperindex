@@ -385,7 +385,7 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsTarget)
+    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsTarget->Int.toFloat)
 }
 
 // Drop every in-flight query and release their reservations together, keeping
@@ -689,7 +689,7 @@ let handleQueryResult = (
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
-  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsTarget)
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsTarget->Int.toFloat)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.

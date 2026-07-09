@@ -326,7 +326,7 @@ describe("CrossChainState fetch control", () => {
           chain->ChainMap.Chain.toChainId,
           switch action {
           | Ready(queries) =>
-            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget)
+            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
           | _ => 0.
           },
         )
