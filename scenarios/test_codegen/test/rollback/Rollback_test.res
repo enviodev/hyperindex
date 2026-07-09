@@ -2724,18 +2724,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // checkpoint, so chain 100 also has a fresh (and a stale pre-rollback)
       // pending query competing for budget — clean those up so chain 1337
       // gets its own.
-      // Chain 100 has dangling pre-rollback queries (its own reorg-time
-      // in-flight fetch plus the one NextQuery started right after it) that
-      // keep it as budget leader until drained — resolve them until chain
-      // 1337 gets its own query.
-      let attempts = ref(0)
-      while sourceMock1.getItemsOrThrowCalls->Array.length == 0 && attempts.contents < 10 {
-        attempts := attempts.contents + 1
-        sourceMock2.resolveGetItemsOrThrow([], ~resolveAt=#all)
-        await Utils.delay(0)
-        await Utils.delay(0)
-        await Utils.delay(0)
-      }
+      // Clean up chain 100's dangling pre-rollback query; its known density
+      // caps the refetch reservation, so the budget reaches chain 1337 right
+      // after.
+      sourceMock2.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      await MockIndexer.Helper.waitItemsQuery(sourceMock1)
 
       let actualPayloads = sourceMock1.getItemsOrThrowCalls->Array.map(c => c.payload)
       t.expect(

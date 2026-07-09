@@ -451,6 +451,23 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
   | None => chainTargetBlock
   }
+  // When the target block is clamped (head/endBlock/cross-chain alignment) a
+  // known-density chain can't use the whole handed budget — cap the fresh part
+  // at what the clamped range actually costs (in-flight reservations stay on
+  // top: they're already accounted and shouldn't crowd out new partitions), so
+  // the waterfall's leftover flows to the next chain in the same tick instead
+  // of being held by an oversized probe.
+  let chainTargetItems = switch cs.chainDensity {
+  | Some(density) if density > 0. =>
+    Pervasives.min(
+      chainTargetItems,
+      Math.ceil(
+        density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat,
+      ) +.
+      cs.pendingBudget,
+    )
+  | _ => chainTargetItems
+  }
   cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
 }
 
