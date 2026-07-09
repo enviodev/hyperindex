@@ -336,7 +336,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
 
-      // Build a real registration the same way `HandlerRegister.buildOnEventRegistrations`
+      // Build a real registration the same way `HandlerRegister.finishRegistration`
       // does at startup (not a stub), so the address filter and `where`
       // behave identically to real indexing — the dead-input tracker relies
       // on `clientAddressFilter` actually gating unrouted items.

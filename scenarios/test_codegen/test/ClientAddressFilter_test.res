@@ -1,22 +1,22 @@
 open Vitest
 
 // Direct tests for the client-side address filter: the `where`-callback
-// detection (`addressFilterParamGroups`) in `LogSelection.parseEventFiltersOrThrow`
+// detection (`addressFilterParamGroups`) in `LogSelection.parseWhereOrThrow`
 // and the precompiled `clientAddressFilter` built in `EventConfigBuilder`.
 
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
-  LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
+let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1) =>
+  LogSelection.parseWhereOrThrow(
+    ~where=eventFilters,
     ~sighash=transferSighash,
     ~params=["from", "to"],
     ~contractName="ERC20",
-    ~probeChainId,
+    ~chainId,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
-describe("parseEventFiltersOrThrow — address-param detection", () => {
+describe("parseWhereOrThrow — address-param detection", () => {
   it("collects the address-filtered param (single group)", t => {
     let {filterByAddresses, addressFilterParamGroups} = parseEvm(
       ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
@@ -83,8 +83,8 @@ describe("clientAddressFilter — precompiled predicate", () => {
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters=Some(eventFilters),
-      ~probeChainId=1,
+      ~where=Some(eventFilters),
+      ~chainId=1,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ).clientAddressFilter
 
@@ -176,8 +176,8 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     ~isWildcard=true,
     ~handler=None,
     ~contractRegister=None,
-    ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
-    ~probeChainId=1,
+    ~where=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
+    ~chainId=1,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
@@ -249,8 +249,8 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     ~isWildcard=false,
     ~handler=None,
     ~contractRegister=None,
-    ~eventFilters=None,
-    ~probeChainId=1,
+    ~where=None,
+    ~chainId=1,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )

@@ -136,25 +136,6 @@ let makeInternal = (
     }
   })
 
-  // TODO: Move it to the HandlerRegister module
-  // so the error is thrown with better stack trace
-  onBlockRegistrations->Array.forEach(onBlockRegistration => {
-    if onBlockRegistration.startBlock->Option.getOr(startBlock) < startBlock {
-      JsError.throwWithMessage(
-        `The start block for onBlock handler "${onBlockRegistration.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
-      )
-    }
-    switch endBlock {
-    | Some(chainEndBlock) =>
-      if onBlockRegistration.endBlock->Option.getOr(chainEndBlock) > chainEndBlock {
-        JsError.throwWithMessage(
-          `The end block for onBlock handler "${onBlockRegistration.name}" is greater than the chain end block (${chainEndBlock->Int.toString}). This is not supported yet.`,
-        )
-      }
-    | None => ()
-    }
-  })
-
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
 

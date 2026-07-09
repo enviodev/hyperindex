@@ -848,8 +848,10 @@ module Source = {
                                 Internal.contractRegister,
                               >
                             ),
-                            getEventFiltersOrThrow: _ =>
-                              JsError.throwWithMessage("Not implemented"),
+                            resolvedWhere: {
+                              topicSelections: [],
+                              startBlock: None,
+                            },
                           }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
                           chain,
                           blockNumber: item.blockNumber,
@@ -974,7 +976,7 @@ let evmOnEventRegistration = (
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
-  ~eventFilters: option<Internal.eventFilters>=?,
+  ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
 ): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
@@ -1006,38 +1008,25 @@ let evmOnEventRegistration = (
     startBlock,
     handler: None,
     contractRegister: None,
-    getEventFiltersOrThrow: _ =>
-      switch eventFilters {
-      | Some(eventFilters) => eventFilters
-      | None =>
-        switch dependsOnAddresses {
-        | Some(true) =>
-          Dynamic(
-            addresses => [
-              {
-                topic0: [
-                  // This is a sighash in the original code
-                  id->EvmTypes.Hex.fromStringUnsafe,
-                ],
-                topic1: addresses->Utils.magic,
-                topic2: [],
-                topic3: [],
-              },
+    resolvedWhere: {
+      topicSelections: switch eventFilters {
+      | Some(topicSelections) => topicSelections
+      | None => [
+          {
+            topic0: [
+              // This is a sighash in the original code
+              id->EvmTypes.Hex.fromStringUnsafe,
             ],
-          )
-        | _ =>
-          Static([
-            {
-              topic0: [
-                // This is a sighash in the original code
-                id->EvmTypes.Hex.fromStringUnsafe,
-              ],
-              topic1: [],
-              topic2: [],
-              topic3: [],
+            topic1: switch dependsOnAddresses {
+            | Some(true) => ContractAddresses({contractName: contractName})
+            | _ => Values([])
             },
-          ])
-        }
+            topic2: Values([]),
+            topic3: Values([]),
+          },
+        ]
       },
+      startBlock: None,
+    },
   }
 }
