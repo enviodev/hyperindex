@@ -1,0 +1,104 @@
+name: Announce release to Telegram
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    if: github.event.release.draft == false
+    steps:
+      # Announce major and minor releases only. A release qualifies when the
+      # tag is an exact "X.Y.0" (strip a leading "v"): patch is 0, and there is
+      # no pre-release suffix. This skips patch releases and release candidates
+      # such as v3.0.0-rc.1, which GitHub does not always flag as prereleases.
+      # (Same gate as .github/workflows/discord-release.yml.)
+      - name: Check if release is major or minor
+        id: classify
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          version="${TAG#v}"
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            echo "$TAG is a prerelease; skipping"
+            echo "announce=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "$TAG is a major/minor release; announcing"
+            echo "announce=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$TAG is a patch release; skipping"
+            echo "announce=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post release to Telegram
+        if: steps.classify.outputs.announce == 'true'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_RELEASE_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_RELEASE_CHAT_ID }}
+          TOPIC_ID: ${{ secrets.TELEGRAM_RELEASE_TOPIC_ID }}
+          TITLE: ${{ github.event.release.name || github.event.release.tag_name }}
+          BODY: ${{ github.event.release.body }}
+          URL: ${{ github.event.release.html_url }}
+        run: |
+          # Render the GitHub release notes into Telegram HTML. Telegram caps
+          # messages at 4096 chars. We size the notes budget against the actual
+          # header and link, truncate the raw notes to that (never mid-tag), then
+          # HTML-escape and add only well-formed tags, so escaping cannot produce
+          # a stray < >, and any code block left open by truncation is auto-closed.
+          esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+          title="$(printf '%s' "$TITLE" | esc)"
+          url="$(printf '%s' "$URL" | esc)"
+          header="🚢 <b>HyperIndex ${title} released</b>"
+          link="<a href=\"${url}\">View on GitHub</a>"
+
+          # Body budget = 4096 minus the fixed parts, separators, and a margin,
+          # then capped at a conservative ceiling that leaves headroom for the
+          # tags and escaping added later (so normal releases stay HTML). The
+          # dynamic term only bites when the title or URL is unusually long.
+          overhead=$(( ${#header} + ${#link} + 8 ))
+          max_body=$(( 4096 - overhead - 64 ))
+          (( max_body > 3000 )) && max_body=3000
+          (( max_body < 0 )) && max_body=0
+          body="$BODY"
+          if [[ ${#body} -gt $max_body ]]; then
+            body="${body:0:$max_body}
+          … read the full notes on GitHub"
+          fi
+
+          # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code)
+          # shellcheck disable=SC2016  # $0 below is awk's field var, not a shell expansion
+          notes="$(printf '%s\n' "$body" | esc | awk '
+            BEGIN { inpre = 0 }
+            /^```/ { if (inpre) { print "</pre>"; inpre = 0 } else { print "<pre>"; inpre = 1 } next }
+            inpre == 0 && /^[[:space:]]*#{1,6}[[:space:]]+/ {
+              sub(/^[[:space:]]*#+[[:space:]]+/, ""); print "<b>" $0 "</b>"; next
+            }
+            { print }
+            END { if (inpre) print "</pre>" }
+          ' | sed -E 's/`([^`]+)`/<code>\1<\/code>/g; s/\*\*//g')"
+
+          message="$(printf '%s\n\n%s\n\n%s' "$header" "$notes" "$link")"
+          parse_mode="HTML"
+
+          # Safety net: if escaping still pushed the HTML past the hard limit,
+          # send plain text truncated to 4096, which a hard cut cannot break.
+          if (( ${#message} > 4096 )); then
+            message="$(printf '🚢 HyperIndex %s released\n\n%s\n\n%s' "$TITLE" "$BODY" "$URL")"
+            message="${message:0:4096}"
+            parse_mode=""
+          fi
+
+          args=(--data-urlencode "chat_id=${CHAT_ID}"
+                --data-urlencode "text=${message}"
+                -d "disable_web_page_preview=false")
+          [[ -n "$parse_mode" ]] && args+=(-d "parse_mode=${parse_mode}")
+          [[ -n "${TOPIC_ID}" ]] && args+=(-d "message_thread_id=${TOPIC_ID}")
+
+          curl -fsS --connect-timeout 10 --max-time 30 \
+            "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" "${args[@]}"
