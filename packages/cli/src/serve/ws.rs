@@ -81,9 +81,22 @@ impl Protocol {
 
 pub fn handle_upgrade(
     state: AppState,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> axum::response::Response {
+    // Hasura also reads auth from the upgrade request's HTTP headers, not
+    // only the connection_init payload; capture them here so init can fall
+    // back to them.
+    let upgrade_auth = UpgradeAuth {
+        admin_secret: headers
+            .get("x-hasura-admin-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from),
+        role: headers
+            .get("x-hasura-role")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from),
+    };
     upgrade
         .protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| async move {
@@ -91,24 +104,37 @@ pub fn handle_upgrade(
                 Some("graphql-transport-ws") => Protocol::Modern,
                 _ => Protocol::Legacy,
             };
-            run_connection(state, socket, protocol).await;
+            run_connection(state, socket, protocol, upgrade_auth).await;
         })
         .into_response()
+}
+
+struct UpgradeAuth {
+    admin_secret: Option<String>,
+    role: Option<String>,
 }
 
 struct Connection {
     state: AppState,
     protocol: Protocol,
     sender: mpsc::UnboundedSender<Message>,
+    upgrade_auth: UpgradeAuth,
     role: Option<Role>,
     /// Live operations by client-assigned id; sending on the channel stops
     /// the poll task.
     operations: HashMap<String, tokio::task::JoinHandle<()>>,
 }
 
-async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) {
+async fn run_connection(
+    state: AppState,
+    socket: WebSocket,
+    protocol: Protocol,
+    upgrade_auth: UpgradeAuth,
+) {
+    tracing::debug!("websocket connection opened");
     let ping_interval = state.serve.ws_ping_interval;
     let dead_after = ping_interval * 2;
+    let mut shutdown = state.shutdown.clone();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
@@ -125,6 +151,7 @@ async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) 
         state,
         protocol,
         sender: tx.clone(),
+        upgrade_auth,
         role: None,
         operations: HashMap::new(),
     };
@@ -150,10 +177,27 @@ async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) 
                     let _ = conn.sender.send(Message::Text("{\"type\":\"ka\"}".into()));
                 }
             }
+            // Graceful shutdown: finish each active operation with a
+            // `complete` frame, then a 1001 close, so clients see a clean
+            // end instead of a dropped socket at the drain timeout.
+            // The extra async block drops watch's non-Send read guard
+            // before the branch value is produced, keeping the whole
+            // connection future Send.
+            _ = async { let _ = shutdown.wait_for(|stopping| *stopping).await; } => {
+                for (id, task) in conn.operations.drain() {
+                    task.abort();
+                    send_frame(&conn.sender, "complete", &id, None);
+                }
+                let _ = conn.sender.send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1001,
+                    reason: "going away".into(),
+                })));
+                break;
+            }
             _ = dead_check.tick() => {
                 let now = Instant::now();
                 if now.duration_since(last_activity) > dead_after {
-                    println!("envio serve: closing websocket, no pong/traffic for {:?}", now.duration_since(last_activity));
+                    tracing::warn!("closing websocket, no pong/traffic for {:?}", now.duration_since(last_activity));
                     let _ = conn.sender.send(Message::Close(Some(axum::extract::ws::CloseFrame {
                         code: 4408,
                         reason: "ping timeout".into(),
@@ -182,6 +226,7 @@ async fn run_connection(state: AppState, socket: WebSocket, protocol: Protocol) 
         }
     }
 
+    tracing::debug!("websocket connection closed");
     for (_, task) in conn.operations.drain() {
         task.abort();
     }
@@ -210,19 +255,33 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
 
     match frame_type {
         "connection_init" => {
-            let secret = frame
-                .get("payload")
-                .and_then(|p| p.get("headers"))
-                .and_then(|h| {
-                    h.get("x-hasura-admin-secret")
-                        .or_else(|| h.get("X-Hasura-Admin-Secret"))
+            let payload_headers = frame.get("payload").and_then(|p| p.get("headers"));
+            // Client-sent payload "headers" keys are arbitrary strings, not
+            // normalized HTTP headers -- match them case-insensitively like
+            // Hasura does.
+            let payload_header = |name: &str| -> Option<&str> {
+                payload_headers.and_then(|h| h.as_object()).and_then(|map| {
+                    map.iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                        .and_then(|(_, v)| v.as_str())
                 })
-                .and_then(|v| v.as_str());
-            let role = match secret {
-                None => Role::Public,
-                Some(s) if s == conn.state.serve.admin_secret => Role::Admin,
-                Some(_) => {
-                    let err = GraphQLError::access_denied();
+            };
+            // Auth comes from the init payload when present, falling back
+            // per-header to the upgrade request's HTTP headers (Hasura
+            // accepts both sources; the payload is the protocol-native one,
+            // so it wins on conflict).
+            let secret = payload_header("x-hasura-admin-secret")
+                .or(conn.upgrade_auth.admin_secret.as_deref());
+            let requested_role =
+                payload_header("x-hasura-role").or(conn.upgrade_auth.role.as_deref());
+            let role = match super::http::resolve_role_values(
+                secret,
+                requested_role,
+                &conn.state.serve.admin_secret,
+            ) {
+                Ok(role) => role,
+                Err(err) => {
+                    tracing::debug!("websocket connection_init rejected: {}", err.message);
                     match conn.protocol {
                         Protocol::Modern => {
                             // graphql-ws: reject with a close frame.
@@ -306,6 +365,7 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
         t if t == conn.protocol.stop_type() => {
             if let Some(id) = frame.get("id").and_then(|v| v.as_str()) {
                 if let Some(task) = conn.operations.remove(id) {
+                    tracing::debug!(op = %id, "websocket operation stopped");
                     task.abort();
                     // The client asked to stop; the legacy protocol echoes a
                     // complete frame, the modern one does not.
@@ -330,6 +390,7 @@ fn start_operation(conn: &mut Connection, role: Role, id: String, request: Graph
     let sender = conn.sender.clone();
     let op_id = id.clone();
 
+    tracing::debug!(op = %id, "websocket operation started");
     let task = tokio::spawn(async move {
         run_operation(state, protocol, role, op_id, request, sender).await;
     });
@@ -426,16 +487,17 @@ async fn run_subscription(
 
     let mut last_payload: Option<String> = None;
     let mut consecutive_failures: u32 = 0;
+    // Compiles the stream SQL once, swapping cursor params per poll.
+    let mut stream_poller = exec::StreamPoller::new();
     loop {
         let result = if is_stream {
-            match exec::execute_stream_operation(&state.serve, &operation).await {
-                Ok((body, Some(new_cursor_values))) => {
-                    // Non-empty batch: emit and move the cursor.
+            match stream_poller.poll(&state.serve, &mut operation).await {
+                // Non-empty batch: emit; the poller advanced the cursor.
+                Ok(Some(body)) => {
                     send_frame(&sender, protocol.data_type(), &id, Some(&body));
-                    apply_cursor(&mut operation, new_cursor_values);
                     Ok(())
                 }
-                Ok((_, None)) => Ok(()), // empty batch: keep waiting
+                Ok(None) => Ok(()), // empty batch: keep waiting
                 Err(e) => Err(e),
             }
         } else {
@@ -466,15 +528,5 @@ async fn run_subscription(
             }
         }
         tokio::time::sleep(POLL_INTERVAL).await;
-    }
-}
-
-fn apply_cursor(operation: &mut ir::Operation, values: Vec<String>) {
-    if let Some(ir::RootField::Table(root)) = operation.root_fields.first_mut() {
-        if let ir::TableRootKind::Stream { cursor, .. } = &mut root.kind {
-            for (c, v) in cursor.iter_mut().zip(values) {
-                c.initial_value = Some(ir::SqlValue::new(v, c.pg_type.clone()));
-            }
-        }
     }
 }

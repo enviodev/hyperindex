@@ -312,12 +312,12 @@ pub(super) fn expect_object<'a>(
     v: V<'a>,
     type_name: &str,
     path: &str,
-) -> GResult<Vec<(String, V<'a>)>> {
+) -> GResult<Vec<(&'a str, V<'a>)>> {
     match v {
         V::L(q::Value::Object(map)) => {
-            Ok(map.iter().map(|(k, val)| (k.clone(), V::L(val))).collect())
+            Ok(map.iter().map(|(k, val)| (k.as_str(), V::L(val))).collect())
         }
-        V::J(Json::Object(map)) => Ok(map.iter().map(|(k, val)| (k.clone(), V::J(val))).collect()),
+        V::J(Json::Object(map)) => Ok(map.iter().map(|(k, val)| (k.as_str(), V::J(val))).collect()),
         other => Err(verr(
             path,
             format!(
@@ -332,17 +332,17 @@ pub(super) fn expect_object<'a>(
 /// then the rest alphabetically. Hasura's processing order is its HashMap's
 /// hash order, which cannot be reproduced; this matches every order the
 /// oracle snapshots pin.
-fn ordered_keys<'a>(table: &Table, entries: Vec<(String, V<'a>)>) -> Vec<(String, V<'a>)> {
+fn ordered_keys<'a>(table: &Table, entries: Vec<(&'a str, V<'a>)>) -> Vec<(&'a str, V<'a>)> {
     let pk_apis: Vec<&str> = table
         .primary_key
         .iter()
         .filter_map(|db| table.columns.iter().find(|c| &c.db_name == db))
         .map(|c| c.api_name.as_str())
         .collect();
-    let mut front: Vec<(String, V)> = Vec::new();
-    let mut rest: Vec<(String, V)> = Vec::new();
+    let mut front: Vec<(&str, V)> = Vec::new();
+    let mut rest: Vec<(&str, V)> = Vec::new();
     for entry in entries {
-        if pk_apis.contains(&entry.0.as_str()) {
+        if pk_apis.contains(&entry.0) {
             front.push(entry);
         } else {
             rest.push(entry);

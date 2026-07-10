@@ -1,4 +1,4 @@
-use super::{invalid_query, GResult};
+use super::{depth_error, invalid_query, GResult, MAX_DEPTH};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -163,6 +163,25 @@ fn tokenize(src: &str) -> Result<Vec<Tok<'_>>, ()> {
 
 pub(super) fn prescan(src: &str) -> GResult<Prescan> {
     let toks = tokenize(src).map_err(|_| invalid_query())?;
+
+    // Nesting depth must be bounded before graphql_parser runs: its
+    // recursive-descent parser overflows the stack (aborting the process)
+    // on deeply nested documents, so this cannot wait for the AST.
+    let mut depth: usize = 0;
+    for t in &toks {
+        match t.kind {
+            TokKind::Punct('(') | TokKind::Punct('[') | TokKind::Punct('{') => {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return Err(depth_error());
+                }
+            }
+            TokKind::Punct(')') | TokKind::Punct(']') | TokKind::Punct('}') => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
 
     // Duplicate argument names / duplicate input-object keys. Inside
     // argument parentheses every `{` opens an object literal (selection

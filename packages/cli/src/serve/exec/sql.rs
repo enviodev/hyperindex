@@ -14,9 +14,38 @@
 use super::error::{GResult, GraphQLError, CODE_POSTGRES_ERROR, CODE_UNEXPECTED};
 use super::ir;
 use crate::serve::ServeState;
+use futures_util::TryStreamExt;
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio_postgres::types::{ToSql, Type};
+
+/// Above this many cached prepared statements on one pooled connection the
+/// whole per-connection cache is dropped. Dropping the cached `Statement`
+/// handles sends a protocol-level Close for each server-side prepared
+/// statement (tokio-postgres `StatementInner::drop`), so this bounds both
+/// server and Postgres backend memory even under an unbounded variety of
+/// query texts.
+const STATEMENT_CACHE_CAP: usize = 500;
+
+fn slow_query_threshold() -> Duration {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    Duration::from_millis(*MS.get_or_init(|| {
+        std::env::var("ENVIO_SERVE_SLOW_QUERY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5000)
+    }))
+}
+
+/// Stable identifier for one compiled statement, loggable without exposing
+/// the full SQL text.
+fn sql_hash(sql: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    sql.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
 
 /// Runs `sql`/`params` (as compiled by `compile_root`) and returns the
 /// single output row every root-field query produces.
@@ -25,16 +54,23 @@ async fn run_root_query(
     sql: &str,
     params: &[Option<String>],
 ) -> GResult<tokio_postgres::Row> {
+    let started = Instant::now();
     // Pool failures (connect refused, wait timeout) get the same
     // postgres-error code as connection-level query failures so
     // subscriptions can tell "Postgres is briefly unreachable" (retryable)
     // apart from deterministic query errors.
-    let client = state.pool.get().await.map_err(|_| GraphQLError {
-        message: "database query error".to_string(),
-        path: "$".to_string(),
-        code: CODE_POSTGRES_ERROR,
-        status: 200,
+    let client = state.pool.get().await.map_err(|e| {
+        tracing::error!(error = %e, "envio serve: postgres pool checkout failed");
+        GraphQLError {
+            message: "database query error".to_string(),
+            path: "$".to_string(),
+            code: CODE_POSTGRES_ERROR,
+            status: 200,
+        }
     })?;
+    if client.statement_cache.size() >= STATEMENT_CACHE_CAP {
+        client.statement_cache.clear();
+    }
     // All parameters are bound as text and cast in the SQL itself
     // (`($1)::numeric`), which keeps runtime coercion errors identical to
     // Hasura's inlined-literal form.
@@ -42,13 +78,36 @@ async fn run_root_query(
     let stmt = client
         .prepare_typed_cached(sql, &types)
         .await
-        .map_err(pg_error)?;
-    let args: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
-    let rows = client.query(&stmt, &args).await.map_err(pg_error)?;
-    match rows.into_iter().next() {
+        .map_err(|e| pg_error(e, sql))?;
+    let row_stream = client
+        .query_raw(&stmt, params.iter().map(|p| p as &(dyn ToSql + Sync)))
+        .await
+        .map_err(|e| pg_error(e, sql))?;
+    // Every compiled statement is expected to produce exactly one row, but
+    // read only the first one off the wire instead of buffering a Vec: a
+    // statement that unexpectedly degenerates to per-row output must not
+    // buffer the whole table in memory.
+    futures_util::pin_mut!(row_stream);
+    let row = row_stream.try_next().await.map_err(|e| pg_error(e, sql))?;
+    let elapsed = started.elapsed();
+    if elapsed >= slow_query_threshold() {
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            sql_hash = %sql_hash(sql),
+            "envio serve: slow root-field query"
+        );
+    }
+    match row {
         // Hasura fails the same way when its aggregate statement degenerates
-        // to a non-aggregate query (e.g. `_aggregate { aggregate { __typename } }`).
-        None => Err(internal_db_error()),
+        // to a non-aggregate query (e.g. `_aggregate { aggregate { __typename } }`)
+        // over an empty table.
+        None => {
+            tracing::warn!(
+                sql_hash = %sql_hash(sql),
+                "envio serve: root-field query returned no rows"
+            );
+            Err(internal_db_error())
+        }
         Some(row) => Ok(row),
     }
 }
@@ -66,27 +125,39 @@ pub async fn execute_root(
     root: &ir::TableRoot,
     out: &mut String,
 ) -> GResult<()> {
-    let (sql, params) = compile_root(&state.model.pg_schema, root);
-    let row = run_root_query(state, &sql, &params).await?;
-    let text: &str = row.try_get(0).map_err(|_| internal_db_error())?;
+    let compiled = compile_root_full(&state.model.pg_schema, root);
+    let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
+    let text: &str = row.try_get(0).map_err(|e| {
+        tracing::warn!(error = %e, "envio serve: root value decode failed");
+        internal_db_error()
+    })?;
     out.push_str(text);
     Ok(())
 }
 
-/// Like `execute_root`, but only for `_stream` roots: also reads back each
-/// cursor column's value for the batch's last row from the same query
-/// result (see `emit_stream_select`), instead of a second, near-identical
-/// query fired just to read those columns back out -- halving the DB load
-/// of each subscription poll. Returns `None` (cursor unchanged) when the
-/// batch was empty.
-pub async fn execute_stream_root(
+/// Like `execute_root`, but for an already-compiled `_stream` root: also
+/// reads back each cursor column's value for the batch's last row from the
+/// same query result (see `emit_stream_select`), instead of a second,
+/// near-identical query fired just to read those columns back out --
+/// halving the DB load of each subscription poll. Returns `None` (cursor
+/// unchanged) when the batch was empty.
+///
+/// A non-empty batch always delivers its cursor values; individual values
+/// can be `None` because NULL cursor positions are reachable (nullable
+/// columns are exposed in `<T>_stream_cursor_value_input`, and DESC
+/// ordering puts NULL rows in the first batch) — the compiled predicate
+/// handles a NULL position (see `emit_cursor_bounds`).
+pub async fn execute_stream_compiled(
     state: &Arc<ServeState>,
-    root: &ir::TableRoot,
+    sql: &str,
+    params: &[Option<String>],
     out: &mut String,
-) -> GResult<Option<Vec<String>>> {
-    let (sql, params) = compile_root(&state.model.pg_schema, root);
-    let row = run_root_query(state, &sql, &params).await?;
-    let root_text: &str = row.try_get(0).map_err(|_| internal_db_error())?;
+) -> GResult<Option<Vec<Option<String>>>> {
+    let row = run_root_query(state, sql, params).await?;
+    let root_text: &str = row.try_get(0).map_err(|e| {
+        tracing::warn!(error = %e, "envio serve: stream root value decode failed");
+        internal_db_error()
+    })?;
     out.push_str(root_text);
     if root_text == "[]" {
         return Ok(None);
@@ -94,16 +165,11 @@ pub async fn execute_stream_root(
 
     let mut cursor_values = Vec::with_capacity(row.len().saturating_sub(1));
     for i in 1..row.len() {
-        match row
-            .try_get::<_, Option<&str>>(i)
-            .map_err(|_| internal_db_error())?
-        {
-            Some(v) => cursor_values.push(v.to_string()),
-            // A non-empty batch always has a last row, so its cursor
-            // columns should never be NULL; treat it as "no rows" rather
-            // than advancing to an unusable position.
-            None => return Ok(None),
-        }
+        let v = row.try_get::<_, Option<&str>>(i).map_err(|e| {
+            tracing::warn!(error = %e, "envio serve: stream cursor value decode failed");
+            internal_db_error()
+        })?;
+        cursor_values.push(v.map(str::to_string));
     }
     Ok(Some(cursor_values))
 }
@@ -117,8 +183,13 @@ fn internal_db_error() -> GraphQLError {
     }
 }
 
-fn pg_error(e: tokio_postgres::Error) -> GraphQLError {
+fn pg_error(e: tokio_postgres::Error, sql: &str) -> GraphQLError {
     let Some(db) = e.as_db_error() else {
+        tracing::warn!(
+            error = %e,
+            sql_hash = %sql_hash(sql),
+            "envio serve: connection-level postgres query failure"
+        );
         return GraphQLError {
             message: "database query error".to_string(),
             path: "$".to_string(),
@@ -126,6 +197,23 @@ fn pg_error(e: tokio_postgres::Error) -> GraphQLError {
             status: 200,
         };
     };
+    // Server-side cancellation (statement_timeout etc.) is the server twin
+    // of the client-side query timeout, so it gets the retryable
+    // postgres-error code instead of the deterministic "unexpected" mask.
+    if db.code().code() == "57014" {
+        tracing::warn!(
+            error = %db,
+            sqlstate = %db.code().code(),
+            sql_hash = %sql_hash(sql),
+            "envio serve: postgres query cancelled"
+        );
+        return GraphQLError {
+            message: "database query error".to_string(),
+            path: "$".to_string(),
+            code: CODE_POSTGRES_ERROR,
+            status: 200,
+        };
+    }
     // Hasura maps SQLSTATE classes: data exceptions and constraint
     // violations surface the Postgres message, everything else is the
     // opaque "unexpected" internal error.
@@ -133,7 +221,15 @@ fn pg_error(e: tokio_postgres::Error) -> GraphQLError {
     let (code, message) = match class {
         "22" => ("data-exception", db.message().to_string()),
         "23" => ("constraint-violation", db.message().to_string()),
-        _ => (CODE_UNEXPECTED, "database query error".to_string()),
+        _ => {
+            tracing::warn!(
+                error = %db,
+                sqlstate = %db.code().code(),
+                sql_hash = %sql_hash(sql),
+                "envio serve: postgres error masked as \"database query error\""
+            );
+            (CODE_UNEXPECTED, "database query error".to_string())
+        }
     };
     GraphQLError {
         message,
@@ -143,8 +239,23 @@ fn pg_error(e: tokio_postgres::Error) -> GraphQLError {
     }
 }
 
+pub struct CompiledRoot {
+    pub sql: String,
+    pub params: Vec<Option<String>>,
+    /// Every parameter slot bound to a stream-cursor value, as
+    /// (cursor index, param index) — one cursor value may occupy several
+    /// slots (strict bound + tie equality). Lets a subscription poll loop
+    /// swap in the next cursor position without recompiling the SQL.
+    pub cursor_slots: Vec<(usize, usize)>,
+}
+
 pub fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Option<String>>) {
-    let mut b = Sql::new(pg_schema);
+    let c = compile_root_full(pg_schema, root);
+    (c.sql, c.params)
+}
+
+pub fn compile_root_full(pg_schema: &str, root: &ir::TableRoot) -> CompiledRoot {
+    let mut b = Sql::new(pg_schema, estimate_capacity(root));
     match &root.kind {
         ir::TableRootKind::Many { args, selection } => {
             let ra = RowsArgs::from_select_args(args);
@@ -185,34 +296,86 @@ pub fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Optio
             emit_stream_select(&mut b, &root.table, &ra, selection);
         }
     }
-    (b.text, b.params)
+    CompiledRoot {
+        sql: b.text,
+        params: b.params,
+        cursor_slots: b.cursor_slots,
+    }
 }
+
+/// Rough output-size guess from the IR shape, so the text buffer doesn't
+/// crawl up through repeated reallocation on deeply nested selections.
+fn estimate_capacity(root: &ir::TableRoot) -> usize {
+    fn sel(s: &ir::ObjectSelection) -> usize {
+        s.items
+            .iter()
+            .map(|i| match i {
+                ir::SelItem::Typename { .. } | ir::SelItem::Column { .. } => 48,
+                ir::SelItem::ObjectRel { selection, .. }
+                | ir::SelItem::ArrayRel { selection, .. } => 280 + sel(selection),
+                ir::SelItem::ArrayRelAggregate { .. } => 448,
+            })
+            .sum()
+    }
+    256 + match &root.kind {
+        ir::TableRootKind::Many { selection, .. }
+        | ir::TableRootKind::ByPk { selection, .. }
+        | ir::TableRootKind::Stream { selection, .. } => sel(selection),
+        ir::TableRootKind::Aggregate { selection, .. } => {
+            selection.items.len() * 96
+                + selection
+                    .items
+                    .iter()
+                    .map(|i| match i {
+                        ir::AggSelItem::Nodes { selection, .. } => sel(selection),
+                        _ => 0,
+                    })
+                    .sum::<usize>()
+        }
+    }
+}
+
+/// Table alias `"tN"`; aliases never need quoting-escapes, so they are
+/// written straight into the text buffer without an intermediate String.
+#[derive(Clone, Copy)]
+struct Alias(usize);
 
 struct Sql<'a> {
     text: String,
     params: Vec<Option<String>>,
+    cursor_slots: Vec<(usize, usize)>,
     schema: &'a str,
     aliases: usize,
 }
 
 impl<'a> Sql<'a> {
-    fn new(schema: &'a str) -> Sql<'a> {
+    fn new(schema: &'a str, capacity: usize) -> Sql<'a> {
         Sql {
-            text: String::with_capacity(512),
+            text: String::with_capacity(capacity),
             params: Vec::new(),
+            cursor_slots: Vec::new(),
             schema,
             aliases: 0,
         }
     }
 
-    fn alias(&mut self) -> String {
-        let a = format!("t{}", self.aliases);
+    fn alias(&mut self) -> Alias {
+        let a = Alias(self.aliases);
         self.aliases += 1;
         a
     }
 
     fn push(&mut self, s: &str) {
         self.text.push_str(s);
+    }
+
+    fn push_alias(&mut self, a: Alias) {
+        let _ = write!(self.text, "\"t{}\"", a.0);
+    }
+
+    /// `"prefixK"` for the fixed internal column names (`_oK`, `_pcK`, ...).
+    fn ident_n(&mut self, prefix: &str, k: usize) {
+        let _ = write!(self.text, "\"{prefix}{k}\"");
     }
 
     fn ident(&mut self, name: &str) {
@@ -230,8 +393,8 @@ impl<'a> Sql<'a> {
         self.text.push('\'');
     }
 
-    fn qual(&mut self, alias: &str, col: &str) {
-        self.ident(alias);
+    fn qual(&mut self, alias: Alias, col: &str) {
+        self.push_alias(alias);
         self.text.push('.');
         self.ident(col);
     }
@@ -263,13 +426,22 @@ impl<'a> Sql<'a> {
         }
     }
 
-    /// `(($n)::cast)` binding one value.
-    fn param(&mut self, v: &ir::SqlValue) {
-        self.params.push(v.text.clone());
+    /// `(($n)::cast)` binding one value; returns the param slot index.
+    fn param_text(&mut self, text: Option<String>, cast: &str) -> usize {
+        self.params.push(text);
         let n = self.params.len();
         let _ = write!(self.text, "((${n})");
-        self.push_cast(&v.cast);
+        self.push_cast(cast);
         self.text.push(')');
+        n - 1
+    }
+
+    fn param(&mut self, v: &ir::SqlValue) -> usize {
+        self.param_text(v.text.clone(), &v.cast)
+    }
+
+    fn param_i64(&mut self, v: i64) {
+        self.param_text(Some(v.to_string()), "int8");
     }
 
     /// `(($n)::elem_cast[])` binding one array-literal parameter built from
@@ -295,11 +467,7 @@ impl<'a> Sql<'a> {
             }
         }
         lit.push('}');
-        self.params.push(Some(lit));
-        let n = self.params.len();
-        let _ = write!(self.text, "((${n})");
-        self.push_cast(&format!("{elem_cast}[]"));
-        self.text.push(')');
+        self.param_text(Some(lit), &format!("{elem_cast}[]"));
     }
 }
 
@@ -325,7 +493,7 @@ struct Ord<'a> {
 /// Join condition of a lateral/EXISTS child against its parent row:
 /// `(("child"."child_col") = ("parent"."parent_col"))`.
 struct Corr<'a> {
-    parent_alias: &'a str,
+    parent_alias: Alias,
     parent_col: &'a str,
     child_col: &'a str,
 }
@@ -418,11 +586,11 @@ fn emit_stream_select(b: &mut Sql, table: &str, ra: &RowsArgs, sel: &ir::ObjectS
     b.push("), '[]'))::text AS \"root\"");
     for k in 0..ra.order.len() {
         b.push(", (array_agg((");
-        b.ident(&format!("_o{k}"));
+        b.ident_n("_o", k);
         b.push(")::text");
         emit_order_by_refs(b, &ra.order);
         b.push("))[count(*)] AS ");
-        b.ident(&format!("cursor_{k}"));
+        b.ident_n("cursor_", k);
     }
     b.push(" FROM (");
     emit_rows_middle(b, table, ra, sel, None);
@@ -432,7 +600,7 @@ fn emit_stream_select(b: &mut Sql, table: &str, ra: &RowsArgs, sel: &ir::ObjectS
 fn emit_order_by_refs(b: &mut Sql, order: &[Ord]) {
     for (k, o) in order.iter().enumerate() {
         b.push(if k == 0 { " ORDER BY " } else { ", " });
-        b.ident(&format!("_o{k}"));
+        b.ident_n("_o", k);
         b.push(" ");
         b.push(o.dir);
     }
@@ -456,13 +624,13 @@ fn emit_rows_middle(
     if !order_in_base && !ra.distinct_on.is_empty() {
         emit_middle_distinct(b, ra.distinct_on.len());
     }
-    emit_row_json(b, &t, sel, &rel_aliases);
+    emit_row_json(b, t, sel, &rel_aliases);
     b.push(" AS \"_v\"");
-    emit_order_cols(b, &t, &ra.order, &order_join_aliases);
+    emit_order_cols(b, t, &ra.order, &order_join_aliases);
     b.push(" FROM ");
-    emit_base(b, table, &t, ra, corr, order_in_base);
-    emit_order_rel_joins(b, &t, &ra.order, &order_join_aliases);
-    emit_rel_laterals(b, &t, sel, &rel_aliases);
+    emit_base(b, table, t, ra, corr, order_in_base);
+    emit_order_rel_joins(b, t, &ra.order, &order_join_aliases);
+    emit_rel_laterals(b, t, sel, &rel_aliases);
     if !order_in_base {
         emit_middle_order_limit(b, ra);
     }
@@ -474,7 +642,7 @@ fn emit_middle_distinct(b: &mut Sql, n_cols: usize) {
         if k > 0 {
             b.push(", ");
         }
-        b.ident(&format!("_o{k}"));
+        b.ident_n("_o", k);
     }
     b.push(") ");
 }
@@ -484,7 +652,7 @@ fn emit_middle_distinct(b: &mut Sql, n_cols: usize) {
 /// text) can reference the leaf alias that `emit_order_rel_joins` later
 /// joins into the FROM clause — the same alloc-then-reference pattern
 /// `alloc_rel_aliases`/`emit_rel_laterals` use for relationship fields.
-fn alloc_order_join_aliases(b: &mut Sql, order: &[Ord]) -> Vec<Option<Vec<String>>> {
+fn alloc_order_join_aliases(b: &mut Sql, order: &[Ord]) -> Vec<Option<Vec<Alias>>> {
     order
         .iter()
         .map(|o| match &o.target {
@@ -496,25 +664,31 @@ fn alloc_order_join_aliases(b: &mut Sql, order: &[Ord]) -> Vec<Option<Vec<String
         .collect()
 }
 
+/// The expression one order target sorts by, shared between the `_oK`
+/// select-list columns and the row-number window in `emit_agg_middle`.
+fn emit_order_target(b: &mut Sql, t: Alias, o: &Ord, join_aliases: &Option<Vec<Alias>>) {
+    match (&o.target, join_aliases) {
+        (OrdTarget::Col(c), _) => b.qual(t, c),
+        (OrdTarget::Rel(ir::OrderTarget::ObjectRelColumn { column, .. }), Some(aliases)) => {
+            // `aliases` has one entry per path hop, and ObjectRelColumn's
+            // path is never empty (see validate.rs's chain-based builder).
+            b.qual(*aliases.last().unwrap(), column);
+        }
+        (OrdTarget::Rel(target), _) => emit_order_rel_expr(b, t, target),
+    }
+}
+
 fn emit_order_cols(
     b: &mut Sql,
-    t: &str,
+    t: Alias,
     order: &[Ord],
-    order_join_aliases: &[Option<Vec<String>>],
+    order_join_aliases: &[Option<Vec<Alias>>],
 ) {
     for (k, o) in order.iter().enumerate() {
         b.push(", ");
-        match (&o.target, &order_join_aliases[k]) {
-            (OrdTarget::Col(c), _) => b.qual(t, c),
-            (OrdTarget::Rel(ir::OrderTarget::ObjectRelColumn { column, .. }), Some(aliases)) => {
-                // `aliases` has one entry per path hop, and ObjectRelColumn's
-                // path is never empty (see validate.rs's chain-based builder).
-                b.qual(aliases.last().unwrap(), column);
-            }
-            (OrdTarget::Rel(target), _) => emit_order_rel_expr(b, t, target),
-        }
+        emit_order_target(b, t, o, &order_join_aliases[k]);
         b.push(" AS ");
-        b.ident(&format!("_o{k}"));
+        b.ident_n("_o", k);
     }
 }
 
@@ -525,9 +699,9 @@ fn emit_order_cols(
 /// unlike a join on an array relationship, which would fan out rows.
 fn emit_order_rel_joins(
     b: &mut Sql,
-    t: &str,
+    t: Alias,
     order: &[Ord],
-    order_join_aliases: &[Option<Vec<String>>],
+    order_join_aliases: &[Option<Vec<Alias>>],
 ) {
     for (o, aliases) in order.iter().zip(order_join_aliases) {
         let (OrdTarget::Rel(ir::OrderTarget::ObjectRelColumn { path, .. }), Some(aliases)) =
@@ -540,13 +714,13 @@ fn emit_order_rel_joins(
             b.push(" LEFT JOIN ");
             b.table(remote);
             b.push(" AS ");
-            b.ident(alias);
+            b.push_alias(*alias);
             b.push(" ON ((");
             b.qual(parent, local);
             b.push(") = (");
-            b.qual(alias, "id");
+            b.qual(*alias, "id");
             b.push("))");
-            parent = alias;
+            parent = *alias;
         }
     }
 }
@@ -554,10 +728,12 @@ fn emit_order_rel_joins(
 fn emit_middle_order_limit(b: &mut Sql, ra: &RowsArgs) {
     emit_order_by_refs(b, &ra.order);
     if let Some(l) = ra.limit {
-        let _ = write!(b.text, " LIMIT {l}");
+        b.push(" LIMIT ");
+        b.param_i64(l);
     }
     if let Some(o) = ra.offset {
-        let _ = write!(b.text, " OFFSET {o}");
+        b.push(" OFFSET ");
+        b.param_i64(o);
     }
 }
 
@@ -566,7 +742,7 @@ fn emit_middle_order_limit(b: &mut Sql, ra: &RowsArgs) {
 fn emit_base(
     b: &mut Sql,
     table: &str,
-    t: &str,
+    t: Alias,
     ra: &RowsArgs,
     corr: Option<&Corr>,
     order_in_base: bool,
@@ -585,7 +761,7 @@ fn emit_base(
     b.push("* FROM ");
     b.table(table);
     b.push(" AS ");
-    b.ident(t);
+    b.push_alias(t);
     b.push(" WHERE ");
 
     let mut first = true;
@@ -634,55 +810,92 @@ fn emit_base(
             b.push(o.dir);
         }
         if let Some(l) = ra.limit {
-            let _ = write!(b.text, " LIMIT {l}");
+            b.push(" LIMIT ");
+            b.param_i64(l);
         }
         if let Some(o) = ra.offset {
-            let _ = write!(b.text, " OFFSET {o}");
+            b.push(" OFFSET ");
+            b.param_i64(o);
         }
     }
     b.push(") AS ");
-    b.ident(t);
+    b.push_alias(t);
 }
 
-/// Lexicographic bound over the stream cursor columns; a NULL initial
+/// Lexicographic bound over the stream cursor columns; a missing initial
 /// value means that column is unbounded.
-fn emit_cursor_bounds(b: &mut Sql, t: &str, cursors: &[ir::StreamCursor]) {
-    let bounded: Vec<&ir::StreamCursor> = cursors
+///
+/// A present-but-NULL cursor value is a real position in the ordering
+/// (nullable cursor columns; bare ASC sorts NULLS LAST, DESC NULLS FIRST):
+/// under ASC nothing sorts strictly after NULL, so the strict bound matches
+/// nothing (the stream has drained but keeps polling); under DESC the
+/// remainder is exactly the non-null rows. Ties on a NULL position continue
+/// the lexicographic chain via `IS NULL`.
+fn emit_cursor_bounds(b: &mut Sql, t: Alias, cursors: &[ir::StreamCursor]) {
+    let bounded: Vec<(usize, &ir::StreamCursor)> = cursors
         .iter()
-        .filter(|c| c.initial_value.is_some())
+        .enumerate()
+        .filter(|(_, c)| c.initial_value.is_some())
         .collect();
 
-    fn emit_from(b: &mut Sql, t: &str, bounded: &[&ir::StreamCursor]) {
-        let c = bounded[0];
+    fn strict(b: &mut Sql, t: Alias, ci: usize, c: &ir::StreamCursor) {
         let v = c.initial_value.as_ref().unwrap();
-        let cmp = if c.descending { " < " } else { " > " };
-        b.push("(");
-        if bounded.len() > 1 {
-            b.push("((");
-            b.qual(t, &c.column);
-            b.push(")");
-            b.push(cmp);
-            b.param(v);
-            b.push(") OR (((");
-            b.qual(t, &c.column);
-            b.push(") = ");
-            b.param(v);
-            b.push(") AND ");
-            emit_from(b, t, &bounded[1..]);
-            b.push(")");
-        } else {
-            b.push("(");
-            b.qual(t, &c.column);
-            b.push(")");
-            b.push(cmp);
-            b.param(v);
+        match (&v.text, c.descending) {
+            (None, false) => b.push("('false')"),
+            (None, true) => {
+                b.push("((");
+                b.qual(t, &c.column);
+                b.push(") IS NOT NULL)");
+            }
+            (Some(_), descending) => {
+                b.push("((");
+                b.qual(t, &c.column);
+                b.push(")");
+                b.push(if descending { " < " } else { " > " });
+                let slot = b.param(v);
+                b.cursor_slots.push((ci, slot));
+                b.push(")");
+            }
         }
-        b.push(")");
+    }
+
+    fn tie(b: &mut Sql, t: Alias, ci: usize, c: &ir::StreamCursor) {
+        let v = c.initial_value.as_ref().unwrap();
+        match &v.text {
+            None => {
+                b.push("((");
+                b.qual(t, &c.column);
+                b.push(") IS NULL)");
+            }
+            Some(_) => {
+                b.push("((");
+                b.qual(t, &c.column);
+                b.push(") = ");
+                let slot = b.param(v);
+                b.cursor_slots.push((ci, slot));
+                b.push(")");
+            }
+        }
+    }
+
+    fn emit_from(b: &mut Sql, t: Alias, bounded: &[(usize, &ir::StreamCursor)]) {
+        let (ci, c) = bounded[0];
+        if bounded.len() == 1 {
+            strict(b, t, ci, c);
+            return;
+        }
+        b.push("(");
+        strict(b, t, ci, c);
+        b.push(" OR (");
+        tie(b, t, ci, c);
+        b.push(" AND ");
+        emit_from(b, t, &bounded[1..]);
+        b.push("))");
     }
     emit_from(b, t, &bounded);
 }
 
-fn alloc_rel_aliases(b: &mut Sql, sel: &ir::ObjectSelection) -> Vec<Option<String>> {
+fn alloc_rel_aliases(b: &mut Sql, sel: &ir::ObjectSelection) -> Vec<Option<Alias>> {
     sel.items
         .iter()
         .map(|item| match item {
@@ -695,7 +908,7 @@ fn alloc_rel_aliases(b: &mut Sql, sel: &ir::ObjectSelection) -> Vec<Option<Strin
 }
 
 /// `row_to_json((SELECT "_e" FROM (SELECT <items>) AS "_e"))`
-fn emit_row_json(b: &mut Sql, t: &str, sel: &ir::ObjectSelection, rel_aliases: &[Option<String>]) {
+fn emit_row_json(b: &mut Sql, t: Alias, sel: &ir::ObjectSelection, rel_aliases: &[Option<Alias>]) {
     b.push("row_to_json((SELECT \"_e\" FROM (SELECT ");
     for (i, item) in sel.items.iter().enumerate() {
         if i > 0 {
@@ -734,8 +947,8 @@ fn emit_row_json(b: &mut Sql, t: &str, sel: &ir::ObjectSelection, rel_aliases: &
             ir::SelItem::ObjectRel { alias, .. }
             | ir::SelItem::ArrayRel { alias, .. }
             | ir::SelItem::ArrayRelAggregate { alias, .. } => {
-                let rel = rel_aliases[i].as_ref().unwrap().clone();
-                b.qual(&rel, "_v");
+                let rel = rel_aliases[i].unwrap();
+                b.qual(rel, "_v");
                 b.push(" AS ");
                 b.ident(alias);
             }
@@ -746,15 +959,14 @@ fn emit_row_json(b: &mut Sql, t: &str, sel: &ir::ObjectSelection, rel_aliases: &
 
 fn emit_rel_laterals(
     b: &mut Sql,
-    t: &str,
+    t: Alias,
     sel: &ir::ObjectSelection,
-    rel_aliases: &[Option<String>],
+    rel_aliases: &[Option<Alias>],
 ) {
     for (i, item) in sel.items.iter().enumerate() {
-        let Some(rel) = rel_aliases[i].as_ref() else {
+        let Some(rel) = rel_aliases[i] else {
             continue;
         };
-        let rel = rel.clone();
         b.push(" LEFT OUTER JOIN LATERAL (");
         match item {
             ir::SelItem::ObjectRel {
@@ -807,7 +1019,7 @@ fn emit_rel_laterals(
             _ => unreachable!(),
         }
         b.push(") AS ");
-        b.ident(&rel);
+        b.push_alias(rel);
         b.push(" ON ('true')");
     }
 }
@@ -856,10 +1068,22 @@ fn emit_agg_select(
             ir::AggSelItem::Typename { .. } => {}
         }
     }
-    let col_ref = |c: &str| -> String {
-        let idx = cols.iter().position(|x| x == c).unwrap();
-        format!("_pc{idx}")
-    };
+    // Whether the statement contains at least one SQL aggregate function
+    // (count/sum/json_agg/the top-level Typename's bool_or). Without one,
+    // the "aggregate" degenerates to a plain per-row select whose output is
+    // the same constant for every table row — see the LIMIT 1 below.
+    let has_aggregate_fn = sel.items.iter().any(|item| match item {
+        ir::AggSelItem::Typename { .. } => true,
+        ir::AggSelItem::Nodes { .. } => true,
+        ir::AggSelItem::Aggregate { items, .. } => items.iter().any(|f| match f {
+            ir::AggFieldItem::Typename { .. } => false,
+            ir::AggFieldItem::Count { .. } => true,
+            ir::AggFieldItem::Op { columns, .. } => columns
+                .iter()
+                .any(|c| matches!(c, ir::AggOpColumn::Column { .. })),
+        }),
+    });
+    let col_idx = |c: &str| -> usize { cols.iter().position(|x| x == c).unwrap() };
 
     b.push("SELECT ");
     if matches!(out, Out::Root) {
@@ -887,21 +1111,21 @@ fn emit_agg_select(
                     if j > 0 {
                         b.push(", ");
                     }
-                    emit_agg_field(b, f, &col_ref);
+                    emit_agg_field(b, f, &col_idx);
                 }
                 b.push(")");
             }
             ir::AggSelItem::Nodes { alias, .. } => {
                 b.string_lit(alias);
                 b.push(", coalesce(json_agg(");
-                b.ident(&format!("_n{node_idx}"));
+                b.ident_n("_n", node_idx);
                 node_idx += 1;
                 emit_order_by_refs(b, &ra.order);
                 b.push(")");
                 // The role's response limit caps nodes rows while the
                 // aggregates above stay uncapped.
                 if let Some(n) = sel.nodes_limit {
-                    b.push(&format!(" FILTER (WHERE \"_rn\" <= {n})"));
+                    let _ = write!(b.text, " FILTER (WHERE \"_rn\" <= {n})");
                 }
                 b.push(", '[]')");
             }
@@ -916,9 +1140,16 @@ fn emit_agg_select(
     let with_row_numbers = sel.nodes_limit.is_some() && !nodes.is_empty();
     emit_agg_middle(b, table, ra, &cols, &nodes, corr, with_row_numbers);
     b.push(") AS \"_r\"");
+    if !has_aggregate_fn {
+        // Every output row is the same constant, so cap the scan at one row
+        // instead of materializing one per table row. Zero rows on an empty
+        // table still surface Hasura's "database query error" (see
+        // `run_root_query`).
+        b.push(" LIMIT 1");
+    }
 }
 
-fn emit_agg_field(b: &mut Sql, f: &ir::AggFieldItem, col_ref: &dyn Fn(&str) -> String) {
+fn emit_agg_field(b: &mut Sql, f: &ir::AggFieldItem, col_idx: &dyn Fn(&str) -> usize) {
     match f {
         ir::AggFieldItem::Typename { alias, type_name } => {
             b.string_lit(alias);
@@ -943,7 +1174,8 @@ fn emit_agg_field(b: &mut Sql, f: &ir::AggFieldItem, col_ref: &dyn Fn(&str) -> S
                     if i > 0 {
                         b.push(", ");
                     }
-                    b.qual("_r", &col_ref(c));
+                    b.push("\"_r\".");
+                    b.ident_n("_pc", col_idx(c));
                 }
                 b.push(")");
             }
@@ -978,7 +1210,8 @@ fn emit_agg_field(b: &mut Sql, f: &ir::AggFieldItem, col_ref: &dyn Fn(&str) -> S
                         }
                         b.push(op);
                         b.push("(");
-                        b.qual("_r", &col_ref(column));
+                        b.push("\"_r\".");
+                        b.ident_n("_pc", col_idx(column));
                         b.push(")");
                         if stringify {
                             b.push(")::text");
@@ -1002,7 +1235,7 @@ fn emit_agg_middle(
 ) {
     let order_in_base = ra.order_in_base();
     let t = b.alias();
-    let node_rel_aliases: Vec<Vec<Option<String>>> =
+    let node_rel_aliases: Vec<Vec<Option<Alias>>> =
         nodes.iter().map(|sel| alloc_rel_aliases(b, sel)).collect();
     let order_join_aliases = alloc_order_join_aliases(b, &ra.order);
 
@@ -1016,26 +1249,36 @@ fn emit_agg_middle(
             b.push(", ");
         }
         first = false;
-        b.qual(&t, c);
+        b.qual(t, c);
         b.push(" AS ");
-        b.ident(&format!("_pc{k}"));
+        b.ident_n("_pc", k);
     }
     for (n, sel) in nodes.iter().enumerate() {
         if !first {
             b.push(", ");
         }
         first = false;
-        emit_row_json(b, &t, sel, &node_rel_aliases[n]);
+        emit_row_json(b, t, sel, &node_rel_aliases[n]);
         b.push(" AS ");
-        b.ident(&format!("_n{n}"));
+        b.ident_n("_n", n);
     }
     if with_row_numbers {
         if !first {
             b.push(", ");
         }
         first = false;
-        // Row order follows the base subquery's ORDER BY.
-        b.push("row_number() OVER () AS \"_rn\"");
+        // The requested ORDER BY goes inside the window: an empty OVER ()
+        // numbers rows in scan order, which need not match the ordering
+        // applied above the base relation, so the `_rn <= n` FILTER would
+        // keep arbitrary rows instead of the first n in requested order.
+        b.push("row_number() OVER (");
+        for (k, o) in ra.order.iter().enumerate() {
+            b.push(if k == 0 { "ORDER BY " } else { ", " });
+            emit_order_target(b, t, o, &order_join_aliases[k]);
+            b.push(" ");
+            b.push(o.dir);
+        }
+        b.push(") AS \"_rn\"");
     }
     if first && ra.order.is_empty() {
         b.push("1");
@@ -1043,12 +1286,12 @@ fn emit_agg_middle(
         // Order columns follow with a leading comma; keep the list valid.
         b.push("1 AS \"_one\"");
     }
-    emit_order_cols(b, &t, &ra.order, &order_join_aliases);
+    emit_order_cols(b, t, &ra.order, &order_join_aliases);
     b.push(" FROM ");
-    emit_base(b, table, &t, ra, corr, order_in_base);
-    emit_order_rel_joins(b, &t, &ra.order, &order_join_aliases);
+    emit_base(b, table, t, ra, corr, order_in_base);
+    emit_order_rel_joins(b, t, &ra.order, &order_join_aliases);
     for (n, sel) in nodes.iter().enumerate() {
-        emit_rel_laterals(b, &t, sel, &node_rel_aliases[n]);
+        emit_rel_laterals(b, t, sel, &node_rel_aliases[n]);
     }
     if !order_in_base {
         emit_middle_order_limit(b, ra);
@@ -1059,10 +1302,10 @@ fn emit_agg_middle(
 /// subselect (`ObjectRelColumn` targets are LEFT JOINed in by
 /// `emit_order_rel_joins` instead; `Column` never reaches here — see
 /// `RowsArgs::from_select_args`).
-fn emit_order_rel_expr(b: &mut Sql, parent: &str, target: &ir::OrderTarget) {
+fn emit_order_rel_expr(b: &mut Sql, parent: Alias, target: &ir::OrderTarget) {
     match target {
         ir::OrderTarget::Column { .. } | ir::OrderTarget::ObjectRelColumn { .. } => {
-            unreachable!("handled directly in emit_order_cols")
+            unreachable!("handled directly in emit_order_target")
         }
         ir::OrderTarget::ArrayRelAggregate {
             path,
@@ -1080,7 +1323,7 @@ fn emit_order_rel_expr(b: &mut Sql, parent: &str, target: &ir::OrderTarget) {
                     b.push(op);
                     b.push("(");
                     if let Some(c) = column {
-                        b.qual(&a, c);
+                        b.qual(a, c);
                     } else {
                         b.push("*");
                     }
@@ -1089,9 +1332,9 @@ fn emit_order_rel_expr(b: &mut Sql, parent: &str, target: &ir::OrderTarget) {
                 b.push(" FROM ");
                 b.table(remote_table);
                 b.push(" AS ");
-                b.ident(&a);
+                b.push_alias(a);
                 b.push(" WHERE ((");
-                b.qual(&a, remote_column);
+                b.qual(a, remote_column);
                 b.push(") = (");
                 b.qual(leaf, "id");
                 b.push(")))");
@@ -1104,30 +1347,30 @@ fn emit_order_rel_expr(b: &mut Sql, parent: &str, target: &ir::OrderTarget) {
 /// `leaf` with the alias of the innermost table.
 fn emit_order_obj_path(
     b: &mut Sql,
-    parent: &str,
+    parent: Alias,
     path: &[(String, String)],
-    leaf: &mut dyn FnMut(&mut Sql, &str),
+    leaf: &mut dyn FnMut(&mut Sql, Alias),
 ) {
     match path.split_first() {
         None => leaf(b, parent),
         Some(((local, remote), rest)) => {
             let a = b.alias();
             b.push("(SELECT ");
-            emit_order_obj_path(b, &a, rest, leaf);
+            emit_order_obj_path(b, a, rest, leaf);
             b.push(" FROM ");
             b.table(remote);
             b.push(" AS ");
-            b.ident(&a);
+            b.push_alias(a);
             b.push(" WHERE ((");
             b.qual(parent, local);
             b.push(") = (");
-            b.qual(&a, "id");
+            b.qual(a, "id");
             b.push(")) LIMIT 1)");
         }
     }
 }
 
-fn emit_bool(b: &mut Sql, t: &str, e: &ir::BoolExp) {
+fn emit_bool(b: &mut Sql, t: Alias, e: &ir::BoolExp) {
     match e {
         ir::BoolExp::And(list) => {
             if list.is_empty() {
@@ -1193,19 +1436,19 @@ fn emit_bool(b: &mut Sql, t: &str, e: &ir::BoolExp) {
         } => {
             let a = b.alias();
             b.push("(EXISTS (SELECT 1 FROM (SELECT ");
-            emit_agg_predicate_expr(b, &a, pred);
+            emit_agg_predicate_expr(b, a, pred);
             b.push(" AS \"_agg\" FROM ");
             b.table(remote_table);
             b.push(" AS ");
-            b.ident(&a);
+            b.push_alias(a);
             b.push(" WHERE (((");
-            b.qual(&a, remote_column);
+            b.qual(a, remote_column);
             b.push(") = (");
             b.qual(t, "id");
             b.push("))");
             if let Some(f) = &pred.filter {
                 b.push(" AND ");
-                emit_bool(b, &a, f);
+                emit_bool(b, a, f);
             }
             b.push(")) AS \"_sub\" WHERE ");
             if pred.predicate.is_empty() {
@@ -1229,7 +1472,7 @@ fn emit_exists(
     b: &mut Sql,
     remote_table: &str,
     child_col: &str,
-    parent: &str,
+    parent: Alias,
     parent_col: &str,
     exp: &ir::BoolExp,
 ) {
@@ -1237,17 +1480,17 @@ fn emit_exists(
     b.push("(EXISTS (SELECT 1 FROM ");
     b.table(remote_table);
     b.push(" AS ");
-    b.ident(&a);
+    b.push_alias(a);
     b.push(" WHERE (((");
-    b.qual(&a, child_col);
+    b.qual(a, child_col);
     b.push(") = (");
     b.qual(parent, parent_col);
     b.push(")) AND ");
-    emit_bool(b, &a, exp);
+    emit_bool(b, a, exp);
     b.push(")))");
 }
 
-fn emit_agg_predicate_expr(b: &mut Sql, t: &str, pred: &ir::AggregatePredicate) {
+fn emit_agg_predicate_expr(b: &mut Sql, t: Alias, pred: &ir::AggregatePredicate) {
     if pred.op == "count" && pred.columns.is_empty() {
         b.push("count(*)");
         return;
@@ -1270,10 +1513,8 @@ fn emit_agg_predicate_expr(b: &mut Sql, t: &str, pred: &ir::AggregatePredicate) 
     b.push(")");
 }
 
-fn lhs_qual(out: &mut String, alias: &str, col: &str) {
-    out.push('(');
-    push_ident_to(out, alias);
-    out.push('.');
+fn lhs_qual(out: &mut String, alias: Alias, col: &str) {
+    let _ = write!(out, "(\"t{}\".", alias.0);
     push_ident_to(out, col);
     out.push(')');
 }
@@ -1374,6 +1615,13 @@ fn emit_compare(b: &mut Sql, lhs: &str, op: &ir::CompareOp, pg_type: &str) {
     }
 }
 
+/// For array-typed columns this deliberately reproduces Hasura v2.43's
+/// broken `_in`/`_nin`: each element (itself an array, text form `{a,b}`)
+/// is quoted into a flat 1-D array literal, losing dimensionality, so
+/// Postgres rejects `col = ANY(...)` with "operator does not exist" and
+/// the client sees the masked "database query error" — pinned by
+/// snapshots/default/wm-array-in-database-error.json. Do not "fix" the
+/// dimensionality.
 fn emit_in_array(b: &mut Sql, vs: &[ir::SqlValue], pg_type: &str) {
     let elem_cast = vs
         .first()
@@ -1442,8 +1690,12 @@ mod tests {
             (
                 "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" DESC NULLS FIRST), '[]'))::text AS \"root\" \
                  FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\", (\"t0\".\"big\")::text AS \"big\", 'User' AS \"__typename\") AS \"_e\")) AS \"_v\", \"t0\".\"age\" AS \"_o0\" \
-                 FROM (SELECT * FROM \"public\".\"User\" AS \"t0\" WHERE ((\"t0\".\"id\") = (($1)::text)) ORDER BY \"age\" DESC NULLS FIRST LIMIT 2 OFFSET 1) AS \"t0\") AS \"_r\"",
-                vec![Some("u1".to_string())]
+                 FROM (SELECT * FROM \"public\".\"User\" AS \"t0\" WHERE ((\"t0\".\"id\") = (($1)::text)) ORDER BY \"age\" DESC NULLS FIRST LIMIT (($2)::int8) OFFSET (($3)::int8)) AS \"t0\") AS \"_r\"",
+                vec![
+                    Some("u1".to_string()),
+                    Some("2".to_string()),
+                    Some("1".to_string())
+                ]
             )
         );
     }
@@ -1521,6 +1773,49 @@ mod tests {
     }
 
     #[test]
+    fn in_on_array_column_reproduces_hasura_error_shape() {
+        // Matches Hasura's broken flat-array encoding pinned by
+        // wm-array-in-database-error.json: elements keep their 1-D text
+        // form as quoted scalars while the cast gains a (meaningless)
+        // extra dimension, so Postgres errors on `text[] = text`.
+        let root = ir::TableRoot {
+            alias: "E".to_string(),
+            table: "E".to_string(),
+            kind: ir::TableRootKind::Many {
+                args: ir::SelectArgs {
+                    where_: Some(ir::BoolExp::Compare {
+                        column: "arrayOfStrings".to_string(),
+                        scalar: Scalar::String,
+                        pg_type: "text".to_string(),
+                        is_array: true,
+                        op: ir::CompareOp::In(vec![
+                            ir::SqlValue::new("{\"a\"}", "text[]"),
+                            ir::SqlValue::new("{\"one\",\"two\"}", "text[]"),
+                        ]),
+                    }),
+                    ..Default::default()
+                },
+                selection: ir::ObjectSelection {
+                    table: "E".to_string(),
+                    items: vec![col("id", "id", Scalar::String, "text")],
+                },
+            },
+        };
+        let (sql, params) = compile_root("public", &root);
+        assert_eq!(
+            (sql.as_str(), params),
+            (
+                "SELECT (coalesce(json_agg(\"_v\"), '[]'))::text AS \"root\" \
+                 FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\" \
+                 FROM (SELECT * FROM \"public\".\"E\" AS \"t0\" WHERE ((\"t0\".\"arrayOfStrings\") = ANY((($1)::text[][])))) AS \"t0\") AS \"_r\"",
+                vec![Some(
+                    "{\"{\\\"a\\\"}\",\"{\\\"one\\\",\\\"two\\\"}\"}".to_string()
+                )]
+            )
+        );
+    }
+
+    #[test]
     fn aggregate_with_nodes_and_typename() {
         let root = ir::TableRoot {
             alias: "User_aggregate".to_string(),
@@ -1589,6 +1884,81 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_typename_only_gets_limit_1() {
+        // `X_aggregate { aggregate { __typename } }` compiles to no SQL
+        // aggregate function; without the LIMIT 1 the statement would
+        // return one identical constant row per table row.
+        let root = ir::TableRoot {
+            alias: "User_aggregate".to_string(),
+            table: "User".to_string(),
+            kind: ir::TableRootKind::Aggregate {
+                args: ir::SelectArgs::default(),
+                selection: ir::AggregateSelection {
+                    table: "User".to_string(),
+                    items: vec![ir::AggSelItem::Aggregate {
+                        alias: "aggregate".to_string(),
+                        items: vec![ir::AggFieldItem::Typename {
+                            alias: "__typename".to_string(),
+                            type_name: "User_aggregate_fields".to_string(),
+                        }],
+                    }],
+                    nodes_limit: None,
+                },
+            },
+        };
+        let (sql, params) = compile_root("public", &root);
+        assert_eq!(
+            (sql.as_str(), params),
+            (
+                "SELECT (json_build_object('aggregate', json_build_object('__typename', 'User_aggregate_fields')))::text AS \"root\" \
+                 FROM (SELECT 1 FROM (SELECT * FROM \"public\".\"User\" AS \"t0\" WHERE ('true')) AS \"t0\") AS \"_r\" LIMIT 1",
+                vec![]
+            )
+        );
+    }
+
+    #[test]
+    fn aggregate_nodes_limit_orders_row_numbers() {
+        let root = ir::TableRoot {
+            alias: "User_aggregate".to_string(),
+            table: "User".to_string(),
+            kind: ir::TableRootKind::Aggregate {
+                args: ir::SelectArgs {
+                    order_by: vec![ir::OrderByItem {
+                        target: ir::OrderTarget::Column {
+                            column: "id".to_string(),
+                        },
+                        direction: ir::OrderDirection::Asc,
+                    }],
+                    ..Default::default()
+                },
+                selection: ir::AggregateSelection {
+                    table: "User".to_string(),
+                    items: vec![ir::AggSelItem::Nodes {
+                        alias: "nodes".to_string(),
+                        selection: ir::ObjectSelection {
+                            table: "User".to_string(),
+                            items: vec![col("id", "id", Scalar::String, "text")],
+                        },
+                    }],
+                    nodes_limit: Some(5),
+                },
+            },
+        };
+        let (sql, params) = compile_root("public", &root);
+        assert_eq!(
+            (sql.as_str(), params),
+            (
+                "SELECT (json_build_object('nodes', coalesce(json_agg(\"_n0\" ORDER BY \"_o0\" ASC NULLS LAST) FILTER (WHERE \"_rn\" <= 5), '[]')))::text AS \"root\" \
+                 FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_n0\", \
+                 row_number() OVER (ORDER BY \"t0\".\"id\" ASC NULLS LAST) AS \"_rn\", \"t0\".\"id\" AS \"_o0\" \
+                 FROM (SELECT * FROM \"public\".\"User\" AS \"t0\" WHERE ('true') ORDER BY \"id\" ASC NULLS LAST) AS \"t0\") AS \"_r\"",
+                vec![]
+            )
+        );
+    }
+
+    #[test]
     fn relationships_and_rel_order() {
         let root = ir::TableRoot {
             alias: "Gravatar".to_string(),
@@ -1645,47 +2015,145 @@ mod tests {
                  FROM (SELECT * FROM \"public\".\"Gravatar\" AS \"t0\" WHERE ('true')) AS \"t0\" \
                  LEFT JOIN \"public\".\"User\" AS \"t3\" ON ((\"t0\".\"owner_id\") = (\"t3\".\"id\")) \
                  LEFT OUTER JOIN LATERAL (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t4\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\" \
-                 FROM (SELECT * FROM \"public\".\"User\" AS \"t4\" WHERE ((\"t4\".\"id\") = (\"t0\".\"owner_id\")) LIMIT 1) AS \"t4\") AS \"t1\" ON ('true') \
+                 FROM (SELECT * FROM \"public\".\"User\" AS \"t4\" WHERE ((\"t4\".\"id\") = (\"t0\".\"owner_id\")) LIMIT (($1)::int8)) AS \"t4\") AS \"t1\" ON ('true') \
                  LEFT OUTER JOIN LATERAL (SELECT coalesce(json_agg(\"_v\"), '[]') AS \"_v\" \
                  FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t5\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\" \
-                 FROM (SELECT * FROM \"public\".\"Tag\" AS \"t5\" WHERE ((\"t5\".\"gravatar_id\") = (\"t0\".\"id\")) LIMIT 2) AS \"t5\") AS \"_r\") AS \"t2\" ON ('true') \
-                 ORDER BY \"_o0\" ASC NULLS LAST LIMIT 3) AS \"_r\"",
-                vec![]
+                 FROM (SELECT * FROM \"public\".\"Tag\" AS \"t5\" WHERE ((\"t5\".\"gravatar_id\") = (\"t0\".\"id\")) LIMIT (($2)::int8)) AS \"t5\") AS \"_r\") AS \"t2\" ON ('true') \
+                 ORDER BY \"_o0\" ASC NULLS LAST LIMIT (($3)::int8)) AS \"_r\"",
+                vec![
+                    Some("1".to_string()),
+                    Some("2".to_string()),
+                    Some("3".to_string())
+                ]
             )
         );
     }
 
-    #[test]
-    fn stream_cursor_bound() {
-        let root = ir::TableRoot {
+    fn stream_root(cursors: Vec<ir::StreamCursor>) -> ir::TableRoot {
+        ir::TableRoot {
             alias: "Token_stream".to_string(),
             table: "Token".to_string(),
             kind: ir::TableRootKind::Stream {
                 batch_size: 10,
-                cursor: vec![ir::StreamCursor {
-                    column: "tokenId".to_string(),
-                    scalar: Scalar::Numeric,
-                    pg_type: "numeric".to_string(),
-                    is_array: false,
-                    initial_value: Some(ir::SqlValue::new("5", "numeric")),
-                    descending: false,
-                }],
+                cursor: cursors,
                 where_: None,
                 selection: ir::ObjectSelection {
                     table: "Token".to_string(),
                     items: vec![col("id", "id", Scalar::String, "text")],
                 },
             },
-        };
-        let (sql, params) = compile_root("public", &root);
+        }
+    }
+
+    fn cursor(
+        column: &str,
+        initial_value: Option<ir::SqlValue>,
+        descending: bool,
+    ) -> ir::StreamCursor {
+        ir::StreamCursor {
+            column: column.to_string(),
+            scalar: Scalar::Numeric,
+            pg_type: "numeric".to_string(),
+            is_array: false,
+            initial_value,
+            descending,
+        }
+    }
+
+    #[test]
+    fn stream_cursor_bound() {
+        let root = stream_root(vec![cursor(
+            "tokenId",
+            Some(ir::SqlValue::new("5", "numeric")),
+            false,
+        )]);
+        let c = compile_root_full("public", &root);
         assert_eq!(
-            (sql.as_str(), params),
+            (c.sql.as_str(), c.params, c.cursor_slots),
             (
                 "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" ASC), '[]'))::text AS \"root\", \
                  (array_agg((\"_o0\")::text ORDER BY \"_o0\" ASC))[count(*)] AS \"cursor_0\" \
                  FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\", \"t0\".\"tokenId\" AS \"_o0\" \
-                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE ((\"t0\".\"tokenId\") > (($1)::numeric)) ORDER BY \"tokenId\" ASC LIMIT 10) AS \"t0\") AS \"_r\"",
-                vec![Some("5".to_string())]
+                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE ((\"t0\".\"tokenId\") > (($1)::numeric)) ORDER BY \"tokenId\" ASC LIMIT (($2)::int8)) AS \"t0\") AS \"_r\"",
+                vec![Some("5".to_string()), Some("10".to_string())],
+                vec![(0usize, 0usize)]
+            )
+        );
+    }
+
+    #[test]
+    fn stream_cursor_null_position_asc_matches_nothing() {
+        // ASC = NULLS LAST: no rows sort strictly after a NULL position,
+        // so the stream drains but keeps polling with an empty result.
+        let root = stream_root(vec![cursor(
+            "tokenId",
+            Some(ir::SqlValue::null("numeric")),
+            false,
+        )]);
+        let c = compile_root_full("public", &root);
+        assert_eq!(
+            (c.sql.as_str(), c.params, c.cursor_slots),
+            (
+                "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" ASC), '[]'))::text AS \"root\", \
+                 (array_agg((\"_o0\")::text ORDER BY \"_o0\" ASC))[count(*)] AS \"cursor_0\" \
+                 FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\", \"t0\".\"tokenId\" AS \"_o0\" \
+                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE ('false') ORDER BY \"tokenId\" ASC LIMIT (($1)::int8)) AS \"t0\") AS \"_r\"",
+                vec![Some("10".to_string())],
+                vec![]
+            )
+        );
+    }
+
+    #[test]
+    fn stream_cursor_null_position_desc_with_tiebreak() {
+        // DESC = NULLS FIRST: after a NULL position the remainder is the
+        // non-null rows; ties on the NULL continue via IS NULL into the
+        // second cursor column's strict bound.
+        let root = stream_root(vec![
+            cursor("blockNumber", Some(ir::SqlValue::null("numeric")), true),
+            cursor("logIndex", Some(ir::SqlValue::new("7", "numeric")), false),
+        ]);
+        let c = compile_root_full("public", &root);
+        assert_eq!(
+            (c.sql.as_str(), c.params, c.cursor_slots),
+            (
+                "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" DESC, \"_o1\" ASC), '[]'))::text AS \"root\", \
+                 (array_agg((\"_o0\")::text ORDER BY \"_o0\" DESC, \"_o1\" ASC))[count(*)] AS \"cursor_0\", \
+                 (array_agg((\"_o1\")::text ORDER BY \"_o0\" DESC, \"_o1\" ASC))[count(*)] AS \"cursor_1\" \
+                 FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\", \"t0\".\"blockNumber\" AS \"_o0\", \"t0\".\"logIndex\" AS \"_o1\" \
+                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE (((\"t0\".\"blockNumber\") IS NOT NULL) OR (((\"t0\".\"blockNumber\") IS NULL) AND ((\"t0\".\"logIndex\") > (($1)::numeric)))) ORDER BY \"blockNumber\" DESC, \"logIndex\" ASC LIMIT (($2)::int8)) AS \"t0\") AS \"_r\"",
+                vec![Some("7".to_string()), Some("10".to_string())],
+                vec![(1usize, 0usize)]
+            )
+        );
+    }
+
+    #[test]
+    fn stream_two_bounded_cursors_record_all_slots() {
+        let root = stream_root(vec![
+            cursor(
+                "blockNumber",
+                Some(ir::SqlValue::new("100", "numeric")),
+                false,
+            ),
+            cursor("logIndex", Some(ir::SqlValue::new("7", "numeric")), false),
+        ]);
+        let c = compile_root_full("public", &root);
+        assert_eq!(
+            (c.sql.as_str(), c.params, c.cursor_slots),
+            (
+                "SELECT (coalesce(json_agg(\"_v\" ORDER BY \"_o0\" ASC, \"_o1\" ASC), '[]'))::text AS \"root\", \
+                 (array_agg((\"_o0\")::text ORDER BY \"_o0\" ASC, \"_o1\" ASC))[count(*)] AS \"cursor_0\", \
+                 (array_agg((\"_o1\")::text ORDER BY \"_o0\" ASC, \"_o1\" ASC))[count(*)] AS \"cursor_1\" \
+                 FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\", \"t0\".\"blockNumber\" AS \"_o0\", \"t0\".\"logIndex\" AS \"_o1\" \
+                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE (((\"t0\".\"blockNumber\") > (($1)::numeric)) OR (((\"t0\".\"blockNumber\") = (($2)::numeric)) AND ((\"t0\".\"logIndex\") > (($3)::numeric)))) ORDER BY \"blockNumber\" ASC, \"logIndex\" ASC LIMIT (($4)::int8)) AS \"t0\") AS \"_r\"",
+                vec![
+                    Some("100".to_string()),
+                    Some("100".to_string()),
+                    Some("7".to_string()),
+                    Some("10".to_string())
+                ],
+                vec![(0usize, 0usize), (0usize, 1usize), (1usize, 2usize)]
             )
         );
     }

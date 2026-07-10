@@ -134,7 +134,11 @@ fn numeric_of(ctx: &Ctx, v: V) -> Option<Num> {
             } else if let Some(u) = n.as_u64() {
                 Some(Num::Big(u.to_string()))
             } else {
-                n.as_f64().map(Num::Float)
+                let f = n.as_f64()?;
+                Some(match ctx.var_number_originals.get(&f.to_bits()) {
+                    Some(orig) => Num::Big(orig.clone()),
+                    None => Num::Float(f),
+                })
             }
         }
         _ => None,
@@ -290,12 +294,12 @@ fn pg_cast(scalar: Scalar, pg_type: &str) -> String {
     }
 }
 
-pub(super) fn coerce_column_value(
-    ctx: &Ctx,
+pub(super) fn coerce_column_value<'a>(
+    ctx: &Ctx<'a>,
     scalar: Scalar,
     pg_type: &str,
     is_array: bool,
-    v: V,
+    v: V<'a>,
     path: &str,
 ) -> GResult<ir::SqlValue> {
     if v.is_null() {
@@ -454,14 +458,46 @@ pub(super) fn coerce_column_value(
 
 /// GraphQL literal (with variables substituted) to a JSON value, for
 /// jsonb/json column positions.
-fn value_to_json(ctx: &Ctx, v: V) -> GResult<Json> {
+fn value_to_json<'a>(ctx: &Ctx<'a>, v: V<'a>) -> GResult<Json> {
     match v {
-        V::J(j) => Ok(j.clone()),
+        V::J(j) => Ok(desentinel(ctx, j)),
         V::L(l) => literal_to_json(ctx, l),
     }
 }
 
-fn literal_to_json(ctx: &Ctx, l: &AValue) -> GResult<Json> {
+/// Sentinel numbers (see json_numbers.rs) must not leak into jsonb values;
+/// substitute the closest f64 to the original text, which is what
+/// serde_json would have parsed without the rewrite.
+fn desentinel(ctx: &Ctx, j: &Json) -> Json {
+    if ctx.var_number_originals.is_empty() {
+        return j.clone();
+    }
+    match j {
+        Json::Number(n) if n.as_i64().is_none() && n.as_u64().is_none() => {
+            let orig = n
+                .as_f64()
+                .and_then(|f| ctx.var_number_originals.get(&f.to_bits()));
+            match orig {
+                Some(orig) => orig
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(serde_json::Number::from_f64)
+                    .map(Json::Number)
+                    .unwrap_or(Json::Null),
+                None => j.clone(),
+            }
+        }
+        Json::Array(items) => Json::Array(items.iter().map(|i| desentinel(ctx, i)).collect()),
+        Json::Object(map) => Json::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), desentinel(ctx, v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn literal_to_json<'a>(ctx: &Ctx<'a>, l: &'a AValue) -> GResult<Json> {
     Ok(match l {
         q::Value::Null => Json::Null,
         q::Value::Boolean(b) => Json::Bool(*b),
@@ -635,7 +671,7 @@ fn hs_scientific_decimal(s: &str) -> String {
 
 /// Splits a decimal/scientific literal into (negative, normalized mantissa
 /// digits, e) with value = 0.digits * 10^e.
-fn parse_decimal(s: &str) -> Option<(bool, String, i64)> {
+pub(super) fn parse_decimal(s: &str) -> Option<(bool, String, i64)> {
     let s = s.trim();
     let (neg, s) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),

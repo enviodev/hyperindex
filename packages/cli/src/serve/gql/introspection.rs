@@ -439,7 +439,6 @@ mod tests {
             }],
             pg_schema: "public".to_string(),
             response_limit: None,
-            enums: std::collections::HashMap::new(),
         };
         schema_build::build(&model, Role::Public)
     }

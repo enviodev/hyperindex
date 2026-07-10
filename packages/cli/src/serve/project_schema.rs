@@ -6,15 +6,16 @@
 //! `HumanConfig` deserializers, this accepts configs written for any envio
 //! version >= 2.21.5 — old or new fields never cause a failure.
 //!
-//! `schema.graphql` is likewise parsed leniently: only entity names,
-//! entity-reference fields (object relationships) and `@derivedFrom` fields
-//! (array relationships) are extracted, since column shapes come from live
-//! Postgres introspection.
+//! `schema.graphql` is likewise parsed leniently: entity names, every
+//! db-backed field name (needed to map GraphQL field names to columns when
+//! the project uses `column_name_format: snake_case`), entity-reference
+//! fields (object relationships) and `@derivedFrom` fields (array
+//! relationships) are extracted; column shapes come from live Postgres
+//! introspection.
 
 use crate::project_paths::ParsedProjectPaths;
 use anyhow::{anyhow, Context};
 use graphql_parser::schema as gql;
-use std::collections::HashMap;
 
 pub struct ProjectSchema {
     pub entities: Vec<EntityDef>,
@@ -27,8 +28,15 @@ pub struct EntityDef {
     pub object_relationships: Vec<ObjectRel>,
     /// @derivedFrom fields
     pub array_relationships: Vec<ArrayRel>,
-    /// field name -> description, for column comments
-    pub field_descriptions: HashMap<String, String>,
+    /// Every field backed by a db column (scalars and enums — everything
+    /// that is neither an entity reference nor @derivedFrom), in schema
+    /// order.
+    pub scalar_fields: Vec<ScalarField>,
+}
+
+pub struct ScalarField {
+    pub name: String,
+    pub description: Option<String>,
 }
 
 pub struct ObjectRel {
@@ -90,7 +98,7 @@ impl ProjectSchema {
             };
             let mut object_relationships = Vec::new();
             let mut array_relationships = Vec::new();
-            let mut field_descriptions = HashMap::new();
+            let mut scalar_fields = Vec::new();
 
             for field in &obj.fields {
                 let base = base_type_name(&field.field_type);
@@ -114,7 +122,7 @@ impl ProjectSchema {
                 // plain db-backed fields, never for relationship fields
                 // (Table.DerivedFrom is skipped outright, and entity-reference
                 // fields never produce a Table.Field entry) — so relationship
-                // fields must not feed field_descriptions here.
+                // fields must not feed scalar_fields here.
                 if let Some(remote_field) = derived_from_field {
                     if entity_names.contains(&base) {
                         array_relationships.push(ArrayRel {
@@ -131,9 +139,10 @@ impl ProjectSchema {
                     });
                     continue;
                 }
-                if let Some(desc) = &field.description {
-                    field_descriptions.insert(field.name.clone(), desc.clone());
-                }
+                scalar_fields.push(ScalarField {
+                    name: field.name.clone(),
+                    description: field.description.clone(),
+                });
             }
 
             entities.push(EntityDef {
@@ -141,7 +150,7 @@ impl ProjectSchema {
                 description: obj.description.clone(),
                 object_relationships,
                 array_relationships,
-                field_descriptions,
+                scalar_fields,
             });
         }
 
@@ -169,13 +178,20 @@ fn is_list_type(t: &gql::Type<String>) -> bool {
 fn read_schema_field(config_text: &str) -> anyhow::Result<String> {
     let value: serde_yaml::Value =
         serde_yaml::from_str(config_text).context("Failed parsing config.yaml as YAML")?;
-    let schema = value
+    match value
         .as_mapping()
         .and_then(|m| m.get(serde_yaml::Value::String("schema".to_string())))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "schema.graphql".to_string());
-    Ok(schema)
+    {
+        None => Ok("schema.graphql".to_string()),
+        Some(v) => v.as_str().map(|s| s.to_string()).ok_or_else(|| {
+            let shown = serde_yaml::to_string(v)
+                .map(|s| s.trim_end().to_string())
+                .unwrap_or_else(|_| format!("{v:?}"));
+            anyhow!(
+                "Invalid `schema` value in config.yaml: expected a string path to the GraphQL schema, got: {shown}"
+            )
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -237,10 +253,28 @@ some_future_field:
     }
 
     #[test]
+    fn non_string_schema_value_is_an_error() {
+        let err = read_schema_field("schema:\n  nested: true\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Invalid `schema` value") && err.contains("nested"),
+            "unexpected error: {err}"
+        );
+        let err = read_schema_field("schema: 42\n").unwrap_err().to_string();
+        assert!(
+            err.contains("Invalid `schema` value") && err.contains("42"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn parses_relationships() {
         let schema = r#"
 type User {
   id: ID!
+  "user balance"
+  tokenBalance: BigInt!
   gravatar: Gravatar
   tokens: [Token!]! @derivedFrom(field: "owner")
 }
@@ -265,8 +299,16 @@ type Token {
                     .iter()
                     .map(|r| (r.field_name.as_str(), r.remote_field.as_str()))
                     .collect::<Vec<_>>(),
+                user.scalar_fields
+                    .iter()
+                    .map(|f| (f.name.as_str(), f.description.as_deref()))
+                    .collect::<Vec<_>>(),
             ),
-            (vec!["gravatar"], vec![("tokens", "owner")])
+            (
+                vec!["gravatar"],
+                vec![("tokens", "owner")],
+                vec![("id", None), ("tokenBalance", Some("user balance"))]
+            )
         );
     }
 }

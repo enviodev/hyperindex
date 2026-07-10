@@ -18,6 +18,7 @@ mod args;
 mod bool_exp;
 mod coerce;
 mod fragments;
+pub mod json_numbers;
 mod prescan;
 mod selection;
 mod variables;
@@ -58,6 +59,17 @@ fn perr(path: impl Into<String>, message: impl Into<String>) -> GraphQLError {
         code: CODE_PARSE_FAILED,
         status: 200,
     }
+}
+
+/// Divergence from Hasura (which has no depth limit): nesting beyond this
+/// would overflow the stack in graphql_parser and the recursive walkers.
+const MAX_DEPTH: usize = 100;
+
+fn depth_error() -> GraphQLError {
+    verr(
+        "$.query",
+        format!("the query exceeds the maximum allowed nesting depth of {MAX_DEPTH}"),
+    )
 }
 
 /// Hasura reports syntax errors as validation-failed at `$.query`.
@@ -159,17 +171,31 @@ pub fn plan_request(
         used_vars: RefCell::new(HashSet::new()),
         int_originals: scan.int_originals,
         inf_float_originals: scan.inf_float_originals,
+        var_number_originals: variables_json
+            .map(json_numbers::extract_originals)
+            .unwrap_or_default(),
     };
 
     // Fragment reachability (undefined spreads, cycles) is checked before
     // variables, which are checked before any schema validation — matching
     // Hasura's inline -> resolveVariables -> parse pipeline.
-    fragment_prepass(&ctx, op.selection_set, "$.selectionSet", &mut Vec::new())?;
+    let expanded_depth = fragment_prepass(
+        &ctx,
+        op.selection_set,
+        "$.selectionSet",
+        &mut Vec::new(),
+        &mut HashMap::new(),
+        0,
+    )?;
+    if expanded_depth > MAX_DEPTH {
+        return Err(depth_error());
+    }
     variable_prepass(&ctx, op.selection_set)?;
     if let Some(vars) = variables_json {
         let used = ctx.used_vars.borrow();
         let unexpected: Vec<&str> = vars
             .keys()
+            .filter(|k| k.as_str() != json_numbers::NUMBER_ORIGINALS_KEY)
             .filter(|k| !used.contains(k.as_str()))
             .map(|k| k.as_str())
             .collect();
@@ -343,7 +369,7 @@ struct Ctx<'a> {
     response_limit: Option<i64>,
     fragments: HashMap<&'a str, &'a AFragment>,
     vars: HashMap<&'a str, VarInfo<'a>>,
-    used_vars: RefCell<HashSet<String>>,
+    used_vars: RefCell<HashSet<&'a str>>,
     /// i64-overflowing int literals were rewritten to magic sentinel values
     /// before parsing; this maps each sentinel back to the original digits.
     int_originals: HashMap<i64, String>,
@@ -352,6 +378,11 @@ struct Ctx<'a> {
     /// pattern back to the original digits, for reconstructing Hasura's
     /// error display of values the AST can no longer represent.
     inf_float_originals: HashMap<u64, String>,
+    /// JSON variable numbers that cannot round-trip through serde_json's
+    /// f64 were rewritten to sentinel values before body parsing (see
+    /// json_numbers.rs); maps each sentinel's bit pattern back to the
+    /// original number text.
+    var_number_originals: HashMap<u64, String>,
 }
 
 /// A value under coercion: either a GraphQL literal or a JSON value that
@@ -418,8 +449,8 @@ fn aeson_kind(v: V) -> &'static str {
 }
 
 impl<'a> Ctx<'a> {
-    fn mark_used(&self, name: &str) {
-        self.used_vars.borrow_mut().insert(name.to_string());
+    fn mark_used(&self, name: &'a str) {
+        self.used_vars.borrow_mut().insert(name);
     }
 
     /// Resolves a possibly-variable value at an input location, type-checking

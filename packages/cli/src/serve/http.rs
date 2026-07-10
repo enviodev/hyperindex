@@ -19,6 +19,10 @@ use std::time::Duration;
 pub struct AppState {
     pub serve: Arc<ServeState>,
     pub schemas: Arc<Schemas>,
+    /// Flips to true on the shutdown signal so long-lived WebSocket
+    /// connections can close cleanly instead of being dropped at the drain
+    /// timeout.
+    pub shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
 /// How long in-flight requests get to finish after a shutdown signal
@@ -35,9 +39,11 @@ pub async fn serve(
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
     let schemas = Arc::new(Schemas::build(&state.model));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let app_state = AppState {
         serve: state,
         schemas,
+        shutdown: shutdown_rx.clone(),
     };
 
     let app = Router::new()
@@ -52,15 +58,14 @@ pub async fn serve(
         .parse()
         .context("Invalid host/port")?;
     let listener = bind_with_keepalive(addr).context("Failed binding the serve listener")?;
-    println!("envio serve: GraphQL API at http://{addr}/v1/graphql");
+    tracing::info!("envio serve: GraphQL API at http://{addr}/v1/graphql");
 
-    let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         shutdown.await;
-        let _ = tx.send(true);
+        let _ = shutdown_tx.send(true);
     });
-    let mut graceful_rx = rx.clone();
-    let mut drain_rx = rx;
+    let mut graceful_rx = shutdown_rx.clone();
+    let mut drain_rx = shutdown_rx;
     tokio::select! {
         r = axum::serve(listener, app).with_graceful_shutdown(async move {
             let _ = graceful_rx.changed().await;
@@ -69,7 +74,7 @@ pub async fn serve(
             let _ = drain_rx.changed().await;
             tokio::time::sleep(SHUTDOWN_DRAIN_TIMEOUT).await;
         } => {
-            println!("envio serve: drain timeout reached, closing remaining connections");
+            tracing::warn!("envio serve: drain timeout reached, closing remaining connections");
         }
     }
     Ok(())
@@ -135,30 +140,59 @@ async fn livez() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-/// Resolve the request's role from headers, mirroring Hasura:
-/// - correct admin secret -> admin (or the role named in X-Hasura-Role)
+/// Compares a client-supplied admin secret without leaking match length
+/// through timing. A length mismatch still rejects (length isn't secret),
+/// but equal-length comparison never early-exits on content.
+pub fn admin_secret_matches(provided: &str, expected: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    provided.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
+/// Resolve the request's role from header values, mirroring Hasura:
+/// - correct admin secret -> admin (or the role named in X-Hasura-Role;
+///   a role that isn't in the metadata — anything but `admin`/`public`
+///   here — is an access-denied error, like Hasura v2)
 /// - wrong admin secret -> HTTP 200 with an access-denied GraphQL error
 ///   (verified live — Hasura never uses 401 for this)
 /// - no secret -> the unauthorized role (public)
+pub fn resolve_role_values(
+    provided_secret: Option<&str>,
+    requested_role: Option<&str>,
+    admin_secret: &str,
+) -> Result<Role, exec::error::GraphQLError> {
+    match provided_secret {
+        None => Ok(Role::Public),
+        Some(s) if admin_secret_matches(s, admin_secret) => match requested_role {
+            None | Some("admin") => Ok(Role::Admin),
+            Some("public") => Ok(Role::Public),
+            Some(other) => {
+                tracing::debug!(role = other, "rejecting request for unknown x-hasura-role");
+                Err(exec::error::GraphQLError {
+                    message: "your requested role is not in allowed roles".to_string(),
+                    path: "$".to_string(),
+                    code: exec::error::CODE_ACCESS_DENIED,
+                    status: 200,
+                })
+            }
+        },
+        Some(_) => {
+            tracing::debug!("rejecting request with wrong x-hasura-admin-secret");
+            Err(exec::error::GraphQLError::access_denied())
+        }
+    }
+}
+
 pub fn resolve_role(
     headers: &HeaderMap,
     admin_secret: &str,
 ) -> Result<Role, exec::error::GraphQLError> {
-    let provided = headers
-        .get("x-hasura-admin-secret")
-        .and_then(|v| v.to_str().ok());
-    match provided {
-        None => Ok(Role::Public),
-        Some(s) if s == admin_secret => {
-            let role_header = headers.get("x-hasura-role").and_then(|v| v.to_str().ok());
-            match role_header {
-                None | Some("admin") => Ok(Role::Admin),
-                Some("public") => Ok(Role::Public),
-                Some(_) => Ok(Role::Public),
-            }
-        }
-        Some(_) => Err(exec::error::GraphQLError::access_denied()),
-    }
+    resolve_role_values(
+        headers
+            .get("x-hasura-admin-secret")
+            .and_then(|v| v.to_str().ok()),
+        headers.get("x-hasura-role").and_then(|v| v.to_str().ok()),
+        admin_secret,
+    )
 }
 
 async fn graphql_handler(
@@ -331,4 +365,75 @@ async fn ws_or_get_handler(
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> axum::response::Response {
     super::ws::handle_upgrade(state, headers, ws)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_secret_comparison() {
+        assert_eq!(
+            [
+                admin_secret_matches("secret", "secret"),
+                admin_secret_matches("secreT", "secret"),
+                admin_secret_matches("secret-longer", "secret"),
+                admin_secret_matches("", "secret"),
+                admin_secret_matches("", ""),
+            ],
+            [true, false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn role_resolution() {
+        let resolve =
+            |secret: Option<&str>, role: Option<&str>| resolve_role_values(secret, role, "s3cret");
+        let tag = |r: Result<Role, exec::error::GraphQLError>| match r {
+            Ok(Role::Admin) => "admin",
+            Ok(Role::Public) => "public",
+            Err(_) => "err",
+        };
+        assert_eq!(
+            [
+                resolve(None, None),
+                resolve(None, Some("admin")),
+                resolve(Some("s3cret"), None),
+                resolve(Some("s3cret"), Some("admin")),
+                resolve(Some("s3cret"), Some("public")),
+            ]
+            .map(tag),
+            ["public", "public", "admin", "admin", "public"]
+        );
+
+        let wrong_secret = resolve(Some("nope"), None).unwrap_err();
+        assert_eq!(
+            (
+                wrong_secret.message.as_str(),
+                wrong_secret.code,
+                wrong_secret.status
+            ),
+            (
+                "invalid \"x-hasura-admin-secret\"/\"x-hasura-access-key\"",
+                "access-denied",
+                200
+            )
+        );
+
+        // A role outside the metadata (only admin/public exist) with a
+        // valid secret is access-denied, not a silent public downgrade.
+        let unknown_role = resolve(Some("s3cret"), Some("editor")).unwrap_err();
+        assert_eq!(
+            (
+                unknown_role.message.as_str(),
+                unknown_role.code,
+                unknown_role.status
+            ),
+            (
+                "your requested role is not in allowed roles",
+                "access-denied",
+                200
+            )
+        );
+    }
 }

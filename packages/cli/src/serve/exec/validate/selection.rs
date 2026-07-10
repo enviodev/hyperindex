@@ -89,6 +89,11 @@ fn eval_directives<'a>(ctx: &'a Ctx<'a>, dirs: &'a [ADirective], sel_path: &str)
     Ok(include)
 }
 
+/// Fragments are re-expanded at every spread site during flattening, so a
+/// chain of fragments each spread twice grows exponentially; this budget on
+/// processed selection items turns that into a graceful validation error.
+const MAX_SELECTIONS: usize = 50_000;
+
 pub(super) fn collect_fields<'a>(
     ctx: &'a Ctx<'a>,
     type_name: &str,
@@ -97,12 +102,22 @@ pub(super) fn collect_fields<'a>(
 ) -> GResult<Vec<Flat<'a>>> {
     let mut out: Vec<Flat<'a>> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
+    let mut budget = MAX_SELECTIONS;
     for set in sets {
-        collect_into(ctx, type_name, set, sel_path, &mut out, &mut index)?;
+        collect_into(
+            ctx,
+            type_name,
+            set,
+            sel_path,
+            &mut out,
+            &mut index,
+            &mut budget,
+        )?;
     }
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_into<'a>(
     ctx: &'a Ctx<'a>,
     type_name: &str,
@@ -110,8 +125,18 @@ fn collect_into<'a>(
     sel_path: &str,
     out: &mut Vec<Flat<'a>>,
     index: &mut HashMap<String, usize>,
+    budget: &mut usize,
 ) -> GResult<()> {
     for item in &set.items {
+        if *budget == 0 {
+            return Err(verr(
+                sel_path,
+                format!(
+                    "the selection set exceeds the maximum of {MAX_SELECTIONS} selections after fragment expansion"
+                ),
+            ));
+        }
+        *budget -= 1;
         match item {
             q::Selection::Field(f) => {
                 if !eval_directives(ctx, &f.directives, sel_path)? {
@@ -178,7 +203,15 @@ fn collect_into<'a>(
                 // fragment silently, as Hasura does.
                 let q::TypeCondition::On(cond) = &frag.type_condition;
                 if cond == type_name {
-                    collect_into(ctx, type_name, &frag.selection_set, sel_path, out, index)?;
+                    collect_into(
+                        ctx,
+                        type_name,
+                        &frag.selection_set,
+                        sel_path,
+                        out,
+                        index,
+                        budget,
+                    )?;
                 }
             }
             q::Selection::InlineFragment(inline) => {
@@ -190,7 +223,15 @@ fn collect_into<'a>(
                     Some(q::TypeCondition::On(cond)) => cond == type_name,
                 };
                 if matches {
-                    collect_into(ctx, type_name, &inline.selection_set, sel_path, out, index)?;
+                    collect_into(
+                        ctx,
+                        type_name,
+                        &inline.selection_set,
+                        sel_path,
+                        out,
+                        index,
+                        budget,
+                    )?;
                 }
             }
         }
@@ -199,7 +240,8 @@ fn collect_into<'a>(
 }
 
 fn args_equal(a: &[(String, AValue)], b: &[(String, AValue)]) -> bool {
-    let to_map =
-        |args: &[(String, AValue)]| -> BTreeMap<String, AValue> { args.iter().cloned().collect() };
+    let to_map = |args: &[(String, AValue)]| -> BTreeMap<&str, &AValue> {
+        args.iter().map(|(k, v)| (k.as_str(), v)).collect()
+    };
     to_map(a) == to_map(b)
 }

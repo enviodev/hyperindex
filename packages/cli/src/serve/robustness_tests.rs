@@ -11,7 +11,9 @@
 //!   never change a cached plan's result type);
 //! - a frozen (SIGSTOP'd) Postgres cannot hang requests beyond the
 //!   client-side query timeout;
-//! - the shutdown signal actually stops the server;
+//! - the shutdown signal actually stops the server, and active WebSocket
+//!   subscriptions get a `complete` frame plus a 1001 close instead of a
+//!   dropped socket;
 //! - a null `arguments` on an aggregate bool_exp predicate is a validation
 //!   error for every op except `count` (whose `arguments` list is genuinely
 //!   nullable), instead of reaching SQL generation and producing invalid
@@ -26,7 +28,7 @@
 //! - `envio serve` started before Postgres is reachable retries within its
 //!   startup budget and becomes healthy once Postgres comes up.
 
-use super::env_config::ServeEnv;
+use super::env_config::{PgSslMode, ServeEnv};
 use super::model::ServerModel;
 use super::project_schema::ProjectSchema;
 use super::test_support::{docker_available, free_port, TestPg};
@@ -44,7 +46,7 @@ fn test_env(pg_port: u16) -> ServeEnv {
         pg_password: "testing".to_string(),
         pg_database: "envio-dev".to_string(),
         pg_schema: "public".to_string(),
-        pg_ssl: false,
+        pg_ssl: PgSslMode::Disable,
         admin_secret: "testing".to_string(),
         response_limit: None,
         aggregate_entities: vec![],
@@ -564,6 +566,100 @@ async fn black_holed_websocket_client_is_closed_within_30s() {
         (true, true),
         "server should close a black-holed client's connection within 30s"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_closes_websocket_subscriptions_cleanly() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if !docker_available() {
+        eprintln!("skipping: docker is not available");
+        return;
+    }
+    let pg = TestPg::start();
+    let mut server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "1",
+            "type": "subscribe",
+            "payload": { "query": SUBSCRIBE_QUERY }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("subscription should push an initial live-query result")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(first, TMessage::Text(_)));
+
+    server.shutdown.take().unwrap().send(()).unwrap();
+
+    // Well before the 25s drain timeout, the server must send `complete`
+    // for the active subscription and then a 1001 (going away) close.
+    let started = Instant::now();
+    let (saw_complete, close_code) = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut saw_complete = false;
+        loop {
+            match ws.next().await {
+                Some(Ok(TMessage::Text(text))) => {
+                    let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if frame["type"] == "complete" && frame["id"] == "1" {
+                        saw_complete = true;
+                    }
+                }
+                Some(Ok(TMessage::Close(frame))) => {
+                    return (saw_complete, frame.map(|f| u16::from(f.code)));
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => return (saw_complete, None),
+            }
+        }
+    })
+    .await
+    .expect("server should close the websocket before the drain timeout");
+
+    assert_eq!(
+        (
+            saw_complete,
+            close_code,
+            started.elapsed() < Duration::from_secs(10)
+        ),
+        (true, Some(u16::from(CloseCode::Away)), true),
+        "shutdown should complete active operations and close with 1001"
+    );
+
+    let serve_result = tokio::time::timeout(Duration::from_secs(15), &mut server.handle)
+        .await
+        .expect("server task should stop after connections close")
+        .expect("serve task should not panic");
+    assert!(serve_result.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]

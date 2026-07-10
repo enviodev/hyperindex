@@ -50,7 +50,21 @@ pub struct ServeState {
 }
 
 pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
+    init_tracing();
     let env = env_config::ServeEnv::load(project_paths)?;
+    tracing::info!(
+        pg_host = %env.pg_host,
+        pg_port = env.pg_port,
+        pg_database = %env.pg_database,
+        pg_schema = %env.pg_schema,
+        pg_ssl_mode = env.pg_ssl.as_str(),
+        pool_max_size = env.pool_max_size,
+        ws_ping_interval_ms = env.ws_ping_interval_ms,
+        healthz_timeout_ms = env.healthz_timeout_ms,
+        startup_retry_budget_ms = env.startup_retry_budget_ms,
+        query_timeout_ms = env.query_timeout_ms,
+        "envio serve starting"
+    );
 
     let project_schema = project_schema::ProjectSchema::load(project_paths, &env)
         .context("Failed loading schema.graphql")?;
@@ -81,6 +95,17 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
     http::serve(state, &args.host, args.port, shutdown_signal()).await
 }
 
+/// Structured logging for the serve path only. The rest of the CLI logs via
+/// env_logger; that's initialized lazily on the indexing path
+/// (evm_hypersync_source), which `envio serve` never reaches, so the two
+/// never contend for the global `log` logger. Filtered by RUST_LOG,
+/// defaulting to `info` (per-connection/per-operation events are `debug`).
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
 /// Longest single backoff sleep between startup retry attempts, regardless
 /// of how large the total budget is.
 const STARTUP_RETRY_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
@@ -109,8 +134,8 @@ async fn wait_for_pg(
                 if budget_ms > 0 && is_pg_unreachable(&e) && start.elapsed() + backoff < budget =>
             {
                 attempt += 1;
-                println!(
-                    "envio serve: Postgres not reachable yet (attempt {attempt}): {e:#}. Retrying in {:.1}s...",
+                tracing::warn!(
+                    "Postgres not reachable yet (attempt {attempt}): {e:#}. Retrying in {:.1}s...",
                     backoff.as_secs_f32()
                 );
                 tokio::time::sleep(backoff).await;
@@ -159,5 +184,5 @@ async fn shutdown_signal() {
     {
         let _ = ctrl_c.await;
     }
-    println!("envio serve: shutdown signal received, draining connections");
+    tracing::info!("shutdown signal received, draining connections");
 }

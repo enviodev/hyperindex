@@ -7,8 +7,6 @@ use std::collections::HashMap;
 pub struct Catalog {
     /// Tables and views in the target schema, keyed by relation name.
     pub relations: HashMap<String, Relation>,
-    /// Enum type name (pg_type.typname) -> ordered labels.
-    pub enums: HashMap<String, Vec<String>>,
 }
 
 pub struct Relation {
@@ -88,21 +86,6 @@ pub async fn introspect(
         .await
         .context("Failed querying pg_catalog for primary keys")?;
 
-    let enum_rows = client
-        .query(
-            r#"
-            SELECT t.typname::text, e.enumlabel::text
-            FROM pg_type t
-            JOIN pg_namespace n ON n.oid = t.typnamespace
-            JOIN pg_enum e ON e.enumtypid = t.oid
-            WHERE n.nspname = $1
-            ORDER BY t.typname, e.enumsortorder
-            "#,
-            &[&pg_schema],
-        )
-        .await
-        .context("Failed querying pg_catalog for enums")?;
-
     let mut relations: HashMap<String, Relation> = HashMap::new();
     for row in column_rows {
         let table_name: String = row.get("table_name");
@@ -135,12 +118,5 @@ pub async fn introspect(
         }
     }
 
-    let mut enums: HashMap<String, Vec<String>> = HashMap::new();
-    for row in enum_rows {
-        let type_name: String = row.get(0);
-        let label: String = row.get(1);
-        enums.entry(type_name).or_default().push(label);
-    }
-
-    Ok(Catalog { relations, enums })
+    Ok(Catalog { relations })
 }
