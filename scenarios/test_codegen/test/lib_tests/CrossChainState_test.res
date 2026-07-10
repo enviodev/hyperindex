@@ -571,6 +571,38 @@ describe("ChainState density from the ready buffer", () => {
     t.expect(cs->ChainState.effectiveDensity).toEqual(Some(0.5))
   })
 
+  it("mid-batch, the span starts at the processing block, not the committed one", t => {
+    // A batch was created up to block 100, consuming the buffer's head; its
+    // progress commits only after processing. The remaining 2 ready items span
+    // the 100 blocks since the batch's progress — not the 201 since the still
+    // uncommitted progress (-1).
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=200,
+      ~bufferBlocks=[150, 160],
+    )
+    let progressedChainsById = Dict.make()
+    progressedChainsById->Utils.Dict.setByInt(
+      1,
+      (
+        {
+          batchSize: 5,
+          progressBlockNumber: 100,
+          sourceBlockNumber: 1_000_000,
+          totalEventsProcessed: 5.,
+          fetchState: (cs->ChainState.toChainBeforeBatch).fetchState,
+          isProgressAtHeadWhenBatchCreated: false,
+        }: Batch.chainAfterBatch
+      ),
+    )
+    cs->ChainState.advanceAfterBatch(
+      ~batch={...emptyBatch, progressedChainsById},
+      ~enteringReorgThreshold=false,
+    )
+    t.expect(cs->ChainState.effectiveDensity).toEqual(Some(2. /. 100.))
+  })
+
   it("ready items alone take the chain out of cold mode before the first batch commits", t => {
     let cs = makeFetchingChainState(
       ~chainId=1,

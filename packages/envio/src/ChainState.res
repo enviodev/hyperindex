@@ -13,6 +13,11 @@ type t = {
   mutable isProgressAtHead: bool,
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
+  // Progress of the batch currently being processed. The buffer is consumed at
+  // batch creation (see advanceAfterBatch), so this runs ahead of
+  // committedProgressBlockNumber until the batch commits — it's the true lower
+  // boundary of the remaining buffer's block span.
+  mutable processingBlockNumber: int,
   mutable numEventsProcessed: float,
   // Running sum of in-flight queries' itemsTarget, kept here so the
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
@@ -90,6 +95,7 @@ let make = (
   isProgressAtHead,
   timestampCaughtUpToHeadOrEndblock,
   committedProgressBlockNumber,
+  processingBlockNumber: committedProgressBlockNumber,
   numEventsProcessed,
   pendingBudget: 0.,
   chainDensity,
@@ -399,7 +405,7 @@ let fetchCeiling = (cs: t) => {
 // batches commit.
 let readyBufferDensity = (cs: t) => {
   let readyCount = cs.fetchState->FetchState.bufferReadyCount
-  let span = cs.fetchState->FetchState.bufferBlockNumber - cs.committedProgressBlockNumber
+  let span = cs.fetchState->FetchState.bufferBlockNumber - cs.processingBlockNumber
   if readyCount > 0 && span > 0 {
     Some(readyCount->Int.toFloat /. span->Int.toFloat)
   } else {
@@ -881,6 +887,10 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
     cs.fetchState = enteringReorgThreshold
       ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
       : chainAfterBatch.fetchState
+
+    // The batch's items just left the buffer, so the remaining buffer's span
+    // starts at the batch's progress.
+    cs.processingBlockNumber = chainAfterBatch.progressBlockNumber
   | None => ()
   }
 
@@ -967,6 +977,13 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
+
+      // Normally already set by advanceAfterBatch at batch creation; catch up
+      // here for paths that commit progress without it.
+      cs.processingBlockNumber = Pervasives.max(
+        cs.processingBlockNumber,
+        chainAfterBatch.progressBlockNumber,
+      )
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
       // Processed blocks' transactions and blocks are no longer needed.
       cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
@@ -1051,6 +1068,7 @@ let rollback = (
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
+    cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
     if isReorgChain {
@@ -1069,6 +1087,7 @@ let rollback = (
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,
       )
+      cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, rollbackTargetBlockNumber)
     }
   }
 }
