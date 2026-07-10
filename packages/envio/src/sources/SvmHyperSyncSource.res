@@ -543,14 +543,6 @@ let make = (
       ->Utils.Dict.dangerouslyGetNonOption(highestSlot->Int.toString)
       ->Option.getOr(0)
 
-    // Best-effort (slot, blockhash) pairs from the blocks the server returned
-    // for this range. Gaps (skipped slots, or slots without matched data) are
-    // fine — reorg detection only compares hashes for slots it has observed.
-    let blockHashes = resp.data.blocks->Array.map((b): ReorgDetection.blockData => {
-      blockNumber: b.slot,
-      blockHash: b.blockhash,
-    })
-
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
@@ -559,11 +551,11 @@ let make = (
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
       // Raw blocks kept in Rust; materialised onto the payload at batch prep.
-      blockStore: Some(blockStore),
+      // Their (slot, blockhash) pairs also drive reorg detection on merge.
+      blockStore,
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }

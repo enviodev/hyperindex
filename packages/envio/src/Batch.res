@@ -12,7 +12,10 @@ type chainAfterBatch = {
 
 type chainBeforeBatch = {
   fetchState: FetchState.t,
-  reorgDetection: ReorgDetection.t,
+  // The chain's block store, read for the checkpoint block hashes it tracks
+  // for reorg detection.
+  blockStore: BlockStore.t,
+  shouldRollbackOnReorg: bool,
   progressBlockNumber: int,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
@@ -122,7 +125,9 @@ let getProgressedChainsById = {
 @inline
 let addReorgCheckpoints = (
   ~prevCheckpointId,
-  ~reorgDetection: ReorgDetection.t,
+  ~blockStore: BlockStore.t,
+  ~shouldRollbackOnReorg,
+  ~isInReorgThreshold,
   ~fromBlockExclusive,
   ~toBlockExclusive,
   ~chainId,
@@ -132,12 +137,10 @@ let addReorgCheckpoints = (
   ~mutCheckpointBlockHashes,
   ~mutCheckpointEventsProcessed,
 ) => {
-  if (
-    reorgDetection.shouldRollbackOnReorg && !(reorgDetection.dataByBlockNumber->Utils.Dict.isEmpty)
-  ) {
+  if shouldRollbackOnReorg && isInReorgThreshold {
     let prevCheckpointId = ref(prevCheckpointId)
     for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
-      switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
+      switch blockStore->BlockStore.getHash(blockNumber) {
       | Null.Value(hash) =>
         let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
         prevCheckpointId := checkpointId
@@ -209,7 +212,9 @@ let prepareBatch = (
           prevCheckpointId :=
             addReorgCheckpoints(
               ~chainId=fetchState.chainId,
-              ~reorgDetection=chainBeforeBatch.reorgDetection,
+              ~blockStore=chainBeforeBatch.blockStore,
+              ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
+              ~isInReorgThreshold,
               ~prevCheckpointId=prevCheckpointId.contents,
               ~fromBlockExclusive=prevBlockNumber.contents,
               ~toBlockExclusive=blockNumber,
@@ -227,7 +232,9 @@ let prepareBatch = (
           checkpointBlockNumbers->Array.push(blockNumber)->ignore
           checkpointBlockHashes
           ->Array.push(
-            chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
+            isInReorgThreshold
+              ? chainBeforeBatch.blockStore->BlockStore.getHash(blockNumber)
+              : Null.Null,
           )
           ->ignore
           checkpointEventsProcessed->Array.push(1)->ignore
@@ -254,7 +261,9 @@ let prepareBatch = (
     prevCheckpointId :=
       addReorgCheckpoints(
         ~chainId=fetchState.chainId,
-        ~reorgDetection=chainBeforeBatch.reorgDetection,
+        ~blockStore=chainBeforeBatch.blockStore,
+        ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
+        ~isInReorgThreshold,
         ~prevCheckpointId=prevCheckpointId.contents,
         ~fromBlockExclusive=prevBlockNumber.contents,
         ~toBlockExclusive=progressBlockNumberAfterBatch + 1, // Make it inclusive

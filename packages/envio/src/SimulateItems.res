@@ -398,7 +398,12 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
           let items = parse(~simulateItems, ~config, ~chainConfig)
           let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
-          let source = SimulateSource.make(~items, ~endBlock, ~chain)
+          let source = SimulateSource.make(
+            ~items,
+            ~endBlock,
+            ~chain,
+            ~ecosystem=config.ecosystem.name,
+          )
           {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }

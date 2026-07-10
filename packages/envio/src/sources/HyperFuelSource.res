@@ -425,7 +425,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
           transaction: {
             "id": item.transactionId,
           }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-          block: block->Obj.magic,
           srcAddress: contractAddress,
           logIndex: receiptIndex,
         }->Fuel.fromPayload,
@@ -433,13 +432,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    // Fuel never rolls back on reorg, so block hashes here are purely informational
-    // for detect-only logging via ReorgDetection.
-    let blockHashes = pageUnsafe.items->Array.map(({block}) => {
-      ReorgDetection.blockNumber: block.height,
-      blockHash: block.id,
-    })
 
     let latestFetchedBlockTimestamp = switch pageUnsafe.items->Array.get(
       pageUnsafe.items->Array.length - 1,
@@ -459,13 +451,15 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
-      // Fuel keeps transaction and block on the payload; no store pages.
+      // Fuel keeps the transaction inline on the payload; the raw blocks are in
+      // the page store and materialised onto the payload at batch prep. Fuel
+      // never rolls back on reorg, so the block ids in the store are purely
+      // informational for detect-only logging.
       transactionStore: None,
-      blockStore: None,
+      blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }

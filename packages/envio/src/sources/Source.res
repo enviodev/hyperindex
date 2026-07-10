@@ -17,20 +17,16 @@ Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   knownHeight: int,
-  // Best-effort (blockNumber, blockHash) pairs observed while fetching this range.
-  // Used by reorg detection; gaps are OK, no extra requests are made to fill them.
-  // Duplicates with the same block number are allowed — registerReorgGuard treats
-  // a within-array hash mismatch on the same block number as a reorg.
-  blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
   // Page of transactions for this response's items, keyed by (blockNumber,
   // transactionIndex); merged into the chain's store on apply. `None` for
   // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
   transactionStore: option<TransactionStore.t>,
-  // Page of blocks for this response's items, keyed by block number; merged into
-  // the chain's store on apply. `None` for sources that keep the block fully
-  // inline on the payload (RPC/Fuel/Simulate).
-  blockStore: option<BlockStore.t>,
+  // Page of blocks observed while fetching this range, keyed by block number;
+  // merged into the chain's store on apply, where its hashes drive reorg
+  // detection. Sources that keep the block inline on the payload (RPC/Simulate)
+  // contribute hash-only rows built from the block hashes they saw.
+  blockStore: BlockStore.t,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,

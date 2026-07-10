@@ -447,6 +447,17 @@ impl StoreCol {
             _ => panic!("expected a var column"),
         }
     }
+
+    /// Raw bytes of a byte-backed cell (hash comparison). `Fixed` carries no
+    /// per-slot validity, so the caller must have checked the row's mask bit.
+    fn cell_bytes(&self, slot: usize) -> Option<&[u8]> {
+        match self {
+            StoreCol::Fixed { width, data } => Some(&data[slot * *width..(slot + 1) * *width]),
+            StoreCol::Var(v) => v[slot].as_deref(),
+            StoreCol::Str(v) => v[slot].as_deref().map(str::as_bytes),
+            _ => panic!("expected a byte-backed column"),
+        }
+    }
 }
 
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
@@ -564,6 +575,71 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             .collect();
         self.merge_batch(live_keys, cols);
         other.clear();
+    }
+
+    /// Bytes of `field`'s cell for `key`, if the row exists and carries the
+    /// field.
+    pub(crate) fn field_bytes(&self, key: &K, field: usize) -> Option<&[u8]> {
+        let &slot = self.by_key.get(key)?;
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field]
+            .as_ref()
+            .and_then(|c| c.cell_bytes(slot as usize))
+    }
+
+    /// Lowest key `>= from` carrying `field` in both tables whose cells differ.
+    pub(crate) fn first_field_mismatch(
+        &self,
+        other: &Table<K>,
+        field: usize,
+        from: K,
+    ) -> Option<K> {
+        for key in other.order.range(from..).map(|(k, _)| k) {
+            if let (Some(a), Some(b)) =
+                (self.field_bytes(key, field), other.field_bytes(key, field))
+            {
+                if a != b {
+                    return Some(key.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Drop rows with keys `<= up_to` (processed), except rows with keys
+    /// `>= keep_from` that carry `field`: those are reduced to that one field,
+    /// so it stays readable after the rest of the row is gone.
+    pub(crate) fn prune_keeping_field(&mut self, up_to: K, keep_from: K, field: usize) {
+        let bit = 1u64 << field;
+        let pruned: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
+        for k in pruned {
+            let slot = self.by_key[&k];
+            if k >= keep_from && self.masks[slot as usize] & bit != 0 {
+                let mask = self.masks[slot as usize];
+                for f in 0..self.n_fields {
+                    if f != field && mask & (1u64 << f) != 0 {
+                        self.cols[f].as_mut().unwrap().clear(slot as usize);
+                    }
+                }
+                self.masks[slot as usize] = bit;
+            } else {
+                self.by_key.remove(&k);
+                self.order.remove(&k);
+                self.free_slot(slot);
+            }
+        }
+    }
+
+    /// Keys in `[from, below)` whose row carries `field`, ascending.
+    pub(crate) fn keys_with_field(&self, from: K, below: K, field: usize) -> Vec<K> {
+        let bit = 1u64 << field;
+        self.order
+            .range(from..below)
+            .filter(|(_, &slot)| self.masks[slot as usize] & bit != 0)
+            .map(|(k, _)| k.clone())
+            .collect()
     }
 
     /// Drop rows with keys `<= up_to` (processed).

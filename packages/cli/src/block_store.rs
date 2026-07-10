@@ -6,11 +6,14 @@
 //! plain JS objects. The store lives on the ReScript `ChainState`; fetch
 //! responses merge in, and rows are pruned or rolled back by block.
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
+use hypersync_client::format::{Address, Data, Hash, Hex, Nonce, Quantity};
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -118,6 +121,28 @@ impl SvmBlockField {
             Height => "height",
             ParentSlot => "parentSlot",
             ParentHash => "parentHash",
+        }
+    }
+}
+
+/// Fuel block field codes, mirroring `Fuel.res` `blockFields` by ordinal (the
+/// bit position in the selection mask). Keep the two in sync.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
+#[repr(i32)]
+pub enum FuelBlockField {
+    Height = 0,
+    Time = 1,
+    Id = 2,
+}
+
+impl FuelBlockField {
+    /// JS property name; must match `Fuel.res` `blockFields`.
+    pub fn name(self) -> &'static str {
+        use FuelBlockField::*;
+        match self {
+            Height => "height",
+            Time => "time",
+            Id => "id",
         }
     }
 }
@@ -297,6 +322,203 @@ fn decode_svm_block_columns(
     )
 }
 
+/// One Fuel block's decoded cells: the insert-side row shape shared by the
+/// Rust client path and `fromJsFuel`.
+pub struct FuelBlockRow {
+    pub height: u64,
+    pub id: Option<[u8; 32]>,
+    pub time: Option<i64>,
+}
+
+/// Build one Fuel field's column; `None` for the key-derived `height`.
+fn fuel_block_col(field: FuelBlockField, blocks: &[FuelBlockRow]) -> Option<AnyCol> {
+    use FuelBlockField::*;
+    match field {
+        // The height is the table key, not a column.
+        Height => None,
+        Time => i64_from(blocks, |b| b.time),
+        Id => fixed_from(blocks, 32, |b| b.id.as_ref().map(|h| h.as_slice())),
+    }
+}
+
+fn decode_fuel_block_field(
+    field: FuelBlockField,
+    scratch: &[Option<AnyCol>],
+    block_numbers: &[i64],
+    masks: &[u64],
+) -> Result<Column> {
+    use FuelBlockField::*;
+    let bit = 1u64 << (field as u32);
+    let col = scratch[field as usize].as_ref();
+    let len = block_numbers.len();
+    Ok(match field {
+        // The height is the store key, so it's always available regardless of
+        // whether the block row was fetched.
+        Height => Column::I64(
+            block_numbers
+                .iter()
+                .zip(masks)
+                .map(|(&n, &m)| (m & bit != 0).then_some(n))
+                .collect(),
+        ),
+        Time => Column::I64(i64_cells(col, len)),
+        Id => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_full(b))))?),
+    })
+}
+
+fn decode_fuel_block_columns(
+    scratch: &[Option<AnyCol>],
+    block_numbers: &[i64],
+    masks: &[u64],
+) -> Result<Columns> {
+    build_columns(
+        FuelBlockField::VARIANTS,
+        masks,
+        block_numbers.len(),
+        |f| f as u32,
+        |f| f.name(),
+        |f| decode_fuel_block_field(f, scratch, block_numbers, masks),
+    )
+}
+
+/// A sparse EVM block from JS for `fromJsEvm`: every field optional except the
+/// key. Field types mirror the materialised `Internal.eventBlock` shape, so a
+/// block round-trips through the store unchanged.
+#[napi(object)]
+pub struct EvmBlockInput {
+    pub number: i64,
+    pub timestamp: Option<i64>,
+    pub hash: Option<String>,
+    pub parent_hash: Option<String>,
+    pub nonce: Option<BigInt>,
+    pub sha3_uncles: Option<String>,
+    pub logs_bloom: Option<String>,
+    pub transactions_root: Option<String>,
+    pub state_root: Option<String>,
+    pub receipts_root: Option<String>,
+    pub miner: Option<String>,
+    pub difficulty: Option<BigInt>,
+    pub total_difficulty: Option<BigInt>,
+    pub extra_data: Option<String>,
+    pub size: Option<BigInt>,
+    pub gas_limit: Option<BigInt>,
+    pub gas_used: Option<BigInt>,
+    pub uncles: Option<Vec<String>>,
+    pub base_fee_per_gas: Option<BigInt>,
+    pub blob_gas_used: Option<BigInt>,
+    pub excess_blob_gas: Option<BigInt>,
+    pub parent_beacon_block_root: Option<String>,
+    pub withdrawals_root: Option<String>,
+    pub l1_block_number: Option<i64>,
+    pub send_count: Option<String>,
+    pub send_root: Option<String>,
+    pub mix_hash: Option<String>,
+}
+
+/// A sparse SVM block from JS for `fromJsSvm`.
+#[napi(object)]
+pub struct SvmBlockInput {
+    pub slot: i64,
+    pub time: Option<i64>,
+    pub hash: Option<String>,
+    pub height: Option<i64>,
+    pub parent_slot: Option<i64>,
+    pub parent_hash: Option<String>,
+}
+
+/// A sparse Fuel block from JS for `fromJsFuel`.
+#[napi(object)]
+pub struct FuelBlockInput {
+    pub height: i64,
+    pub id: Option<String>,
+    pub time: Option<i64>,
+}
+
+/// A JS bigint's magnitude as minimal big-endian bytes (the `Quantity` wire
+/// shape). Sign is ignored — chain quantities are non-negative.
+fn bigint_be_bytes(b: &BigInt) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(b.words.len() * 8);
+    for w in b.words.iter().rev() {
+        out.extend_from_slice(&w.to_be_bytes());
+    }
+    match out.iter().position(|&x| x != 0) {
+        Some(idx) => out[idx..].to_vec(),
+        None => vec![0],
+    }
+}
+
+fn bigint_quantity(v: &Option<BigInt>) -> Option<Quantity> {
+    v.as_ref().map(|b| Quantity::from(bigint_be_bytes(b)))
+}
+
+fn decode_hex_opt<T: Hex>(v: &Option<String>, name: &str) -> Result<Option<T>> {
+    v.as_ref()
+        .map(|s| T::decode_hex(s).with_context(|| format!("decoding {name}")))
+        .transpose()
+}
+
+pub(crate) fn decode_hash32(s: &str, name: &str) -> Result<[u8; 32]> {
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    let mut out = [0u8; 32];
+    faster_hex::hex_decode(hex.as_bytes(), &mut out).with_context(|| format!("decoding {name}"))?;
+    Ok(out)
+}
+
+/// Rebuild a `simple_types::Block` from JS field values, so `fromJsEvm` rows
+/// go through the same column fill as fetched blocks.
+fn evm_input_to_simple(b: EvmBlockInput) -> Result<simple_types::Block> {
+    Ok(simple_types::Block {
+        number: Some(u64::try_from(b.number).context("block.number negative")?),
+        hash: decode_hex_opt(&b.hash, "block.hash")?,
+        parent_hash: decode_hex_opt(&b.parent_hash, "block.parentHash")?,
+        nonce: b
+            .nonce
+            .as_ref()
+            .map(|n| Nonce::from(n.words.first().copied().unwrap_or(0).to_be_bytes())),
+        sha3_uncles: decode_hex_opt(&b.sha3_uncles, "block.sha3Uncles")?,
+        logs_bloom: decode_hex_opt(&b.logs_bloom, "block.logsBloom")?,
+        transactions_root: decode_hex_opt(&b.transactions_root, "block.transactionsRoot")?,
+        state_root: decode_hex_opt(&b.state_root, "block.stateRoot")?,
+        receipts_root: decode_hex_opt(&b.receipts_root, "block.receiptsRoot")?,
+        miner: decode_hex_opt::<Address>(&b.miner, "block.miner")?,
+        difficulty: bigint_quantity(&b.difficulty),
+        total_difficulty: bigint_quantity(&b.total_difficulty),
+        extra_data: decode_hex_opt::<Data>(&b.extra_data, "block.extraData")?,
+        size: bigint_quantity(&b.size),
+        gas_limit: bigint_quantity(&b.gas_limit),
+        gas_used: bigint_quantity(&b.gas_used),
+        timestamp: b
+            .timestamp
+            .map(|t| Quantity::try_from(t).context("block.timestamp negative"))
+            .transpose()?,
+        uncles: b
+            .uncles
+            .map(|v| {
+                v.iter()
+                    .map(|s| Hash::decode_hex(s).context("decoding block.uncles"))
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
+        base_fee_per_gas: bigint_quantity(&b.base_fee_per_gas),
+        blob_gas_used: bigint_quantity(&b.blob_gas_used),
+        excess_blob_gas: bigint_quantity(&b.excess_blob_gas),
+        parent_beacon_block_root: decode_hex_opt(
+            &b.parent_beacon_block_root,
+            "block.parentBeaconBlockRoot",
+        )?,
+        withdrawals_root: decode_hex_opt(&b.withdrawals_root, "block.withdrawalsRoot")?,
+        withdrawals: None,
+        l1_block_number: b
+            .l1_block_number
+            .map(|v| u64::try_from(v).context("block.l1BlockNumber negative"))
+            .transpose()?
+            .map(Into::into),
+        send_count: decode_hex_opt(&b.send_count, "block.sendCount")?,
+        send_root: decode_hex_opt(&b.send_root, "block.sendRoot")?,
+        mix_hash: decode_hex_opt(&b.mix_hash, "block.mixHash")?,
+    })
+}
+
 #[napi]
 pub struct BlockStore {
     inner: Mutex<Table<u64>>,
@@ -319,20 +541,74 @@ impl BlockStore {
         Self::with_ecosystem(Ecosystem::Svm)
     }
 
-    /// Fuel store. Fuel keeps the block inline, so this store is never merged
-    /// into or materialised through — it exists only because every chain holds one.
+    /// Fuel store. Used for both fetch-response pages and the persistent store.
     #[napi(factory)]
     pub fn new_fuel() -> Self {
         Self::with_ecosystem(Ecosystem::Fuel)
     }
 
+    /// Page built from JS block objects (sparse fields), for sources that fetch
+    /// blocks in JS (RPC, simulate) and for seeding stored reorg checkpoints on
+    /// resume.
+    #[napi(factory)]
+    pub fn from_js_evm(blocks: Vec<EvmBlockInput>, should_checksum: bool) -> napi::Result<Self> {
+        let store = Self::with_ecosystem(Ecosystem::Evm { should_checksum });
+        let simple = blocks
+            .into_iter()
+            .map(evm_input_to_simple)
+            .collect::<Result<Vec<_>>>()
+            .map_err(map_err)?;
+        store.insert_evm_blocks(simple);
+        Ok(store)
+    }
+
+    #[napi(factory)]
+    pub fn from_js_svm(blocks: Vec<SvmBlockInput>) -> napi::Result<Self> {
+        let store = Self::with_ecosystem(Ecosystem::Svm);
+        store.insert_svm_inputs(blocks)?;
+        Ok(store)
+    }
+
+    #[napi(factory)]
+    pub fn from_js_fuel(blocks: Vec<FuelBlockInput>) -> napi::Result<Self> {
+        let store = Self::with_ecosystem(Ecosystem::Fuel);
+        let rows = blocks
+            .into_iter()
+            .map(|b| {
+                Ok(FuelBlockRow {
+                    height: u64::try_from(b.height).context("block.height negative")?,
+                    id: b
+                        .id
+                        .as_deref()
+                        .map(|s| decode_hash32(s, "block.id"))
+                        .transpose()?,
+                    time: b.time,
+                })
+            })
+            .collect::<Result<Vec<_>>>()
+            .map_err(map_err)?;
+        store.insert_fuel_block_rows(rows);
+        Ok(store)
+    }
+
     /// Move every row from `page` into this store (merging a fetch-response
-    /// page into the persistent per-chain store).
+    /// page into the persistent per-chain store), comparing hashes on the way:
+    /// the lowest page block at or above `from_block` whose hash differs from
+    /// the stored one is reported as a reorg. A block without a hash on either
+    /// side is skipped by the comparison. On a mismatch nothing is merged — the
+    /// stored (scanned) hashes stay intact for the rollback comparison — unless
+    /// `report_only` is set (detect-only mode), which merges anyway so the
+    /// overwritten hash doesn't re-report on every response.
     #[napi]
-    pub fn merge(&self, page: &BlockStore) {
+    pub fn merge(
+        &self,
+        page: &BlockStore,
+        from_block: i64,
+        report_only: bool,
+    ) -> Option<HashMismatch> {
         // Merging a store into itself would lock the same Mutex twice (deadlock).
         if std::ptr::eq(self, page) {
-            return;
+            return None;
         }
         // A page and its persistent store are the same per-chain ecosystem (both
         // derive it from the one chain config), so the decoder is unaffected by
@@ -340,7 +616,81 @@ impl BlockStore {
         debug_assert_eq!(self.ecosystem, page.ecosystem);
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
-        dst.append_from(&mut src);
+        let field = self.hash_field();
+        let from = u64::try_from(from_block).unwrap_or(0);
+        let mismatch = dst
+            .first_field_mismatch(&src, field, from)
+            .map(|key| HashMismatch {
+                block_number: key as i64,
+                stored_hash: self.hash_display(dst.field_bytes(&key, field).unwrap()),
+                received_hash: self.hash_display(src.field_bytes(&key, field).unwrap()),
+            });
+        if mismatch.is_none() || report_only {
+            dst.append_from(&mut src);
+        }
+        mismatch
+    }
+
+    /// Hash of a stored block, if the store still holds it. Feeds the persisted
+    /// reorg checkpoints.
+    #[napi]
+    pub fn get_hash(&self, block_number: i64) -> Option<String> {
+        let key = u64::try_from(block_number).ok()?;
+        let inner = self.inner.lock().unwrap();
+        inner
+            .field_bytes(&key, self.hash_field())
+            .map(|b| self.hash_display(b))
+    }
+
+    /// Block numbers in `[from_block, below_block)` with a stored hash,
+    /// ascending — the rollback candidates to re-fetch and compare.
+    #[napi]
+    pub fn get_hashed_block_numbers(&self, from_block: i64, below_block: i64) -> Vec<i64> {
+        let from = u64::try_from(from_block).unwrap_or(0);
+        let below = match u64::try_from(below_block) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        self.inner
+            .lock()
+            .unwrap()
+            .keys_with_field(from, below, self.hash_field())
+            .into_iter()
+            .map(|k| k as i64)
+            .collect()
+    }
+
+    /// The highest of the given (number, hash) pairs that still matches the
+    /// stored hash, walking them ascending and stopping at the first pair that
+    /// mismatches or is no longer stored — the reorg rollback target.
+    #[napi]
+    pub fn latest_valid_block(
+        &self,
+        block_numbers: Vec<i64>,
+        hashes: Vec<String>,
+    ) -> napi::Result<Option<i64>> {
+        if block_numbers.len() != hashes.len() {
+            return Err(napi::Error::from_reason(format!(
+                "latestValidBlock column length mismatch: block_numbers={}, hashes={}",
+                block_numbers.len(),
+                hashes.len()
+            )));
+        }
+        let pairs: BTreeMap<i64, String> = block_numbers.into_iter().zip(hashes).collect();
+        let inner = self.inner.lock().unwrap();
+        let field = self.hash_field();
+        let mut prev = None;
+        for (n, h) in pairs {
+            let stored = u64::try_from(n)
+                .ok()
+                .and_then(|k| inner.field_bytes(&k, field))
+                .map(|b| self.hash_display(b));
+            match stored {
+                Some(s) if s == h => prev = Some(n),
+                _ => return Ok(prev),
+            }
+        }
+        Ok(prev)
     }
 
     /// Bulk-materialise blocks in columnar form, one row per `block_numbers[i]`
@@ -382,20 +732,27 @@ impl BlockStore {
                 })
                 .map_err(map_err)
             }
-            // Fuel keeps the block inline, so its store is never materialised
-            // through; should it be, every key is a miss → `len` empty objects.
-            Ecosystem::Fuel => Ok(Columns {
-                len: block_numbers.len(),
-                columns: Vec::new(),
-            }),
+            Ecosystem::Fuel => {
+                let scratch = self.gather(&block_numbers, &masks);
+                tokio::task::block_in_place(|| {
+                    decode_fuel_block_columns(&scratch, &block_numbers, &masks)
+                })
+                .map_err(map_err)
+            }
         }
     }
 
-    /// Drop blocks at or below `up_to_block` (already processed).
+    /// Drop blocks at or below `up_to_block` (already processed), except that
+    /// blocks at or above `keep_hashes_from` keep their hash — still needed for
+    /// reorg detection until they leave the reorg threshold.
     #[napi]
-    pub fn prune(&self, up_to_block: i64) {
+    pub fn prune(&self, up_to_block: i64, keep_hashes_from: i64) {
         if let Ok(up_to) = u64::try_from(up_to_block) {
-            self.inner.lock().unwrap().prune(up_to);
+            let keep_from = u64::try_from(keep_hashes_from).unwrap_or(0);
+            self.inner
+                .lock()
+                .unwrap()
+                .prune_keeping_field(up_to, keep_from, self.hash_field());
         }
     }
 
@@ -415,11 +772,30 @@ impl BlockStore {
         let n_fields = match ecosystem {
             Ecosystem::Evm { .. } => EvmBlockField::VARIANTS.len(),
             Ecosystem::Svm => SvmBlockField::VARIANTS.len(),
-            Ecosystem::Fuel => 0,
+            Ecosystem::Fuel => FuelBlockField::VARIANTS.len(),
         };
         Self {
             inner: Mutex::new(Table::new(n_fields)),
             ecosystem,
+        }
+    }
+
+    /// The ecosystem's block-hash field code — the field reorg detection
+    /// compares and the threshold prune retains.
+    fn hash_field(&self) -> usize {
+        match self.ecosystem {
+            Ecosystem::Evm { .. } => EvmBlockField::Hash as usize,
+            Ecosystem::Svm => SvmBlockField::Hash as usize,
+            Ecosystem::Fuel => FuelBlockField::Id as usize,
+        }
+    }
+
+    /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
+    /// EVM/Fuel hashes, the raw base58 string for SVM.
+    fn hash_display(&self, bytes: &[u8]) -> String {
+        match self.ecosystem {
+            Ecosystem::Svm => String::from_utf8_lossy(bytes).into_owned(),
+            _ => hex_full(bytes),
         }
     }
 
@@ -461,6 +837,84 @@ impl BlockStore {
             .collect();
         self.inner.lock().unwrap().merge_batch(keys, cols);
     }
+
+    /// Merge a response's rollback-guard blocks into the page as hash-only
+    /// rows: the guard's head block and the parent of the first in-memory
+    /// block. Not exposed to JS.
+    pub(crate) fn insert_rollback_guard_blocks(
+        &self,
+        guard: &crate::evm_hypersync_source::types::RollbackGuard,
+    ) -> Result<()> {
+        let mut rows = vec![simple_types::Block {
+            number: Some(u64::try_from(guard.block_number).context("guard block_number negative")?),
+            hash: Some(Hash::decode_hex(&guard.hash).context("decoding guard hash")?),
+            ..Default::default()
+        }];
+        if guard.first_block_number > 0 {
+            rows.push(simple_types::Block {
+                number: Some((guard.first_block_number - 1) as u64),
+                hash: Some(
+                    Hash::decode_hex(&guard.first_parent_hash)
+                        .context("decoding guard parent hash")?,
+                ),
+                ..Default::default()
+            });
+        }
+        self.insert_evm_blocks(rows);
+        Ok(())
+    }
+
+    /// Merge one response's Fuel blocks into the table, keyed by height.
+    pub(crate) fn insert_fuel_block_rows(&self, blocks: Vec<FuelBlockRow>) {
+        if blocks.is_empty() {
+            return;
+        }
+        let keys = blocks.iter().map(|b| b.height).collect();
+        let cols = FuelBlockField::VARIANTS
+            .iter()
+            .map(|&f| fuel_block_col(f, &blocks))
+            .collect();
+        self.inner.lock().unwrap().merge_batch(keys, cols);
+    }
+
+    /// Merge sparse JS SVM blocks into the table, keyed by slot.
+    fn insert_svm_inputs(&self, blocks: Vec<SvmBlockInput>) -> napi::Result<()> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+        let keys = blocks
+            .iter()
+            .map(|b| u64::try_from(b.slot).context("block.slot negative"))
+            .collect::<Result<Vec<_>>>()
+            .map_err(map_err)?;
+        let cols = SvmBlockField::VARIANTS
+            .iter()
+            .map(|&f| {
+                use SvmBlockField::*;
+                match f {
+                    Slot => None,
+                    Time => i64_from(&blocks, |b| b.time),
+                    Hash => str_from(&blocks, |b| b.hash.as_deref()),
+                    Height => u64_from(&blocks, |b| b.height.and_then(|v| u64::try_from(v).ok())),
+                    ParentSlot => u64_from(&blocks, |b| {
+                        b.parent_slot.and_then(|v| u64::try_from(v).ok())
+                    }),
+                    ParentHash => str_from(&blocks, |b| b.parent_hash.as_deref()),
+                }
+            })
+            .collect();
+        self.inner.lock().unwrap().merge_batch(keys, cols);
+        Ok(())
+    }
+}
+
+/// A reorg detected while merging a page: the lowest in-threshold block whose
+/// received hash differs from the stored (previously scanned) one.
+#[napi(object)]
+pub struct HashMismatch {
+    pub block_number: i64,
+    pub stored_hash: String,
+    pub received_hash: String,
 }
 
 /// Ordered EVM block-field names — the single source of truth the ReScript
@@ -475,6 +929,12 @@ pub fn evm_block_field_names() -> Vec<String> {
 #[napi]
 pub fn svm_block_field_names() -> Vec<String> {
     field_names(SvmBlockField::VARIANTS, SvmBlockField::name)
+}
+
+/// Ordered Fuel block-field names; `Fuel.res blockFields` is tested against this.
+#[napi]
+pub fn fuel_block_field_names() -> Vec<String> {
+    field_names(FuelBlockField::VARIANTS, FuelBlockField::name)
 }
 
 #[cfg(test)]
@@ -712,7 +1172,7 @@ mod tests {
         store.insert_evm_blocks(blocks);
 
         let mask = bit(EvmBlockField::Timestamp) as f64;
-        store.prune(10);
+        store.prune(10, 11);
         let after_prune = store
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
@@ -745,13 +1205,13 @@ mod tests {
         let mut first = raw_evm_block(20);
         first.timestamp = Some(Quantity::from(100u64));
         page1.insert_evm_blocks(vec![first]);
-        persistent.merge(&page1);
+        persistent.merge(&page1, 0, false);
 
         let page2 = BlockStore::new_evm(false);
         let mut second = raw_evm_block(20);
         second.timestamp = Some(Quantity::from(200u64));
         page2.insert_evm_blocks(vec![second]);
-        persistent.merge(&page2);
+        persistent.merge(&page2, 0, false);
 
         let mask = bit(EvmBlockField::Timestamp) as f64;
         let cols = persistent
@@ -819,5 +1279,356 @@ mod tests {
             svm_names,
             vec!["slot", "time", "hash", "height", "parentSlot", "parentHash"]
         );
+
+        let fuel_codes: Vec<i32> = FuelBlockField::VARIANTS.iter().map(|&f| f as i32).collect();
+        assert_eq!(
+            fuel_codes,
+            Vec::from_iter(0..FuelBlockField::VARIANTS.len() as i32)
+        );
+        let fuel_names: Vec<&str> = FuelBlockField::VARIANTS.iter().map(|f| f.name()).collect();
+        assert_eq!(fuel_names, vec!["height", "time", "id"]);
+    }
+
+    fn hashed_evm_block(number: u64, byte: u8) -> simple_types::Block {
+        let mut b = raw_evm_block(number);
+        b.hash = Some(Hash::from([byte; 32]));
+        b
+    }
+
+    fn evm_page(blocks: Vec<simple_types::Block>) -> BlockStore {
+        let page = BlockStore::new_evm(false);
+        page.insert_evm_blocks(blocks);
+        page
+    }
+
+    #[test]
+    fn merge_reports_lowest_hash_mismatch_and_discards_page() {
+        let persistent = evm_page(vec![
+            hashed_evm_block(10, 0x10),
+            hashed_evm_block(11, 0x11),
+            hashed_evm_block(12, 0x12),
+        ]);
+
+        // Two conflicting blocks: the lowest one is reported.
+        let page = evm_page(vec![hashed_evm_block(11, 0xbb), hashed_evm_block(12, 0xcc)]);
+        let mismatch = persistent.merge(&page, 0, false).expect("mismatch");
+        assert_eq!(
+            (
+                mismatch.block_number,
+                mismatch.stored_hash,
+                mismatch.received_hash
+            ),
+            (
+                11,
+                format!("0x{}", "11".repeat(32)),
+                format!("0x{}", "bb".repeat(32))
+            )
+        );
+        // Rollback mode: nothing merged, the stored hash is unchanged.
+        assert_eq!(
+            persistent.get_hash(11),
+            Some(format!("0x{}", "11".repeat(32)))
+        );
+    }
+
+    #[test]
+    fn merge_report_only_still_overwrites() {
+        let persistent = evm_page(vec![hashed_evm_block(11, 0x11)]);
+        let page = evm_page(vec![hashed_evm_block(11, 0xbb)]);
+        let mismatch = persistent.merge(&page, 0, true).expect("mismatch");
+        assert_eq!(mismatch.block_number, 11);
+        // Detect-only mode converges to the received hash, so the same
+        // mismatch doesn't re-report on the next page.
+        assert_eq!(
+            persistent.get_hash(11),
+            Some(format!("0x{}", "bb".repeat(32)))
+        );
+    }
+
+    #[test]
+    fn merge_skips_mismatches_below_from_block_and_hashless_blocks() {
+        let persistent = evm_page(vec![hashed_evm_block(10, 0x10), hashed_evm_block(20, 0x20)]);
+        // Block 10 conflicts but is below the reorg threshold; block 20 has no
+        // hash on the incoming side (the Fuel-style hashless merge).
+        let mut no_hash = raw_evm_block(20);
+        no_hash.timestamp = Some(Quantity::from(7u64));
+        let page = evm_page(vec![hashed_evm_block(10, 0xaa), no_hash]);
+        assert!(persistent.merge(&page, 15, false).is_none());
+        // The page merged: the overwrite applied below the threshold too.
+        assert_eq!(
+            persistent.get_hash(10),
+            Some(format!("0x{}", "aa".repeat(32)))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prune_keeps_hashes_in_threshold() {
+        let store = evm_page(vec![
+            hashed_evm_block(10, 0x10),
+            hashed_evm_block(20, 0x20),
+            hashed_evm_block(30, 0x30),
+        ]);
+
+        // Everything up to 30 is processed; hashes from 20 stay for reorg
+        // detection.
+        store.prune(30, 20);
+
+        assert_eq!(
+            (
+                store.get_hash(10),
+                store.get_hash(20),
+                store.get_hash(30),
+                store.get_hashed_block_numbers(0, 100),
+            ),
+            (
+                None,
+                Some(format!("0x{}", "20".repeat(32))),
+                Some(format!("0x{}", "30".repeat(32))),
+                vec![20, 30],
+            )
+        );
+
+        // The kept rows are hash-only: timestamp no longer materialises.
+        let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
+        let cols = store
+            .materialize(vec![20], vec![mask])
+            .await
+            .expect("materialize");
+        assert_eq!(
+            (
+                match column(&cols, "timestamp") {
+                    Some(Column::I64(v)) => v.iter().any(|c| c.is_some()),
+                    None => false,
+                    _ => panic!("expected timestamp column"),
+                },
+                {
+                    match column(&cols, "hash") {
+                        Some(Column::Str(v)) => v.clone(),
+                        _ => panic!("expected hash column"),
+                    }
+                }
+            ),
+            (false, vec![Some(format!("0x{}", "20".repeat(32)))])
+        );
+    }
+
+    #[test]
+    fn latest_valid_block_stops_at_first_mismatch() {
+        let store = evm_page(vec![
+            hashed_evm_block(10, 0x10),
+            hashed_evm_block(11, 0x11),
+            hashed_evm_block(12, 0x12),
+        ]);
+        let h = |b: &str| format!("0x{}", b.repeat(32));
+        assert_eq!(
+            (
+                store
+                    .latest_valid_block(vec![10, 11, 12], vec![h("10"), h("11"), h("12")])
+                    .unwrap(),
+                store
+                    .latest_valid_block(vec![10, 11, 12], vec![h("10"), h("bb"), h("12")])
+                    .unwrap(),
+                store
+                    .latest_valid_block(vec![10, 11], vec![h("aa"), h("11")])
+                    .unwrap(),
+                // A block the store no longer holds counts as a mismatch.
+                store
+                    .latest_valid_block(vec![10, 99], vec![h("10"), h("99")])
+                    .unwrap(),
+            ),
+            (Some(12), Some(10), None, Some(10))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fuel_store_materializes_and_detects() {
+        let page = BlockStore::new_fuel();
+        page.insert_fuel_block_rows(vec![FuelBlockRow {
+            height: 5,
+            id: Some([0xee; 32]),
+            time: Some(123),
+        }]);
+
+        let persistent = BlockStore::new_fuel();
+        assert!(persistent.merge(&page, 0, false).is_none());
+
+        let mask = ((1u64 << (FuelBlockField::Height as u32))
+            | (1u64 << (FuelBlockField::Time as u32))
+            | (1u64 << (FuelBlockField::Id as u32))) as f64;
+        let cols = persistent
+            .materialize(vec![5], vec![mask])
+            .await
+            .expect("materialize");
+        let summary = (
+            match column(&cols, "height") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected height column"),
+            },
+            match column(&cols, "time") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected time column"),
+            },
+            match column(&cols, "id") {
+                Some(Column::Str(v)) => v.clone(),
+                _ => panic!("expected id column"),
+            },
+        );
+        assert_eq!(
+            summary,
+            (
+                vec![Some(5)],
+                vec![Some(123)],
+                vec![Some(format!("0x{}", "ee".repeat(32)))]
+            )
+        );
+
+        // A conflicting id on a later page is a reorg.
+        let conflicting = BlockStore::new_fuel();
+        conflicting.insert_fuel_block_rows(vec![FuelBlockRow {
+            height: 5,
+            id: Some([0xdd; 32]),
+            time: Some(124),
+        }]);
+        let mismatch = persistent.merge(&conflicting, 0, false).expect("mismatch");
+        assert_eq!(mismatch.block_number, 5);
+
+        // A hashless fuel row merges without detection.
+        let hashless = BlockStore::new_fuel();
+        hashless.insert_fuel_block_rows(vec![FuelBlockRow {
+            height: 5,
+            id: None,
+            time: Some(125),
+        }]);
+        assert!(persistent.merge(&hashless, 0, false).is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn from_js_evm_round_trips_sparse_blocks() {
+        let store = BlockStore::from_js_evm(
+            vec![
+                EvmBlockInput {
+                    number: 7,
+                    timestamp: Some(999),
+                    hash: Some(format!("0x{}", "ab".repeat(32))),
+                    parent_hash: None,
+                    nonce: Some(BigInt::from(5u64)),
+                    sha3_uncles: None,
+                    logs_bloom: None,
+                    transactions_root: None,
+                    state_root: None,
+                    receipts_root: None,
+                    miner: None,
+                    difficulty: None,
+                    total_difficulty: None,
+                    extra_data: None,
+                    size: None,
+                    gas_limit: None,
+                    gas_used: Some(BigInt::from(555u64)),
+                    uncles: None,
+                    base_fee_per_gas: None,
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    parent_beacon_block_root: None,
+                    withdrawals_root: None,
+                    l1_block_number: None,
+                    send_count: None,
+                    send_root: None,
+                    mix_hash: None,
+                },
+                // A hash-only guard row.
+                EvmBlockInput {
+                    number: 8,
+                    timestamp: None,
+                    hash: Some(format!("0x{}", "cd".repeat(32))),
+                    parent_hash: None,
+                    nonce: None,
+                    sha3_uncles: None,
+                    logs_bloom: None,
+                    transactions_root: None,
+                    state_root: None,
+                    receipts_root: None,
+                    miner: None,
+                    difficulty: None,
+                    total_difficulty: None,
+                    extra_data: None,
+                    size: None,
+                    gas_limit: None,
+                    gas_used: None,
+                    uncles: None,
+                    base_fee_per_gas: None,
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    parent_beacon_block_root: None,
+                    withdrawals_root: None,
+                    l1_block_number: None,
+                    send_count: None,
+                    send_root: None,
+                    mix_hash: None,
+                },
+            ],
+            false,
+        )
+        .expect("fromJs");
+
+        let mask = (bit(EvmBlockField::Number)
+            | bit(EvmBlockField::Timestamp)
+            | bit(EvmBlockField::Hash)
+            | bit(EvmBlockField::GasUsed)) as f64;
+        let cols = store
+            .materialize(vec![7], vec![mask])
+            .await
+            .expect("materialize");
+        let summary = (
+            match column(&cols, "timestamp") {
+                Some(Column::I64(v)) => v.clone(),
+                _ => panic!("expected timestamp column"),
+            },
+            match column(&cols, "hash") {
+                Some(Column::Str(v)) => v.clone(),
+                _ => panic!("expected hash column"),
+            },
+            match column(&cols, "gasUsed") {
+                Some(Column::Big(v)) => v
+                    .iter()
+                    .map(|b| b.as_ref().map(|b| b.get_u64().1))
+                    .collect::<Vec<_>>(),
+                _ => panic!("expected gasUsed column"),
+            },
+            store.get_hash(8),
+        );
+        assert_eq!(
+            summary,
+            (
+                vec![Some(999)],
+                vec![Some(format!("0x{}", "ab".repeat(32)))],
+                vec![Some(555)],
+                Some(format!("0x{}", "cd".repeat(32)))
+            )
+        );
+    }
+
+    #[test]
+    fn from_js_svm_stores_hashes() {
+        let store = BlockStore::from_js_svm(vec![SvmBlockInput {
+            slot: 42,
+            time: Some(1),
+            hash: Some("base58hash".to_string()),
+            height: None,
+            parent_slot: None,
+            parent_hash: None,
+        }])
+        .expect("fromJs");
+        assert_eq!(store.get_hash(42), Some("base58hash".to_string()));
+    }
+
+    #[test]
+    fn from_js_fuel_stores_hashes() {
+        let store = BlockStore::from_js_fuel(vec![FuelBlockInput {
+            height: 9,
+            id: Some(format!("0x{}", "ee".repeat(32))),
+            time: Some(3),
+        }])
+        .expect("fromJs");
+        assert_eq!(store.get_hash(9), Some(format!("0x{}", "ee".repeat(32))));
     }
 }

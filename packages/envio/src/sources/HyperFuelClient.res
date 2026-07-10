@@ -121,7 +121,8 @@ let make = (cfg: cfg) => {
 }
 
 @send
-external getSelectedData: (t, QueryTypes.query) => promise<queryResponseTyped> = "getSelectedData"
+external getSelectedData: (t, QueryTypes.query) => promise<(queryResponseTyped, BlockStore.t)> =
+  "getSelectedData"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

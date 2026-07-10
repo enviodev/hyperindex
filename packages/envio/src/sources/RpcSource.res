@@ -1093,12 +1093,20 @@ let make = (
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    let blockHashes = []
+    // They go into a hash-only page store merged into the chain store, where
+    // hash comparison happens. The block data itself stays inline on the payload.
+    let observedBlocks: array<BlockStore.inputBlock> = []
     let pushBlockInfo = (b: blockInfo) => {
-      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      observedBlocks
+      ->Array.push({
+        BlockStore.blockNumber: b.number,
+        blockHash: b.hash,
+        blockTimestamp: b.timestamp,
+      })
+      ->ignore
       if b.number > 0 {
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        observedBlocks
+        ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
         ->ignore
       }
     }
@@ -1108,8 +1116,8 @@ let make = (
     | None => ()
     }
     items->Array.forEach(({log}) =>
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      observedBlocks
+      ->Array.push({BlockStore.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore
     )
 
@@ -1117,14 +1125,18 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      // RPC keeps the transaction and block inline on the payload; no store pages.
+      // RPC keeps the transaction and block inline on the payload; no
+      // transaction page, and the block page carries only observed hashes.
       transactionStore: None,
-      blockStore: None,
+      blockStore: BlockStore.fromJs(
+        observedBlocks,
+        ~ecosystem=Evm,
+        ~shouldChecksum=!lowercaseAddresses,
+      ),
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats: drainRequestStats(),
     }

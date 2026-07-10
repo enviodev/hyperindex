@@ -2,6 +2,8 @@ type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
+  // Page store owning this page's raw blocks (built on the Rust side).
+  blockStore: BlockStore.t,
 }
 
 type block = {

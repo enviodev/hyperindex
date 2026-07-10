@@ -172,6 +172,24 @@ impl EvmHypersyncClient {
         })
         .map_err(convert_error_to_napi)?;
 
+        let rollback_guard = response
+            .rollback_guard
+            .map(RollbackGuard::try_from)
+            .transpose()
+            .context("convert rollback guard")
+            .map_err(map_err)?;
+
+        // The rollback guard's blocks are reorg-detection inputs like any
+        // other: keep them in the page store so merging compares their hashes.
+        // The guard's head block covers the tip of the scanned range; the
+        // parent of the first in-memory block covers the seam right below it.
+        if let Some(g) = &rollback_guard {
+            block_store
+                .insert_rollback_guard_blocks(g)
+                .context("insert rollback guard blocks")
+                .map_err(map_err)?;
+        }
+
         let event_items = EventItemsResponse {
             archive_height: response
                 .archive_height
@@ -186,12 +204,7 @@ impl EvmHypersyncClient {
                 .map_err(map_err)?,
             blocks,
             items,
-            rollback_guard: response
-                .rollback_guard
-                .map(RollbackGuard::try_from)
-                .transpose()
-                .context("convert rollback guard")
-                .map_err(map_err)?,
+            rollback_guard,
         };
         Ok((event_items, transaction_store, block_store))
     }

@@ -34,6 +34,7 @@ type addon = {
   // must match the Rust ordinals).
   evmBlockFieldNames: unit => array<string>,
   svmBlockFieldNames: unit => array<string>,
+  fuelBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

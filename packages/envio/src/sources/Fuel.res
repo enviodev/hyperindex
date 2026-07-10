@@ -1,5 +1,7 @@
 // Fuel's concrete item payload. Erased to `Internal.eventPayload` on the item
-// and recovered here via `toPayload`.
+// and recovered here via `toPayload`. The block lives raw in the per-chain
+// store and is written onto the payload at batch prep (like HyperSync EVM);
+// simulate builds it inline.
 type payload = {
   contractName: string,
   eventName: string,
@@ -8,10 +10,18 @@ type payload = {
   srcAddress: Address.t,
   logIndex: int,
   transaction: Internal.eventTransaction,
-  block: Internal.eventBlock,
+  block?: Internal.eventBlock,
 }
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
+
+// Ordered block field names. The index of each is the field code shared with
+// the Rust store (`FuelBlockField`) — keep this order in sync.
+let blockFields = ["height", "time", "id"]
+
+// Fuel has no per-event block field selection: every event materialises the
+// full (height, time, id) trio, matching what the source always queries.
+let fullBlockFieldMask = BlockStore.makeMaskFn(blockFields)(Utils.Set.fromArray(blockFields))
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.id
@@ -56,7 +66,13 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
-    let header = payload.block->(Utils.magic: Internal.eventBlock => {"id": string, "time": int})
+    // Store-backed payloads get `block` written at batch prep and simulate
+    // carries it from the start, so it's present by the time a raw event is built.
+    let header = switch payload.block {
+    | Some(block) => block->(Utils.magic: Internal.eventBlock => {"id": string, "time": int})
+    | None =>
+      JsError.throwWithMessage("Unexpected case: The event block is missing for a raw event")
+    }
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,

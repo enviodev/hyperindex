@@ -1,4 +1,9 @@
-let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
+let make = (
+  ~items: array<Internal.item>,
+  ~endBlock: int,
+  ~chain: ChainMap.Chain.t,
+  ~ecosystem: Ecosystem.name=Evm,
+): Source.t => {
   // getItemsOrThrow might be called multiple times with different partition ids.
   // Return all items on the first call and empty on subsequent calls to prevent
   // duplicate event processing.
@@ -41,11 +46,11 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       let reportedHeight = max(endBlock, 1)
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        blockHashes: [],
         parsedQueueItems: result,
-        // Simulate keeps the transaction and block inline on the payload; no store pages.
+        // Simulate keeps the transaction and block inline on the payload; no
+        // transaction page and an empty block page (nothing to reorg-check).
         transactionStore: None,
-        blockStore: None,
+        blockStore: BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,

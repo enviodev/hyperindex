@@ -2,6 +2,8 @@ type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
+  // Page store owning this page's raw blocks (built on the Rust side).
+  blockStore: BlockStore.t,
 }
 
 type block = {
@@ -140,12 +142,16 @@ module GetLogs = {
     items
   }
 
-  let convertResponse = (res: HyperFuelClient.queryResponseTyped): logsQueryPage => {
+  let convertResponse = (
+    res: HyperFuelClient.queryResponseTyped,
+    ~blockStore: BlockStore.t,
+  ): logsQueryPage => {
     let {nextBlock, ?archiveHeight} = res
     let page: logsQueryPage = {
       items: res.data->decodeLogQueryPageItems,
       nextBlock,
       archiveHeight: archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
+      blockStore,
     }
     page
   }
@@ -162,7 +168,7 @@ module GetLogs = {
       ~recieptsSelection,
     )
 
-    let res = switch await client->HyperFuelClient.getSelectedData(query) {
+    let (res, blockStore) = switch await client->HyperFuelClient.getSelectedData(query) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {
@@ -174,6 +180,6 @@ module GetLogs = {
       // Might happen when /height response was from another instance of HyperFuel
       throw(Error(WrongInstance))
     }
-    res->convertResponse
+    res->convertResponse(~blockStore)
   }
 }

@@ -370,29 +370,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
-    // Collect (blockNumber, blockHash) pairs we already have from the response —
-    // one per returned block plus, when present, the rollbackGuard's head block
-    // and the parent of the range's first block. Duplicates are allowed; reorg
-    // detection notices same-block-number-different-hash collisions itself.
-    let blockHashes = []
-    pageUnsafe.blocks->Array.forEach(block => {
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: block.number, blockHash: block.hash})
-      ->ignore
-    })
-    switch pageUnsafe.rollbackGuard {
-    | None => ()
-    | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
-        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash: hash})->ignore
-        blockHashes
-        ->Array.push({
-          ReorgDetection.blockNumber: firstBlockNumber - 1,
-          blockHash: firstParentHash,
-        })
-        ->ignore
-      }
-    }
-
     // Best-effort timestamp for the queried-range head: prefer the rollbackGuard
     // (set at the head for unconfirmed blocks), otherwise the last item if it
     // happens to be in the range's last block. 0 is a tolerated placeholder
@@ -419,11 +396,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       latestFetchedBlockTimestamp,
       parsedQueueItems,
       transactionStore: Some(pageUnsafe.transactionStore),
-      blockStore: Some(pageUnsafe.blockStore),
+      // The page store also carries the rollbackGuard's blocks (head block and
+      // parent of the range's first block), inserted on the Rust side.
+      blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }
