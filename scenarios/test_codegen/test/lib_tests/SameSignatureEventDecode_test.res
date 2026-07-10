@@ -62,9 +62,9 @@ describe("Same-signature event across contracts with different param names", () 
     // route+decode the shared Transfer log through EvmRpcClient. Routing picks
     // the owning contract's registration, so each contract's params come back
     // under its own names instead of the first-registered contract's.
-    let tokenA = {...tokenA, id: 0}
-    let tokenB = {...tokenB, id: 1}
-    let allEventRegistrations = EvmChain.collectEventRegistrations([tokenA, tokenB])
+    let tokenA = {...tokenA, index: 0}
+    let tokenB = {...tokenB, index: 1}
+    let allEventRegistrations = HyperSyncClient.Registration.fromOnEventRegistrations([tokenA, tokenB])
 
     let decodeAs = async contractName => {
       let decoded = await NativeDecoder.decodeLogs(
@@ -73,7 +73,7 @@ describe("Same-signature event across contracts with different param names", () 
         ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, contractName)]),
       )
       let item = decoded[0]->Option.getUnsafe
-      (item.onEventRegistrationId, item.params)
+      (item.onEventRegistrationIndex, item.params)
     }
 
     t

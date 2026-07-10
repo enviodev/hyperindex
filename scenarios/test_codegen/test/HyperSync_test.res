@@ -15,7 +15,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
         ~eventRegistrations=[
           {
-            id: 0,
+            index: 0,
             sighash: transferSighash,
             topicCount: 3,
             eventName: "Transfer",
@@ -39,7 +39,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ~fromBlock=12403138,
       ~toBlock=Some(12403139),
       ~maxNumLogs=5000,
-      ~registrationIds=[0],
+      ~registrationIndexes=[0],
       ~addressesByContractName=Dict.make(),
     )
 

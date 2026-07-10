@@ -240,9 +240,12 @@ let deriveSrcAddress = (
   }
 }
 
-let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
-  Internal.item,
-> => {
+let parse = (
+  ~simulateItems: array<JSON.t>,
+  ~config: Config.t,
+  ~chainConfig: Config.chain,
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+): array<Internal.item> => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
@@ -345,11 +348,18 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~chainId,
         ~eventConfig,
       )
+      // Append into the chain's registration array — the same one chain-state
+      // startup installs for item resolution — so simulate item indexes stay
+      // valid after startup replaces the per-chain registry entry.
+      let onEventRegistrationIndex = onEventRegistrations->Array.length
+      onEventRegistrations
+      ->Array.push({...onEventRegistration, index: onEventRegistrationIndex})
+      ->ignore
 
       items
       ->Array.push(
         Internal.Event({
-          onEventRegistration,
+          onEventRegistrationIndex,
           chain,
           blockNumber,
           logIndex,
@@ -382,7 +392,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
 
 // Apply simulate source config from processConfig JSON to a Config.t
 // This patches chainMap entries that have simulate items with CustomSources
-let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
+let patchConfig = (
+  ~config: Config.t,
+  ~processConfig: JSON.t,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+): Config.t => {
   let processChains: option<dict<JSON.t>> =
     (processConfig->(Utils.magic: JSON.t => {..}))["chains"]->Nullable.toOption
   switch processChains {
@@ -395,7 +409,24 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
         let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
-          let items = parse(~simulateItems, ~config, ~chainConfig)
+          let chainRegistrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
+            chainIdStr,
+          ) {
+          | Some(registrations) => registrations
+          | None =>
+            let registrations: HandlerRegister.chainRegistrations = {
+              onEventRegistrations: [],
+              onBlockRegistrations: [],
+            }
+            registrationsByChainId->Dict.set(chainIdStr, registrations)
+            registrations
+          }
+          let items = parse(
+            ~simulateItems,
+            ~config,
+            ~chainConfig,
+            ~onEventRegistrations=chainRegistrations.onEventRegistrations,
+          )
           let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)

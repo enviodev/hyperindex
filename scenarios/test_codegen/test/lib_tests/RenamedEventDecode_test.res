@@ -28,7 +28,7 @@ describe("Renamed event decoding (issue #1285)", () => {
     let decoded = await NativeDecoder.decodeLogs(
       ~eventRegistrations=[
         {
-          id: 5,
+          index: 5,
           sighash: onChainSighash,
           topicCount: 1,
           eventName: "ApprovalRenamed",
@@ -57,7 +57,7 @@ describe("Renamed event decoding (issue #1285)", () => {
     let item = decoded[0]->Option.getUnsafe
 
     t
-    .expect((item.onEventRegistrationId, item.params))
+    .expect((item.onEventRegistrationIndex, item.params))
     .toEqual((
       5,
       {"owner": owner, "value": value}->(Utils.magic: {..} => Internal.eventParams),

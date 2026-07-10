@@ -801,9 +801,8 @@ module Source = {
                     blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
-                        Internal.Event({
-                          onEventRegistration: ({
-                            id: 0,
+                        let onEventRegistration = ({
+                            index: 0,
                             eventConfig: ({
                               id: "MockEvent",
                               contractName: "MockContract",
@@ -853,7 +852,12 @@ module Source = {
                               topicSelections: [],
                               startBlock: None,
                             },
-                          }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
+                          }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
+                        Internal.Event({
+                          onEventRegistrationIndex: Internal.addOnEventRegistration(
+                            ~chainId=chain->ChainMap.Chain.toChainId,
+                            onEventRegistration,
+                          ),
                           chain,
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
@@ -988,7 +992,7 @@ let evmOnEventRegistration = (
     paramsMetadata: [],
   }
   {
-    id: -1,
+    index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses,

@@ -7,17 +7,15 @@ let hexId = suffix => "0x" ++ "00"->String.repeat(31) ++ suffix
 let sighash1 = hexId("01")
 let sighash2 = hexId("02")
 
-// Query log selections are built on the Rust side (shared by the HyperSync
-// and RPC clients); `buildLogSelections` exposes the result for assertions.
-// Field-selection union/exclusion behavior is covered by Rust unit tests in
-// packages/cli/src/evm_hypersync_source/selection.rs.
+// `buildLogSelections` exposes the selections a query would fetch for a given
+// registration selection and address index.
 let makeClient = (registrations: array<Internal.evmOnEventRegistration>) => {
-  let registrations = registrations->Array.mapWithIndex((reg, i) => {...reg, id: i})
+  let registrations = registrations->Array.mapWithIndex((reg, i) => {...reg, index: i})
   EvmRpcClient.make(
     ~url="http://localhost:1",
     ~checksumAddresses=false,
     ~syncConfig=EvmChain.getSyncConfig({}),
-    ~eventRegistrations=EvmChain.collectEventRegistrations(registrations),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(registrations),
   )
 }
 

@@ -174,7 +174,10 @@ module Make = () => {
       transactionIndex,
     }): log => {
       let log = Internal.Event({
-        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+        onEventRegistrationIndex: Internal.addOnEventRegistration(
+          ~chainId=self.chainConfig.id,
+          (onEventRegistration :> Internal.onEventRegistration),
+        ),
         payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         blockNumber,
@@ -232,7 +235,13 @@ module Make = () => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
               eventKeys->arrayHas(
-                getEventKey((l.item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig),
+                getEventKey(
+                  (
+                    l.item
+                    ->Internal.castUnsafeEventItem
+                    ->Internal.getItemOnEventRegistration
+                  ).eventConfig,
+                ),
               ))
           },
         )

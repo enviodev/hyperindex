@@ -410,7 +410,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       }
 
       Internal.Event({
-        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+        onEventRegistrationIndex: onEventRegistration.index,
         chain,
         blockNumber: block.height,
         logIndex: receiptIndex,

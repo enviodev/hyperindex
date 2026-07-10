@@ -33,7 +33,7 @@ module GetLogs: {
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~maxNumLogs: int,
-    ~registrationIds: array<int>,
+    ~registrationIndexes: array<int>,
     ~addressesByContractName: dict<array<Address.t>>,
   ) => promise<logsQueryPage>
 }

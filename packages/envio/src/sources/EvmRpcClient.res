@@ -10,11 +10,11 @@ type cfg = {
   queryTimeoutMillis: int,
 }
 
-// Routed on the Rust side: only logs that resolved to a registration cross
-// the boundary, each carrying its registration's chain-scoped id.
+// Only logs that resolved to a registration cross the boundary, each carrying
+// its registration's chain-scoped index.
 type rpcEventItem = {
   log: Rpc.GetLogs.log,
-  onEventRegistrationId: int,
+  onEventRegistrationIndex: int,
   params: Internal.eventParams,
 }
 
@@ -22,10 +22,10 @@ type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
   partitionId: string,
-  // The partition's registration selection, by chain-scoped id. Log
+  // The partition's registration selection, by chain-scoped index. Log
   // selections and the routing index are derived on the Rust side from the
   // registrations passed at construction.
-  registrationIds: array<int>,
+  registrationIndexes: array<int>,
   addressesByContractName: dict<array<Address.t>>,
 }
 

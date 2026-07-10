@@ -16,7 +16,7 @@ let transferParams: array<Internal.paramMeta> = [
 ]
 
 let transferEventRegistration: HyperSyncClient.Registration.input = {
-  id: 42,
+  index: 42,
   sighash: transferSighash,
   topicCount: 3,
   eventName: "Transfer",
@@ -50,13 +50,13 @@ let makeClient = (~eventRegistrations) =>
 let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
-let runQuery = async (~client: HyperSyncClient.t, ~registrationIds=[42]) => {
+let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => {
   let (res, _txStore, _blockStore) = await client.getEventItems(
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
       maxNumLogs: 10_000,
-      registrationIds,
+      registrationIndexes,
       addressesByContractName: Dict.fromArray([
         (
           "ERC20",
@@ -75,7 +75,7 @@ describe("HyperSync client getEventItems (live)", () => {
 
     let summary = {
       "hasItems": res.items->Array.length > 0,
-      "everyItemRouted": res.items->Array.every(item => item.onEventRegistrationId == 42),
+      "everyItemRouted": res.items->Array.every(item => item.onEventRegistrationIndex == 42),
       "everySrcAddressIsUsdc": res.items->Array.every(item =>
         item.srcAddress->Address.toString->String.toLowerCase ==
           usdcAddress->Address.toString->String.toLowerCase
@@ -119,7 +119,7 @@ describe("HyperSync client getEventItems (live)", () => {
     // query fetches Transfer logs, but the decoder is only registered for an
     // unrelated 1-topic signature — every fetched log routes nowhere.
     let unrelatedEventRegistration: HyperSyncClient.Registration.input = {
-      id: 0,
+      index: 0,
       sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
       topicCount: 1,
       eventName: "Unrelated",
@@ -139,7 +139,7 @@ describe("HyperSync client getEventItems (live)", () => {
       transactionFields: [],
     }
     let client = makeClient(~eventRegistrations=[unrelatedEventRegistration])
-    let res = await runQuery(~client, ~registrationIds=[0])
+    let res = await runQuery(~client, ~registrationIndexes=[0])
 
     t.expect(res.items->Array.length).toEqual(0)
   })

@@ -91,14 +91,14 @@ module GetLogs = {
     ~fromBlock,
     ~toBlock,
     ~maxNumLogs,
-    ~registrationIds,
+    ~registrationIndexes,
     ~addressesByContractName,
   ): logsQueryPage => {
     let query: HyperSyncClient.EventItems.query = {
       fromBlock,
       toBlock,
       maxNumLogs,
-      registrationIds,
+      registrationIndexes,
       addressesByContractName,
     }
 

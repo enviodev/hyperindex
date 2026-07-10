@@ -88,12 +88,12 @@ impl EvmHypersyncClient {
     #[napi]
     pub fn build_log_selections(
         &self,
-        registration_ids: Vec<i64>,
+        registration_indexes: Vec<i64>,
         addresses_by_contract_name: HashMap<String, Vec<String>>,
     ) -> napi::Result<Vec<BuiltLogSelection>> {
         let built = self
             .selection_builder
-            .build(&registration_ids, &addresses_by_contract_name)
+            .build(&registration_indexes, &addresses_by_contract_name)
             .map_err(map_err)?;
         Ok(built.log_selections)
     }
@@ -137,7 +137,7 @@ impl EvmHypersyncClient {
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
         let built = self
             .selection_builder
-            .build(&params.registration_ids, &params.addresses_by_contract_name)
+            .build(&params.registration_indexes, &params.addresses_by_contract_name)
             .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
@@ -263,7 +263,7 @@ pub struct EventItemsQuery {
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     pub max_num_logs: i64,
-    pub registration_ids: Vec<i64>,
+    pub registration_indexes: Vec<i64>,
     pub addresses_by_contract_name: HashMap<String, Vec<String>>,
 }
 
@@ -305,7 +305,7 @@ pub struct EventItem {
     pub transaction_index: i64,
     /// The registration this log routed to, as passed to the client
     /// constructor. Logs that route nowhere never cross the boundary.
-    pub on_event_registration_id: i64,
+    pub on_event_registration_index: i64,
     pub params: ParamValue,
 }
 
@@ -364,13 +364,6 @@ fn convert_response(
             .transpose()
             .context("convert rollback guard")?,
     })
-}
-
-fn add_field<T: PartialEq>(selection: &mut Option<Vec<T>>, field: T) {
-    let fields = selection.get_or_insert_with(Vec::new);
-    if !fields.contains(&field) {
-        fields.push(field);
-    }
 }
 
 fn push_unique(missing: &mut Vec<String>, name: String) {
@@ -515,7 +508,7 @@ fn process_response(
                 src_address,
                 block_number,
                 transaction_index,
-                on_event_registration_id: routed.id,
+                on_event_registration_index: routed.index,
                 params: routed.params,
             });
         }
@@ -535,9 +528,9 @@ fn flatten_log_for_js(
         log.address.as_ref().context("log.address missing")?,
         should_checksum,
     );
-    // block_number + transaction_index are force-selected (see
-    // `ensure_required_log_fields`) so they're always present, independent of
-    // the user's field selection — they key the transaction store.
+    // block_number + transaction_index are force-selected in the query's log
+    // field selection so they're always present, independent of the user's
+    // field selection — they key the transaction store.
     let block_number: i64 = u64::from(log.block_number.context("log.blockNumber missing")?)
         .try_into()
         .context("log.blockNumber overflow")?;
@@ -684,25 +677,6 @@ fn transaction_field_missing(
 const REQUIRED_BLOCK_FIELDS: &[BlockField] =
     &[BlockField::Number, BlockField::Timestamp, BlockField::Hash];
 
-fn ensure_required_log_fields(selection: &mut Option<Vec<LogField>>) {
-    use std::collections::BTreeSet;
-    const REQUIRED: &[LogField] = &[
-        LogField::Address,
-        LogField::Data,
-        LogField::LogIndex,
-        LogField::Topic0,
-        LogField::Topic1,
-        LogField::Topic2,
-        LogField::Topic3,
-        // Key the transaction store regardless of the user's field selection.
-        LogField::BlockNumber,
-        LogField::TransactionIndex,
-    ];
-    let mut set: BTreeSet<LogField> = selection.take().unwrap_or_default().into_iter().collect();
-    set.extend(REQUIRED.iter().copied());
-    *selection = Some(set.into_iter().collect());
-}
-
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{:?}", e))
 }
@@ -722,7 +696,7 @@ mod tests {
     fn zero_event_decoder() -> DecoderCore {
         DecoderCore::from_registrations(
             &[crate::evm_hypersync_source::types::EventRegistrationInput {
-                id: 0,
+                index: 0,
                 sighash: format!("0x{}", "00".repeat(32)),
                 topic_count: 1,
                 event_name: "Zero".to_string(),

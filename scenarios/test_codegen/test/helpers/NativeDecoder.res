@@ -52,7 +52,7 @@ let decodeLogs = async (
     fromBlock: 0,
     toBlockCeiling: 0,
     partitionId: "0",
-    registrationIds: eventRegistrations->Array.map(reg => reg.id),
+    registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
     addressesByContractName,
   }) catch {
   | exn =>

@@ -9,3 +9,8 @@ type sizeOptions = {size: int}
 @module("viem") external boolToHex: (bool, ~options: sizeOptions=?) => hex = "boolToHex"
 @module("viem") external bytesToHex: (Uint8Array.t, ~options: sizeOptions=?) => hex = "bytesToHex"
 @module("viem") external concat: array<hex> => hex = "concat"
+
+type abiParams
+@module("viem") external parseAbiParameters: string => abiParams = "parseAbiParameters"
+@module("viem")
+external encodeAbiParametersUnsafe: (abiParams, array<'a>) => hex = "encodeAbiParameters"

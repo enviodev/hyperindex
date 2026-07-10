@@ -55,7 +55,7 @@ impl MetaKey {
 /// `MetaKey` when they emit the same-signature event; the positional decode is
 /// shared, the param names are not.
 struct EventVariant {
-    id: i64,
+    index: i64,
     params: Vec<ParamMeta>,
 }
 
@@ -146,7 +146,7 @@ impl DecoderCore {
                 event.wildcard = Some(variant_idx);
             }
             event.variants.push(EventVariant {
-                id: ep.id,
+                index: ep.index,
                 params: ep.params.clone(),
             });
         }
@@ -228,7 +228,7 @@ impl DecoderCore {
             .context("decode log")?;
 
         Ok(Some(RoutedEvent {
-            id: variant.id,
+            index: variant.index,
             params: ParamValue::Obj(apply_names(
                 decoded,
                 &variant.params,
@@ -239,7 +239,7 @@ impl DecoderCore {
 }
 
 pub(crate) struct RoutedEvent {
-    pub id: i64,
+    pub index: i64,
     pub params: ParamValue,
 }
 
@@ -352,7 +352,7 @@ mod tests {
 
         let core = DecoderCore::from_registrations(
             &[EventRegistrationInput {
-                id: 7,
+                index: 7,
                 sighash: real_sighash.clone(),
                 topic_count: 1,
                 event_name: "ApprovalRenamed".to_string(),
@@ -397,7 +397,7 @@ mod tests {
             .unwrap()
             .expect("renamed event must decode under its real sighash");
 
-        assert_eq!(routed.id, 7);
+        assert_eq!(routed.index, 7);
         match routed.params {
             ParamValue::Obj(fields) => match fields.as_slice() {
                 [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt(_))]
@@ -427,7 +427,7 @@ mod tests {
             .selector()
             .to_string();
         let variant = |contract: &str, params| EventRegistrationInput {
-            id: 0,
+            index: 0,
             sighash: sighash.clone(),
             topic_count: 2,
             event_name: "Foo".to_string(),
@@ -466,7 +466,7 @@ mod tests {
                 .selector()
                 .to_string();
         let variant = |contract: &str, params| EventRegistrationInput {
-            id: 0,
+            index: 0,
             sighash: sighash.clone(),
             topic_count: 3,
             event_name: "Transfer".to_string(),

@@ -30,7 +30,7 @@ let decodeSingle = async (
   let decoded = await NativeDecoder.decodeLogs(
     ~eventRegistrations=[
       {
-        id: 0,
+        index: 0,
         sighash,
         topicCount,
         eventName,
@@ -77,7 +77,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let decoded = await NativeDecoder.decodeLogs(
       ~eventRegistrations=[
         {
-          id: 0,
+          index: 0,
           sighash,
           topicCount: 4,
           eventName: "Transfer",
@@ -94,7 +94,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           ],
         },
         {
-          id: 1,
+          index: 1,
           sighash,
           topicCount: 1,
           eventName: "Transfer",
@@ -153,7 +153,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let decoded = await NativeDecoder.decodeLogs(
       ~eventRegistrations=[
         {
-          id: 0,
+          index: 0,
           sighash: toEventSelector("event Empty()"),
           topicCount: 1,
           eventName: "Empty",
@@ -211,7 +211,10 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
 
     let eventItem =
       Internal.Event({
-        onEventRegistration: (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
+        onEventRegistrationIndex: Internal.addOnEventRegistration(
+          ~chainId=137,
+          (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
+        ),
         chain: ChainMap.Chain.makeUnsafe(~chainId=137),
         blockNumber,
         logIndex,

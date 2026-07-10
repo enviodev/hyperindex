@@ -60,12 +60,6 @@ struct TopicSelection {
 }
 
 impl TopicSelection {
-    fn has_filters(&self) -> bool {
-        [&self.topic1, &self.topic2, &self.topic3]
-            .iter()
-            .any(|t| !matches!(t, TopicFilter::Values(v) if v.is_empty()))
-    }
-
     fn materialize(&self, address_topics: &[String]) -> MaterializedTopicSelection {
         MaterializedTopicSelection {
             topic0: self.topic0.clone(),
@@ -188,9 +182,9 @@ impl SelectionBuilder {
                 transaction_fields: reg.transaction_fields.clone(),
             };
             anyhow::ensure!(
-                map.insert(reg.id, parsed).is_none(),
-                "Duplicate registration id {} for event {}",
-                reg.id,
+                map.insert(reg.index, parsed).is_none(),
+                "Duplicate registration index {} for event {}",
+                reg.index,
                 reg.event_name,
             );
         }
@@ -199,7 +193,7 @@ impl SelectionBuilder {
 
     pub(crate) fn build(
         &self,
-        registration_ids: &[i64],
+        registration_indexes: &[i64],
         addresses_by_contract_name: &HashMap<String, Vec<String>>,
     ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
@@ -216,11 +210,11 @@ impl SelectionBuilder {
         let mut block_fields: Vec<BlockField> = Vec::new();
         let mut transaction_fields: Vec<TransactionField> = Vec::new();
 
-        for id in registration_ids {
+        for id in registration_indexes {
             let reg = self
                 .registrations
                 .get(id)
-                .with_context(|| format!("Unknown registration id {id} in query selection"))?;
+                .with_context(|| format!("Unknown registration index {id} in query selection"))?;
             for &field in &reg.block_fields {
                 if !block_fields.contains(&field) {
                     block_fields.push(field);
@@ -332,7 +326,7 @@ mod tests {
         topic1: Option<Vec<String>>,
     ) -> EventRegistrationInput {
         EventRegistrationInput {
-            id,
+            index: id,
             sighash: sighash.to_string(),
             topic_count: 1,
             event_name: "E".to_string(),
@@ -492,6 +486,6 @@ mod tests {
     fn unknown_registration_id_errors() {
         let builder = SelectionBuilder::from_registrations(&[]).unwrap();
         let err = builder.build(&[7], &HashMap::new()).err().unwrap();
-        assert!(format!("{err:#}").contains("Unknown registration id 7"));
+        assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
 }

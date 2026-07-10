@@ -295,9 +295,9 @@ pub struct ParamMeta {
 /// queries are built from (`topic_selections`, field selections).
 #[napi(object)]
 pub struct EventRegistrationInput {
-    /// Chain-scoped sequential registration id; returned on every routed item
-    /// so JS resolves the registration by array index.
-    pub id: i64,
+    /// Chain-scoped sequential registration index; returned on every routed
+    /// item so JS resolves the registration by array index.
+    pub index: i64,
     pub sighash: String,
     pub topic_count: i32,
     pub event_name: String,

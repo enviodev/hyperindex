@@ -680,7 +680,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                     (registration->getResolvedWhere).topicSelections->Utils.Array.isEmpty
                 if !isDroppedByWhere {
                   onEventRegistrations
-                  ->Array.push({...registration, id: onEventRegistrations->Array.length})
+                  ->Array.push({...registration, index: onEventRegistrations->Array.length})
                   ->ignore
                 }
               | None => ()

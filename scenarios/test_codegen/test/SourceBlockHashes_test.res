@@ -27,6 +27,16 @@ let pairCreatedSelectedBlockFields = Utils.Set.fromArray(
   ([Number, Hash]: array<Internal.evmBlockField>),
 )
 
+// Match the on-chain ABI so the hypersync-client decoder doesn't raise
+// UndefinedValue for valid logs. Non-wildcard event configs treat decode
+// failures as fatal.
+let pairCreatedAbi: array<Internal.paramMeta> = [
+  {name: "token0", abiType: "address", indexed: true},
+  {name: "token1", abiType: "address", indexed: true},
+  {name: "pair", abiType: "address", indexed: false},
+  {name: "allPairs", abiType: "uint256", indexed: false},
+]
+
 let pairCreatedEventConfig: Internal.evmEventConfig = {
   id: pairCreatedEventId,
   contractName: "UniswapV2Factory",
@@ -47,11 +57,11 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   ),
   sighash: pairCreatedTopic0,
   topicCount: 3,
-  paramsMetadata: [],
+  paramsMetadata: pairCreatedAbi,
 }
 
 let pairCreatedRegistration: Internal.evmOnEventRegistration = {
-  id: 0,
+  index: 0,
   eventConfig: (pairCreatedEventConfig :> Internal.eventConfig),
   isWildcard: false,
   filterByAddresses: false,
@@ -72,22 +82,6 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   },
 }
 
-// Match the on-chain ABI so the hypersync-client decoder doesn't raise
-// UndefinedValue for valid logs. Non-wildcard event configs treat decode
-// failures as fatal.
-let pairCreatedAbi: array<Internal.paramMeta> = [
-  {name: "token0", abiType: "address", indexed: true},
-  {name: "token1", abiType: "address", indexed: true},
-  {name: "pair", abiType: "address", indexed: false},
-  {name: "allPairs", abiType: "uint256", indexed: false},
-]
-
-// The registration input mirrors pairCreatedRegistration, with the on-chain
-// ABI attached so decoding works on real logs.
-let pairCreatedEventRegistrations = EvmChain.collectEventRegistrations([
-  pairCreatedRegistration,
-])->Array.map(reg => {...reg, params: pairCreatedAbi})
-
 let makeAddressesByContractName = () =>
   Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
 
@@ -100,7 +94,6 @@ let makeHyperSyncSource = () =>
   HyperSyncSource.make({
     chain,
     endpointUrl: "https://eth.hypersync.xyz",
-    eventRegistrations: pairCreatedEventRegistrations,
     onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
@@ -117,7 +110,6 @@ let makeRpcSource = () =>
     onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
-    eventRegistrations: pairCreatedEventRegistrations,
     lowercaseAddresses: true,
   })
 

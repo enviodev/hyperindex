@@ -27,7 +27,6 @@ describe("RpcSource - name", () => {
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
       onEventRegistrations: [],
-      eventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       lowercaseAddresses: false,
@@ -42,7 +41,6 @@ describe("RpcSource - getHeightOrThrow", () => {
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
       onEventRegistrations: [],
-      eventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       lowercaseAddresses: false,
@@ -730,16 +728,12 @@ describe("RpcSource - fieldRegistry completeness", () => {
 })
 
 let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
-// Query log selection construction now lives on the Rust side; see
-// packages/cli/src/evm_hypersync_source/selection.rs unit tests and the
-// buildLogSelections coverage in HyperSyncSource_test.res.
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
     let source = RpcSource.make({
       url: "http://localhost:1",
       chain,
       onEventRegistrations: [],
-      eventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       lowercaseAddresses: false,
@@ -778,7 +772,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   Async.it(
     "Shrinks the partition block interval immediately (no backoff) on each too-large retry",
     async t => {
-      let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), id: 0}
+      let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), index: 0}
 
       let blockJson = JSON.Object(
         Dict.fromArray([
@@ -823,7 +817,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventConfig]),
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8
         syncConfig: EvmChain.getSyncConfig({}),
@@ -902,7 +895,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   Async.it(
     "Re-grows the partition interval on the next successful query after a density shrink",
     async t => {
-      let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), id: 0}
+      let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), index: 0}
 
       let blockJson = JSON.Object(
         Dict.fromArray([
@@ -953,7 +946,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventConfig]),
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
         syncConfig: EvmChain.getSyncConfig({}),
@@ -1020,7 +1012,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
 describe("RpcSource - getItemsOrThrow classifies real provider block-range errors", () => {
   let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-  let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), id: 0}
+  let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), index: 0}
 
   let blockJson = JSON.Object(
     Dict.fromArray([
@@ -1104,7 +1096,6 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventConfig]),
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
@@ -1160,7 +1151,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
     async t => {
       let eventConfig = {
         ...MockIndexer.evmOnEventRegistration(~id=sighash, ~transactionFieldNames=[GasUsed]),
-        id: 0,
+        index: 0,
       }
 
       let logJson = JSON.Object(
@@ -1199,7 +1190,6 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventConfig]),
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
@@ -1296,7 +1286,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
           },
         ],
         ),
-        id: 0,
+        index: 0,
       }
 
       let logJson = JSON.Object(
@@ -1336,7 +1326,6 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventConfig]),
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
@@ -1387,7 +1376,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       // eth_getLogs (and without throwing, which the pre-fan-out code did).
       let eventConfig = {
         ...MockIndexer.evmOnEventRegistration(~id=sighash, ~isWildcard=true, ~eventFilters=[]),
-        id: 0,
+        index: 0,
       }
 
       // Echo the requested block number so `latestFetchedBlockNumber` reflects
@@ -1415,7 +1404,6 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventConfig]),
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
@@ -1485,7 +1473,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
             },
           ],
         ),
-        id: 0,
+        index: 0,
       }
       let eventB = {
         ...MockIndexer.evmOnEventRegistration(
@@ -1500,7 +1488,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
             },
           ],
         ),
-        id: 1,
+        index: 1,
       }
 
       // A log emitted by ContractA's address, carrying only topic0 (so it does
@@ -1577,7 +1565,6 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         url: mock.url,
         chain,
         onEventRegistrations: [eventA, eventB],
-        eventRegistrations: EvmChain.collectEventRegistrations([eventA, eventB]),
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,

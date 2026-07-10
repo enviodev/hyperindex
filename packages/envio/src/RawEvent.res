@@ -32,8 +32,8 @@ let make = (
   ~blockTimestamp: int,
   ~cleanUpRawEventFieldsInPlace: JSON.t => unit,
 ): Internal.rawEvent => {
-  let {onEventRegistration, chain, blockNumber, logIndex} = eventItem
-  let eventConfig = onEventRegistration.eventConfig
+  let {chain, blockNumber, logIndex} = eventItem
+  let eventConfig = (eventItem->Internal.getItemOnEventRegistration).eventConfig
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =

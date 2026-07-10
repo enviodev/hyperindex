@@ -76,7 +76,10 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
 let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
-  onEventRegistration: Utils.magic("Mock onEventRegistration in fetchstate test"),
+  onEventRegistrationIndex: Internal.addOnEventRegistration(
+    ~chainId,
+    Utils.magic("Mock onEventRegistration in fetchstate test"),
+  ),
   logIndex,
   transactionIndex: 0,
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),

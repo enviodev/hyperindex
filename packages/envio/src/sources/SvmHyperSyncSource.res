@@ -521,7 +521,7 @@ let make = (
         parsedQueueItems
         ->Array.push(
           Internal.Event({
-            onEventRegistration,
+            onEventRegistrationIndex: onEventRegistration.index,
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),

@@ -73,9 +73,10 @@ let runEventHandlerOrThrow = async (
     )
   }
   let handlerDuration = timeBeforeHandler->Performance.secondsSince
+  let eventConfig = (eventItem->Internal.getItemOnEventRegistration).eventConfig
   Prometheus.ProcessingHandler.increment(
-    ~contract=eventItem.onEventRegistration.eventConfig.contractName,
-    ~event=eventItem.onEventRegistration.eventConfig.name,
+    ~contract=eventConfig.contractName,
+    ~event=eventConfig.name,
     ~duration=handlerDuration,
   )
 }
@@ -121,8 +122,8 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({onEventRegistration}) =>
-    switch onEventRegistration.handler {
+  | Event(_) =>
+    switch (item->Internal.castUnsafeEventItem->Internal.getItemOnEventRegistration).handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
@@ -161,7 +162,9 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({onEventRegistration: {handler, eventConfig: {contractName, name: eventName}}}) =>
+      | Event(_) =>
+        let {handler, eventConfig: {contractName, name: eventName}} =
+          item->Internal.castUnsafeEventItem->Internal.getItemOnEventRegistration
         switch handler {
         | None => ()
         | Some(handler) =>

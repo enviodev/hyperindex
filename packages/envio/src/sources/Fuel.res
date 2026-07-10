@@ -46,8 +46,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     Logging.createChildFrom(
       ~logger,
       ~params={
-        "contract": eventItem.onEventRegistration.eventConfig.contractName,
-        "event": eventItem.onEventRegistration.eventConfig.name,
+        "contract": (eventItem->Internal.getItemOnEventRegistration).eventConfig.contractName,
+        "event": (eventItem->Internal.getItemOnEventRegistration).eventConfig.name,
         "chainId": eventItem.chain->ChainMap.Chain.toChainId,
         "block": eventItem.blockNumber,
         "logIndex": eventItem.logIndex,

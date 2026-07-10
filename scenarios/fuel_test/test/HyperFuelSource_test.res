@@ -16,7 +16,7 @@ let mkRegistration = (
   ~kind,
   ~isWildcard=false,
 ): Internal.fuelOnEventRegistration => {
-  id: -1,
+  index: -1,
   eventConfig: ({
     id,
     name,

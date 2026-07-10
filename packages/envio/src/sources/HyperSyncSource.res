@@ -9,11 +9,7 @@ let isUnauthorizedError = (message: string) => message->String.includes("401 Una
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
-  // The chain's registration inputs, mirrored to the Rust client which owns
-  // query construction, routing, and decoding.
-  eventRegistrations: array<HyperSyncClient.Registration.input>,
-  // The chain's registrations, indexed by their sequential id — Rust routes
-  // each log and echoes the id back on the item.
+  // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
@@ -27,7 +23,6 @@ let make = (
   {
     chain,
     endpointUrl,
-    eventRegistrations,
     onEventRegistrations,
     apiToken,
     clientTimeoutMillis,
@@ -51,7 +46,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations,
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
+      onEventRegistrations,
+    ),
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -66,14 +63,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
   let makeEventBatchQueueItem = (
     item: HyperSyncClient.EventItems.item,
-    ~params: Internal.eventParams,
     ~onEventRegistration: Internal.evmOnEventRegistration,
   ): Internal.item => {
     let {transactionIndex, logIndex, srcAddress} = item
-    let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
-      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+      onEventRegistrationIndex: item.onEventRegistrationIndex,
       chain,
       blockNumber: item.blockNumber,
       logIndex,
@@ -83,8 +78,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       payload: {
         contractName: onEventRegistration.eventConfig.contractName,
         eventName: onEventRegistration.eventConfig.name,
-        chainId,
-        params,
+        chainId: chain->ChainMap.Chain.toChainId,
+        params: item.params,
         srcAddress,
         logIndex,
       }->Evm.fromPayload,
@@ -113,7 +108,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~fromBlock,
       ~toBlock,
       ~maxNumLogs=itemsTarget,
-      ~registrationIds=selection.onEventRegistrations->Array.map(reg => reg.id),
+      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressesByContractName,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
@@ -184,12 +179,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
-    // Routing and decoding happen on the Rust side; each item carries its
-    // registration's id and only routed items cross the boundary.
     pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationId)
+      let onEventRegistration =
+        onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
-      ->Array.push(makeEventBatchQueueItem(item, ~params=item.params, ~onEventRegistration))
+      ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
       ->ignore
     })
 

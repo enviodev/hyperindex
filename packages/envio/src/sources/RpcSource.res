@@ -615,12 +615,8 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  // The chain's registrations, indexed by their sequential id — Rust routes
-  // each log and echoes the id back on the item.
+  // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
-  // The chain's registration inputs, mirrored to the Rust client which owns
-  // query construction, routing, and decoding.
-  eventRegistrations: array<HyperSyncClient.Registration.input>,
   lowercaseAddresses: bool,
   ws?: string,
   headers?: dict<string>,
@@ -633,7 +629,6 @@ let make = (
     url,
     chain,
     onEventRegistrations,
-    eventRegistrations,
     lowercaseAddresses,
     ?ws,
     ?headers,
@@ -652,7 +647,9 @@ let make = (
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~eventRegistrations,
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
+      onEventRegistrations,
+    ),
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -840,7 +837,7 @@ let make = (
       fromBlock,
       toBlockCeiling: toBlock,
       partitionId,
-      registrationIds: selection.onEventRegistrations->Array.map(reg => reg.id),
+      registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       addressesByContractName,
     }) catch {
     | exn =>
@@ -875,10 +872,9 @@ let make = (
     ->Promise.thenResolve(parseBlockInfo)
 
     let parsedQueueItems = await items
-    ->Array.map(({log, onEventRegistrationId, params: decoded}: EvmRpcClient.rpcEventItem) => {
-      // Routed on the Rust side; `log.address` comes back already normalized
-      // to the client's casing.
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationId)
+    ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
+      // `log.address` comes back already normalized to the client's casing.
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationIndex)
       let eventConfig =
         onEventRegistration.eventConfig->(
           Utils.magic: Internal.eventConfig => Internal.evmEventConfig
@@ -924,7 +920,7 @@ let make = (
                 }
 
                 Internal.Event({
-                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+                  onEventRegistrationIndex,
                   blockNumber: block->getBlockNumber,
                   chain,
                   logIndex: log.logIndex,

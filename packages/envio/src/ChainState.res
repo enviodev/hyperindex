@@ -4,6 +4,8 @@
 
 type t = {
   logger: Pino.t,
+  // The chain's registrations, indexed by each item's `onEventRegistrationIndex`.
+  onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
   // The chain-wide address index. Not `mutable`: the dict is mutated in place by
   // register/rollback, so the reference is stable across fetchState versions.
@@ -64,6 +66,7 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations=[],
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
@@ -78,6 +81,7 @@ let make = (
 ): t => {
   logger,
   fetchState,
+  onEventRegistrations,
   indexingAddresses,
   sourceManager,
   chainConfig,
@@ -118,6 +122,10 @@ let makeInternal = (
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
     ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
+
+  // Items carry only `onEventRegistrationIndex`; consumers resolve the full
+  // registration through this per-chain array.
+  Internal.setOnEventRegistrations(~chainId=chainConfig.id, ~registrations=onEventRegistrations)
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
@@ -217,6 +225,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
+    ~onEventRegistrations,
     ~indexingAddresses=indexingAddressIndex,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
@@ -461,7 +470,7 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
       | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
       | None =>
         let {transactionIndex} = eventItem
-        let mask = eventItem.onEventRegistration.eventConfig.transactionFieldMask
+        let mask = (eventItem->Internal.getItemOnEventRegistration).eventConfig.transactionFieldMask
         if mask != 0. {
           anyTransactionFieldSelected := true
         }
@@ -488,7 +497,7 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
         switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
         | Some(_) => () // RPC/simulate/Fuel carry the block inline.
         | None =>
-          let mask = eventItem.onEventRegistration.eventConfig.blockFieldMask
+          let mask = (eventItem->Internal.getItemOnEventRegistration).eventConfig.blockFieldMask
           let last = blockItemGroups->Array.length - 1
           if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
             blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)

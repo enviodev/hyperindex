@@ -17,6 +17,11 @@ let keccak256 = Viem.keccak256
 let bytesToHex = Viem.bytesToHex
 let concat = Viem.concat
 let castToHexUnsafe: 'a => hex = val => val->(Utils.magic: 'a => hex)
+
+// Indexed dynamic values (tuples/arrays) match on the keccak256 of their ABI
+// encoding, the same digest the chain stores in the topic.
+let fromAbiValue = (~abiType: string, value: 'a): hex =>
+  Viem.encodeAbiParametersUnsafe(Viem.parseAbiParameters(abiType), [value])->keccak256
 let fromBigInt: bigint => hex = val => val->Viem.bigintToHex(~options={size: 32})
 let fromDynamicString: string => hex = val => val->(Utils.magic: string => hex)->keccak256
 let fromString: string => hex = val => val->Viem.stringToHex(~options={size: 32})

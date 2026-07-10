@@ -555,11 +555,11 @@ type svmInstructionEventConfig = {
 // must stay directly constructable), and the evm→base cast in sources is sound
 // by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
-  // Chain-scoped sequential id — the registration's index in the chain's
-  // onEventRegistrations array, assigned when registration finishes (-1 until
-  // then). Crosses the napi boundary so Rust-routed items resolve back by
-  // array index.
-  id: int,
+  // Chain-scoped sequential index — the registration's position in the
+  // chain's onEventRegistrations array, assigned when registration finishes
+  // (-1 until then). Items reference their registration by this index, and it
+  // crosses the napi boundary so Rust-routed items resolve the same way.
+  index: int,
   eventConfig: eventConfig,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
@@ -610,7 +610,7 @@ type dcs = array<indexingAddress>
 // to make item properly unboxed
 type eventItem = private {
   kind: [#0],
-  onEventRegistration: onEventRegistration,
+  onEventRegistrationIndex: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
@@ -663,7 +663,7 @@ type onBlockRegistration = {
 type item =
   | @as(0)
   Event({
-      onEventRegistration: onEventRegistration,
+      onEventRegistrationIndex: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
@@ -673,6 +673,48 @@ type item =
   | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int, logIndex: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
+
+// Per-chain onEventRegistrations, indexed by each registration's `index`.
+// Items carry only `onEventRegistrationIndex`, so consumers resolve the full
+// registration from here (or from the same array held by the chain's state).
+// Populated once per chain when chain states are created; simulate and test
+// setups that synthesize items register their own arrays.
+let onEventRegistrationsByChainId: dict<array<onEventRegistration>> = Dict.make()
+
+let setOnEventRegistrations = (~chainId: int, ~registrations: array<onEventRegistration>) =>
+  onEventRegistrationsByChainId->Dict.set(chainId->Int.toString, registrations)
+
+// Appends a registration to the chain's registry (creating it if needed) and
+// returns the index an item should carry. Registering the same registration
+// twice returns the existing index, so repeated item construction from a
+// shared registration stays stable. For simulate and test setups that
+// synthesize items outside the chain-state startup path.
+let addOnEventRegistration = (~chainId: int, registration: onEventRegistration): int => {
+  let registrations = switch onEventRegistrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
+    chainId->Int.toString,
+  ) {
+  | Some(registrations) => registrations
+  | None =>
+    let registrations = []
+    onEventRegistrationsByChainId->Dict.set(chainId->Int.toString, registrations)
+    registrations
+  }
+  switch registrations->Array.findIndexOpt(existing => existing === registration) {
+  | Some(index) => index
+  | None =>
+    let index = registrations->Array.length
+    // Keep the caller's object identity (don't copy) so a re-registration of
+    // the same value dedupes; `index` on the stored copy may therefore lag,
+    // the array position is the truth.
+    registrations->Array.push(registration)->ignore
+    index
+  }
+}
+
+let getItemOnEventRegistration = (eventItem: eventItem): onEventRegistration =>
+  onEventRegistrationsByChainId
+  ->Dict.getUnsafe(eventItem.chain->ChainMap.Chain.toChainId->Int.toString)
+  ->Array.getUnsafe(eventItem.onEventRegistrationIndex)
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"

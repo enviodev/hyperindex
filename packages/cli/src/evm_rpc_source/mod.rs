@@ -57,7 +57,7 @@ pub struct RpcEventItem {
     pub log: RpcLog,
     /// The registration this log routed to, as passed to the client
     /// constructor. Logs that route nowhere are dropped before the boundary.
-    pub on_event_registration_id: i64,
+    pub on_event_registration_index: i64,
     pub params: ParamValue,
 }
 
@@ -128,7 +128,7 @@ pub struct NextPageParams {
     /// The partition's registration selection, by chain-scoped id. Log
     /// selections and the routing index are derived internally from the
     /// registrations passed at construction.
-    pub registration_ids: Vec<i64>,
+    pub registration_indexes: Vec<i64>,
     pub addresses_by_contract_name: HashMap<String, Vec<String>>,
 }
 
@@ -217,12 +217,12 @@ impl EvmRpcClient {
     #[napi]
     pub fn build_log_selections(
         &self,
-        registration_ids: Vec<i64>,
+        registration_indexes: Vec<i64>,
         addresses_by_contract_name: HashMap<String, Vec<String>>,
     ) -> napi::Result<Vec<BuiltLogSelection>> {
         let built = self
             .selection_builder
-            .build(&registration_ids, &addresses_by_contract_name)
+            .build(&registration_indexes, &addresses_by_contract_name)
             .map_err(map_err)?;
         Ok(built.log_selections)
     }
@@ -270,7 +270,7 @@ impl EvmRpcClient {
 
         let built = self
             .selection_builder
-            .build(&params.registration_ids, &params.addresses_by_contract_name)
+            .build(&params.registration_indexes, &params.addresses_by_contract_name)
             .map_err(map_err)?;
         let log_selections = built.log_selections;
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
@@ -501,7 +501,7 @@ impl EvmRpcClient {
                         .flatten()?;
                     Some(raw.into_rpc_log(address).map(|log| RpcEventItem {
                         log,
-                        on_event_registration_id: routed.id,
+                        on_event_registration_index: routed.index,
                         params: routed.params,
                     }))
                 })

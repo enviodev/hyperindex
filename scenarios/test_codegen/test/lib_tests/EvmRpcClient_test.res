@@ -154,7 +154,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~syncConfig,
       ~eventRegistrations=[
         {
-          id: 3,
+          index: 3,
           sighash: transferSighash,
           topicCount: 3,
           eventName: "Transfer",
@@ -180,7 +180,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       fromBlock: 100,
       toBlockCeiling: 100,
       partitionId: "0",
-      registrationIds: [3],
+      registrationIndexes: [3],
       addressesByContractName: Dict.fromArray([
         (
           "ERC20",
@@ -195,10 +195,10 @@ describe("EvmRpcClient - getNextPage via napi", () => {
 
     t.expect((
       toBlock,
-      items->Array.map(({log, onEventRegistrationId, params}) => {
+      items->Array.map(({log, onEventRegistrationIndex, params}) => {
         let decoded = params->(Utils.magic: Internal.eventParams => {..})
         {
-          "onEventRegistrationId": onEventRegistrationId,
+          "onEventRegistrationIndex": onEventRegistrationIndex,
           "blockNumber": log.blockNumber,
           "transactionIndex": log.transactionIndex,
           "logIndex": log.logIndex,
@@ -213,7 +213,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       100,
       [
         {
-          "onEventRegistrationId": 3,
+          "onEventRegistrationIndex": 3,
           "blockNumber": 100,
           "transactionIndex": 1,
           "logIndex": 2,
@@ -238,7 +238,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~syncConfig,
       ~eventRegistrations=[
         {
-          id: 3,
+          index: 3,
           sighash: transferSighash,
           topicCount: 3,
           eventName: "Transfer",
@@ -264,7 +264,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       fromBlock: 1,
       toBlockCeiling: 1,
       partitionId: "0",
-      registrationIds: [3],
+      registrationIndexes: [3],
       addressesByContractName: Dict.fromArray([
         (
           "ERC20",
@@ -288,7 +288,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~syncConfig,
       ~eventRegistrations=[
         {
-          id: 0,
+          index: 0,
           sighash: transferSighash,
           topicCount: 1,
           eventName: "Transfer",
@@ -315,7 +315,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         fromBlock: 0,
         toBlockCeiling: 5000,
         partitionId: "0",
-        registrationIds: [0],
+        registrationIndexes: [0],
         addressesByContractName: Dict.make(),
       })
       None

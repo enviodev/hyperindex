@@ -246,8 +246,8 @@ module Registration = {
   // construction: decode metadata, routing identity, and the fetch state
   // queries are built from.
   type input = {
-    // Chain-scoped sequential registration id, echoed back on routed items.
-    id: int,
+    // Chain-scoped sequential registration index, echoed back on routed items.
+    index: int,
     sighash: string,
     topicCount: int,
     eventName: string,
@@ -269,6 +269,46 @@ module Registration = {
     addresses: array<Address.t>,
     topics: array<array<string>>,
   }
+
+  let toTopicFilterInput = (filter: Internal.topicFilter): topicFilterInput =>
+    switch filter {
+    | Values(values) => Some(values->EvmTypes.Hex.toStrings)
+    | ContractAddresses(_) => None
+    }
+
+  let fromOnEventRegistrations = (
+      onEventRegistrations: array<Internal.evmOnEventRegistration>,
+    ): array<input> => {
+    onEventRegistrations->Array.map(reg => {
+      let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      {
+        index: reg.index,
+        sighash: event.sighash,
+        topicCount: event.topicCount,
+        eventName: event.name,
+        contractName: event.contractName,
+        isWildcard: reg.isWildcard,
+        dependsOnAddresses: reg.dependsOnAddresses,
+        params: event.paramsMetadata,
+        topicSelections: reg.resolvedWhere.topicSelections->Array.map((
+          ts
+        ): topicSelectionInput => {
+          topic0: ts.topic0->EvmTypes.Hex.toStrings,
+          topic1: ts.topic1->toTopicFilterInput,
+          topic2: ts.topic2->toTopicFilterInput,
+          topic3: ts.topic3->toTopicFilterInput,
+        }),
+        // Capitalized to match the Rust BlockField/TransactionField string
+        // enums.
+        blockFields: event.selectedBlockFields
+        ->Utils.Set.toArray
+        ->Array.map(name => (name :> string)->Utils.String.capitalize),
+        transactionFields: event.selectedTransactionFields
+        ->Utils.Set.toArray
+        ->Array.map(name => (name :> string)->Utils.String.capitalize),
+      }
+    })
+  }
 }
 
 module EventItems = {
@@ -280,7 +320,7 @@ module EventItems = {
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     maxNumLogs: int,
-    registrationIds: array<int>,
+    registrationIndexes: array<int>,
     addressesByContractName: dict<array<Address.t>>,
   }
 
@@ -293,9 +333,9 @@ module EventItems = {
     // Key (with the block number) into the transaction store; the transaction
     // is resolved from the store on demand.
     transactionIndex: int,
-    // Routed on the Rust side: the registration's chain-scoped id. Logs that
+    // The registration this log routed to, by chain-scoped index. Logs that
     // route to no registration never cross the boundary.
-    onEventRegistrationId: int,
+    onEventRegistrationIndex: int,
     params: Internal.eventParams,
   }
 
