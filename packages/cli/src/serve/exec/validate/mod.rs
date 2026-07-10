@@ -1221,7 +1221,11 @@ mod tests {
                     column("big", "numeric", Scalar::Numeric),
                 ],
                 primary_key: vec!["id".to_string()],
-                object_relationships: vec![],
+                object_relationships: vec![crate::serve::model::ObjectRelationship {
+                    name: "self_rel".to_string(),
+                    local_db_column: "id".to_string(),
+                    remote_table: "User".to_string(),
+                }],
                 array_relationships: vec![],
                 admin_only: false,
                 public_aggregations: false,
@@ -1333,17 +1337,39 @@ mod tests {
     }
 
     #[test]
-    fn dbg_scratch2() {
-        if let Err(e) = plan(&nested_not_query(96), None) {
-            panic!("err at 96: {} / {}", e.path, e.message);
+    fn deep_valid_documents_pass() {
+        // graphql_parser itself rejects nesting much beyond ~46 input-object
+        // levels, so the deepest end-to-end-plannable documents sit well
+        // under the 100 limit; the exact-100 boundary is pinned on the
+        // pre-parse scan below.
+        assert!(plan(&nested_not_query(40), None).is_ok());
+        let mut q = String::from("{ User ");
+        for _ in 0..40 {
+            q.push_str("{ self_rel ");
         }
+        q.push_str("{ id }");
+        for _ in 0..40 {
+            q.push('}');
+        }
+        q.push('}');
+        assert!(plan(&q, None).is_ok());
     }
 
     #[test]
-    fn nesting_depth_at_limit_passes() {
-        // Depth: selection brace + arg paren + 94 `_not` braces + the two
-        // `{id: {_eq:` braces = exactly 100.
-        assert!(plan(&nested_not_query(96), None).is_ok());
+    fn prescan_depth_boundary() {
+        let at_limit = nested_not_query(96); // max bracket depth exactly 100
+        let over = nested_not_query(97);
+        let over_message = match prescan(&over) {
+            Err(e) => e.message,
+            Ok(_) => panic!("expected a depth error"),
+        };
+        assert_eq!(
+            (prescan(&at_limit).is_ok(), over_message),
+            (
+                true,
+                "the query exceeds the maximum allowed nesting depth of 100".to_string(),
+            )
+        );
     }
 
     #[test]

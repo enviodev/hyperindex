@@ -353,7 +353,7 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
                     .get("query")
                     .and_then(|q| q.as_str())
                     .map(String::from),
-                variables: payload.get("variables").cloned(),
+                variables: preserve_variable_numbers(text, payload.get("variables").cloned()),
                 operation_name: payload
                     .get("operationName")
                     .and_then(|o| o.as_str())
@@ -377,6 +377,35 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+/// Same raw-text number preservation as decode_request_body's HTTP path:
+/// variable numbers that don't round-trip through serde_json's f64 are
+/// re-read from the raw frame text with sentinel substitution (see
+/// exec/validate/json_numbers.rs) so their exact text reaches SQL
+/// parameters.
+fn preserve_variable_numbers(
+    frame_text: &str,
+    variables: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    match variables {
+        Some(serde_json::Value::Object(_)) => {
+            let preserved = exec::validate::json_numbers::rewrite_lossy_numbers(frame_text)
+                .and_then(|(rewritten, originals)| {
+                    let reparsed: serde_json::Value = serde_json::from_str(&rewritten).ok()?;
+                    match reparsed.get("payload").and_then(|p| p.get("variables")) {
+                        Some(serde_json::Value::Object(m)) => {
+                            let mut m = m.clone();
+                            exec::validate::json_numbers::attach_originals(&mut m, &originals);
+                            Some(serde_json::Value::Object(m))
+                        }
+                        _ => None,
+                    }
+                });
+            preserved.or(variables)
+        }
+        other => other,
     }
 }
 
@@ -528,5 +557,42 @@ async fn run_subscription(
             }
         }
         tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exec::validate::json_numbers::NUMBER_ORIGINALS_KEY;
+    use super::*;
+
+    #[test]
+    fn subscribe_payload_variables_preserve_lossy_numbers() {
+        let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"big":99999999999999999999999,"small":1.5}}}"#;
+        let frame: serde_json::Value = serde_json::from_str(text).unwrap();
+        let raw_vars = frame["payload"].get("variables").cloned();
+
+        let vars = preserve_variable_numbers(text, raw_vars).unwrap();
+        let sentinel_bits = vars["big"].as_f64().unwrap().to_bits().to_string();
+        assert_eq!(
+            (
+                vars[NUMBER_ORIGINALS_KEY][&sentinel_bits].as_str(),
+                vars["small"].as_f64(),
+                vars["big"].as_i64(),
+            ),
+            (Some("99999999999999999999999"), Some(1.5), None)
+        );
+    }
+
+    #[test]
+    fn payload_without_lossy_numbers_is_untouched() {
+        let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"n":42}}}"#;
+        assert_eq!(
+            [
+                preserve_variable_numbers(text, Some(json!({"n": 42}))),
+                preserve_variable_numbers(text, None),
+                preserve_variable_numbers(text, Some(json!(null))),
+            ],
+            [Some(json!({"n": 42})), None, Some(json!(null))]
+        );
     }
 }

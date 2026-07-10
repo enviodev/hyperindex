@@ -11,7 +11,6 @@
 use super::coerce::parse_decimal;
 use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 
 /// Starts with a control character, which is invalid in a GraphQL name, so
 /// it can never shadow or be confused with a real variable.
@@ -106,12 +105,24 @@ pub fn rewrite_lossy_numbers(src: &str) -> Option<(String, HashMap<u64, String>)
     let mut out = String::with_capacity(src.len());
     let mut pos = 0;
     for t in lossy {
-        while taken.contains(&sentinel.to_bits()) || originals.contains_key(&sentinel.to_bits()) {
+        // serde_json's default float parsing is not correctly rounded
+        // (that's its `float_roundtrip` feature), so the map must be keyed
+        // by the value serde_json will actually parse from the sentinel
+        // text — adjacent ULPs can collapse to the same f64.
+        let (text, bits) = loop {
+            let text = format!("{sentinel:e}");
             sentinel = f64::from_bits(sentinel.to_bits() - 1);
-        }
-        originals.insert(sentinel.to_bits(), src[t.start..t.end].to_string());
+            let Ok(parsed) = serde_json::from_str::<f64>(&text) else {
+                continue;
+            };
+            let bits = parsed.to_bits();
+            if !taken.contains(&bits) && !originals.contains_key(&bits) {
+                break (text, bits);
+            }
+        };
+        originals.insert(bits, src[t.start..t.end].to_string());
         out.push_str(&src[pos..t.start]);
-        let _ = write!(out, "{sentinel:e}");
+        out.push_str(&text);
         pos = t.end;
     }
     out.push_str(&src[pos..]);
@@ -188,4 +199,3 @@ mod tests {
         );
     }
 }
-
