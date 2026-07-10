@@ -946,229 +946,6 @@ describe("RpcSource - getSelectionConfig", () => {
   })
 })
 
-describe("RpcSource - getSuggestedBlockIntervalFromExn", () => {
-  let getSuggestedBlockIntervalFromExn = RpcSource.getSuggestedBlockIntervalFromExn
-
-  it("Should handle retry with the range", t => {
-    let error = JsExn(
-      %raw(`{
-        "code": "UNKNOWN_ERROR",
-        "error": {
-          "code": -32602,
-          "message": "query exceeds max results 20000, retry with the range 6000000-6000509"
-        },
-        "payload": {
-          "method": "eth_getLogs",
-          "params": [
-            {
-              "topics": [
-                [
-                  "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
-                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-                ]
-              ],
-              "fromBlock": "0x5b8d80",
-              "toBlock": "0x5b9168"
-            }
-          ],
-          "id": 4,
-          "jsonrpc": "2.0"
-        },
-        "shortMessage": "could not coalesce error"
-
-      }`),
-    )
-
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
-  })
-
-  it("Shouldn't retry on height not available", t => {
-    let error = JsExn(
-      %raw(`{
-        "code": "UNKNOWN_ERROR",
-        "error": {
-          "code": -32000,
-          "message": "height is not available (requested height: 138913957, base height: 155251499)"
-        },
-        "payload": {
-          "method": "eth_getBlockByNumber",
-          "params": [
-            "0x847a8a5",
-            false
-          ],
-          "id": 2,
-          "jsonrpc": "2.0"
-        },
-        "shortMessage": "could not coalesce error"
-      }`),
-    )
-
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(None)
-  })
-
-  it("Should retry on block range too large", t => {
-    let error = JsExn(
-      %raw(`{
-        code: 'UNKNOWN_ERROR',
-        error: {
-          code: -32000,
-          message: 'block range too large (2000), maximum allowed is 1000 blocks'
-        },
-        payload: { method: 'eth_getLogs', params: [], id: 4, jsonrpc: '2.0' },
-        shortMessage: 'could not coalesce error'
-      }`),
-    )
-
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
-  })
-
-  it("Should ignore invalid range errors where toBlock is less than fromBlock", t => {
-    let error = JsExn(
-      %raw(`{
-        "code": "UNKNOWN_ERROR",
-        "error": {
-          "code": -32602,
-          "message": "query exceeds max results 20000, retry with the range 6000509-6000000"
-        },
-        "payload": {
-          "method": "eth_getLogs",
-          "params": [
-            {
-              "topics": [
-                [
-                  "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
-                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-                ]
-              ],
-              "fromBlock": "0x5b8d80",
-              "toBlock": "0x5b9168"
-            }
-          ],
-          "id": 4,
-          "jsonrpc": "2.0"
-        },
-        "shortMessage": "could not coalesce error"
-
-      }`),
-    )
-
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(None)
-  })
-
-  it("Should handle block range limit from https://1rpc.io/eth", t => {
-    let error = JsExn(
-      %raw(`{
-        "code": "UNKNOWN_ERROR",
-        "error": {
-          "code": -32000,
-          "message": "eth_getLogs is limited to a 1000 blocks range"
-        },
-        "payload": {
-          "method": "eth_getLogs",
-          "params": [
-            {
-              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
-              "topics": [
-                [
-                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-                ]
-              ],
-              "fromBlock": "0x5b8d80",
-              "toBlock": "0x5ba17f"
-            }
-          ],
-          "id": 18,
-          "jsonrpc": "2.0"
-        },
-        "shortMessage": "could not coalesce error"
-      }`),
-    )
-
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
-  })
-
-  it("Should handle block range limit from Alchemy", t => {
-    let error = JsExn(
-      %raw(`{
-        "code": "UNKNOWN_ERROR",
-        "error": {
-          "code": -32600,
-          "message": "You can make eth_getLogs requests with up to a 500 block range. Based on your parameters, this block range should work: [0x3d7773, 0x3d7966]"
-        },
-        "payload": {
-          "method": "eth_getLogs",
-          "params": [
-            {
-              "address": "0x2da25e7446a70d7be65fd4c053948becaa6374c8",
-              "topics": [
-                "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
-              ],
-              "fromBlock": "0x3d7773",
-              "toBlock": "0x3d843e"
-            }
-          ],
-          "id": 13,
-          "jsonrpc": "2.0"
-        },
-        "shortMessage": "could not coalesce error"
-      }`),
-    )
-
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((500, true)))
-  })
-
-  it("Should handle Rpc.JsonRpcError with block range limit", t => {
-    let error = Rpc.JsonRpcError({
-      code: -32000,
-      message: "eth_getLogs is limited to a 1000 blocks range",
-    })
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((1000, true)))
-  })
-
-  it("Should handle Rpc.JsonRpcError with suggested range", t => {
-    let error = Rpc.JsonRpcError({
-      code: -32602,
-      message: "query exceeds max results 20000, retry with the range 6000000-6000509",
-    })
-    t.expect(getSuggestedBlockIntervalFromExn(error)).toEqual(Some((510, false)))
-  })
-})
-
-describe("RpcSource - isResponseTooLargeError", () => {
-  let isResponseTooLargeError = RpcSource.isResponseTooLargeError
-
-  it("Classifies deterministic too-large responses and ignores unrelated errors", t => {
-    let make = (code, message) => Rpc.JsonRpcError({code, message})
-    t.expect({
-      // HyperRPC 50k-log cap — the case the benchmark hits
-      "hyperRpc": make(-32005, "More than 50000 logs returned")->isResponseTooLargeError,
-      "zkEvm": make(-32000, "query returned more than 10000 results")->isResponseTooLargeError,
-      "llamaRpc": make(-32000, "query exceeds max results")->isResponseTooLargeError,
-      "optimism": make(-32000, "backend response too large")->isResponseTooLargeError,
-      "arbitrum": make(
-        -32000,
-        "logs matched by query exceeds limit of 10000",
-      )->isResponseTooLargeError,
-      // Block-range limits are handled by getSuggestedBlockIntervalFromExn, not here
-      "blockRangeLimit": make(
-        -32005,
-        "eth_getLogs is limited to a 1000 blocks range",
-      )->isResponseTooLargeError,
-      "rateLimit": make(-32029, "rate limited")->isResponseTooLargeError,
-      "notJsonRpc": JsExn(%raw(`new Error("boom")`))->isResponseTooLargeError,
-    }).toEqual({
-      "hyperRpc": true,
-      "zkEvm": true,
-      "llamaRpc": true,
-      "optimism": true,
-      "arbitrum": true,
-      "blockRangeLimit": false,
-      "rateLimit": false,
-      "notJsonRpc": false,
-    })
-  })
-})
-
 describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
@@ -1429,6 +1206,144 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       t.expect(queriedToBlocks).toEqual([9999, 7999, 8499])
     },
   )
+})
+
+describe("RpcSource - getItemsOrThrow classifies real provider block-range errors", () => {
+  let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+  let eventConfig = MockIndexer.evmOnEventRegistration(~id=`${sighash}_1`)
+
+  let blockJson = JSON.Object(
+    Dict.fromArray([
+      ("number", JSON.String("0x2710")),
+      ("timestamp", JSON.String("0x64")),
+      ("hash", JSON.String("0xb64")),
+      ("parentHash", JSON.String("0xb63")),
+    ]),
+  )
+
+  let jsonRpcError = message =>
+    JSON.stringify(
+      JSON.Object(
+        Dict.fromArray([
+          ("jsonrpc", JSON.String("2.0")),
+          ("id", JSON.Number(1.)),
+          (
+            "error",
+            JSON.Object(
+              Dict.fromArray([("code", JSON.Number(-32000.)), ("message", JSON.String(message))]),
+            ),
+          ),
+        ]),
+      ),
+    )
+
+  let jsonRpcResult = result =>
+    JSON.stringify(
+      JSON.Object(
+        Dict.fromArray([("jsonrpc", JSON.String("2.0")), ("id", JSON.Number(1.)), ("result", result)]),
+      ),
+    )
+
+  // Real `eth_getLogs` error messages providers return today (see the regex
+  // comments in packages/cli/src/evm_rpc_source/classify.rs), fed through a
+  // mock JSON-RPC server so each assertion exercises the actual napi boundary
+  // instead of a hand-built exception.
+  [
+    (
+      "an unknown provider's suggested range",
+      "query exceeds max results 20000, retry with the range 6000000-6000509",
+      510,
+    ),
+    (
+      "evm-rpc.sei-apis.com's max-allowed-blocks",
+      "block range too large (2000), maximum allowed is 1000 blocks",
+      1000,
+    ),
+    ("1RPC's block range limit", "eth_getLogs is limited to a 1000 blocks range", 1000),
+    (
+      "Alchemy's block range",
+      "You can make eth_getLogs requests with up to a 500 block range. Based on your parameters, this block range should work: [0x3d7773, 0x3d7966]",
+      500,
+    ),
+    ("Cloudflare's max range", "Max range: 3500", 3500),
+    ("Thirdweb's max requested blocks", "Maximum allowed number of requested blocks is 3500", 3500),
+    ("BlockPI's limited-to range", "limited to 2000 block", 2000),
+    ("Base's fixed range", "block range too large", 2000),
+    ("Blast's paid-plan range", "exceeds the range allowed for your plan (5000 > 3000)", 3000),
+    ("Chainstack's fixed range", "Block range limit exceeded.", 10000),
+    ("Coinbase's at-most range", "please limit the query to at most 1000 blocks", 1000),
+    ("PublicNode's max block range", "maximum block range: 2000", 2000),
+    ("Hyperliquid's max block range", "query exceeds max block range 1000", 1000),
+  ]->Array.forEach(((name, message, suggestedInterval)) => {
+    Async.it(`Resizes to the suggested interval for ${name}`, async t => {
+      let mock = await MockRpcServer.start(~handler=requestBody => {
+        let method =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "method"))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("")
+        switch method {
+        | "eth_getLogs" => (200, jsonRpcError(message))
+        | _ => (200, jsonRpcResult(blockJson))
+        }
+      })
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let retry = try {
+        let result = try {
+          let _ = await source.getItemsOrThrow(
+            ~fromBlock=0,
+            ~toBlock=Some(1_000_000),
+            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ),
+            ~knownHeight=1_000_000,
+            ~partitionId="0",
+            ~selection={
+              dependsOnAddresses: true,
+              onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
+            },
+            ~itemsTarget=5000,
+            ~retry=0,
+            ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
+          )
+          None
+        } catch {
+        | Source.GetItemsError(FailedGettingItems({retry})) => Some(retry)
+        | Source.GetItemsError(_) => None
+        }
+        mock.close()
+        result
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      t.expect(retry).toEqual(Some(WithSuggestedToBlock({toBlock: suggestedInterval - 1})))
+    })
+  })
 })
 
 describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
