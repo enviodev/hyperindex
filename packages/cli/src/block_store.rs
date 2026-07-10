@@ -130,9 +130,9 @@ impl SvmBlockField {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
 pub enum FuelBlockField {
-    Height = 0,
-    Time = 1,
-    Id = 2,
+    Id = 0,
+    Height = 1,
+    Time = 2,
 }
 
 impl FuelBlockField {
@@ -140,9 +140,9 @@ impl FuelBlockField {
     pub fn name(self) -> &'static str {
         use FuelBlockField::*;
         match self {
+            Id => "id",
             Height => "height",
             Time => "time",
-            Id => "id",
         }
     }
 }
@@ -157,10 +157,13 @@ fn evm_block_col(field: EvmBlockField, blocks: &[simple_types::Block]) -> Option
         // The block number is the table key, not a column.
         Number => None,
         Timestamp => var_from(blocks, |b| b.timestamp.as_ref().map(bytes)),
-        // The hash is the reorg-detection comparison key: stored as its JS
-        // string form so pages built from JS observations (arbitrary strings in
-        // tests) compare against fetched blocks byte-for-byte. Filled by
-        // `insert_evm_blocks`, which owns the hex encoding.
+        // The hash is the reorg-detection comparison key, stored as its JS
+        // string form so hashes observed in JS (`fromJsEvm` pages) compare
+        // byte-for-byte with fetched blocks' — and `getHash` returns exactly
+        // the string that went in. The column is filled by
+        // `insert_evm_blocks_with_hashes` (this builder only sees the
+        // byte-typed simple block, and a fill closure can't return the owned
+        // hex string).
         Hash => None,
         ParentHash => fixed_from(blocks, 32, |b| b.parent_hash.as_ref().map(bytes)),
         Nonce => fixed_from(blocks, 8, |b| b.nonce.as_ref().map(bytes)),
@@ -338,10 +341,10 @@ pub struct FuelBlockRow {
 fn fuel_block_col(field: FuelBlockField, blocks: &[FuelBlockRow]) -> Option<AnyCol> {
     use FuelBlockField::*;
     match field {
+        Id => str_from(blocks, |b| b.id.as_deref()),
         // The height is the table key, not a column.
         Height => None,
         Time => i64_from(blocks, |b| b.time),
-        Id => str_from(blocks, |b| b.id.as_deref()),
     }
 }
 
@@ -356,6 +359,7 @@ fn decode_fuel_block_field(
     let col = scratch[field as usize].as_ref();
     let len = block_numbers.len();
     Ok(match field {
+        Id => Column::Str(str_cells(col, len)),
         // The height is the store key, so it's always available regardless of
         // whether the block row was fetched.
         Height => Column::I64(
@@ -366,7 +370,6 @@ fn decode_fuel_block_field(
                 .collect(),
         ),
         Time => Column::I64(i64_cells(col, len)),
-        Id => Column::Str(str_cells(col, len)),
     })
 }
 
@@ -518,16 +521,21 @@ fn evm_input_to_simple(b: EvmBlockInput) -> Result<simple_types::Block> {
     })
 }
 
+/// The store's lock-guarded state: the table plus the lowest within-page hash
+/// conflict recorded while building a page (two observations of the same block
+/// with different hashes in one response — e.g. a rollback guard disagreeing
+/// with a returned block). The conflict is accumulated across the page's
+/// insert calls and reported by `merge` alongside cross-store mismatches.
+struct Inner {
+    table: Table<u64>,
+    pending_mismatch: Option<HashMismatch>,
+}
+
 #[napi]
 pub struct BlockStore {
-    inner: Mutex<Table<u64>>,
+    inner: Mutex<Inner>,
     // Fixed at construction; drives the decoder in `materialize`.
     ecosystem: Ecosystem,
-    // Lowest within-page hash conflict recorded while building a page (two
-    // observations of the same block with different hashes in one response —
-    // e.g. a rollback guard disagreeing with a returned block). Reported by
-    // `merge` alongside cross-store mismatches.
-    pending_mismatch: Mutex<Option<HashMismatch>>,
 }
 
 #[napi]
@@ -624,19 +632,18 @@ impl BlockStore {
         let field = self.hash_field();
         let from = u64::try_from(from_block).unwrap_or(0);
         let cross = dst
-            .first_field_mismatch(&src, field, from)
+            .table
+            .first_field_mismatch(&src.table, field, from)
             .map(|key| HashMismatch {
                 block_number: key as i64,
-                stored_hash: self.hash_display(dst.field_bytes(&key, field).unwrap()),
-                received_hash: self.hash_display(src.field_bytes(&key, field).unwrap()),
+                stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
+                received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
             });
         // A conflict the page recorded while it was built (the same block
         // observed twice with different hashes in one response) is a reorg
         // signal too, subject to the same threshold.
-        let within_page = page
+        let within_page = src
             .pending_mismatch
-            .lock()
-            .unwrap()
             .take()
             .filter(|p| p.block_number >= from_block);
         let mismatch = match (cross, within_page) {
@@ -644,7 +651,7 @@ impl BlockStore {
             (a, b) => a.or(b),
         };
         if mismatch.is_none() || report_only {
-            dst.append_from(&mut src);
+            dst.table.append_from(&mut src.table);
         }
         mismatch
     }
@@ -656,6 +663,7 @@ impl BlockStore {
         let key = u64::try_from(block_number).ok()?;
         let inner = self.inner.lock().unwrap();
         inner
+            .table
             .field_bytes(&key, self.hash_field())
             .map(|b| self.hash_display(b))
     }
@@ -672,6 +680,7 @@ impl BlockStore {
         self.inner
             .lock()
             .unwrap()
+            .table
             .keys_with_field(from, below, self.hash_field())
             .into_iter()
             .map(|k| k as i64)
@@ -701,7 +710,7 @@ impl BlockStore {
         for (n, h) in pairs {
             let stored = u64::try_from(n)
                 .ok()
-                .and_then(|k| inner.field_bytes(&k, field))
+                .and_then(|k| inner.table.field_bytes(&k, field))
                 .map(|b| self.hash_display(b));
             match stored {
                 Some(s) if s == h => prev = Some(n),
@@ -770,6 +779,7 @@ impl BlockStore {
             self.inner
                 .lock()
                 .unwrap()
+                .table
                 .prune_keeping_field(up_to, keep_from, self.hash_field());
         }
     }
@@ -782,9 +792,11 @@ impl BlockStore {
     pub fn rollback(&self, target_block: i64, keep_hashes: bool) {
         let mut inner = self.inner.lock().unwrap();
         match u64::try_from(target_block) {
-            Ok(target) if keep_hashes => inner.rollback_keeping_field(target, self.hash_field()),
-            Ok(target) => inner.rollback(target),
-            Err(_) => inner.clear(),
+            Ok(target) if keep_hashes => {
+                inner.table.rollback_keeping_field(target, self.hash_field())
+            }
+            Ok(target) => inner.table.rollback(target),
+            Err(_) => inner.table.clear(),
         }
     }
 }
@@ -797,27 +809,11 @@ impl BlockStore {
             Ecosystem::Fuel => FuelBlockField::VARIANTS.len(),
         };
         Self {
-            inner: Mutex::new(Table::new(n_fields)),
+            inner: Mutex::new(Inner {
+                table: Table::new(n_fields),
+                pending_mismatch: None,
+            }),
             ecosystem,
-            pending_mismatch: Mutex::new(None),
-        }
-    }
-
-    /// Record a hash conflict found while inserting a batch, keeping the lowest
-    /// block number.
-    fn record_conflict(&self, conflict: Option<(u64, Vec<u8>, Vec<u8>)>) {
-        if let Some((key, stored, received)) = conflict {
-            let mut pending = self.pending_mismatch.lock().unwrap();
-            if pending
-                .as_ref()
-                .is_none_or(|p| (key as i64) < p.block_number)
-            {
-                *pending = Some(HashMismatch {
-                    block_number: key as i64,
-                    stored_hash: self.hash_display(&stored),
-                    received_hash: self.hash_display(&received),
-                });
-            }
         }
     }
 
@@ -842,7 +838,7 @@ impl BlockStore {
             .iter()
             .map(|&n| u64::try_from(n).ok())
             .collect();
-        self.inner.lock().unwrap().gather_scratch(&keys, masks)
+        self.inner.lock().unwrap().table.gather_scratch(&keys, masks)
     }
 
     /// Merge one response's EVM blocks into the table (called by the HyperSync
@@ -892,16 +888,27 @@ impl BlockStore {
     }
 
     /// Merge a batch, first recording any hash conflict it introduces (against
-    /// the table or within the batch itself).
+    /// the table or within the batch itself), keeping the lowest block number.
     fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>) {
         let field = self.hash_field();
-        let conflict = {
-            let mut inner = self.inner.lock().unwrap();
-            let conflict = inner.detect_field_conflict(&keys, cols[field].as_ref(), field);
-            inner.merge_batch(keys, cols);
-            conflict
-        };
-        self.record_conflict(conflict);
+        let mut inner = self.inner.lock().unwrap();
+        let conflict = inner
+            .table
+            .detect_field_conflict(&keys, cols[field].as_ref(), field);
+        inner.table.merge_batch(keys, cols);
+        if let Some((key, stored, received)) = conflict {
+            if inner
+                .pending_mismatch
+                .as_ref()
+                .is_none_or(|p| (key as i64) < p.block_number)
+            {
+                inner.pending_mismatch = Some(HashMismatch {
+                    block_number: key as i64,
+                    stored_hash: self.hash_display(&stored),
+                    received_hash: self.hash_display(&received),
+                });
+            }
+        }
     }
 
     /// Merge one response's SVM blocks into the table, keyed by slot. Not
@@ -1366,7 +1373,7 @@ mod tests {
             Vec::from_iter(0..FuelBlockField::VARIANTS.len() as i32)
         );
         let fuel_names: Vec<&str> = FuelBlockField::VARIANTS.iter().map(|f| f.name()).collect();
-        assert_eq!(fuel_names, vec!["height", "time", "id"]);
+        assert_eq!(fuel_names, vec!["id", "height", "time"]);
     }
 
     fn hashed_evm_block(number: u64, byte: u8) -> simple_types::Block {

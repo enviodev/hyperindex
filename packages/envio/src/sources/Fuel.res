@@ -17,7 +17,7 @@ external toPayload: Internal.eventPayload => payload = "%identity"
 
 // Ordered block field names. The index of each is the field code shared with
 // the Rust store (`FuelBlockField`) — keep this order in sync.
-let blockFields = ["height", "time", "id"]
+let blockFields = ["id", "height", "time"]
 
 // Fuel has no per-event block field selection: every event materialises the
 // full (height, time, id) trio, matching what the source always queries.
