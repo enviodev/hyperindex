@@ -764,9 +764,15 @@ module Source = {
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
+                  // The store hex-validates hashes, so pad the decimal marker
+                  // to an even number of hex digits.
+                  let mockBlockHash = blockNumber => {
+                    let s = blockNumber->Int.toString
+                    s->String.length->mod(2) == 1 ? `0x0${s}` : `0x${s}`
+                  }
                   let latestFetchedBlockHash = switch latestFetchedBlockHash {
                   | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                  | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                  | None => mockBlockHash(latestFetchedBlockNumber)
                   }
                   let observedBlocks = [
                     (
@@ -792,7 +798,7 @@ module Source = {
                         (
                           {
                             blockNumber: fromBlock - 1,
-                            blockHash: `0x${(fromBlock - 1)->Int.toString}`,
+                            blockHash: mockBlockHash(fromBlock - 1),
                           }: BlockStore.inputBlock
                         ),
                       )

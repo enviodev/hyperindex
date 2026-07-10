@@ -5,7 +5,7 @@ mod config;
 mod query;
 mod types;
 
-use crate::block_store::{BlockStore, FuelBlockRow};
+use crate::block_store::{decode_hex_bytes, BlockStore, FuelBlockRow};
 use config::ClientConfig;
 use query::Query;
 use types::{convert_response, ConvertError, QueryResponse};
@@ -61,7 +61,7 @@ impl HyperfuelClient {
             .map(|b| {
                 Ok(FuelBlockRow {
                     height: u64::try_from(b.height).context("block.height negative")?,
-                    id: Some(b.id.clone()),
+                    id: Some(decode_hex_bytes(&b.id, "block.id")?),
                     time: Some(b.time),
                 })
             })

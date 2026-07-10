@@ -130,8 +130,8 @@ impl SvmBlockField {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, VariantArray)]
 #[repr(i32)]
 pub enum FuelBlockField {
-    Id = 0,
-    Height = 1,
+    Height = 0,
+    Id = 1,
     Time = 2,
 }
 
@@ -140,8 +140,8 @@ impl FuelBlockField {
     pub fn name(self) -> &'static str {
         use FuelBlockField::*;
         match self {
-            Id => "id",
             Height => "height",
+            Id => "id",
             Time => "time",
         }
     }
@@ -157,14 +157,11 @@ fn evm_block_col(field: EvmBlockField, blocks: &[simple_types::Block]) -> Option
         // The block number is the table key, not a column.
         Number => None,
         Timestamp => var_from(blocks, |b| b.timestamp.as_ref().map(bytes)),
-        // The hash is the reorg-detection comparison key, stored as its JS
-        // string form so hashes observed in JS (`fromJsEvm` pages) compare
-        // byte-for-byte with fetched blocks' — and `getHash` returns exactly
-        // the string that went in. The column is filled by
-        // `insert_evm_blocks_with_hashes` (this builder only sees the
-        // byte-typed simple block, and a fill closure can't return the owned
-        // hex string).
-        Hash => None,
+        // The hash is the reorg-detection comparison key. It's a variable-width
+        // byte column rather than fixed 32 so a `fromJsEvm` page (which
+        // hex-validates its input) can carry shorter hashes in tests; fetched
+        // blocks always store the full 32 bytes.
+        Hash => var_from(blocks, |b| b.hash.as_ref().map(bytes)),
         ParentHash => fixed_from(blocks, 32, |b| b.parent_hash.as_ref().map(bytes)),
         Nonce => fixed_from(blocks, 8, |b| b.nonce.as_ref().map(bytes)),
         Sha3Uncles => fixed_from(blocks, 32, |b| b.sha3_uncles.as_ref().map(bytes)),
@@ -224,8 +221,8 @@ fn decode_evm_block_field(
                 .collect(),
         ),
         Timestamp => Column::I64(bytes_cells(col, len, |b| map_i64(&Some(b)))?),
-        Hash => Column::Str(str_cells(col, len)),
-        ParentHash
+        Hash
+        | ParentHash
         | Sha3Uncles
         | LogsBloom
         | TransactionsRoot
@@ -333,7 +330,7 @@ fn decode_svm_block_columns(
 /// Rust client path and `fromJsFuel`.
 pub struct FuelBlockRow {
     pub height: u64,
-    pub id: Option<String>,
+    pub id: Option<Vec<u8>>,
     pub time: Option<i64>,
 }
 
@@ -341,9 +338,9 @@ pub struct FuelBlockRow {
 fn fuel_block_col(field: FuelBlockField, blocks: &[FuelBlockRow]) -> Option<AnyCol> {
     use FuelBlockField::*;
     match field {
-        Id => str_from(blocks, |b| b.id.as_deref()),
         // The height is the table key, not a column.
         Height => None,
+        Id => var_from(blocks, |b| b.id.as_deref()),
         Time => i64_from(blocks, |b| b.time),
     }
 }
@@ -359,7 +356,6 @@ fn decode_fuel_block_field(
     let col = scratch[field as usize].as_ref();
     let len = block_numbers.len();
     Ok(match field {
-        Id => Column::Str(str_cells(col, len)),
         // The height is the store key, so it's always available regardless of
         // whether the block row was fetched.
         Height => Column::I64(
@@ -369,6 +365,7 @@ fn decode_fuel_block_field(
                 .map(|(&n, &m)| (m & bit != 0).then_some(n))
                 .collect(),
         ),
+        Id => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_full(b))))?),
         Time => Column::I64(i64_cells(col, len)),
     })
 }
@@ -458,6 +455,21 @@ fn bigint_quantity(v: &Option<BigInt>) -> Option<Quantity> {
     v.as_ref().map(|b| Quantity::from(bigint_be_bytes(b)))
 }
 
+/// Strictly decode a 0x-prefixed even-length hex string into bytes; anything
+/// else (e.g. an arbitrary marker string) is a validation error.
+pub(crate) fn decode_hex_bytes(s: &str, name: &str) -> Result<Vec<u8>> {
+    let hex = s
+        .strip_prefix("0x")
+        .with_context(|| format!("{name} '{s}' must be a 0x-prefixed hex string"))?;
+    if !hex.len().is_multiple_of(2) {
+        anyhow::bail!("{name} '{s}' must have an even number of hex digits");
+    }
+    let mut out = vec![0u8; hex.len() / 2];
+    faster_hex::hex_decode(hex.as_bytes(), &mut out)
+        .with_context(|| format!("{name} '{s}' is not valid hex"))?;
+    Ok(out)
+}
+
 fn decode_hex_opt<T: Hex>(v: &Option<String>, name: &str) -> Result<Option<T>> {
     v.as_ref()
         .map(|s| T::decode_hex(s).with_context(|| format!("decoding {name}")))
@@ -469,8 +481,8 @@ fn decode_hex_opt<T: Hex>(v: &Option<String>, name: &str) -> Result<Option<T>> {
 fn evm_input_to_simple(b: EvmBlockInput) -> Result<simple_types::Block> {
     Ok(simple_types::Block {
         number: Some(u64::try_from(b.number).context("block.number negative")?),
-        // The hash column is filled from the JS string directly (see
-        // `from_js_evm`), not through the byte-typed simple block.
+        // The hash column is hex-validated and filled separately (see
+        // `from_js_evm`) so it can be shorter than the 32 bytes `Hash` requires.
         hash: None,
         parent_hash: decode_hex_opt(&b.parent_hash, "block.parentHash")?,
         nonce: b
@@ -565,13 +577,33 @@ impl BlockStore {
     #[napi(factory)]
     pub fn from_js_evm(blocks: Vec<EvmBlockInput>, should_checksum: bool) -> napi::Result<Self> {
         let store = Self::with_ecosystem(Ecosystem::Evm { should_checksum });
-        let hashes: Vec<Option<String>> = blocks.iter().map(|b| b.hash.clone()).collect();
+        let hashes: Vec<Option<Vec<u8>>> = blocks
+            .iter()
+            .map(|b| {
+                b.hash
+                    .as_deref()
+                    .map(|s| decode_hex_bytes(s, "block.hash"))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>>>()
+            .map_err(map_err)?;
         let simple = blocks
             .into_iter()
             .map(evm_input_to_simple)
             .collect::<Result<Vec<_>>>()
             .map_err(map_err)?;
-        store.insert_evm_blocks_with_hashes(simple, hashes);
+        let keys: Vec<u64> = simple.iter().map(|b| b.number.unwrap()).collect();
+        let cols: Vec<Option<AnyCol>> = EvmBlockField::VARIANTS
+            .iter()
+            .map(|&f| {
+                if f == EvmBlockField::Hash {
+                    var_from(&hashes, |h| h.as_deref())
+                } else {
+                    evm_block_col(f, &simple)
+                }
+            })
+            .collect();
+        store.insert_watching_hash(keys, cols);
         Ok(store)
     }
 
@@ -590,7 +622,11 @@ impl BlockStore {
             .map(|b| {
                 Ok(FuelBlockRow {
                     height: u64::try_from(b.height).context("block.height negative")?,
-                    id: b.id,
+                    id: b
+                        .id
+                        .as_deref()
+                        .map(|s| decode_hex_bytes(s, "block.id"))
+                        .transpose()?,
                     time: b.time,
                 })
             })
@@ -827,10 +863,13 @@ impl BlockStore {
         }
     }
 
-    /// A stored hash cell in the shape JS knows it by. Hashes are stored as
-    /// their JS string form for every ecosystem, so this is a UTF-8 read.
+    /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
+    /// EVM/Fuel hashes, the raw base58 string for SVM.
     fn hash_display(&self, bytes: &[u8]) -> String {
-        String::from_utf8_lossy(bytes).into_owned()
+        match self.ecosystem {
+            Ecosystem::Svm => String::from_utf8_lossy(bytes).into_owned(),
+            _ => hex_full(bytes),
+        }
     }
 
     fn gather(&self, block_numbers: &[i64], masks: &[u64]) -> Vec<Option<AnyCol>> {
@@ -845,44 +884,15 @@ impl BlockStore {
     /// source while building a page). One block per number, so overlapping
     /// partition re-fetches overwrite in place instead of duplicating. Not
     /// exposed to JS.
-    pub(crate) fn insert_evm_blocks(&self, blocks: Vec<simple_types::Block>) {
-        let hashes = blocks
-            .iter()
-            .map(|b| b.hash.as_ref().map(|h| hex_full(h.as_ref())))
-            .collect();
-        self.insert_evm_blocks_with_hashes(blocks, hashes);
-    }
-
-    /// EVM insert with the hash column supplied as strings (the fetched
-    /// blocks' hex form, or raw JS observations from `fromJsEvm`).
-    fn insert_evm_blocks_with_hashes(
-        &self,
-        mut blocks: Vec<simple_types::Block>,
-        mut hashes: Vec<Option<String>>,
-    ) {
-        let mut i = 0;
-        blocks.retain(|b| {
-            let keep = b.number.is_some();
-            if !keep {
-                hashes.remove(i);
-            } else {
-                i += 1;
-            }
-            keep
-        });
+    pub(crate) fn insert_evm_blocks(&self, mut blocks: Vec<simple_types::Block>) {
+        blocks.retain(|b| b.number.is_some());
         if blocks.is_empty() {
             return;
         }
         let keys: Vec<u64> = blocks.iter().map(|b| b.number.unwrap()).collect();
         let cols: Vec<Option<AnyCol>> = EvmBlockField::VARIANTS
             .iter()
-            .map(|&f| {
-                if f == EvmBlockField::Hash {
-                    str_from(&hashes, |h| h.as_deref())
-                } else {
-                    evm_block_col(f, &blocks)
-                }
-            })
+            .map(|&f| evm_block_col(f, &blocks))
             .collect();
         self.insert_watching_hash(keys, cols);
     }
@@ -1373,7 +1383,7 @@ mod tests {
             Vec::from_iter(0..FuelBlockField::VARIANTS.len() as i32)
         );
         let fuel_names: Vec<&str> = FuelBlockField::VARIANTS.iter().map(|f| f.name()).collect();
-        assert_eq!(fuel_names, vec!["id", "height", "time"]);
+        assert_eq!(fuel_names, vec!["height", "id", "time"]);
     }
 
     fn hashed_evm_block(number: u64, byte: u8) -> simple_types::Block {
@@ -1563,7 +1573,7 @@ mod tests {
         let page = BlockStore::new_fuel();
         page.insert_fuel_block_rows(vec![FuelBlockRow {
             height: 5,
-            id: Some(format!("0x{}", "ee".repeat(32))),
+            id: Some([0xee_u8; 32].to_vec()),
             time: Some(123),
         }]);
 
@@ -1604,7 +1614,7 @@ mod tests {
         let conflicting = BlockStore::new_fuel();
         conflicting.insert_fuel_block_rows(vec![FuelBlockRow {
             height: 5,
-            id: Some(format!("0x{}", "dd".repeat(32))),
+            id: Some([0xdd_u8; 32].to_vec()),
             time: Some(124),
         }]);
         let mismatch = persistent.merge(&conflicting, 0, false).expect("mismatch");
