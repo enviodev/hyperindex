@@ -1333,6 +1333,13 @@ mod tests {
     }
 
     #[test]
+    fn dbg_scratch2() {
+        if let Err(e) = plan(&nested_not_query(96), None) {
+            panic!("err at 96: {} / {}", e.path, e.message);
+        }
+    }
+
+    #[test]
     fn nesting_depth_at_limit_passes() {
         // Depth: selection brace + arg paren + 94 `_not` braces + the two
         // `{id: {_eq:` braces = exactly 100.
