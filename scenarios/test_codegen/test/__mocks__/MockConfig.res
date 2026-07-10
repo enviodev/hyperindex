@@ -18,7 +18,7 @@ let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>
   )
 
 // Build the per-(event, chain) registration from the event definition + the
-// registered handlers, mirroring `HandlerRegister.buildOnEventRegistrations`.
+// registered handlers, mirroring `HandlerRegister.finishRegistration`.
 // Handlers must have been registered (`HandlerLoader.registerAllHandlers`)
 // before calling.
 let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
