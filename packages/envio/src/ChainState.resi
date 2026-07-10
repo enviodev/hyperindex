@@ -67,7 +67,12 @@ let isReadyToEnterReorgThreshold: t => bool
 let targetBlock: (t, ~chainTargetItems: float) => int
 let progressAtBlock: (t, ~blockNumber: int) => float
 let blockAtProgress: (t, ~progress: float) => int
-let getNextQuery: (t, ~chainTargetItems: float, ~maxTargetBlock: int=?) => FetchState.nextQuery
+let getNextQuery: (
+  t,
+  ~chainTargetItems: float,
+  ~chunkItemsMultiplier: float=?,
+  ~maxTargetBlock: int=?,
+) => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

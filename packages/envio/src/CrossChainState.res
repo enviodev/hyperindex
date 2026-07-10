@@ -217,6 +217,11 @@ let checkAndFetch = async (
     ),
   )
 
+  // Chunk reservations get headroom over the density estimate so a
+  // denser-than-expected range doesn't truncate at the server cap; realtime
+  // gets more since a forced catch-up query there costs a head-poll roundtrip.
+  let chunkItemsMultiplier = crossChainState.isRealtime ? 3. : 1.5
+
   let actionByChain = Dict.make()
   let maxProgress = ref(None)
   crossChainState
@@ -242,7 +247,11 @@ let checkAndFetch = async (
         None
       | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress))
       }
-      switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
+      switch cs->ChainState.getNextQuery(
+        ~chainTargetItems,
+        ~chunkItemsMultiplier,
+        ~maxTargetBlock?,
+      ) {
       | (WaitingForNewBlock | NothingToQuery) as action =>
         actionByChain->Utils.Dict.setByInt(chainId, action)
       | Ready(queries) => {

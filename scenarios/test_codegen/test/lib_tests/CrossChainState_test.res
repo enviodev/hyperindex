@@ -252,14 +252,14 @@ describe("CrossChainState fetch control", () => {
     t.expect(dispatched).toEqual([(1, 1)])
   })
 
-  Async.it(
-    "checkAndFetch's waterfall lets the furthest-behind chain drain only what it can use, flowing the remainder to the next chain",
-    async t => {
-      // Chain 1 (furthest behind, so priorityOrder visits it first): a single
-      // known-density partition with a short remaining range (endBlock=20 at
-      // density 10 items/block -> 200 items total across 2 chunks). Its real
-      // consumption is capped by that range, far below whatever share of the
-      // 3000-item pool the waterfall would otherwise hand it.
+  // Chain 1 (furthest behind, so priorityOrder visits it first): a single
+  // known-density partition with a short remaining range (endBlock=20 at
+  // density 10 items/block -> 200 items across 2 chunks, reserved at the
+  // chunk headroom multiplier: 1.5x backfill, 3x realtime). Its real
+  // consumption is capped by that range, far below whatever share of the
+  // 3000-item pool the waterfall would otherwise hand it. Returns each
+  // chain's dispatched itemsTarget total and pendingBudget.
+  let runShortRangeWaterfall = async (~isRealtime) => {
       let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
       let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
       let partition1: FetchState.partition = {
@@ -327,7 +327,7 @@ describe("CrossChainState fetch control", () => {
       // directly reflects what chain 1 left behind.
       let b = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=500)
 
-      let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
+      let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime, ~targetBufferSize=3000)
 
       let dispatchedItemsByChain = Dict.make()
       await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
@@ -342,20 +342,30 @@ describe("CrossChainState fetch control", () => {
         Promise.resolve()
       })
 
-      t.expect(
-        (
-          dispatchedItemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(1),
-          dispatchedItemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(2),
-        ),
-        ~message="Chain 1's real range caps it at 200 regardless of its share of the 3000-item pool; chain 2 gets the rest",
-      ).toEqual((Some(200.), Some(2800.)))
+      (
+        dispatchedItemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(1),
+        dispatchedItemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(2),
+        a->ChainState.pendingBudget,
+        b->ChainState.pendingBudget,
+      )
+  }
 
+  Async.it(
+    "checkAndFetch's waterfall lets the furthest-behind chain drain only what it can use, flowing the remainder to the next chain",
+    async t => {
       t.expect(
-        (a->ChainState.pendingBudget, b->ChainState.pendingBudget),
-        ~message="Each chain's pendingBudget reflects exactly what it was just dispatched",
-      ).toEqual((200., 2800.))
+        await runShortRangeWaterfall(~isRealtime=false),
+        ~message="Chain 1's real range caps it at 300 (200 items at 1.5x chunk headroom) regardless of its share of the 3000-item pool; chain 2 gets the rest, and each chain's pendingBudget reflects exactly what it was just dispatched",
+      ).toEqual((Some(300.), Some(2700.), 300., 2700.))
     },
   )
+
+  Async.it("checkAndFetch reserves chunks with 3x headroom under realtime", async t => {
+    t.expect(
+      await runShortRangeWaterfall(~isRealtime=true),
+      ~message="Chain 1's 200-item range is reserved at 3x = 600; chain 2 gets the rest",
+    ).toEqual((Some(600.), Some(2400.), 600., 2400.))
+  })
 
   Async.it(
     "checkAndFetch skips a chain with no known height without claiming leadership or budget",

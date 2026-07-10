@@ -476,15 +476,21 @@ module OptimizedPartitions = {
         switch query.toBlock {
         | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
         | Some(queryToBlock) =>
-          // Update on partial response (direct capacity evidence),
-          // or when the query's intended range covers at least the partition's
-          // current chunk range — meaning it was a capacity-based split chunk,
-          // not a small gap-fill whose toBlock is an artificial boundary.
-          latestFetchedBlock.blockNumber < queryToBlock ||
+          if latestFetchedBlock.blockNumber < queryToBlock {
+            // Partial response is direct capacity evidence — unless it was
+            // truncated by our own itemsTarget cap: that reflects the
+            // reservation we asked for, not what the server could return.
+            itemsCount < query.itemsTarget
+          } else {
+            // A full response updates only when the query's intended range
+            // covers at least the partition's current chunk range — meaning it
+            // was a capacity-based split chunk, not a small gap-fill whose
+            // toBlock is an artificial boundary.
             switch getMinHistoryRange(p) {
             | None => false // Chunking not active yet, don't update
             | Some(minHistoryRange) => queryToBlock - query.fromBlock + 1 >= minHistoryRange
             }
+          }
         }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
@@ -1377,6 +1383,7 @@ let pushGapFillQueries = (
   ~maxChunks: int,
   ~partition: partition,
   ~partitionBudget: float,
+  ~chunkItemsMultiplier: float,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1419,7 +1426,7 @@ let pushGapFillQueries = (
           ) {
             let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
             let itemsTarget = densityItemsTarget(
-              ~density,
+              ~density=density *. chunkItemsMultiplier,
               ~fromBlock=chunkFromBlock.contents,
               ~toBlock=Some(chunkToBlock),
               ~chainTargetBlock,
@@ -1439,9 +1446,10 @@ let pushGapFillQueries = (
           }
         } else {
           // Not enough room for 2 chunks, fall back to a single query
-          pushSingleQuery(~density, ~isChunk=rangeEndBlock !== None)
+          pushSingleQuery(~density=density *. chunkItemsMultiplier, ~isChunk=rangeEndBlock !== None)
         }
-      | (Some(density), _) => pushSingleQuery(~density, ~isChunk=false)
+      | (Some(density), _) =>
+        pushSingleQuery(~density=density *. chunkItemsMultiplier, ~isChunk=false)
       | (None, _) =>
         let remainingRange = Pervasives.max(1, chainTargetBlock - rangeFromBlock + 1)
         pushSingleQuery(~density=partitionBudget /. remainingRange->Int.toFloat, ~isChunk=false)
@@ -1482,6 +1490,11 @@ type waterFillState = {
   p: partition,
   mutable cursor: int,
   mutable chunksUsedThisCall: int,
+  // Whether a water-fill round already emitted for this partition this call.
+  // The min-one-chunk force (emit a full chunk even past the allotment) is a
+  // progress guarantee, so it applies only to a partition's first emit — a
+  // later round's leftover re-pour must not force over-budget chunks.
+  mutable emittedThisCall: bool,
   // Existing mutPendingQueries count before this call — fixed for the call,
   // used with chunksUsedThisCall against maxPendingChunksPerPartition.
   pendingCount: int,
@@ -1523,6 +1536,7 @@ let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
+  ~chunkItemsMultiplier: float=1.,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1630,6 +1644,7 @@ let getNextQuery = (
             ~maxChunks=maxPendingChunksPerPartition - pendingCount - chunksUsedThisCall.contents,
             ~partition=p,
             ~partitionBudget=chainTargetItems /. partitionsCount->Int.toFloat,
+            ~chunkItemsMultiplier,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
@@ -1653,6 +1668,7 @@ let getNextQuery = (
           p,
           cursor: cursor.contents,
           chunksUsedThisCall: chunksUsedThisCall.contents,
+          emittedThisCall: false,
           pendingCount,
           queryEndBlock,
           maybeChunkRange,
@@ -1710,41 +1726,55 @@ let getNextQuery = (
       }
       switch (fs.maybeChunkRange, p->getTrustedDensity) {
       | (Some(minHistoryRange), Some(density)) if density > 0. =>
-        // Chunking active: strict chunks with a hard endBlock, uncapped real
-        // density — at least one full chunk this round even if budget falls
-        // short.
+        // Chunking active: strict chunks with a hard endBlock, sized by real
+        // density with the chunk headroom multiplier — the partition's first
+        // emit this call gets one full chunk even if the budget falls short.
         let chunkSize = Js.Math.ceil_int(minHistoryRange->Int.toFloat *. 1.8)
-        let chunkCost = density *. chunkSize->Int.toFloat
         let maxChunksRemaining =
           maxPendingChunksPerPartition - fs.pendingCount - fs.chunksUsedThisCall
-        let affordable = Math.floor(budget /. chunkCost)->Float.toInt
-        let numChunks = Pervasives.max(1, Pervasives.min(affordable, maxChunksRemaining))
         let consumed = ref(0.)
         let created = ref(0)
         let chunkFromBlock = ref(fs.cursor)
-        while created.contents < numChunks && chunkFromBlock.contents <= maxBlock {
+        let budgetLeft = ref(true)
+        while (
+          budgetLeft.contents &&
+          created.contents < maxChunksRemaining &&
+          chunkFromBlock.contents <= maxBlock
+        ) {
           let chunkToBlock = Pervasives.min(chunkFromBlock.contents + chunkSize - 1, maxBlock)
           let itemsTarget = Pervasives.max(
             1,
-            (density *. (chunkToBlock - chunkFromBlock.contents + 1)->Int.toFloat)
+            (density *.
+            (chunkToBlock - chunkFromBlock.contents + 1)->Int.toFloat *.
+            chunkItemsMultiplier)
             ->Math.ceil
             ->Float.toInt,
           )
-          fs.bucket->Array.push({
-            partitionId: fs.partitionId,
-            fromBlock: chunkFromBlock.contents,
-            toBlock: Some(chunkToBlock),
-            isChunk: true,
-            selection: p.selection,
-            itemsTarget,
-            addressesByContractName: p.addressesByContractName,
-          })
-          consumed := consumed.contents +. itemsTarget->Int.toFloat
-          chunkFromBlock := chunkToBlock + 1
-          created := created.contents + 1
+          if (
+            (!fs.emittedThisCall && consumed.contents == 0.) ||
+              consumed.contents +. itemsTarget->Int.toFloat <= budget
+          ) {
+            fs.bucket->Array.push({
+              partitionId: fs.partitionId,
+              fromBlock: chunkFromBlock.contents,
+              toBlock: Some(chunkToBlock),
+              isChunk: true,
+              selection: p.selection,
+              itemsTarget,
+              addressesByContractName: p.addressesByContractName,
+            })
+            consumed := consumed.contents +. itemsTarget->Int.toFloat
+            chunkFromBlock := chunkToBlock + 1
+            created := created.contents + 1
+          } else {
+            budgetLeft := false
+          }
         }
         fs.cursor = chunkFromBlock.contents
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + created.contents
+        if created.contents > 0 {
+          fs.emittedThisCall = true
+        }
         consumed.contents
       | _ =>
         let itemsTarget = Pervasives.max(1, Math.round(budget)->Float.toInt)
@@ -1759,6 +1789,7 @@ let getNextQuery = (
         })
         fs.cursor = maxBlock + 1
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + 1
+        fs.emittedThisCall = true
         itemsTarget->Int.toFloat
       }
     }
@@ -1770,13 +1801,11 @@ let getNextQuery = (
     // round. Allotments sum to exactly the poured budget, so the outcome is
     // order-independent and never exceeds it — the only overshoot left is the
     // min-one-chunk quantization in emitQueries, bounded by one chunk per
-    // partition per round.
+    // partition per call (a partition's first emit only).
     //
-    // No explicit round cap: a partition survives a round only by advancing
-    // chunksUsedThisCall (capped at maxPendingChunksPerPartition) or by
-    // consuming fresh budget (every emit consumes at least 1), so the
-    // not-filled set drains on its own and the loop also stops once the whole
-    // budget is poured.
+    // No explicit round cap: a partition survives a round only by consuming
+    // fresh budget, so the not-filled set drains on its own and the loop also
+    // stops once the whole budget is poured.
     let notFilledPartitions = ref(inRangeStates)
     let remainingBudget = ref(rangeItemsTarget)
     while notFilledPartitions.contents->Array.length > 0 && remainingBudget.contents > 0. {
@@ -1794,7 +1823,11 @@ let getNextQuery = (
           let consumed = emitQueries(fs, ~budget)
           reservedByPartition->Dict.set(fs.partitionId, reserved +. consumed)
           remainingBudget := remainingBudget.contents -. consumed
-          if fs->isInRange {
+
+          // A zero-consumption emit means the allotment can't fit even one
+          // more chunk — re-pouring the same leftover at it would spin
+          // forever, so the partition is done for this call.
+          if consumed > 0. && fs->isInRange {
             next->Array.push(fs)->ignore
           }
         }
