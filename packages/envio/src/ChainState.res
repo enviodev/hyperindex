@@ -448,7 +448,12 @@ let blockAtProgress = (cs: t, ~progress) => {
 // maxTargetBlock set to the most-behind chain's progress mapped onto this
 // chain, so a chain with budget can't run further ahead than the chain the
 // whole pool is prioritizing.
-let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
+let getNextQuery = (
+  cs: t,
+  ~chainTargetItems: float,
+  ~chunkItemsMultiplier=1.,
+  ~maxTargetBlock=?,
+) => {
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
   let chainTargetBlock = switch maxTargetBlock {
   | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
@@ -478,7 +483,11 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
     // hold the whole pool while it takes its first measurements.
     Pervasives.min(chainTargetItems, 5_000. +. cs.pendingBudget)
   }
-  cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
+  cs.fetchState->FetchState.getNextQuery(
+    ~chainTargetBlock,
+    ~chainTargetItems,
+    ~chunkItemsMultiplier,
+  )
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch

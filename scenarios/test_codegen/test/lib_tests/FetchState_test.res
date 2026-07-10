@@ -4268,12 +4268,10 @@ describe("FetchState.getNextQuery water-fill with uneven in-flight reservations"
     }
 
     // Fresh budget = 2000 - 1500 reserved = 500. Level = 500 (partition "1"
-    // sits above it). Partition "0": 2 affordable chunks + 1 forced chunk for
-    // the 140-item leftover — the only overshoot is the min-one-chunk
-    // quantization, not the reservation-inflated mean.
-    t.expect(byPartition).toEqual(
-      Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]),
-    )
+    // sits above it). Partition "0": 2 chunks fit the 500 budget + 1 forced
+    // chunk for the 140-item leftover — the only overshoot is the
+    // min-one-chunk quantization, not the reservation-inflated mean.
+    t.expect(byPartition).toEqual(Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]))
   })
 
   it("sizes an unknown-density probe to the whole leftover instead of a diluted even split", t => {
@@ -4305,5 +4303,164 @@ describe("FetchState.getNextQuery water-fill with uneven in-flight reservations"
         },
       ]),
     )
+  })
+})
+
+describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => {
+  // Single partition with density 10 items/block and chunk history 10 ->
+  // chunkSize = ceil(10 * 1.8) = 18, so a chunk costs 180 items at multiplier
+  // 1, 270 at the 1.5x backfill headroom, 540 at the 3x realtime headroom.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makeFetchState = (): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[
+        {
+          id: "0",
+          latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+          selection: normalSelection,
+          addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+          mergeBlock: None,
+          dynamicContract: None,
+          mutPendingQueries: [],
+          prevQueryRange: 10,
+          prevPrevQueryRange: 10,
+          prevRangeSize: 100, // density = 100 / 10 = 10 items/block
+          latestBlockRangeUpdateBlock: 0,
+        },
+      ],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  let getChunks = (fetchState: FetchState.t, ~chainTargetItems, ~chunkItemsMultiplier=?) =>
+    switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100000,
+      ~chainTargetItems,
+      ~chunkItemsMultiplier?,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.itemsTarget))
+    | _ => []
+    }
+
+  it("sizes chunk itemsTarget with the chunk headroom multiplier", t => {
+    t.expect({
+      "backfill1_5x": makeFetchState()->getChunks(~chainTargetItems=270., ~chunkItemsMultiplier=1.5),
+      "realtime3x": makeFetchState()->getChunks(~chainTargetItems=270., ~chunkItemsMultiplier=3.),
+    }).toEqual({
+      // ceil(1.5 * 10 * 18) = 270 per chunk.
+      "backfill1_5x": [(1, 270)],
+      // ceil(3 * 10 * 18) = 540 per chunk.
+      "realtime3x": [(1, 540)],
+    })
+  })
+
+  it("emits chunks while the budget lasts, min one chunk per water-fill round", t => {
+    t.expect({
+      "budget400": makeFetchState()->getChunks(~chainTargetItems=400.),
+      "budget50": makeFetchState()->getChunks(~chainTargetItems=50.),
+    }).toEqual({
+      // 180 + 180 = 360 <= 400 in the first round; the 40-item leftover
+      // re-pours and forces one more full chunk, so no budget strands.
+      "budget400": [(1, 180), (19, 180), (37, 180)],
+      // The first chunk emits full-size regardless of budget (overshoot allowed).
+      "budget50": [(1, 180)],
+    })
+  })
+})
+
+describe("Cap-hit truncation does not update chunk history", () => {
+  // Chunk history 300 with a pending chunk truncated at block 90: when the
+  // truncation was caused by our own itemsTarget cap it says nothing about
+  // server capacity, so the 300 history must survive. A sub-cap partial is
+  // real capacity evidence and shrinks it to 90.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let addressesByContractName = Dict.fromArray([("MockContract", [mockAddress0])])
+
+  let makeFetchState = (): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[
+        {
+          id: "0",
+          latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+          selection: normalSelection,
+          addressesByContractName,
+          mergeBlock: None,
+          dynamicContract: None,
+          mutPendingQueries: [],
+          prevQueryRange: 300,
+          prevPrevQueryRange: 300,
+          prevRangeSize: 300,
+          latestBlockRangeUpdateBlock: 0,
+        },
+      ],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  let chunkQuery: FetchState.query = {
+    partitionId: "0",
+    fromBlock: 1,
+    toBlock: Some(540),
+    isChunk: true,
+    itemsTarget: 3,
+    selection: normalSelection,
+    addressesByContractName,
+  }
+
+  let runPartialResponse = (~itemsCount) => {
+    let (_, indexingAddresses) = makeInitial()
+    let fetchState = makeFetchState()
+    fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~indexingAddresses,
+        ~query=chunkQuery,
+        ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
+        ~newItems=Array.fromInitializer(~length=itemsCount, i =>
+          mockEvent(~blockNumber=10, ~logIndex=i)
+        ),
+      )
+    updated.optimizedPartitions.entities
+    ->Dict.getUnsafe("0")
+    ->FetchState.getMinHistoryRange
+  }
+
+  it("keeps history on a cap-hit partial and updates it on a sub-cap partial", t => {
+    t.expect({
+      "capHit": runPartialResponse(~itemsCount=3),
+      "subCap": runPartialResponse(~itemsCount=2),
+    }).toEqual({
+      "capHit": Some(300),
+      "subCap": Some(90),
+    })
   })
 })
