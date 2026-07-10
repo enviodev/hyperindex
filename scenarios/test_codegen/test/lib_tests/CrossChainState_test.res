@@ -356,16 +356,16 @@ describe("CrossChainState fetch control", () => {
     async t => {
       t.expect(
         await runShortRangeWaterfall(~isRealtime=false),
-        ~message="Chain 1's real range caps it at 300 (200 items at 1.5x chunk headroom) regardless of its share of the 3000-item pool; chain 2 gets the rest, and each chain's pendingBudget reflects exactly what it was just dispatched",
-      ).toEqual((Some(300.), Some(2700.), 300., 2700.))
+        ~message="Chain 1's real range caps it at 200 items regardless of its share of the 3000-item pool (itemsTarget carries the 1.5x headroom = 300, but only the 200 estimate is reserved); chain 2 gets the rest",
+      ).toEqual((Some(300.), Some(2800.), 200., 2800.))
     },
   )
 
-  Async.it("checkAndFetch reserves chunks with 3x headroom under realtime", async t => {
+  Async.it("checkAndFetch sizes realtime chunk caps with 3x headroom but reserves the estimate", async t => {
     t.expect(
       await runShortRangeWaterfall(~isRealtime=true),
-      ~message="Chain 1's 200-item range is reserved at 3x = 600; chain 2 gets the rest",
-    ).toEqual((Some(600.), Some(2400.), 600., 2400.))
+      ~message="Chain 1's itemsTarget carries the 3x realtime headroom = 600, but pendingBudget still reserves the honest 200-item estimate; chain 2 gets the rest",
+    ).toEqual((Some(600.), Some(2800.), 200., 2800.))
   })
 
   Async.it(
@@ -403,7 +403,7 @@ describe("CrossChainState fetch control", () => {
     },
   )
 
-  it("getNextQuery gives 3x head headroom only to a chain that has caught up once", t => {
+  it("getNextQuery caps the budget at the plain range cost regardless of caught-up status", t => {
     let makeChain = (~caughtUpOnce) =>
       makeFetchingChainState(
         ~chainId=1,
@@ -420,10 +420,12 @@ describe("CrossChainState fetch control", () => {
       }
 
     // Range cost to the 20-block endBlock ceiling at density 10 = 200 items.
+    // No extra headroom on the budget cap: truncation safety lives in the
+    // itemsTarget server cap via chunkItemsMultiplier, not in the reservation.
     t.expect(
       (makeChain(~caughtUpOnce=false)->itemsTarget, makeChain(~caughtUpOnce=true)->itemsTarget),
-      ~message="Backfill is capped at the plain range cost; a caught-up chain polling the head gets 3x",
-    ).toEqual((200, 600))
+      ~message="Both are capped at the plain range cost",
+    ).toEqual((200, 200))
   })
 })
 
