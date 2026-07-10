@@ -35,8 +35,8 @@ let makeClient = (~eventParams) =>
 let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
-let runQuery = async (~client: HyperSyncClient.t) =>
-  await client.getEventItems(
+let runQuery = async (~client: HyperSyncClient.t) => {
+  let (res, _txStore, _blockStore) = await client.getEventItems(
     ~query={
       fromBlock,
       toBlockExclusive: toBlock + 1,
@@ -55,6 +55,8 @@ let runQuery = async (~client: HyperSyncClient.t) =>
       },
     },
   )
+  res
+}
 
 describe("HyperSync client getEventItems (live)", () => {
   Async.it("returns decoded event items for a real block range", async t => {
@@ -72,7 +74,7 @@ describe("HyperSync client getEventItems (live)", () => {
           usdcAddress->Address.toString->String.toLowerCase
       ),
       "everyBlockInRange": res.items->Array.every(item => {
-        let n = item.block.number->Option.getUnsafe
+        let n = item.blockNumber
         n >= fromBlock && n <= toBlock
       }),
       "everyParamsDecoded": res.items->Array.every(item =>

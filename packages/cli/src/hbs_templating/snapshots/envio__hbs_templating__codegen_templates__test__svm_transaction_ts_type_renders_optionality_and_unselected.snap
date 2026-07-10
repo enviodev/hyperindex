@@ -1,0 +1,78 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3451
+expression: generated
+---
+{
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - transactionIndex
+   * ```
+   */
+  readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /** The signatures field. */
+  readonly signatures: readonly string[];
+  /** The feePayer field. */
+  readonly feePayer: string;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - success
+   * ```
+   */
+  readonly success: FieldNotSelected<"Field 'success' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /** The err field. */
+  readonly err: string | undefined;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - fee
+   * ```
+   */
+  readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - computeUnitsConsumed
+   * ```
+   */
+  readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - accountKeys
+   * ```
+   */
+  readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - recentBlockhash
+   * ```
+   */
+  readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - version
+   * ```
+   */
+  readonly version: FieldNotSelected<"Field 'version' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /** The tokenBalances field. */
+  readonly tokenBalances: readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[];
+}

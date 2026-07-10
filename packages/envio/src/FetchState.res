@@ -1,10 +1,4 @@
-type contractConfig = {startBlock: option<int>}
-
 type indexingAddress = Internal.indexingContract
-
-let deriveEffectiveStartBlock = (~registrationBlock: int, ~contractStartBlock: option<int>) => {
-  Pervasives.max(Pervasives.max(registrationBlock, 0), contractStartBlock->Option.getOr(0))
-}
 
 type blockNumberAndTimestamp = {
   blockNumber: int,
@@ -13,12 +7,18 @@ type blockNumberAndTimestamp = {
 
 type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
-type selection = {eventConfigs: array<Internal.eventConfig>, dependsOnAddresses: bool}
+type selection = {
+  onEventRegistrations: array<Internal.onEventRegistration>,
+  dependsOnAddresses: bool,
+}
 
 type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Estimated items this in-flight query will add, carried from the query so the
+  // shared buffer budget can account for what's already being fetched.
+  estResponseSize: float,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
@@ -47,6 +47,10 @@ type partition = {
   // Track last 3 successful query ranges for chunking heuristic (0 means no data)
   prevQueryRange: int,
   prevPrevQueryRange: int,
+  // Item count of the response that set prevQueryRange. Paired with it to derive
+  // the partition's event density (prevRangeSize / prevQueryRange) for sizing
+  // queries against the buffer budget.
+  prevRangeSize: int,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated prevQueryRange. Prevents degradation of the chunking heuristic
   // when parallel query responses arrive out of order.
@@ -58,10 +62,73 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
+  // Estimated number of items the query will return, from the partition's
+  // density and the query's block range. Used to admit queries against the
+  // shared buffer budget.
+  estResponseSize: float,
+  // Owning chain and the chain progress % at the query's fromBlock. Set by the
+  // cross-chain scheduler so candidate queries can be pooled and ordered
+  // (furthest-behind first) without allocating a side tuple per query.
+  mutable chainId: int,
+  mutable progress: float,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
-  indexingAddresses: dict<indexingAddress>,
 }
+
+// Invert addressesByContractName into address→contractName for log-ownership
+// routing. 1:1 today (each address belongs to one contract), so no key
+// collisions. Memoized on the addressesByContractName object so a partition's
+// many responses share one derivation and a large factory never rebuilds the
+// whole index; sound because the dict is immutable after construction (every
+// mutation produces a new dict).
+let deriveContractNameByAddress: dict<array<Address.t>> => dict<
+  string,
+> = Utils.WeakMap.memoize(addressesByContractName => {
+  let result = Dict.make()
+  addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
+    for i in 0 to addresses->Array.length - 1 {
+      result->Dict.set(addresses->Array.getUnsafe(i)->Address.toString, contractName)
+    }
+  })
+  result
+})
+
+// Bounds for the no-history default estimate below. Also used by SourceManager
+// as the floor for its own maxNumLogs-style safety net.
+let minEstResponseSize = 2_000.
+let maxEstResponseSize = 10_000.
+
+// Default estimate for a query whose partition hasn't responded yet, so the
+// shared budget still accounts for unknown queries instead of treating them as
+// free. Scaled down as partitionsCount grows: assuming every partition's first
+// query is "big" starves the rest of that tick's admission when many
+// partitions share the same buffer, so the per-partition default shrinks
+// accordingly — clamped to [minEstResponseSize, maxEstResponseSize] either way.
+let calculateDefaultEstResponseSize = (~partitionsCount) =>
+  Pervasives.max(
+    minEstResponseSize,
+    Pervasives.min(maxEstResponseSize, 20_000. /. partitionsCount->Int.toFloat),
+  )
+
+// Estimated items a query will return, from the partition's event density
+// (items/block derived from its last response) and the query's block range.
+// toBlock None is the open-ended tail, capped at knownHeight. A partition
+// that responded with no items has density 0, so its queries cost 0 — correct,
+// they don't fill the buffer. Only a partition that has never responded
+// (prevQueryRange 0) has no signal, so it falls back to calculateDefaultEstResponseSize.
+let calculateEstResponseSize = (
+  p: partition,
+  ~fromBlock,
+  ~toBlock,
+  ~knownHeight,
+  ~partitionsCount,
+) =>
+  if p.prevQueryRange > 0 {
+    let density = p.prevRangeSize->Int.toFloat /. p.prevQueryRange->Int.toFloat
+    (toBlock->Option.getOr(knownHeight) - fromBlock + 1)->Int.toFloat *. density
+  } else {
+    calculateDefaultEstResponseSize(~partitionsCount)
+  }
 
 // Calculate the chunk range from history using min-of-last-3-ranges heuristic
 let getMinHistoryRange = (p: partition) => {
@@ -160,6 +227,7 @@ module OptimizedPartitions = {
         mutPendingQueries: [],
         prevQueryRange: minRange,
         prevPrevQueryRange: minRange,
+        prevRangeSize: 0,
         latestBlockRangeUpdateBlock: 0,
       }
     }
@@ -397,6 +465,7 @@ module OptimizedPartitions = {
     optimizedPartitions: t,
     ~query,
     ~knownHeight,
+    ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
     let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
@@ -428,6 +497,7 @@ module OptimizedPartitions = {
         }
     let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
     let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
+    let updatedPrevRangeSize = shouldUpdateBlockRange ? itemsCount : p.prevRangeSize
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -449,6 +519,7 @@ module OptimizedPartitions = {
         latestFetchedBlock: updatedLatestFetchedBlock,
         prevQueryRange: updatedPrevQueryRange,
         prevPrevQueryRange: updatedPrevPrevQueryRange,
+        prevRangeSize: updatedPrevRangeSize,
         latestBlockRangeUpdateBlock: shouldUpdateBlockRange
           ? latestFetchedBlock.blockNumber
           : p.latestBlockRangeUpdateBlock,
@@ -480,10 +551,8 @@ type t = {
   startBlock: int,
   endBlock: option<int>,
   normalSelection: selection,
-  // By address
-  indexingAddresses: dict<indexingAddress>,
   // By contract name
-  contractConfigs: dict<contractConfig>,
+  contractConfigs: dict<IndexingAddresses.contractConfig>,
   // Not used for logic - only metadata
   chainId: int,
   // The block number of the latest block which was added to the queue
@@ -496,10 +565,11 @@ type t = {
   blockLag: int,
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
-  // How many items we should aim to have in the buffer
-  // ready for processing
-  targetBufferSize: int,
-  onBlockConfigs: array<Internal.onBlockConfig>,
+  // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
+  // size). Event fetch depth is bounded separately, by CrossChainState's
+  // cross-chain admission against the indexer-wide buffer pool.
+  maxOnBlockBufferSize: int,
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
 }
@@ -535,6 +605,25 @@ let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
   }
 }
 
+// Number of buffered items at or below the ready frontier (processable now,
+// i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
+// The buffer is kept sorted, so binary-search the frontier in O(log n).
+let bufferReadyCount = (fetchState: t) => {
+  let frontier = fetchState->bufferBlockNumber
+  let buffer = fetchState.buffer
+  let lo = ref(0)
+  let hi = ref(buffer->Array.length)
+  while lo.contents < hi.contents {
+    let mid = (lo.contents + hi.contents) / 2
+    if buffer->Array.getUnsafe(mid)->Internal.getItemBlockNumber <= frontier {
+      lo := mid + 1
+    } else {
+      hi := mid
+    }
+  }
+  lo.contents
+}
+
 /*
 Comparitor for two events from the same chain. No need for chain id or timestamp
 */
@@ -550,19 +639,17 @@ let compareBufferItem = (a: Internal.item, b: Internal.item) => {
 // Some big number which should be bigger than any log index
 let blockItemLogIndex = 16777216
 
-let numAddresses = fetchState => fetchState.indexingAddresses->Utils.Dict.size
-
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
-// latestOnBlockBlockNumber pointer. targetBufferSize bounds how many items
+// latestOnBlockBlockNumber pointer. maxOnBlockBufferSize bounds how many items
 // are generated at once to prevent OOM.
 let appendOnBlockItems = (
   ~mutItems: array<Internal.item>,
-  ~onBlockConfigs: array<Internal.onBlockConfig>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>,
   ~indexerStartBlock,
   ~fromBlock,
   ~maxBlockNumber,
-  ~targetBufferSize,
+  ~maxOnBlockBufferSize,
 ) => {
   let newItemsCounter = ref(0)
   let latestOnBlockBlockNumber = ref(fromBlock)
@@ -573,32 +660,32 @@ let appendOnBlockItems = (
   while (
     latestOnBlockBlockNumber.contents < maxBlockNumber &&
       // Additional safeguard to prevent OOM
-      newItemsCounter.contents <= targetBufferSize
+      newItemsCounter.contents <= maxOnBlockBufferSize
   ) {
     let blockNumber = latestOnBlockBlockNumber.contents + 1
     latestOnBlockBlockNumber := blockNumber
 
-    for configIdx in 0 to onBlockConfigs->Array.length - 1 {
-      let onBlockConfig = onBlockConfigs->Array.getUnsafe(configIdx)
+    for configIdx in 0 to onBlockRegistrations->Array.length - 1 {
+      let onBlockRegistration = onBlockRegistrations->Array.getUnsafe(configIdx)
 
-      let handlerStartBlock = switch onBlockConfig.startBlock {
+      let handlerStartBlock = switch onBlockRegistration.startBlock {
       | Some(startBlock) => startBlock
       | None => indexerStartBlock
       }
 
       if (
         blockNumber >= handlerStartBlock &&
-        switch onBlockConfig.endBlock {
+        switch onBlockRegistration.endBlock {
         | Some(endBlock) => blockNumber <= endBlock
         | None => true
         } &&
-        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockConfig.interval) === 0
+        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockRegistration.interval) === 0
       ) {
         mutItems->Array.push(
           Block({
-            onBlockConfig,
+            onBlockRegistration,
             blockNumber,
-            logIndex: blockItemLogIndex + onBlockConfig.index,
+            logIndex: blockItemLogIndex + onBlockRegistration.index,
           }),
         )
         newItemsCounter := newItemsCounter.contents + 1
@@ -616,18 +703,17 @@ Runs partition optimization when partitions change.
 let updateInternal = (
   fetchState: t,
   ~optimizedPartitions=fetchState.optimizedPartitions,
-  ~indexingAddresses=fetchState.indexingAddresses,
   ~mutItems=?,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
 ): t => {
   let mutItemsRef = ref(mutItems)
 
-  let latestOnBlockBlockNumber = switch fetchState.onBlockConfigs {
+  let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
   | [] => knownHeight
-  | onBlockConfigs => {
+  | onBlockRegistrations => {
       // Calculate the max block number we are going to create items for
-      // Use targetBufferSize to get the last target item in the buffer
+      // Use maxOnBlockBufferSize to get the last target item in the buffer
       //
       // mutItems is not very reliable, since it might not be sorted,
       // but the chances for it happen are very low and not critical
@@ -636,7 +722,7 @@ let updateInternal = (
       let maxBlockNumber = switch switch mutItemsRef.contents {
       | Some(mutItems) => mutItems
       | None => fetchState.buffer
-      }->Array.get(fetchState.targetBufferSize - 1) {
+      }->Array.get(fetchState.maxOnBlockBufferSize - 1) {
       | Some(item) => item->Internal.getItemBlockNumber
       | None =>
         switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
@@ -653,11 +739,11 @@ let updateInternal = (
 
       appendOnBlockItems(
         ~mutItems,
-        ~onBlockConfigs,
+        ~onBlockRegistrations,
         ~indexerStartBlock=fetchState.startBlock,
         ~fromBlock=fetchState.latestOnBlockBlockNumber,
         ~maxBlockNumber,
-        ~targetBufferSize=fetchState.targetBufferSize,
+        ~maxOnBlockBufferSize=fetchState.maxOnBlockBufferSize,
       )
     }
   }
@@ -668,11 +754,10 @@ let updateInternal = (
     contractConfigs: fetchState.contractConfigs,
     normalSelection: fetchState.normalSelection,
     chainId: fetchState.chainId,
-    onBlockConfigs: fetchState.onBlockConfigs,
-    targetBufferSize: fetchState.targetBufferSize,
+    onBlockRegistrations: fetchState.onBlockRegistrations,
+    maxOnBlockBufferSize: fetchState.maxOnBlockBufferSize,
     optimizedPartitions,
     latestOnBlockBlockNumber,
-    indexingAddresses,
     blockLag,
     knownHeight,
     buffer: switch mutItemsRef.contents {
@@ -700,12 +785,6 @@ let updateInternal = (
     ~blockNumber=updatedFetchState->bufferBlockNumber,
     ~chainId=fetchState.chainId,
   )
-  if indexingAddresses !== fetchState.indexingAddresses {
-    Prometheus.IndexingAddresses.set(
-      ~addressesCount=updatedFetchState->numAddresses,
-      ~chainId=fetchState.chainId,
-    )
-  }
 
   updatedFetchState
 }
@@ -837,6 +916,7 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             prevQueryRange: 0,
             prevPrevQueryRange: 0,
+            prevRangeSize: 0,
             latestBlockRangeUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
@@ -935,22 +1015,22 @@ OptimizedPartitions.t => {
 
 let registerDynamicContracts = (
   fetchState: t,
+  ~indexingAddresses: IndexingAddresses.t,
   // These are raw items which might have dynamic contracts received from contractRegister call.
   // Might contain duplicates which we should filter out
   items: array<Internal.item>,
 ) => {
-  if fetchState.normalSelection.eventConfigs->Utils.Array.isEmpty {
+  if fetchState.normalSelection.onEventRegistrations->Utils.Array.isEmpty {
     // Can the normalSelection be empty?
     JsError.throwWithMessage(
       "Invalid configuration. No events to fetch for the dynamic contract registration.",
     )
   }
 
-  let indexingAddresses = fetchState.indexingAddresses
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let earliestRegisteringEventBlockNumber = ref(%raw(`Infinity`))
   // Addresses registered for contracts without matching events. These are not
-  // added to partitions, but they are tracked on fetchState.indexingAddresses
+  // added to partitions, but they are tracked on indexingAddresses
   // so that later conflicting registrations are detected, and are persisted
   // to envio_addresses so they can be picked up on restart with updated config.
   let noEventsAddresses: dict<indexingAddress> = Dict.make()
@@ -976,15 +1056,13 @@ let registerDynamicContracts = (
             address: dc.address,
             contractName: dc.contractName,
             registrationBlock: dc.registrationBlock,
-            effectiveStartBlock: deriveEffectiveStartBlock(
+            effectiveStartBlock: IndexingAddresses.deriveEffectiveStartBlock(
               ~registrationBlock=dc.registrationBlock,
               ~contractStartBlock,
             ),
           }
           // Prevent registering already indexing contracts
-          switch indexingAddresses->Utils.Dict.dangerouslyGetNonOption(
-            dc.address->Address.toString,
-          ) {
+          switch indexingAddresses->IndexingAddresses.get(dc.address->Address.toString) {
           | Some(existingContract) =>
             // FIXME: Instead of filtering out duplicates,
             // we should check the block number first.
@@ -1039,7 +1117,7 @@ let registerDynamicContracts = (
             address: dc.address,
             contractName: dc.contractName,
             registrationBlock: dc.registrationBlock,
-            effectiveStartBlock: deriveEffectiveStartBlock(
+            effectiveStartBlock: IndexingAddresses.deriveEffectiveStartBlock(
               ~registrationBlock=dc.registrationBlock,
               ~contractStartBlock=None,
             ),
@@ -1047,9 +1125,7 @@ let registerDynamicContracts = (
           // Prevent duplicate logging/persistence when the same address is
           // already tracked on fetchState, either from the db on startup or
           // from an earlier registration in this batch.
-          switch indexingAddresses->Utils.Dict.dangerouslyGetNonOption(
-            dc.address->Address.toString,
-          ) {
+          switch indexingAddresses->IndexingAddresses.get(dc.address->Address.toString) {
           | Some(existingContract) =>
             if existingContract.contractName != dc.contractName {
               fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
@@ -1103,12 +1179,10 @@ let registerDynamicContracts = (
     // Only dcs for contracts without events. Track them on
     // indexingAddresses so subsequent registrations see them, but don't touch
     // partitions since there's nothing to fetch for them.
-    let newIndexingContracts = indexingAddresses->Utils.Dict.shallowCopy
-    let _ = Utils.Dict.mergeInPlace(newIndexingContracts, noEventsAddresses)
-    fetchState->updateInternal(~indexingAddresses=newIndexingContracts)
+    indexingAddresses->IndexingAddresses.register(noEventsAddresses)
+    fetchState
   | (_, _) => {
       let newPartitions = []
-      let newIndexingAddresses = indexingAddresses->Utils.Dict.shallowCopy
       let dynamicContractsRef = ref(fetchState.optimizedPartitions.dynamicContracts)
       let mutExistingPartitions = fetchState.optimizedPartitions.entities->Dict.valuesToArray
 
@@ -1178,6 +1252,7 @@ let registerDynamicContracts = (
                         mutPendingQueries: p.mutPendingQueries,
                         prevQueryRange: p.prevQueryRange,
                         prevPrevQueryRange: p.prevPrevQueryRange,
+                        prevRangeSize: p.prevRangeSize,
                         latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
                       })
                     }
@@ -1189,10 +1264,10 @@ let registerDynamicContracts = (
         }
 
         let registeringContracts = registeringContractsByContract->Dict.getUnsafe(contractName)
-        let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, registeringContracts)
+        indexingAddresses->IndexingAddresses.register(registeringContracts)
       }
       // Include no-events dcs so later batches detect conflicts against them.
-      let _ = Utils.Dict.mergeInPlace(newIndexingAddresses, noEventsAddresses)
+      indexingAddresses->IndexingAddresses.register(noEventsAddresses)
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
@@ -1205,7 +1280,7 @@ let registerDynamicContracts = (
         ~progressBlockNumber=0,
       )
 
-      fetchState->updateInternal(~optimizedPartitions, ~indexingAddresses=newIndexingAddresses)
+      fetchState->updateInternal(~optimizedPartitions)
     }
   }
 }
@@ -1218,6 +1293,7 @@ newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let handleQueryResult = (
   fetchState: t,
+  ~indexingAddresses: IndexingAddresses.t,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
@@ -1228,9 +1304,10 @@ let handleQueryResult = (
   // param-level analogue of EventRouter's srcAddress effectiveStartBlock check.
   let newItems = newItems->Array.filter(item =>
     switch item {
-    | Internal.Event({eventConfig, event, blockNumber}) =>
-      switch eventConfig.clientAddressFilter {
-      | Some(filter) => filter(event, blockNumber, fetchState.indexingAddresses)
+    | Internal.Event({onEventRegistration, payload, blockNumber}) =>
+      switch onEventRegistration.clientAddressFilter {
+      | Some(filter) =>
+        filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
       | None => true
       }
     | _ => true
@@ -1240,6 +1317,7 @@ let handleQueryResult = (
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
+      ~itemsCount=newItems->Array.length,
       ~latestFetchedBlock,
     ),
     ~mutItems=?{
@@ -1252,7 +1330,6 @@ let handleQueryResult = (
 }
 
 type nextQuery =
-  | ReachedMaxConcurrency
   | WaitingForNewBlock
   | NothingToQuery
   | Ready(array<query>)
@@ -1266,6 +1343,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
       fromBlock: q.fromBlock,
       toBlock: q.toBlock,
       isChunk: q.isChunk,
+      estResponseSize: q.estResponseSize,
       fetchedBlock: None,
     }
 
@@ -1286,19 +1364,24 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
   }
 }
 
+// Most parallel in-flight chunk queries a single partition may have at once.
+let maxPendingChunksPerPartition = 10
+
 @inline
 let pushQueriesForRange = (
   queries: array<query>,
   ~partitionId: string,
   ~rangeFromBlock: int,
   ~rangeEndBlock: option<int>,
-  ~maxQueryBlockNumber: int,
+  ~knownHeight: int,
   ~maybeChunkRange: option<int>,
+  ~maxChunks: int,
+  ~partition: partition,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
-  ~indexingAddresses: dict<indexingAddress>,
+  ~partitionsCount: int,
 ) => {
-  if rangeFromBlock <= maxQueryBlockNumber {
+  if rangeFromBlock <= knownHeight && maxChunks > 0 {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
@@ -1310,35 +1393,50 @@ let pushQueriesForRange = (
           toBlock: rangeEndBlock,
           selection,
           isChunk: false,
+          estResponseSize: calculateEstResponseSize(
+            partition,
+            ~fromBlock=rangeFromBlock,
+            ~toBlock=rangeEndBlock,
+            ~knownHeight,
+            ~partitionsCount,
+          ),
+          chainId: 0,
+          progress: 0.,
           addressesByContractName,
-          indexingAddresses,
         })
       | Some(chunkRange) =>
         let maxBlock = switch rangeEndBlock {
         | Some(eb) => eb
-        | None => maxQueryBlockNumber
+        | None => knownHeight
         }
         let chunkSize = Js.Math.ceil_int(chunkRange->Int.toFloat *. 1.8)
-        if rangeFromBlock + 2 * chunkSize - 1 <= maxBlock {
-          // Create 2 chunks of ceil(1.8 * chunkRange) each
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock,
-            toBlock: Some(rangeFromBlock + chunkSize - 1),
-            isChunk: true,
-            selection,
-            addressesByContractName,
-            indexingAddresses,
-          })
-          queries->Array.push({
-            partitionId,
-            fromBlock: rangeFromBlock + chunkSize,
-            toBlock: Some(rangeFromBlock + 2 * chunkSize - 1),
-            isChunk: true,
-            selection,
-            addressesByContractName,
-            indexingAddresses,
-          })
+        if rangeFromBlock + chunkSize * 2 - 1 <= maxBlock {
+          let chunkFromBlock = ref(rangeFromBlock)
+          let chunkIdx = ref(0)
+          while (
+            chunkIdx.contents < maxChunks && chunkFromBlock.contents + chunkSize - 1 <= maxBlock
+          ) {
+            let chunkToBlock = chunkFromBlock.contents + chunkSize - 1
+            queries->Array.push({
+              partitionId,
+              fromBlock: chunkFromBlock.contents,
+              toBlock: Some(chunkToBlock),
+              isChunk: true,
+              selection,
+              estResponseSize: calculateEstResponseSize(
+                partition,
+                ~fromBlock=chunkFromBlock.contents,
+                ~toBlock=Some(chunkToBlock),
+                ~knownHeight,
+                ~partitionsCount,
+              ),
+              chainId: 0,
+              progress: 0.,
+              addressesByContractName,
+            })
+            chunkFromBlock := chunkToBlock + 1
+            chunkIdx := chunkIdx.contents + 1
+          }
         } else {
           // Not enough room for 2 chunks, fall back to a single query
           queries->Array.push({
@@ -1347,8 +1445,16 @@ let pushQueriesForRange = (
             toBlock: rangeEndBlock,
             selection,
             isChunk: rangeEndBlock !== None,
+            estResponseSize: calculateEstResponseSize(
+              partition,
+              ~fromBlock=rangeFromBlock,
+              ~toBlock=rangeEndBlock,
+              ~knownHeight,
+              ~partitionsCount,
+            ),
+            chainId: 0,
+            progress: 0.,
             addressesByContractName,
-            indexingAddresses,
           })
         }
       }
@@ -1356,46 +1462,26 @@ let pushQueriesForRange = (
   }
 }
 
+// Candidate queries are sized against the natural ceiling (head/endBlock/mergeBlock),
+// not a share of the shared buffer — CrossChainState.checkAndFetch's admission loop
+// is what actually bounds how much gets fetched per tick, by estResponseSize (which
+// the HyperSync/SVM sources also enforce server-side via a maxNumLogs-style cap, so
+// a wrong estimate truncates the response instead of overshooting the buffer).
 let getNextQuery = (
-  {
-    buffer,
-    optimizedPartitions,
-    targetBufferSize,
-    indexingAddresses,
-    blockLag,
-    latestOnBlockBlockNumber,
-    knownHeight,
-  } as fetchState: t,
-  ~concurrencyLimit,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
     WaitingForNewBlock
-  } else if concurrencyLimit === 0 {
-    ReachedMaxConcurrency
   } else {
     let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
     let shouldWaitForNewBlock = ref(
-      switch fetchState.endBlock {
+      switch endBlock {
       | Some(endBlock) => headBlockNumber < endBlock
       | None => true
       } &&
       !isOnBlockBehindTheHead,
     )
-
-    // We want to limit the buffer size to targetBufferSize (usually 3 * batchSize)
-    // To make sure the processing always has some buffer
-    // and not increase the memory usage too much
-    // If a partition fetched further
-    // it should be skipped until the buffer is consumed
-    let maxQueryBlockNumber = {
-      switch buffer->Array.get(targetBufferSize - 1) {
-      | Some(item) =>
-        // Just in case check that we don't query beyond the current block
-        Pervasives.min(item->Internal.getItemBlockNumber, knownHeight)
-      | None => knownHeight
-      }
-    }
 
     let queries = []
 
@@ -1406,8 +1492,9 @@ let getNextQuery = (
       let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
 
+      let pendingCount = p.mutPendingQueries->Array.length
       let isBehindTheHead = p.latestFetchedBlock.blockNumber < headBlockNumber
-      let hasPendingQueries = p.mutPendingQueries->Utils.Array.notEmpty
+      let hasPendingQueries = pendingCount > 0
 
       if hasPendingQueries || isBehindTheHead {
         // Even if there are some partitions waiting for the new block
@@ -1418,23 +1505,16 @@ let getNextQuery = (
         shouldWaitForNewBlock := false
       }
 
+      let partitionQueriesStart = queries->Array.length
+
       // Compute queryEndBlock for this partition
-      let queryEndBlock = Utils.Math.minOptInt(fetchState.endBlock, p.mergeBlock)
+      let queryEndBlock = Utils.Math.minOptInt(endBlock, p.mergeBlock)
       let queryEndBlock = switch blockLag {
       | 0 => queryEndBlock
       | _ =>
         // Force head block as an endBlock when blockLag is set
         // because otherwise HyperSync might return bigger range
         Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock)
-      }
-      // Enforce the response range up until target block
-      // Otherwise for indexers with 100+ partitions
-      // we might blow up the buffer size to more than 600k events
-      // simply because of HyperSync returning extra blocks
-      let queryEndBlock = switch (queryEndBlock, maxQueryBlockNumber < knownHeight) {
-      | (Some(endBlock), true) => Some(Pervasives.min(maxQueryBlockNumber, endBlock))
-      | (None, true) => Some(maxQueryBlockNumber)
-      | (_, false) => queryEndBlock
       }
 
       let maybeChunkRange = getMinHistoryRange(p)
@@ -1453,11 +1533,16 @@ let getNextQuery = (
             ~partitionId,
             ~rangeFromBlock=cursor.contents,
             ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
-            ~maxQueryBlockNumber,
+            ~knownHeight,
             ~maybeChunkRange,
+            ~maxChunks=maxPendingChunksPerPartition -
+            pendingCount -
+            (queries->Array.length -
+            partitionQueriesStart),
+            ~partition=p,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
-            ~indexingAddresses,
+            ~partitionsCount,
           )
         }
         switch pq {
@@ -1477,11 +1562,16 @@ let getNextQuery = (
           ~partitionId,
           ~rangeFromBlock=cursor.contents,
           ~rangeEndBlock=queryEndBlock,
-          ~maxQueryBlockNumber,
+          ~knownHeight,
           ~maybeChunkRange,
+          ~maxChunks=maxPendingChunksPerPartition -
+          pendingCount -
+          (queries->Array.length -
+          partitionQueriesStart),
+          ~partition=p,
           ~selection=p.selection,
           ~addressesByContractName=p.addressesByContractName,
-          ~indexingAddresses,
+          ~partitionsCount,
         )
       }
 
@@ -1495,13 +1585,6 @@ let getNextQuery = (
         NothingToQuery
       }
     } else {
-      // Enforce concurrency limit: sort by fromBlock and take the first concurrencyLimit
-      let queries = if queries->Array.length > concurrencyLimit {
-        queries->Array.sort((a, b) => Int.compare(a.fromBlock, b.fromBlock))
-        queries->Array.slice(~start=0, ~end=concurrencyLimit)
-      } else {
-        queries
-      }
       Ready(queries)
     }
   }
@@ -1543,14 +1626,15 @@ Instantiates a fetch state with partitions for initial addresses
 let make = (
   ~startBlock,
   ~endBlock,
-  ~eventConfigs: array<Internal.eventConfig>,
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~contractConfigs: dict<IndexingAddresses.contractConfig>,
   ~addresses: array<Internal.indexingAddress>,
   ~maxAddrInPartition,
   ~chainId,
-  ~targetBufferSize,
+  ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
-  ~onBlockConfigs=[],
+  ~onBlockRegistrations=[],
   ~blockLag=0,
   ~firstEventBlock=None,
 ): t => {
@@ -1560,38 +1644,15 @@ let make = (
   }
 
   let notDependingOnAddresses = []
-  let normalEventConfigs = []
+  let normalRegistrations = []
   let contractNamesWithNormalEvents = Utils.Set.make()
-  let indexingAddresses = Dict.make()
-  let contractConfigs: dict<contractConfig> = Dict.make()
 
-  eventConfigs->Array.forEach(ec => {
-    switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(ec.contractName) {
-    | Some({startBlock}) =>
-      contractConfigs->Dict.set(
-        ec.contractName,
-        {
-          startBlock: switch (startBlock, ec.startBlock) {
-          | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
-          | (Some(_) as s, None) | (None, Some(_) as s) => s
-          | (None, None) => None
-          },
-        },
-      )
-    | None =>
-      contractConfigs->Dict.set(
-        ec.contractName,
-        {
-          startBlock: ec.startBlock,
-        },
-      )
-    }
-
-    if ec.dependsOnAddresses {
-      normalEventConfigs->Array.push(ec)
-      contractNamesWithNormalEvents->Utils.Set.add(ec.contractName)->ignore
+  onEventRegistrations->Array.forEach(reg => {
+    if reg.dependsOnAddresses {
+      normalRegistrations->Array.push(reg)
+      contractNamesWithNormalEvents->Utils.Set.add(reg.eventConfig.contractName)->ignore
     } else {
-      notDependingOnAddresses->Array.push(ec)
+      notDependingOnAddresses->Array.push(reg)
     }
   })
 
@@ -1603,7 +1664,7 @@ let make = (
       latestFetchedBlock,
       selection: {
         dependsOnAddresses: false,
-        eventConfigs: notDependingOnAddresses,
+        onEventRegistrations: notDependingOnAddresses,
       },
       addressesByContractName: Dict.make(),
       mergeBlock: None,
@@ -1611,13 +1672,14 @@ let make = (
       mutPendingQueries: [],
       prevQueryRange: 0,
       prevPrevQueryRange: 0,
+      prevRangeSize: 0,
       latestBlockRangeUpdateBlock: 0,
     })
   }
 
   let normalSelection = {
     dependsOnAddresses: true,
-    eventConfigs: normalEventConfigs,
+    onEventRegistrations: normalRegistrations,
   }
 
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
@@ -1625,32 +1687,16 @@ let make = (
 
   addresses->Array.forEach(contract => {
     let contractName = contract.contractName
-    let contractStartBlock = switch contractConfigs->Utils.Dict.dangerouslyGetNonOption(
-      contractName,
-    ) {
-    | Some({startBlock}) => startBlock
-    | None => None
-    }
-    let ia: indexingAddress = {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-      effectiveStartBlock: deriveEffectiveStartBlock(
-        ~registrationBlock=contract.registrationBlock,
-        ~contractStartBlock,
-      ),
-    }
-    // Track the address on fetchState regardless of whether it currently has
-    // matching events. This way, if the config is updated later to add events
-    // for this contract, the address is already known.
-    indexingAddresses->Dict.set(contract.address->Address.toString, ia)
 
     // Only addresses whose contract has events that depend on addresses get
     // registered for active fetching via partitions.
     if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      let registeringContracts =
-        registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-      registeringContracts->Dict.set(contract.address->Address.toString, ia)
+      registeringContractsByContract
+      ->Utils.Dict.getOrInsertEmptyDict(contractName)
+      ->Dict.set(
+        contract.address->Address.toString,
+        IndexingAddresses.makeIndexingAddress(~contract, ~contractConfigs),
+      )
 
       // Detect dynamic contracts by registrationBlock
       if contract.registrationBlock !== -1 {
@@ -1669,12 +1715,15 @@ let make = (
     ~progressBlockNumber,
   )
 
-  if optimizedPartitions->OptimizedPartitions.count === 0 && onBlockConfigs->Utils.Array.isEmpty {
+  if (
+    optimizedPartitions->OptimizedPartitions.count === 0 &&
+      onBlockRegistrations->Utils.Array.isEmpty
+  ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->Int.toString}. ` ++
       `addresses=${addresses->Array.length->Int.toString}, ` ++
-      `eventConfigs=${eventConfigs->Array.length->Int.toString}, ` ++
-      `normalEventConfigs=${normalEventConfigs
+      `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
+      `normalRegistrations=${normalRegistrations
         ->Array.length
         ->Int.toString}. ` ++ `Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.`,
     )
@@ -1685,18 +1734,18 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
-  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockConfigs->Utils.Array.notEmpty {
+  let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
     }
     appendOnBlockItems(
       ~mutItems=buffer,
-      ~onBlockConfigs,
+      ~onBlockRegistrations,
       ~indexerStartBlock=startBlock,
       ~fromBlock=progressBlockNumber,
       ~maxBlockNumber,
-      ~targetBufferSize,
+      ~maxOnBlockBufferSize,
     )
   } else {
     progressBlockNumber
@@ -1710,17 +1759,14 @@ let make = (
     endBlock,
     latestOnBlockBlockNumber,
     normalSelection,
-    indexingAddresses,
     blockLag,
-    onBlockConfigs,
-    targetBufferSize,
+    onBlockRegistrations,
+    maxOnBlockBufferSize,
     knownHeight,
     buffer,
     firstEventBlock,
   }
 
-  let numAddresses = indexingAddresses->Utils.Dict.size
-  Prometheus.IndexingAddresses.set(~addressesCount=numAddresses, ~chainId)
   Prometheus.IndexingPartitions.set(
     ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
     ~chainId,
@@ -1768,18 +1814,11 @@ Always recreates optimized partitions to avoid duplicate addresses:
 - Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
-let rollback = (fetchState: t, ~targetBlockNumber) => {
-  // Step 1: Build addressesToRemove and surviving indexingAddresses
-  let addressesToRemove = Utils.Set.make()
-  let indexingAddresses = Dict.make()
-
-  fetchState.indexingAddresses->Utils.Dict.forEachWithKey((indexingContract, address) => {
-    if indexingContract.registrationBlock > targetBlockNumber {
-      let _ = addressesToRemove->Utils.Set.add(address->Address.unsafeFromString)
-    } else {
-      indexingAddresses->Dict.set(address, indexingContract)
-    }
-  })
+let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetBlockNumber) => {
+  // Step 1: Prune addresses registered after the target block. The pruned index is
+  // then the source of truth for partition cleanup below — an address survives iff
+  // it's still in the index.
+  indexingAddresses->IndexingAddresses.rollbackInPlace(~targetBlockNumber)
 
   // Step 2: Categorize partitions
   let keptPartitions = []
@@ -1809,18 +1848,12 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
     | _ if p.latestFetchedBlock.blockNumber > targetBlockNumber =>
       p.addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
         addresses->Array.forEach(address => {
-          if (
-            !(addressesToRemove->Utils.Set.has(address)) &&
-            indexingAddresses
-            ->Utils.Dict.dangerouslyGetNonOption(address->Address.toString)
-            ->Option.isSome
-          ) {
+          switch indexingAddresses->IndexingAddresses.get(address->Address.toString) {
+          | Some(indexingContract) =>
             let registeringContracts =
               registeringContractsByContract->Utils.Dict.getOrInsertEmptyDict(contractName)
-            registeringContracts->Dict.set(
-              address->Address.toString,
-              indexingAddresses->Dict.getUnsafe(address->Address.toString),
-            )
+            registeringContracts->Dict.set(address->Address.toString, indexingContract)
+          | None => ()
           }
         })
       })
@@ -1833,11 +1866,13 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
         | other => other
         }
 
-        // Remove addresses that should be removed
+        // Drop addresses pruned from the index
         let rollbackedAddressesByContractName = Dict.make()
         addressesByContractName->Utils.Dict.forEachWithKey((addresses, contractName) => {
           let keptAddresses =
-            addresses->Array.filter(address => !(addressesToRemove->Utils.Set.has(address)))
+            addresses->Array.filter(address =>
+              indexingAddresses->IndexingAddresses.get(address->Address.toString)->Option.isSome
+            )
           if keptAddresses->Array.length > 0 {
             rollbackedAddressesByContractName->Dict.set(contractName, keptAddresses)
           }
@@ -1881,7 +1916,6 @@ let rollback = (fetchState: t, ~targetBlockNumber) => {
     ),
   }->updateInternal(
     ~optimizedPartitions,
-    ~indexingAddresses,
     ~mutItems=fetchState.buffer->Array.filter(item =>
       switch item {
       | Event({blockNumber})
@@ -1957,29 +1991,41 @@ let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as
   buffer->Utils.Array.isEmpty
 }
 
-let sortForUnorderedBatch = {
+// Lower progress percentage = further behind = higher priority. Shared by the
+// batch ordering and the cross-chain fetch priority.
+let getProgressPercentage = (fetchState: t) => {
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    if totalRange <= 0 {
+      0.
+    } else {
+      let progress = switch fetchState.buffer->Array.get(0) {
+      | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+      | None => fetchState->bufferBlockNumber - firstEventBlock
+      }
+      progress->Int.toFloat /. totalRange->Int.toFloat
+    }
+  }
+}
+
+// Progress a specific block sits at along the chain, used to order queries from
+// different chains: a query starting further back (lower %) is fetched first.
+let getProgressPercentageAt = (fetchState: t, ~blockNumber) => {
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) =>
+    let totalRange = fetchState.knownHeight - firstEventBlock
+    totalRange <= 0 ? 0. : (blockNumber - firstEventBlock)->Int.toFloat /. totalRange->Int.toFloat
+  }
+}
+
+let sortForBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Array.get(batchSizeTarget - 1) {
     | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
     | None => false
-    }
-  }
-
-  // Lower progress percentage = further behind = higher priority
-  let getProgressPercentage = (fetchState: t) => {
-    switch fetchState.firstEventBlock {
-    | None => 0.
-    | Some(firstEventBlock) =>
-      let totalRange = fetchState.knownHeight - firstEventBlock
-      if totalRange <= 0 {
-        0.
-      } else {
-        let progress = switch fetchState.buffer->Array.get(0) {
-        | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
-        | None => fetchState->bufferBlockNumber - firstEventBlock
-        }
-        progress->Int.toFloat /. totalRange->Int.toFloat
-      }
     }
   }
 

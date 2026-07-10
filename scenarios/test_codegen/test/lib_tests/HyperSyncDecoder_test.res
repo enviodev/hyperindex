@@ -14,24 +14,23 @@ let fromAddr = "0x000000000000000000000000000000000000aaaa"
 let toAddr = "0x000000000000000000000000000000000000bbbb"
 let value = 42n
 
-let makeEvent = (~topics: array<string>, ~data: string): HyperSyncClient.ResponseTypes.event =>
-  {"log": {"topics": topics, "data": data}}->(
-    Utils.magic: {..} => HyperSyncClient.ResponseTypes.event
-  )
-
+// A crafted log as (topics, data); fed to a mock eth_getLogs endpoint and
+// decoded through EvmRpcClient.
 let decodeSingle = async (
   ~eventName: string,
   ~params: array<Internal.paramMeta>,
-  ~event: HyperSyncClient.ResponseTypes.event,
+  ~log: (array<string>, string),
 ) => {
   let sighash = toEventSelector(
-    `event ${eventName}(${params->Array.map(p => p.indexed ? `${p.abiType} indexed` : p.abiType)->Array.joinUnsafe(", ")})`,
+    `event ${eventName}(${params
+      ->Array.map(p => p.indexed ? `${p.abiType} indexed` : p.abiType)
+      ->Array.joinUnsafe(", ")})`,
   )
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
-  let decoder = HyperSyncClient.Decoder.fromParams([
-    {sighash, topicCount, eventName, contractName: "TestContract", params},
-  ])
-  let decoded = await decoder.decodeLogs([event])
+  let decoded = await NativeDecoder.decodeLogs(
+    ~eventParams=[{sighash, topicCount, eventName, contractName: "TestContract", params}],
+    ~logs=[log],
+  )
   decoded[0]
   ->Option.getUnsafe
   ->Nullable.toOption
@@ -39,55 +38,60 @@ let decodeSingle = async (
   ->Dict.getUnsafe("TestContract")
 }
 
-let allIndexedLog = makeEvent(
-  ~topics=[
+let allIndexedLog = (
+  [
     sighash,
     fromAddr->pad,
     toAddr->pad,
     Viem.bigintToHex(value, ~options={size: 32})->(Utils.magic: Viem.hex => string),
   ],
-  ~data="0x",
+  "0x",
 )
 
-let noneIndexedLog = makeEvent(
-  ~topics=[sighash],
-  ~data=encodeAbiParameters(
+let noneIndexedLog = (
+  [sighash],
+  encodeAbiParameters(
     %raw(`[{"type":"address"},{"type":"address"},{"type":"uint256"}]`),
     %raw(`["0x000000000000000000000000000000000000aaaa","0x000000000000000000000000000000000000bbbb",42n]`),
   ),
 )
 
-describe("HyperSync decoder – fromParams + decodeLogs", () => {
+describe("EVM event decoding via EvmRpcClient.getLogs", () => {
   Async.it("produces named params directly for different indexed layouts", async t => {
-    let decoder = HyperSyncClient.Decoder.fromParams([
-      {
-        sighash,
-        topicCount: 4,
-        eventName: "Transfer",
-        contractName: "TestContract",
-        params: [
-          {name: "from", abiType: "address", indexed: true},
-          {name: "to", abiType: "address", indexed: true},
-          {name: "value", abiType: "uint256", indexed: true},
-        ],
-      },
-      {
-        sighash,
-        topicCount: 1,
-        eventName: "Transfer",
-        contractName: "TestContract",
-        params: [
-          {name: "from", abiType: "address", indexed: false},
-          {name: "to", abiType: "address", indexed: false},
-          {name: "value", abiType: "uint256", indexed: false},
-        ],
-      },
-    ])
-
-    let decoded = await decoder.decodeLogs([allIndexedLog, noneIndexedLog])
+    let decoded = await NativeDecoder.decodeLogs(
+      ~eventParams=[
+        {
+          sighash,
+          topicCount: 4,
+          eventName: "Transfer",
+          contractName: "TestContract",
+          params: [
+            {name: "from", abiType: "address", indexed: true},
+            {name: "to", abiType: "address", indexed: true},
+            {name: "value", abiType: "uint256", indexed: true},
+          ],
+        },
+        {
+          sighash,
+          topicCount: 1,
+          eventName: "Transfer",
+          contractName: "TestContract",
+          params: [
+            {name: "from", abiType: "address", indexed: false},
+            {name: "to", abiType: "address", indexed: false},
+            {name: "value", abiType: "uint256", indexed: false},
+          ],
+        },
+      ],
+      ~logs=[allIndexedLog, noneIndexedLog],
+    )
 
     let pick = i =>
-      decoded[i]->Option.getUnsafe->Nullable.toOption->Option.getUnsafe->Dict.getUnsafe("TestContract")
+      decoded[i]
+      ->Option.getUnsafe
+      ->Nullable.toOption
+      ->Option.getUnsafe
+      ->Dict.getUnsafe("TestContract")
     let paramsAll = pick(0)
     let paramsNone = pick(1)
 
@@ -105,34 +109,35 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
     let result = await decodeSingle(
       ~eventName="Transfer",
       ~params,
-      ~event=makeEvent(
-        ~topics=[
-          sighash,
-          "0xabc"->pad,
-          "0xdef"->pad,
-        ],
-        ~data=encodeAbiParameters(
-          %raw(`[{"type":"uint256"}]`),
-          %raw(`[100n]`),
-        ),
+      ~log=(
+        [sighash, "0xabc"->pad, "0xdef"->pad],
+        encodeAbiParameters(%raw(`[{"type":"uint256"}]`), %raw(`[100n]`)),
       ),
     )
-    t.expect(result).toEqual({"from": "0x0000000000000000000000000000000000000abc", "to": "0x0000000000000000000000000000000000000def", "value": 100n}->Utils.magic)
+    t
+    .expect(result)
+    .toEqual(
+      {
+        "from": "0x0000000000000000000000000000000000000abc",
+        "to": "0x0000000000000000000000000000000000000def",
+        "value": 100n,
+      }->Utils.magic,
+    )
   })
 
   Async.it("handles empty params", async t => {
-    let decoder = HyperSyncClient.Decoder.fromParams([
-      {
-        sighash: toEventSelector("event Empty()"),
-        topicCount: 1,
-        eventName: "Empty",
-        contractName: "TestContract",
-        params: [],
-      },
-    ])
-    let decoded = await decoder.decodeLogs([
-      makeEvent(~topics=[toEventSelector("event Empty()")], ~data="0x"),
-    ])
+    let decoded = await NativeDecoder.decodeLogs(
+      ~eventParams=[
+        {
+          sighash: toEventSelector("event Empty()"),
+          topicCount: 1,
+          eventName: "Empty",
+          contractName: "TestContract",
+          params: [],
+        },
+      ],
+      ~logs=[([toEventSelector("event Empty()")], "0x")],
+    )
     let result =
       decoded[0]
       ->Option.getUnsafe
@@ -140,6 +145,61 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
       ->Option.getUnsafe
       ->Dict.getUnsafe("TestContract")
     t.expect(result).toEqual(%raw(`{}`))
+  })
+
+  // Regression for https://github.com/enviodev/hyperindex/issues/1353
+  // The native decoder returns an empty object `{}` for a zero-parameter event,
+  // which the ecosystem's toRawEvent must serialize for the raw_events table
+  // without crashing the batch write.
+  Async.it("toRawEvent serializes empty params decoded by native decoder", async t => {
+    let params = await decodeSingle(
+      ~eventName="Empty",
+      ~params=[],
+      ~log=([toEventSelector("event Empty()")], "0x"),
+    )
+    t.expect(params).toEqual(%raw(`{}`))
+
+    let srcAddress =
+      "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
+    let blockNumber = 5
+    let logIndex = 3
+
+    let payload =
+      {
+        "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+        "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        "params": params,
+        "logIndex": logIndex,
+        "srcAddress": srcAddress,
+        "chainId": 137,
+        "contractName": "ERC20",
+        "eventName": "EventWithoutFields",
+      }->(Utils.magic: {..} => Internal.eventPayload)
+
+    let eventItem =
+      Internal.Event({
+        onEventRegistration: (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
+        chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+        blockNumber,
+        logIndex,
+        transactionIndex: 0,
+        payload,
+      })->Internal.castUnsafeEventItem
+
+    t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
+      chain_id: 137,
+      event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
+      event_name: "EventWithoutFields",
+      contract_name: "ERC20",
+      block_number: blockNumber,
+      log_index: logIndex,
+      src_address: srcAddress,
+      block_hash: "0xblockhash",
+      block_timestamp: 9999,
+      block_fields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
+      transaction_fields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+      params: %raw(`"null"`),
+    })
   })
 
   Async.it(
@@ -167,14 +227,14 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
       let result = await decodeSingle(
         ~eventName="VehicleCreated",
         ~params,
-        ~event=makeEvent(
-          ~topics=[
+        ~log=(
+          [
             toEventSelector(
               "event VehicleCreated(address indexed, address, (address,address,address[],uint256,address))",
             ),
             "0x00000000000000000000000000000000000000aa"->pad,
           ],
-          ~data=encodeAbiParameters(
+          encodeAbiParameters(
             %raw(`[{"type":"address"},{"type":"tuple","components":[{"type":"address"},{"type":"address"},{"type":"address[]"},{"type":"uint256"},{"type":"address"}]}]`),
             %raw(`["0x0000000000000000000000000000000000000001",["0x0000000000000000000000000000000000000002","0x0000000000000000000000000000000000000003",["0x0000000000000000000000000000000000000004","0x0000000000000000000000000000000000000005"],1000n,"0x0000000000000000000000000000000000000006"]]`),
           ),
@@ -182,29 +242,29 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
       )
 
       t
-        .expect(result)
-        .toEqual(
-          {
-            "deployer": "0x00000000000000000000000000000000000000aa",
-            "vehicle": "0x0000000000000000000000000000000000000001",
-            "params": {
-              "asset": "0x0000000000000000000000000000000000000002",
-              "poolAddressesProvider": "0x0000000000000000000000000000000000000003",
-              "forbiddenAddresses": [
-                "0x0000000000000000000000000000000000000004",
-                "0x0000000000000000000000000000000000000005",
-              ],
-              "initialExpectedSupply": 1000n,
-              "registry": "0x0000000000000000000000000000000000000006",
-            },
-          }->Utils.magic,
-        )
+      .expect(result)
+      .toEqual(
+        {
+          "deployer": "0x00000000000000000000000000000000000000aa",
+          "vehicle": "0x0000000000000000000000000000000000000001",
+          "params": {
+            "asset": "0x0000000000000000000000000000000000000002",
+            "poolAddressesProvider": "0x0000000000000000000000000000000000000003",
+            "forbiddenAddresses": [
+              "0x0000000000000000000000000000000000000004",
+              "0x0000000000000000000000000000000000000005",
+            ],
+            "initialExpectedSupply": 1000n,
+            "registry": "0x0000000000000000000000000000000000000006",
+          },
+        }->Utils.magic,
+      )
 
       let json = result->S.reverseConvertToJsonOrThrow(schema)
       t
-        .expect(json)
-        .toEqual(
-          %raw(`{
+      .expect(json)
+      .toEqual(
+        %raw(`{
         "deployer": "0x00000000000000000000000000000000000000aa",
         "vehicle": "0x0000000000000000000000000000000000000001",
         "params": {
@@ -215,7 +275,7 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
           "registry": "0x0000000000000000000000000000000000000006"
         }
       }`),
-        )
+      )
     },
   )
 
@@ -237,9 +297,9 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
     let result = await decodeSingle(
       ~eventName="MixedEvent",
       ~params,
-      ~event=makeEvent(
-        ~topics=[toEventSelector("event MixedEvent((string,uint256,address,bool))")],
-        ~data=encodeAbiParameters(
+      ~log=(
+        [toEventSelector("event MixedEvent((string,uint256,address,bool))")],
+        encodeAbiParameters(
           %raw(`[{"type":"tuple","components":[{"type":"string"},{"type":"uint256"},{"type":"address"},{"type":"bool"}]}]`),
           %raw(`[["hi", 42n, "0x0000000000000000000000000000000000000abc", true]]`),
         ),
@@ -247,17 +307,17 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
     )
 
     t
-      .expect(result)
-      .toEqual(
-        {
-          "mixed": {
-            "label": "hi",
-            "1": 42n,
-            "recipient": "0x0000000000000000000000000000000000000abc",
-            "3": true,
-          },
-        }->Utils.magic,
-      )
+    .expect(result)
+    .toEqual(
+      {
+        "mixed": {
+          "label": "hi",
+          "1": 42n,
+          "recipient": "0x0000000000000000000000000000000000000abc",
+          "3": true,
+        },
+      }->Utils.magic,
+    )
   })
 
   Async.it("leaves indexed struct params as topic hashes", async t => {
@@ -277,17 +337,11 @@ describe("HyperSync decoder – fromParams + decodeLogs", () => {
     let result = await decodeSingle(
       ~eventName="StructEvent",
       ~params,
-      ~event=makeEvent(
-        ~topics=[
-          toEventSelector("event StructEvent((address,uint256) indexed)"),
-          topicHash,
-        ],
-        ~data="0x",
-      ),
+      ~log=([toEventSelector("event StructEvent((address,uint256) indexed)"), topicHash], "0x"),
     )
 
     t
-      .expect(result)
-      .toEqual({"indexedStruct": topicHash}->Utils.magic)
+    .expect(result)
+    .toEqual({"indexedStruct": topicHash}->Utils.magic)
   })
 })

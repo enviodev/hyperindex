@@ -5,6 +5,7 @@ let loadById = (
   ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~entityId,
 ) => {
   let chainId = item->Internal.getItemChainId
@@ -40,7 +41,10 @@ let loadById = (
       )
     } catch {
     | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
+      reason->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+        ~msg=message,
+      )
     }
 
     let entitiesMap = Dict.make()
@@ -93,7 +97,7 @@ let callEffect = (
   )
 
   if hadActiveCalls {
-    let elapsed = Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
+    let elapsed = Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
         ~labels=effectName,
@@ -121,17 +125,17 @@ let callEffect = (
       ~labels=effectName,
       ~value=effect.activeCallsCount,
     )
-    let newTimer = Hrtime.makeTimer()
+    let newTimer = Performance.now()
     Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
+      ~value=Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
     )
     effect.prevCallStartTimerRef = newTimer
 
     Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
     Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+      ~value=timerRef->Performance.secondsSince,
     )
   })
 }
@@ -145,7 +149,7 @@ let rec executeWithRateLimit = (
 ) => {
   let effectName = effect.name
 
-  let timerRef = Hrtime.makeTimer()
+  let timerRef = Performance.now()
   let promises = []
 
   switch effect.rateLimit {
@@ -260,6 +264,7 @@ let loadEffect = (
   ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
 ) => {
   let effectName = effect.name
   let key = `${effectName}.effect`
@@ -291,9 +296,7 @@ let loadEffect = (
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
-        item
-        ->Logging.getItemLogger
-        ->Logging.childWarn({
+        Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
           "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           "err": exn->Utils.prettifyExn,
           "effect": effectName,
@@ -310,9 +313,7 @@ let loadEffect = (
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
           Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
-          item
-          ->Logging.getItemLogger
-          ->Logging.childTrace({
+          Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,
             "effect": effectName,
@@ -369,6 +370,7 @@ let loadByFilter = (
   ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~filter: EntityFilter.t,
 ) => {
   let chainId = item->Internal.getItemChainId
@@ -423,7 +425,7 @@ let loadByFilter = (
       | Persistence.StorageError({message, reason}) =>
         reason->ErrorHandling.mkLogAndRaise(
           ~logger=Logging.createChildFrom(
-            ~logger=item->Logging.getItemLogger,
+            ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
             // The executed query might be merged from multiple getWhere
             // calls, so report it as the operation users write with the
             // values bound to its placeholders, instead of an internal

@@ -47,7 +47,6 @@
   "dependencies": {
     "@clickhouse/client": "1.17.0",
     "@elastic/ecs-pino-format": "1.4.0",
-    "@envio-dev/hyperfuel-client": "1.2.2",
     "@fuel-ts/crypto": "0.96.1",
     "@fuel-ts/errors": "0.96.1",
     "@fuel-ts/hasher": "0.96.1",
@@ -63,7 +62,7 @@
     "yargs": "17.7.2",
     "@rescript/runtime": "12.2.0",
     "rescript-schema": "9.5.1",
-    "viem": "2.46.2",
+    "viem": "2.54.0",
     "dotenv": "16.4.5",
     "date-fns": "3.3.1",
     "@rescript/react": "0.14.1",

@@ -32,6 +32,7 @@ let make: (
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
+  ~targetBufferSize: int=?,
   ~committedCheckpointId: Internal.checkpointId=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
@@ -43,11 +44,12 @@ let makeFromDbState: (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
-  ~registrations: HandlerRegister.registrations,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
+  ~targetBufferSize: int=?,
   ~onError: ErrorHandling.t => unit,
 ) => t
 
@@ -93,6 +95,7 @@ let writeFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
+let crossChainState: t => CrossChainState.t
 let chainStates: t => dict<ChainState.t>
 let isInReorgThreshold: t => bool
 let isRealtime: t => bool
@@ -104,6 +107,7 @@ let exitAfterFirstEventBlock: t => bool
 let isStopped: t => bool
 let epoch: t => int
 let pruneStaleEntityHistoryThrottler: t => Throttler.t
+let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
 
 // Store domain operations.
 let queueProcessedBatch: (t, ~batch: Batch.t) => unit

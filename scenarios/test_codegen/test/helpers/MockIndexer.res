@@ -1,6 +1,6 @@
 type chainId = Indexer.chainId
 
-let config = Config.loadWithoutRegistrations()
+let config = Config.load()
 
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
@@ -85,10 +85,7 @@ module Storage = {
     resolveInitialize: Persistence.initialState => unit,
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
-    loadOrThrowCalls: array<{
-      "filter": EntityFilter.t,
-      "tableName": string,
-    }>,
+    loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
   }
@@ -178,10 +175,9 @@ module Storage = {
               "tableName": table.tableName,
             })
             ->ignore
-            let rows = switch dbEntities->Array.find(((
-              entityConfig: Internal.entityConfig,
-              _,
-            )) => entityConfig.table.tableName === table.tableName) {
+            let rows = switch dbEntities->Array.find(((entityConfig: Internal.entityConfig, _)) =>
+              entityConfig.table.tableName === table.tableName
+            ) {
             | Some((_, rows)) =>
               rows->Array.filter(row =>
                 filter->EntityFilter.matches(
@@ -223,7 +219,7 @@ module Storage = {
   let toPersistence = (storageMock: t) => {
     {
       ...PgStorage.makePersistenceFromConfig(
-        ~config=Config.loadWithoutRegistrations(),
+        ~config=Config.load(),
         ~storage=storageMock.storage,
       ),
       storageStatus: Ready({
@@ -286,6 +282,7 @@ module Indexer = {
     ~batchSize=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
+    ~targetBufferSize=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
@@ -299,12 +296,13 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    let (postRegistrationConfig, registrations) = await HandlerLoader.registerAllHandlers(
-      ~config=Config.loadWithoutRegistrations(),
-    )
-
+    // Build the final per-test config (chain overrides, enableRawEvents, ...)
+    // before registering handlers: `HandlerRegister.finishRegistration` now
+    // builds each chain's onEventRegistrations (gated by `enableRawEvents`)
+    // from the config it's given, so registration must see the resolved
+    // config rather than the raw generated one.
     let config = {
-      let config = postRegistrationConfig
+      let config = Config.load()
 
       let chainMap =
         chains
@@ -332,6 +330,8 @@ module Indexer = {
         batchSize: batchSize->Option.getOr(config.batchSize),
       }
     }
+
+    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
@@ -365,8 +365,9 @@ module Indexer = {
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,
-      ~registrations,
+      ~registrationsByChainId,
       ~reducedPollingInterval?,
+      ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~onError,
@@ -393,10 +394,10 @@ module Indexer = {
               ()
             } else {
               idleChecks := if isIdle {
-                idleChecks.contents + 1
-              } else {
-                0
-              }
+                  idleChecks.contents + 1
+                } else {
+                  0
+                }
               await Utils.delay(1)
               await wait()
             }
@@ -541,6 +542,7 @@ module Indexer = {
           ~batchSize?,
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
+          ~targetBufferSize?,
           ~mapStorage,
         )
       },
@@ -668,7 +670,7 @@ module Source = {
         if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
         }
-        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve(height))
+        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve({Source.height, requestStats: []}))
       },
       rejectGetHeightOrThrow: exn => {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
@@ -707,7 +709,9 @@ module Source = {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
-        getBlockHashesResolveFns->Array.forEach(resolve => resolve(Ok(blockHashes)))
+        getBlockHashesResolveFns->Array.forEach(
+          resolve => resolve({Source.result: Ok(blockHashes), requestStats: []}),
+        )
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
       heightSubscriptionCalls,
@@ -744,10 +748,11 @@ module Source = {
             ~fromBlock,
             ~toBlock,
             ~addressesByContractName as _addressesByContractName,
-            ~indexingAddresses as _,
+            ~contractNameByAddress as _,
             ~knownHeight,
             ~partitionId,
             ~selection as _,
+            ~itemsTarget as _,
             ~retry,
             ~logger as _,
           ) => {
@@ -809,10 +814,21 @@ module Source = {
                     parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
-                          eventConfig: ({
-                            id: "MockEvent",
-                            contractName: "MockContract",
-                            name: "MockEvent",
+                          onEventRegistration: ({
+                            eventConfig: ({
+                              id: "MockEvent",
+                              contractName: "MockContract",
+                              name: "MockEvent",
+                              paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+                              simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+                              selectedBlockFields: Utils.Set.make(),
+                              selectedTransactionFields: Utils.Set.make(),
+                              transactionFieldMask: 0.,
+                              blockFieldMask: 0.,
+                              sighash: "",
+                              topicCount: 1,
+                              paramsMetadata: [],
+                            }: Internal.evmEventConfig :> Internal.eventConfig),
                             isWildcard: false,
                             filterByAddresses: false,
                             dependsOnAddresses: false,
@@ -844,48 +860,40 @@ module Source = {
                                 Internal.contractRegister,
                               >
                             ),
-                            paramsRawEventSchema: S.literal(%raw(`null`))
-                            ->S.shape(_ => ())
-                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-                            simulateParamsSchema: S.unknown
-                            ->S.shape(_ => ())
-                            ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-                            getEventFiltersOrThrow: _ =>
-                              JsError.throwWithMessage("Not implemented"),
-                            selectedBlockFields: Utils.Set.make(),
-                            selectedTransactionFields: Utils.Set.make(),
-                            sighash: "",
-                            topicCount: 1,
-                            paramsMetadata: [],
-                          }: Internal.evmEventConfig :> Internal.eventConfig),
-                          timestamp: item.blockNumber,
+                            resolvedWhere: {
+                              topicSelections: [],
+                              startBlock: None,
+                            },
+                          }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
                           chain,
                           blockNumber: item.blockNumber,
-                          blockHash: `0x${item.blockNumber->Int.toString}`,
                           logIndex: item.logIndex,
-                          event: {
+                          transactionIndex: 0,
+                          payload: {
                             contractName: "MockContract",
                             eventName: "MockEvent",
                             params: %raw(`{}`),
                             chainId: chain->ChainMap.Chain.toChainId,
                             srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                             logIndex: item.logIndex,
-                            transaction: %raw(`null`),
                             block: {
                               "number": item.blockNumber,
                               "timestamp": item.blockNumber,
                               "hash": `0x${item.blockNumber->Int.toString}`,
                             }->Utils.magic,
-                          }->Internal.fromGenericEvent,
+                          }->Evm.fromPayload,
                         })
                       },
                     ),
+                    transactionStore: None,
+                    blockStore: None,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
                     stats: {
                       totalTimeElapsed: 0.,
                     },
+                    requestStats: [],
                   })
                 },
                 reject: reject->Utils.magic,
@@ -938,17 +946,17 @@ module Helper = {
 }
 
 let mockRawEventRow: InternalTable.RawEvents.t = {
-  chainId: 1,
-  eventId: 1234567890n,
-  contractName: "NftFactory",
-  eventName: "SimpleNftCreated",
-  blockNumber: 1000,
-  logIndex: 10,
-  transactionFields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
-  srcAddress: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
-  blockHash: "0x9876543210fedcba9876543210fedcba987654321",
-  blockTimestamp: 1620720000,
-  blockFields: %raw(`{}`),
+  chain_id: 1,
+  event_id: 1234567890n,
+  contract_name: "NftFactory",
+  event_name: "SimpleNftCreated",
+  block_number: 1000,
+  log_index: 10,
+  transaction_fields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
+  src_address: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
+  block_hash: "0x9876543210fedcba9876543210fedcba987654321",
+  block_timestamp: 1620720000,
+  block_fields: %raw(`{}`),
   params: {
     "foo": "bar",
     "baz": 42,
@@ -957,7 +965,7 @@ let mockRawEventRow: InternalTable.RawEvents.t = {
 
 let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
 
-let evmEventConfig = (
+let evmOnEventRegistration = (
   ~id=eventId,
   ~contractName="ERC20",
   ~blockFieldNames: array<Internal.evmBlockField>=[],
@@ -966,57 +974,57 @@ let evmEventConfig = (
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
-): Internal.evmEventConfig => {
-  {
+  ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
+): Internal.evmOnEventRegistration => {
+  let selectedTransactionFields =
+    Utils.Set.fromArray(transactionFieldNames)->(
+      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+    )
+  let eventConfig: Internal.evmEventConfig = {
     id,
     contractName,
     name: "EventWithoutFields",
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
+    selectedTransactionFields,
+    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      Utils.Set.fromArray(blockFieldNames)->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
+    sighash: id,
+    topicCount: 1,
+    paramsMetadata: [],
+  }
+  {
+    eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses,
-    dependsOnAddresses: filterByAddresses ||
-    dependsOnAddresses->Option.getOr(!isWildcard),
+    dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
     startBlock,
     handler: None,
     contractRegister: None,
-    paramsRawEventSchema: S.literal(%raw(`null`))
-    ->S.shape(_ => ())
-    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    simulateParamsSchema: S.unknown
-    ->S.shape(_ => ())
-    ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-    getEventFiltersOrThrow: _ =>
-      switch dependsOnAddresses {
-      | Some(true) =>
-        Dynamic(
-          addresses => [
-            {
-              topic0: [
-                // This is a sighash in the original code
-                id->EvmTypes.Hex.fromStringUnsafe,
-              ],
-              topic1: addresses->Utils.magic,
-              topic2: [],
-              topic3: [],
-            },
-          ],
-        )
-      | _ =>
-        Static([
+    resolvedWhere: {
+      topicSelections: switch eventFilters {
+      | Some(topicSelections) => topicSelections
+      | None => [
           {
             topic0: [
               // This is a sighash in the original code
               id->EvmTypes.Hex.fromStringUnsafe,
             ],
-            topic1: [],
-            topic2: [],
-            topic3: [],
+            topic1: switch dependsOnAddresses {
+            | Some(true) => ContractAddresses({contractName: contractName})
+            | _ => Values([])
+            },
+            topic2: Values([]),
+            topic3: Values([]),
           },
-        ])
+        ]
       },
-    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields: Utils.Set.fromArray(transactionFieldNames),
-    sighash: id,
-    topicCount: 1,
-    paramsMetadata: [],
+      startBlock: None,
+    },
   }
 }

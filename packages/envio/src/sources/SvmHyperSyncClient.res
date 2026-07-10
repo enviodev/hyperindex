@@ -138,29 +138,12 @@ module QueryTypes = {
 }
 
 module ResponseTypes = {
+  // Lean per-slot header for reorg detection and each item's slot/time; the
+  // selectable fields live in the block store and are materialised on demand.
   type block = {
     slot: int,
     blockhash: string,
-    parentSlot?: int,
-    parentBlockhash?: string,
     blockTime?: int,
-    blockHeight?: int,
-  }
-
-  type transaction = {
-    slot: int,
-    transactionIndex: int,
-    signatures: array<string>,
-    feePayer?: string,
-    success?: bool,
-    err?: string,
-    fee?: int,
-    computeUnitsConsumed?: int,
-    accountKeys: array<string>,
-    recentBlockhash?: string,
-    version?: string,
-    loadedAddressesWritable: array<string>,
-    loadedAddressesReadonly: array<string>,
   }
 
   /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`
@@ -204,22 +187,10 @@ module ResponseTypes = {
     message?: string,
   }
 
-  type tokenBalance = {
-    slot: int,
-    transactionIndex?: int,
-    account?: string,
-    mint?: string,
-    owner?: string,
-    preAmount?: string,
-    postAmount?: string,
-  }
-
   type queryResponseData = {
     blocks: array<block>,
-    transactions: array<transaction>,
     instructions: array<instruction>,
     logs: array<log>,
-    tokenBalances: array<tokenBalance>,
   }
 
   type queryResponse = {
@@ -234,7 +205,9 @@ type queryResponse = ResponseTypes.queryResponse
 
 type t = {
   getHeight: unit => promise<int>,
-  get: (~query: query) => promise<queryResponse>,
+  // Returns the response plus pages of raw transactions and blocks (kept in
+  // Rust), keyed by (slot, transactionIndex) / slot, materialised at batch prep.
+  get: (~query: query) => promise<(queryResponse, TransactionStore.t, BlockStore.t)>,
 }
 
 @send

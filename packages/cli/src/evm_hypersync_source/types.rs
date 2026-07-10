@@ -10,18 +10,6 @@ use hypersync_client::{
 use napi::bindgen_prelude::{BigInt, FromNapiValue, ToNapiValue};
 use napi_derive::napi;
 
-/// Data relating to a single event (log)
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Event {
-    /// Transaction that triggered this event
-    pub transaction: Option<Transaction>,
-    /// Block that this event happened in
-    pub block: Option<Block>,
-    /// Evm log data
-    pub log: Log,
-}
-
 /// Evm log object
 ///
 /// See ethereum rpc spec for the meaning of fields
@@ -37,61 +25,6 @@ pub struct Log {
     pub address: Option<String>,
     pub data: Option<String>,
     pub topics: Vec<Option<String>>,
-}
-
-/// Evm transaction object
-///
-/// See ethereum rpc spec for the meaning of fields
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Transaction {
-    pub block_hash: Option<String>,
-    pub block_number: Option<i64>,
-    pub from: Option<String>,
-    pub gas: Option<BigInt>,
-    pub gas_price: Option<BigInt>,
-    pub hash: Option<String>,
-    pub input: Option<String>,
-    pub nonce: Option<BigInt>,
-    pub to: Option<String>,
-    pub transaction_index: Option<i64>,
-    pub value: Option<BigInt>,
-    pub v: Option<String>,
-    pub r: Option<String>,
-    pub s: Option<String>,
-    pub y_parity: Option<String>,
-    pub max_priority_fee_per_gas: Option<BigInt>,
-    pub max_fee_per_gas: Option<BigInt>,
-    pub chain_id: Option<i64>,
-    pub access_list: Option<Vec<AccessList>>,
-    pub authorization_list: Option<Vec<Authorization>>,
-    pub max_fee_per_blob_gas: Option<BigInt>,
-    pub blob_versioned_hashes: Option<Vec<String>>,
-    pub cumulative_gas_used: Option<BigInt>,
-    pub effective_gas_price: Option<BigInt>,
-    pub gas_used: Option<BigInt>,
-    pub contract_address: Option<String>,
-    pub logs_bloom: Option<String>,
-    #[napi(js_name = "type")]
-    pub type_: Option<i64>,
-    pub root: Option<String>,
-    pub status: Option<i64>,
-    pub l1_fee: Option<BigInt>,
-    pub l1_gas_price: Option<BigInt>,
-    pub l1_gas_used: Option<BigInt>,
-    pub l1_fee_scalar: Option<f64>,
-    pub gas_used_for_l1: Option<BigInt>,
-    pub blob_gas_price: Option<BigInt>,
-    pub blob_gas_used: Option<BigInt>,
-    pub deposit_nonce: Option<BigInt>,
-    pub deposit_receipt_version: Option<BigInt>,
-    pub l1_base_fee_scalar: Option<BigInt>,
-    pub l1_blob_base_fee: Option<BigInt>,
-    pub l1_blob_base_fee_scalar: Option<BigInt>,
-    pub l1_block_number: Option<i64>,
-    pub mint: Option<BigInt>,
-    pub sighash: Option<String>,
-    pub source_hash: Option<String>,
 }
 
 /// Evm withdrawal object
@@ -225,7 +158,10 @@ fn encode_prefix_hex(bytes: &[u8]) -> String {
     format!("0x{}", faster_hex::hex_string(bytes))
 }
 
-fn map_address_string(v: &Option<FixedSizeData<20>>, should_checksum: bool) -> Option<String> {
+pub(crate) fn map_address_string(
+    v: &Option<FixedSizeData<20>>,
+    should_checksum: bool,
+) -> Option<String> {
     v.as_ref().map(|v| encode_address(v, should_checksum))
 }
 
@@ -237,11 +173,11 @@ pub(crate) fn encode_address(addr: &FixedSizeData<20>, should_checksum: bool) ->
     }
 }
 
-fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {
+pub(crate) fn map_hex_string<T: Hex>(v: &Option<T>) -> Option<String> {
     v.as_ref().map(|v| v.encode_hex())
 }
 
-fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
+pub(crate) fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
     opt.as_ref()
         .map(|v| {
             i64::try_from(ruint::aliases::U256::from_be_slice(v.as_ref()))
@@ -250,7 +186,7 @@ fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
         .transpose()
 }
 
-fn map_bigint<T: AsRef<[u8]>>(opt: &Option<T>) -> Option<BigInt> {
+pub(crate) fn map_bigint<T: AsRef<[u8]>>(opt: &Option<T>) -> Option<BigInt> {
     opt.as_ref()
         .map(|v| convert_bigint_unsigned(ruint::aliases::U256::from_be_slice(v.as_ref())))
 }
@@ -300,120 +236,6 @@ impl Block {
             send_count: map_hex_string(&b.send_count),
             send_root: map_hex_string(&b.send_root),
             mix_hash: map_hex_string(&b.mix_hash),
-        })
-    }
-}
-
-impl Transaction {
-    pub fn from_simple(t: &simple_types::Transaction, should_checksum: bool) -> Result<Self> {
-        Ok(Self {
-            block_hash: map_hex_string(&t.block_hash),
-            block_number: t
-                .block_number
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping transaction.block_number")?,
-            from: map_address_string(&t.from, should_checksum),
-            gas: map_bigint(&t.gas),
-            gas_price: map_bigint(&t.gas_price),
-            hash: map_hex_string(&t.hash),
-            input: map_hex_string(&t.input),
-            nonce: map_bigint(&t.nonce),
-            to: map_address_string(&t.to, should_checksum),
-            transaction_index: t
-                .transaction_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping transaction.transaction_index")?,
-            value: map_bigint(&t.value),
-            v: map_hex_string(&t.v),
-            r: map_hex_string(&t.r),
-            s: map_hex_string(&t.s),
-            y_parity: map_hex_string(&t.y_parity),
-            max_priority_fee_per_gas: map_bigint(&t.max_priority_fee_per_gas),
-            max_fee_per_gas: map_bigint(&t.max_fee_per_gas),
-            chain_id: t
-                .chain_id
-                .as_ref()
-                .map(|n| ruint::aliases::U256::from_be_slice(n).try_into())
-                .transpose()
-                .context("mapping transaction.chain_id")?,
-            access_list: t
-                .access_list
-                .as_ref()
-                .map(|arr| arr.iter().map(AccessList::from).collect()),
-            authorization_list: t
-                .authorization_list
-                .as_ref()
-                .map(|al| {
-                    al.iter()
-                        .map(Authorization::try_from)
-                        .collect::<Result<_>>()
-                })
-                .transpose()
-                .context("mapping transaction.authorization_list")?,
-            max_fee_per_blob_gas: map_bigint(&t.max_fee_per_blob_gas),
-            blob_versioned_hashes: t
-                .blob_versioned_hashes
-                .as_ref()
-                .map(|arr| arr.iter().map(|h| h.encode_hex()).collect()),
-            cumulative_gas_used: map_bigint(&t.cumulative_gas_used),
-            effective_gas_price: map_bigint(&t.effective_gas_price),
-            gas_used: map_bigint(&t.gas_used),
-            contract_address: map_address_string(&t.contract_address, should_checksum),
-            logs_bloom: map_hex_string(&t.logs_bloom),
-            type_: t.type_.map(|v| u8::from(v).into()),
-            root: map_hex_string(&t.root),
-            status: t.status.map(|v| v.to_u8().into()),
-            l1_fee: map_bigint(&t.l1_fee),
-            l1_gas_price: map_bigint(&t.l1_gas_price),
-            l1_gas_used: map_bigint(&t.l1_gas_used),
-            l1_fee_scalar: t.l1_fee_scalar,
-            gas_used_for_l1: map_bigint(&t.gas_used_for_l1),
-            blob_gas_price: map_bigint(&t.blob_gas_price),
-            blob_gas_used: map_bigint(&t.blob_gas_used),
-            deposit_nonce: map_bigint(&t.deposit_nonce),
-            deposit_receipt_version: map_bigint(&t.deposit_receipt_version),
-            l1_base_fee_scalar: map_bigint(&t.l1_base_fee_scalar),
-            l1_blob_base_fee: map_bigint(&t.l1_blob_base_fee),
-            l1_blob_base_fee_scalar: map_bigint(&t.l1_blob_base_fee_scalar),
-            l1_block_number: map_i64(&t.l1_block_number)
-                .context("mapping transaction.l1_block_number")?,
-            mint: map_bigint(&t.mint),
-            sighash: map_hex_string(&t.sighash),
-            source_hash: map_hex_string(&t.source_hash),
-        })
-    }
-}
-
-impl Log {
-    pub fn from_simple(l: &simple_types::Log, should_checksum: bool) -> Result<Self> {
-        Ok(Self {
-            removed: l.removed,
-            log_index: l
-                .log_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.log_index")?,
-            transaction_index: l
-                .transaction_index
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.transaction_index")?,
-            transaction_hash: map_hex_string(&l.transaction_hash),
-            block_hash: map_hex_string(&l.block_hash),
-            block_number: l
-                .block_number
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping log.block_number")?,
-            address: map_address_string(&l.address, should_checksum),
-            data: map_hex_string(&l.data),
-            topics: l
-                .topics
-                .iter()
-                .map(|t| t.as_ref().map(|v| v.encode_hex()))
-                .collect(),
         })
     }
 }

@@ -208,90 +208,6 @@ module ResponseTypes = {
     mixHash?: string,
   }
 
-  type accessList = {
-    address?: Address.t,
-    storageKeys?: array<string>,
-  }
-
-  let accessListSchema = S.object(s => {
-    address: ?s.field("address", S.option(Address.schema)),
-    storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
-  })
-
-  type authorizationList = {
-    chainId: bigint,
-    address: Address.t,
-    nonce: int,
-    yParity: [#0 | #1],
-    r: string,
-    s: string,
-  }
-
-  let authorizationListSchema = S.object(s => {
-    chainId: s.field("chainId", S.bigint),
-    address: s.field("address", Address.schema),
-    nonce: s.field("nonce", S.int),
-    yParity: s.field("yParity", S.enum([#0, #1])),
-    r: s.field("r", S.string),
-    s: s.field("s", S.string),
-  })
-
-  type transaction = {
-    blockHash?: string,
-    blockNumber?: int,
-    from?: string,
-    gas?: bigint,
-    gasPrice?: bigint,
-    hash?: string,
-    input?: string,
-    nonce?: bigint,
-    to?: string,
-    transactionIndex?: int,
-    value?: bigint,
-    v?: string,
-    r?: string,
-    s?: string,
-    yParity?: string,
-    maxPriorityFeePerGas?: bigint,
-    maxFeePerGas?: bigint,
-    chainId?: int,
-    accessList?: array<accessList>,
-    maxFeePerBlobGas?: bigint,
-    blobVersionedHashes?: array<string>,
-    cumulativeGasUsed?: bigint,
-    effectiveGasPrice?: bigint,
-    gasUsed?: bigint,
-    contractAddress?: string,
-    logsBloom?: string,
-    @as("type") type_?: int,
-    root?: string,
-    status?: int,
-    l1Fee?: bigint,
-    l1GasPrice?: bigint,
-    l1GasUsed?: bigint,
-    l1FeeScalar?: float,
-    gasUsedForL1?: bigint,
-    authorizationList?: array<authorizationList>,
-  }
-
-  type log = {
-    removed?: bool,
-    @as("logIndex") index?: int,
-    transactionIndex?: int,
-    transactionHash?: string,
-    blockHash?: string,
-    blockNumber?: int,
-    address?: Address.t,
-    data?: string,
-    topics?: array<Nullable.t<EvmTypes.Hex.t>>,
-  }
-
-  type event = {
-    transaction?: transaction,
-    block?: block,
-    log: log,
-  }
-
   type rollbackGuard = {
     blockNumber: int,
     timestamp: int,
@@ -303,11 +219,7 @@ module ResponseTypes = {
 
 type query = QueryTypes.query
 
-type queryResponseData = {
-  blocks: array<ResponseTypes.block>,
-  transactions: array<ResponseTypes.transaction>,
-  logs: array<ResponseTypes.log>,
-}
+type queryResponseData = {blocks: array<ResponseTypes.block>}
 
 type queryResponse = {
   archiveHeight: option<int>,
@@ -325,25 +237,6 @@ module Decoder = {
     contractName: string,
     params: array<Internal.paramMeta>,
   }
-
-  // Decoded params keyed by contract name. Contracts that emit the same-signature
-  // event share one decode but get their own param names, so the caller picks the
-  // entry for the contract its router resolved the log to.
-  type tWithParams = {
-    decodeLogs: array<ResponseTypes.event> => promise<
-      array<Nullable.t<dict<Internal.eventParams>>>,
-    >,
-  }
-
-  @send
-  external classFromParams: (
-    Core.evmDecoderCtor,
-    array<eventParamsInput>,
-    ~checksumAddresses: bool=?,
-  ) => tWithParams = "fromParams"
-
-  let fromParams = (eventParams, ~checksumAddresses=?) =>
-    Core.getAddon().evmDecoder->classFromParams(eventParams, ~checksumAddresses?)
 }
 
 module EventItems = {
@@ -352,14 +245,28 @@ module EventItems = {
     srcAddress: Address.t,
     topic0: EvmTypes.Hex.t,
     topicCount: int,
-    block: ResponseTypes.block,
-    transaction: ResponseTypes.transaction,
+    // Number of the block this log belongs to; the block itself is resolved from
+    // `response.blocks`, deduplicated across items sharing a block.
+    blockNumber: int,
+    // Key (with the block number) into the transaction store; the transaction
+    // is resolved from the store on demand.
+    transactionIndex: int,
     params: Nullable.t<dict<Internal.eventParams>>,
+  }
+
+  // The always-needed block fields, one per block number. The block's remaining
+  // fields live raw in the block store and are materialised on demand.
+  type blockHeader = {
+    number: int,
+    timestamp: int,
+    hash: string,
   }
 
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
+    // One header per block number referenced by `items`.
+    blocks: array<blockHeader>,
     items: array<item>,
     rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
@@ -367,7 +274,11 @@ module EventItems = {
 
 type t = {
   get: (~query: query) => promise<queryResponse>,
-  getEventItems: (~query: query) => promise<EventItems.response>,
+  // Returns the response plus page stores owning this page's raw transactions
+  // and blocks.
+  getEventItems: (
+    ~query: query,
+  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 

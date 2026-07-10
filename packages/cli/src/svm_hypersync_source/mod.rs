@@ -7,7 +7,7 @@ use napi_derive::napi;
 mod borsh_decoder;
 mod config;
 mod query;
-mod types;
+pub(crate) mod types;
 
 /// Local hex helpers. Lives here so `decoder.rs` can pull them via
 /// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary
@@ -30,10 +30,29 @@ pub(crate) mod mod_helpers {
 }
 
 use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
+use hypersync_client_solana::simple_types as simple;
 
+use crate::block_store::BlockStore;
+use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use types::QueryResponse;
+
+/// Move the response's transactions and token balances into a
+/// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
+/// only the config-selected fields are materialised at batch prep; many
+/// instructions in one transaction collapse to a single stored row, and token
+/// balances land in the store's companion table joined back by key at
+/// materialisation.
+fn build_svm_store(
+    transactions: Vec<simple::Transaction>,
+    token_balances: Vec<simple::TokenBalance>,
+) -> TransactionStore {
+    let store = TransactionStore::new_svm();
+    store.insert_svm_txs(transactions);
+    store.insert_svm_token_balances(token_balances);
+    store
+}
 
 #[napi]
 pub struct SvmHypersyncClient {
@@ -86,12 +105,15 @@ impl SvmHypersyncClient {
     /// must NOT call `collect` (which spins up parallel batched requests under
     /// `StreamConfig::default()` and can DoS the server on multi-day windows).
     #[napi]
-    pub async fn get(&self, query: SvmQuery) -> napi::Result<QueryResponse> {
+    pub async fn get(
+        &self,
+        query: SvmQuery,
+    ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
         let q: hypersync_solana_net_types::query::SolanaQuery = query
             .try_into()
             .context("parse solana query")
             .map_err(map_err)?;
-        let resp = self
+        let mut resp = self
             .inner
             .get(&q)
             .await
@@ -120,13 +142,39 @@ impl SvmHypersyncClient {
                 .collect()
         };
 
+        // Retain raw transactions + token balances in Rust; ReScript builds
+        // items from instructions and the store materialises the parent
+        // transaction (selected fields only) at batch prep.
+        let store = build_svm_store(
+            std::mem::take(&mut resp.transactions),
+            std::mem::take(&mut resp.token_balances),
+        );
+
+        // Take the raw blocks out before the response conversion consumes them,
+        // build the lean per-slot header from a borrow, then move the owned raw
+        // blocks into the store — avoiding a full raw-`Block` clone per block
+        // (mirrors the EVM source's borrow-then-move header pattern).
+        let raw_blocks = std::mem::take(&mut resp.blocks);
+        let block_headers: Vec<types::Block> = raw_blocks
+            .iter()
+            .map(types::Block::from_raw)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("mapping solana block headers")
+            .map_err(map_err)?;
+
+        // slot/time/hash decode from the store like any other field, so every
+        // response block needs a store entry.
+        let block_store = BlockStore::new_svm();
+        block_store.insert_svm_blocks(raw_blocks);
+
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
             .map_err(map_err)?;
+        out.data.blocks = block_headers;
         for (instr, d) in out.data.instructions.iter_mut().zip(decoded) {
             instr.decoded = d;
         }
-        Ok(out)
+        Ok((out, store, block_store))
     }
 }
 
@@ -170,11 +218,12 @@ mod tests {
             ..Default::default()
         };
 
-        let resp = client.get(q).await.expect("collect");
+        // Transactions are moved into the store, so `resp.data.transactions` is
+        // empty here by design.
+        let (resp, _store, _block_store) = client.get(q).await.expect("collect");
         eprintln!(
-            "got {} instructions / {} txs / next_slot={}",
+            "got {} instructions / next_slot={}",
             resp.data.instructions.len(),
-            resp.data.transactions.len(),
             resp.next_slot
         );
         assert!(

@@ -981,30 +981,6 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
-
-
-  it("Currently filters are ignored by the test framework", async () => {
-    const indexer = createTestIndexer();
-
-    await assert.rejects(
-      indexer.process({
-        chains: {
-          1337: {
-            startBlock: 1,
-            endBlock: 100,
-            simulate: [
-              {
-                contract: "EventFiltersTest",
-                event: "FilterTestEvent",
-                params: { addr: "0x000" },
-              },
-            ],
-          },
-        },
-      }),
-    );
-  });
-
   it("createTestIndexer has chain info", () => {
     const testIndexer = createTestIndexer();
 
@@ -1223,10 +1199,11 @@ describe("Use Envio test framework to test event handlers", () => {
   it("createTestIndexer throws when startBlock overlaps with previously processed blocks", async () => {
     const indexer = createTestIndexer();
 
-    // First process: block 1 with simulate event (WriteBatch sets progress to block 1)
+    // First process on chain 1337 where Gravatar is configured (so its EmptyEvent
+    // resolves to an indexed srcAddress). WriteBatch sets progress to block 100.
     await indexer.process({
       chains: {
-        1: {
+        1337: {
           startBlock: 1,
           endBlock: 100,
           simulate: [
@@ -1241,12 +1218,12 @@ describe("Use Envio test framework to test event handlers", () => {
       () =>
         indexer.process({
           chains: {
-            1: { startBlock: 50, endBlock: 150 },
+            1337: { startBlock: 50, endBlock: 150 },
           },
         }),
       {
         message:
-          "Invalid block range for chain 1: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
+          "Invalid block range for chain 1337: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer().",
       }
     );
   });

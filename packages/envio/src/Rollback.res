@@ -18,7 +18,7 @@ let getLastKnownValidBlock = async (
     ->ChainState.reorgDetection
     ->ReorgDetection.getThresholdBlockNumbersBelowBlock(
       ~blockNumber=reorgBlockNumber,
-      ~knownHeight=(chainState->ChainState.fetchState).knownHeight,
+      ~knownHeight=chainState->ChainState.knownHeight,
     )
 
   switch scannedBlockNumbers {
@@ -40,7 +40,7 @@ let getLastKnownValidBlock = async (
 
 let rec rollback = async (
   state: IndexerState.t,
-  ~scheduleFetchAllChains,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) =>
@@ -78,7 +78,7 @@ let rec rollback = async (
         state,
         ~reorgChain,
         ~rollbackTargetBlockNumber,
-        ~scheduleFetchAllChains,
+        ~scheduleFetch,
         ~scheduleProcessing,
       )
     }
@@ -91,10 +91,10 @@ and executeRollback = async (
   state: IndexerState.t,
   ~reorgChain,
   ~rollbackTargetBlockNumber,
-  ~scheduleFetchAllChains,
+  ~scheduleFetch,
   ~scheduleProcessing,
 ) => {
-  let startTime = Hrtime.makeTimer()
+  let startTime = Performance.now()
 
   let chainState = state->IndexerState.getChainState(~chain=reorgChain)
 
@@ -194,11 +194,11 @@ and executeRollback = async (
     "targetCheckpointId": rollbackTargetCheckpointId,
   })
   Prometheus.RollbackSuccess.increment(
-    ~timeSeconds=Hrtime.timeSince(startTime)->Hrtime.toSecondsFloat,
+    ~timeSeconds=Performance.secondsSince(startTime),
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
   )
 
   state->IndexerState.completeRollback(~eventsProcessedDiffByChain)
-  scheduleFetchAllChains()
+  scheduleFetch()
   scheduleProcessing()
 }

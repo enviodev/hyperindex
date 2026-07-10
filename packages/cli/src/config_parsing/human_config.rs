@@ -689,6 +689,13 @@ pub mod evm {
         )]
         pub ws: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional HTTP headers sent with every request to this RPC endpoint, \
+                           e.g. an Authorization bearer token for gated endpoints. Values support \
+                           ${ENV_VAR} interpolation."
+        )]
+        pub headers: Option<std::collections::BTreeMap<String, String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1258,50 +1265,84 @@ pub mod svm {
         }
     }
 
-    /// Value for a field-selection entry. `true` includes all fields;
-    /// a list of field names enables per-field selection (not yet supported).
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(untagged)]
-    pub enum FieldSelectionValue {
-        All(bool),
-        Fields(Vec<String>),
+    /// Selectable parent-transaction field names (camelCase), matching the
+    /// public `svmTransaction` shape. `tokenBalances` is selected via the
+    /// separate `token_balance_fields` toggle, so it isn't listed here.
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        JsonSchema,
+        strum::Display,
+        strum::EnumIter,
+    )]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[strum(serialize_all = "camelCase")]
+    pub enum SvmTransactionField {
+        TransactionIndex,
+        Signatures,
+        FeePayer,
+        Success,
+        Err,
+        Fee,
+        ComputeUnitsConsumed,
+        AccountKeys,
+        RecentBlockhash,
+        Version,
     }
 
-    impl FieldSelectionValue {
-        pub fn is_enabled(&self) -> bool {
-            match self {
-                FieldSelectionValue::All(b) => *b,
-                FieldSelectionValue::Fields(f) => !f.is_empty(),
-            }
-        }
-
-        pub fn is_per_field(&self) -> bool {
-            matches!(self, FieldSelectionValue::Fields(_))
-        }
+    /// Selectable block field names (camelCase), matching the public
+    /// `instruction.block` shape. `slot`/`time`/`hash` are always included,
+    /// so everything here is opt-in on top of that trio.
+    #[derive(
+        Debug,
+        Serialize,
+        Deserialize,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        JsonSchema,
+        strum::Display,
+        strum::EnumIter,
+    )]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[strum(serialize_all = "camelCase")]
+    pub enum SvmBlockField {
+        Height,
+        ParentSlot,
+        ParentHash,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct SvmFieldSelection {
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Include the parent transaction for each matched instruction. \
-                           Use `true` to include all fields."
-        )]
-        pub transaction_fields: Option<FieldSelectionValue>,
+        #[schemars(description = "Parent-transaction fields to include on each matched \
+                           instruction, as a list of field names. Omit (or pass an \
+                           empty list) to include no transaction.")]
+        pub transaction_fields: Option<Vec<SvmTransactionField>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Block fields to include on each matched instruction's \
+                           `block`, as a list of field names. `slot`/`time`/`hash` are \
+                           always included; this adds `height`/`parentSlot`/`parentHash`.")]
+        pub block_fields: Option<Vec<SvmBlockField>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Set to `true` to include program logs scoped to each \
+                           matched instruction.")]
+        pub log_fields: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Include program logs scoped to each matched instruction. \
-                           Use `true` to include all fields."
+            description = "Set to `true` to include SPL Token / Token-2022 balance \
+                           snapshots for the parent transaction, exposed as \
+                           `transaction.tokenBalances`. Independent of \
+                           `transaction_fields`."
         )]
-        pub log_fields: Option<FieldSelectionValue>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Include SPL Token / Token-2022 balance snapshots for the \
-                           parent transaction. Implies transaction_fields: true. \
-                           Use `true` to include all fields."
-        )]
-        pub token_balance_fields: Option<FieldSelectionValue>,
+        pub token_balance_fields: Option<bool>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1910,7 +1951,7 @@ chains:
                 - position: 0
                   values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
               field_selection:
-                transaction_fields: true
+                transaction_fields: [signatures, feePayer]
 "#;
 
         #[test]
@@ -1954,7 +1995,11 @@ chains:
                                 ],
                             }])),
                             field_selection: Some(SvmFieldSelection {
-                                transaction_fields: Some(FieldSelectionValue::All(true)),
+                                transaction_fields: Some(vec![
+                                    SvmTransactionField::Signatures,
+                                    SvmTransactionField::FeePayer,
+                                ]),
+                                block_fields: None,
                                 log_fields: None,
                                 token_balance_fields: None,
                             }),

@@ -23,6 +23,7 @@ type evmRpcConfig = {
   sourceFor: Source.sourceFor,
   syncConfig: option<sourceSyncOptions>,
   ws: option<string>,
+  headers: option<dict<string>>,
 }
 
 type sourceConfig =
@@ -160,6 +161,7 @@ let rpcConfigSchema = S.schema(s =>
     "url": s.matches(S.string),
     "for": s.matches(rpcSourceForSchema),
     "ws": s.matches(S.option(S.string)),
+    "headers": s.matches(S.option(S.dict(S.string))),
     "initialBlockInterval": s.matches(S.option(S.int)),
     "backoffMultiplicative": s.matches(S.option(S.float)),
     "accelerationAdditive": s.matches(S.option(S.int)),
@@ -199,9 +201,9 @@ let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
     "discriminatorByteLen": s.matches(S.int),
-    "includeTransaction": s.matches(S.bool),
+    "transactionFields": s.matches(S.array(Internal.svmTransactionFieldSchema)),
+    "blockFields": s.matches(S.option(S.array(Internal.svmBlockFieldSchema))),
     "includeLogs": s.matches(S.bool),
-    "includeTokenBalances": s.matches(S.bool),
     "accountFilters": s.matches(
       S.option(
         S.array(
@@ -562,10 +564,19 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     )
   }
 
+  let logger = Logging.getLogger()
   let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.ecosystem
-  | Ecosystem.Fuel => Fuel.ecosystem
-  | Ecosystem.Svm => Svm.ecosystem
+  | Ecosystem.Evm => Evm.make(~logger)
+  | Ecosystem.Fuel => Fuel.make(~logger)
+  | Ecosystem.Svm => Svm.make(~logger)
+  }
+
+  // SVM has no raw-events representation (`Svm.toRawEvent` throws), so reject
+  // it at config time instead of failing mid-indexing.
+  if ecosystemName === Ecosystem.Svm && publicConfig["rawEvents"]->Option.getOr(false) {
+    JsError.throwWithMessage(
+      "Invalid indexer config: rawEvents is not supported for the SVM ecosystem",
+    )
   }
 
   // Extract EVM-specific options with defaults
@@ -660,7 +671,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ~events: option<array<_>>,
     ~abi,
     ~chainId: int,
-    ~startBlock: option<int>,
     ~addresses: array<string>,
     ~svmDefinedTypes: JSON.t=JSON.Null,
   ) => {
@@ -683,10 +693,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               ~kind=fuelKind,
               ~sighash,
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
-              ~isWildcard=false,
-              ~handler=None,
-              ~contractRegister=None,
-              ~startBlock?,
             ) :> Internal.eventConfig)
           | None =>
             JsError.throwWithMessage(
@@ -711,9 +717,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                 "svm": option<{
                   "discriminator": option<string>,
                   "discriminatorByteLen": int,
-                  "includeTransaction": bool,
+                  "transactionFields": array<Internal.svmTransactionField>,
+                  "blockFields": option<array<Internal.svmBlockField>>,
                   "includeLogs": bool,
-                  "includeTokenBalances": bool,
                   "accountFilters": option<
                     array<array<{"position": int, "values": array<string>}>>,
                   >,
@@ -747,18 +753,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~programId,
             ~discriminator=svm["discriminator"],
             ~discriminatorByteLen=svm["discriminatorByteLen"],
-            ~includeTransaction=svm["includeTransaction"],
+            ~transactionFields=svm["transactionFields"],
+            ~blockFields=?svm["blockFields"],
             ~includeLogs=svm["includeLogs"],
-            ~includeTokenBalances=svm["includeTokenBalances"],
             ~accountFilters,
             ~isInner=svm["isInner"],
-            ~isWildcard=false,
-            ~handler=None,
-            ~contractRegister=None,
             ~accounts=svm["accounts"]->Option.getOr([]),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
-            ~startBlock?,
           ) :> Internal.eventConfig)
         | _ =>
           (EventConfigBuilder.buildEvmEventConfig(
@@ -766,15 +768,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~eventName,
             ~sighash,
             ~params,
-            ~isWildcard=false,
-            ~handler=None,
-            ~contractRegister=None,
-            ~eventFilters=None,
-            ~probeChainId=chainId,
-            ~onEventBlockFilterSchema=ecosystem.onEventBlockFilterSchema,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
-            ~startBlock?,
             ~globalBlockFieldsSet,
             ~globalTransactionFieldsSet,
           ) :> Internal.eventConfig)
@@ -826,17 +821,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           let addresses = rawAddresses->Array.map(parseAddress)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
-          // Build event configs from JSON (field selections resolved inline)
-          // chainId is threaded in so the where-callback detection probe
-          // exercises the callback with this chain's real id — handlers
-          // that branch on `chain.id` are taken through the same path
-          // they will follow at runtime.
+          // Build event definitions from JSON (field selections resolved
+          // inline). Handlers and per-chain `where` filters are layered on
+          // later as `onEventRegistration`s in `ChainState.makeInternal`.
           let events = buildContractEvents(
             ~contractName=capitalizedName,
             ~events=contractData["events"],
             ~abi=contractData["abi"],
             ~chainId,
-            ~startBlock,
             ~addresses=rawAddresses,
             ~svmDefinedTypes=contractData["svmAbi"]
             ->Option.map(a => a["definedTypes"])
@@ -917,6 +909,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               sourceFor: parseRpcSourceFor(rpcConfig["for"]),
               syncConfig,
               ws: rpcConfig["ws"],
+              headers: rpcConfig["headers"],
             }
           })
         EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
@@ -1036,6 +1029,50 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     allEnums,
   }
 }
+
+// Canonicalize a user-provided address to the configured casing so it matches
+// addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
+// already canonical; only user-land input (simulate srcAddress, contractRegister
+// add) can carry arbitrary casing and needs this before comparison.
+let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
+  switch config.ecosystem.name {
+  | Ecosystem.Evm =>
+    if config.lowercaseAddresses {
+      address->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      address->Address.Evm.fromAddressOrThrow
+    }
+  // TODO: Ideally we should do the same for other ecosystems
+  | Ecosystem.Fuel | Ecosystem.Svm => address
+  }
+
+// Relaxed counterpart to normalizeUserAddress, used only for simulate srcAddress.
+// Tests commonly use short placeholder strings like "0xfoo" as a stand-in
+// identity (e.g. for a wildcard event whose srcAddress doesn't need to resolve
+// to any real contract), so only the "0x" prefix is enforced here. Under
+// address_format: checksum, a real address is checksummed even if the input
+// casing doesn't match (getAddress doesn't require the input to already be
+// checksummed) — a placeholder that isn't valid hex falls back unchanged.
+let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
+  switch config.ecosystem.name {
+  | Ecosystem.Evm =>
+    let str = address->Address.toString
+    if !(str->String.startsWith("0x")) {
+      JsError.throwWithMessage(
+        `simulate: srcAddress "${str}" is invalid. Expected a string starting with "0x".`,
+      )
+    }
+    if config.lowercaseAddresses {
+      address->Address.Evm.fromAddressLowercaseOrThrow
+    } else {
+      try {
+        address->Address.Evm.fromAddressOrThrow
+      } catch {
+      | _ => address
+      }
+    }
+  | Ecosystem.Fuel | Ecosystem.Svm => address
+  }
 
 // Look up an event config by (contract, event) name. When `chainId` is given,
 // returns that chain's per-chain event config (matters for where-callback
@@ -1278,11 +1315,11 @@ let throwIfIncompatible = (
   }
 }
 
-// The returned value is a pure function of the JSON — no handler
-// registrations are applied here. Post-registration configs come from
-// `HandlerLoader.applyRegistrations`. That purity is what lets this
-// memoize without invalidation.
-let loadWithoutRegistrations = () =>
+// The returned value is a pure function of the JSON: it holds only event
+// definitions, never handler/contractRegister/where state (that's layered on
+// separately as `HandlerRegister.registrationsByChainId`). That purity is
+// what lets this memoize without invalidation.
+let load = () =>
   switch cached.contents {
   | Some(c) => c
   | None => {

@@ -1,18 +1,17 @@
 open Vitest
 
-// Covers `HandlerLoader.applyRegistrations`: the handler-state fields
+// Covers `HandlerRegister.buildOnEventRegistration`: the handler-state fields
 // (`handler`, `contractRegister`, `isWildcard`) registered via
-// `indexer.onEvent` / `indexer.contractRegister` land on the enriched
-// event config, and `dependsOnAddresses` follows the shared
+// `indexer.onEvent` / `indexer.contractRegister` land on the built
+// registration, and `dependsOnAddresses` follows the shared
 // `Internal.dependsOnAddresses` formula. Filter-parsing behavior is
 // covered separately by `EventFilters_test.res`.
-let (configWithRegistrations, _) = await HandlerLoader.registerAllHandlers(
-  ~config=Config.loadWithoutRegistrations(),
-)
+let config = Config.load()
+let _ = await HandlerLoader.registerAllHandlers(~config)
 
-let getEvmEventConfig = MockConfig.getEvmEventConfig(~config=configWithRegistrations, ...)
+let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config, ...)
 
-describe("HandlerLoader.applyRegistrations", () => {
+describe("onEventRegistration handler-state fields", () => {
   it("propagates handler from onEvent into the event config", t => {
     // `indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, …)`
     // is registered in EventHandlers.ts at module top level.

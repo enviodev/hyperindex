@@ -132,9 +132,10 @@ Supported for all ecosystems (EVM, Fuel, SVM).
 rpc:
   - url: ${ENVIO_RPC_URL}                    # required — errors if missing
   - url: ${ENVIO_RPC_URL:-http://localhost:8545}  # with default value
+  - url: ${ENVIO_RPC_URL:-${ENVIO_FALLBACK_RPC_URL}}  # nested: fall back to another var
 ```
 
-Works in any string value in config. Set via `.env` file or shell environment.
+Works in any string value in config. Set via `.env` file or shell environment. The default after `:-` (or `-`) may itself be a `${...}` expression and is only resolved when the default is actually used.
 
 **IMPORTANT:** All environment variables MUST use the `ENVIO_` prefix (e.g., `ENVIO_RPC_URL`, not `RPC_URL`). The hosted service requires the `ENVIO_` prefix — variables without it will not be available at runtime.
 
@@ -159,9 +160,5 @@ Add at top of file for IDE schema validation:
 - `event_decoder` — removed
 - `rpc_config` — replaced by `rpc:` under chains
 - `unordered_multichain_mode` — removed
-
-## RPC Configuration
-
-RPC tuning parameters are documented in the `indexer-performance` skill.
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

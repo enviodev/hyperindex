@@ -1,5 +1,10 @@
 type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
 
+// Cumulative per-method request count/time for a source, aggregated from the
+// requestStat arrays returned by its methods. Rendered into
+// envio_source_request_* by Metrics.renderSourceRequests.
+type requestStatAgg = {mutable count: int, mutable seconds: float}
+
 type sourceState = {
   source: Source.t,
   mutable knownHeight: int,
@@ -9,15 +14,36 @@ type sourceState = {
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
+  requestStats: dict<requestStatAgg>,
+}
+
+let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.requestStat>) => {
+  requestStats->Array.forEach(({method, seconds}) => {
+    switch sourceState.requestStats->Utils.Dict.dangerouslyGetNonOption(method) {
+    | Some(agg) =>
+      agg.count = agg.count + 1
+      agg.seconds = agg.seconds +. seconds
+    | None => sourceState.requestStats->Dict.set(method, {count: 1, seconds})
+    }
+  })
+}
+
+// Flattened (source, method) aggregates for Metrics.renderSourceRequests to
+// inline into the /metrics response.
+type requestStatSample = {
+  sourceName: string,
+  chainId: int,
+  method: string,
+  count: int,
+  seconds: float,
 }
 
 // Encapsulates the fetching logic for a chain's sources.
 // with a mutable state for easier reasoning and testing.
 type t = {
   sourcesState: array<sourceState>,
-  mutable statusStart: Hrtime.timeRef,
+  mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
-  maxPartitionConcurrency: int,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
@@ -25,6 +51,10 @@ type t = {
   getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
+  // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
+  // wait period instead of on every epoch that re-enters the wait before any
+  // new block is found. Reset when blocks are found.
+  mutable waitingLogged: bool,
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
@@ -42,6 +72,29 @@ type t = {
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    let chainId = sourceState.source.chain->ChainMap.Chain.toChainId
+    sourceState.requestStats->Utils.Dict.forEachWithKey((agg, method) => {
+      samples
+      ->Array.push({
+        sourceName: sourceState.source.name,
+        chainId,
+        method,
+        count: agg.count,
+        seconds: agg.seconds,
+      })
+      ->ignore
+    })
+  })
+  samples
+}
+
+// Partition queries currently in flight on this chain's sources. Summed across
+// chains by CrossChainState to enforce the indexer-wide concurrency budget.
+let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
 
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
@@ -148,7 +201,6 @@ let makeGetHeightRetryInterval = (
 
 let make = (
   ~sources: array<Source.t>,
-  ~maxPartitionConcurrency,
   ~isRealtime,
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutRealtime=20_000,
@@ -169,16 +221,11 @@ let make = (
   | None =>
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
-  Prometheus.IndexingMaxConcurrency.set(
-    ~maxConcurrency=maxPartitionConcurrency,
-    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
-  )
   Prometheus.IndexingConcurrency.set(
     ~concurrency=0,
     ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
   )
   {
-    maxPartitionConcurrency,
     sourcesState: sources->Array.map(source => {
       source,
       knownHeight: 0,
@@ -186,9 +233,11 @@ let make = (
       pendingHeightResolvers: [],
       disabled: false,
       lastFailedAt: None,
+      requestStats: Dict.make(),
     }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
+    waitingLogged: false,
     fetchingPartitionsCount: 0,
     newBlockStallTimeout,
     newBlockStallTimeoutRealtime,
@@ -196,7 +245,7 @@ let make = (
     reducedPollingInterval,
     getHeightRetryInterval,
     recoveryTimeout,
-    statusStart: Hrtime.makeTimer(),
+    statusStart: Performance.now(),
     status: Idle,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
@@ -214,30 +263,26 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   }
   promCounter->Prometheus.SafeCounter.handleFloat(
     ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Hrtime.timeSince->Hrtime.toSecondsFloat,
+    ~value=sourceManager.statusStart->Performance.secondsSince,
   )
-  sourceManager.statusStart = Hrtime.makeTimer()
+  sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
 
-let fetchNext = async (
+// Carry out the fetch decision made by CrossChainState.checkAndFetch: either
+// dispatch the admitted queries or start waiting for a new block. Selection
+// (getNextQuery + cross-chain admission) happens upstream so the budget is split
+// per query across all chains.
+let dispatch = async (
   sourceManager: t,
   ~fetchState: FetchState.t,
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
+  ~action: FetchState.nextQuery,
   ~stateId,
 ) => {
-  let {maxPartitionConcurrency} = sourceManager
-
-  let nextQuery = fetchState->FetchState.getNextQuery(
-    ~concurrencyLimit={
-      maxPartitionConcurrency - sourceManager.fetchingPartitionsCount
-    },
-  )
-
-  switch nextQuery {
-  | ReachedMaxConcurrency
+  switch action {
   | NothingToQuery => ()
   | WaitingForNewBlock =>
     switch sourceManager.waitingForNewBlockStateId {
@@ -258,7 +303,8 @@ let fetchNext = async (
       }
     }
   | Ready(queries) => {
-      fetchState->FetchState.startFetchingQueries(~queries)
+      // Queries are already marked in flight by ChainState.startFetchingQueries
+      // when they were admitted; here we just execute them.
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
       Prometheus.IndexingConcurrency.set(
@@ -345,7 +391,9 @@ let getSourceNewHeight = async (
         let h = ref(initialHeight)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
           try {
-            h := (await source.getHeightOrThrow())
+            let res = await source.getHeightOrThrow()
+            sourceState->recordRequestStats(res.requestStats)
+            h := res.height
           } catch {
           | _ => ()
           }
@@ -364,7 +412,9 @@ let getSourceNewHeight = async (
     | None =>
       // No subscription, use REST polling
       try {
-        let height = await source.getHeightOrThrow()
+        let res = await source.getHeightOrThrow()
+        sourceState->recordRequestStats(res.requestStats)
+        let height = res.height
 
         newHeight := height
         if height <= knownHeight {
@@ -386,6 +436,9 @@ let getSourceNewHeight = async (
               }
             })
             sourceState.unsubscribe = Some(unsubscribe)
+            // Count a subscription (re)start rather than every pushed height —
+            // there's no request/response to time here.
+            sourceState->recordRequestStats([{Source.method: "heightSubscription", seconds: 0.}])
           | _ =>
             // Slowdown polling when the chain isn't progressing
             let pollingInterval = if reducedPolling {
@@ -502,13 +555,14 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
       "knownHeight": knownHeight,
     },
   )
-  if reducedPolling {
+  if !sourceManager.waitingLogged {
     logger->Logging.childTrace(
-      `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
-          ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`,
+      reducedPolling
+        ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
+              ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
+        : "Initiating check for new blocks.",
     )
-  } else {
-    logger->Logging.childTrace("Initiating check for new blocks.")
+    sourceManager.waitingLogged = true
   }
 
   let mainSources = sourceManager->getNextSources(~isRealtime)
@@ -606,6 +660,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     "source": source.name,
     "newBlockHeight": newBlockHeight,
   })
+  sourceManager.waitingLogged = false
 
   status := Done
 
@@ -675,19 +730,21 @@ let executeQuery = async (
         ~fromBlock=query.fromBlock,
         ~toBlock,
         ~addressesByContractName=query.addressesByContractName,
-        ~indexingAddresses=query.indexingAddresses,
+        ~contractNameByAddress=query.addressesByContractName->FetchState.deriveContractNameByAddress,
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
+        // Ceil (not truncate) so a sub-1 estimate from a sparse partition over a
+        // small range doesn't round down to 0 and ask the backend to cap the
+        // response at nothing — 0 items is indistinguishable from "no signal".
+        ~itemsTarget={
+          let est = query.estResponseSize->Math.ceil->Float.toInt
+          est > 0 ? est : FetchState.minEstResponseSize->Float.toInt
+        },
         ~retry,
         ~logger,
       )
-      logger->Logging.childTrace({
-        "msg": "Fetched block range from server",
-        "toBlock": response.latestFetchedBlockNumber,
-        "numEvents": response.parsedQueueItems->Array.length,
-        "stats": response.stats,
-      })
+      sourceState->recordRequestStats(response.requestStats)
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
@@ -827,7 +884,8 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
 
     try {
       let res = await source.getBlockHashes(~blockNumbers, ~logger)
-      switch res {
+      sourceState->recordRequestStats(res.requestStats)
+      switch res.result {
       | Ok(data) =>
         sourceState.lastFailedAt = None
         responseRef := Some(data)

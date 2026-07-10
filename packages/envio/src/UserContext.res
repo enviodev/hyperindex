@@ -22,7 +22,8 @@ Utils.Object.defineProperty(
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
     get: Utils.toMethod(() => {
-      (paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))).item->Logging.getUserLogger
+      let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
+      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
     }),
   },
 )
@@ -63,6 +64,7 @@ let initEffect = (params: contextParams) => {
       ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
+      ~ecosystem=params.config.ecosystem,
     )
   }
   callEffect
@@ -85,6 +87,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
+      ~ecosystem=params.config.ecosystem,
       ~filter,
     )
 
@@ -153,6 +156,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
+              ~ecosystem=params.config.ecosystem,
               ~entityId,
             )
         )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
@@ -184,6 +188,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
+              ~ecosystem=params.config.ecosystem,
               ~entityId,
             )->Promise.thenResolve(entity => {
               switch entity {
@@ -213,6 +218,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
+              ~ecosystem=params.config.ecosystem,
               ~entityId=entity.id,
             )->Promise.thenResolve(storageEntity => {
               switch storageEntity {
@@ -254,13 +260,17 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     if params.isResolved {
       Utils.Error.make(
         `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=params.item->Logging.getItemLogger)
+      )->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
+      )
     }
     switch prop {
     | "log" =>
-      (params.isPreload ? Logging.noopLogger : params.item->Logging.getUserLogger)->(
-        Utils.magic: Envio.logger => unknown
-      )
+      (
+        params.isPreload
+          ? Logging.noopLogger
+          : Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
+      )->(Utils.magic: Envio.logger => unknown)
 
     | "effect" =>
       initEffect((params :> contextParams))->(

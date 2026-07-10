@@ -1,6 +1,7 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
+    env_interpolation::interpolate_config_variables,
     human_config::{
         self,
         evm::{
@@ -13,6 +14,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::utils::dotenv::{self, EnvMap};
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
@@ -24,7 +26,6 @@ use crate::{
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
-use dotenvy::{EnvLoader, EnvMap, EnvSequence};
 use itertools::Itertools;
 
 use super::abi_compat::EventParam;
@@ -79,300 +80,26 @@ impl EnvState {
             Err(_) => {
                 let result = match &self.maybe_dotenv {
                     Some(env_map) => env_map.var(name),
-                    None => {
-                        match EnvLoader::with_path(self.project_root.join(".env"))
-                            .sequence(EnvSequence::InputOnly)
-                            .load()
-                        {
-                            Ok(env_map) => {
-                                self.maybe_dotenv = Some(env_map.clone());
-                                env_map.var(name)
-                            }
-                            Err(err) => {
-                                match err {
-                                    dotenvy::Error::Io(_, _) => (),
-                                    _ => println!(
-                                        "Warning: Failed loading .env file with unexpected error: \
-                                         {err}"
-                                    ),
-                                };
-                                self.maybe_dotenv = Some(EnvMap::new());
-                                Err(err)
-                            }
+                    None => match dotenv::from_path(self.project_root.join(".env")) {
+                        Ok(env_map) => {
+                            self.maybe_dotenv = Some(env_map.clone());
+                            env_map.var(name)
                         }
-                    }
+                        Err(err) => {
+                            match err {
+                                dotenv::Error::Io(_, _) => (),
+                                _ => println!(
+                                    "Warning: Failed loading .env file with unexpected error: \
+                                         {err}"
+                                ),
+                            };
+                            self.maybe_dotenv = Some(EnvMap::new());
+                            Err(err)
+                        }
+                    },
                 };
                 result.ok()
             }
-        }
-    }
-}
-
-mod interpolation {
-    use anyhow::{anyhow, Result};
-    use regex::{Captures, Regex};
-
-    #[derive(PartialEq)]
-    enum InterpolationResult {
-        DirectSubstitution,
-        InvalidName,
-        DefaultForMissing(String),
-        DefaultForMissingAndEmpty(String),
-    }
-
-    fn parse_capture(inner: &str) -> (String, InterpolationResult) {
-        let (name, result) = match (inner.find(":-"), inner.find('-')) {
-            (Some(pos1), Some(pos2)) if pos1 < pos2 => {
-                let name = &inner[..pos1];
-                let default_value = inner[pos1 + 2..].to_string();
-                (
-                    name,
-                    InterpolationResult::DefaultForMissingAndEmpty(default_value),
-                )
-            }
-            (_, Some(pos)) => {
-                let name = &inner[..pos];
-                let default_value = inner[pos + 1..].to_string();
-                (name, InterpolationResult::DefaultForMissing(default_value))
-            }
-            (Some(pos), _) => {
-                let name = &inner[..pos];
-                let default_value = inner[pos + 2..].to_string();
-                (
-                    name,
-                    InterpolationResult::DefaultForMissingAndEmpty(default_value),
-                )
-            }
-            (None, None) => (inner, InterpolationResult::DirectSubstitution),
-        };
-
-        if name.is_empty()
-            || name.chars().next().is_some_and(|c| c.is_ascii_digit())
-            || !name.chars().all(|c| {
-                matches!(c,
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
-            })
-        {
-            return (name.to_string(), InterpolationResult::InvalidName);
-        }
-
-        (name.to_string(), result)
-    }
-
-    pub fn interpolate_config_variables(
-        config_string: String,
-        mut get_env: impl FnMut(&str) -> Option<String>,
-    ) -> Result<String> {
-        let mut missing_vars = Vec::new();
-        let mut invalid_vars = Vec::new();
-
-        // If we don't have `[^}]` and simpley use `.` in the regex, it will match the last `}` and the rest of the string until the last `}`
-        let re = Regex::new(r"\$\{([^}]*)\}").unwrap();
-        let config_string = re.replace_all(&config_string, |caps: &Captures| {
-            let name = &caps[1];
-            let (name, interpolation_result) = parse_capture(name);
-            if interpolation_result == InterpolationResult::InvalidName {
-                // Wrap invalid vars with quotes to make them more visible in the error message
-                // Don't need to do this for missing ones, because they won't have spaces in the name
-                invalid_vars.push(format!("\"{name}\""));
-                return "".to_string();
-            }
-            match (get_env(&name), interpolation_result) {
-                (Some(val), InterpolationResult::DefaultForMissingAndEmpty(default))
-                    if val.is_empty() =>
-                {
-                    default
-                }
-                (Some(val), _) => val,
-                (None, InterpolationResult::DefaultForMissing(default))
-                | (None, InterpolationResult::DefaultForMissingAndEmpty(default)) => default,
-                (None, _) => {
-                    missing_vars.push(name.to_string());
-                    "".to_string()
-                }
-            }
-        });
-
-        if !invalid_vars.is_empty() {
-            return Err(anyhow!(
-                "Failed to interpolate variables into your config file. Invalid environment \
-                 variables are present: {}",
-                invalid_vars.join(", ")
-            ));
-        }
-
-        if !missing_vars.is_empty() {
-            return Err(anyhow!(
-                "Failed to interpolate variables into your config file. Environment variables are \
-                 not present: {}",
-                missing_vars.join(", ")
-            ));
-        }
-
-        Ok(config_string.to_string())
-    }
-
-    #[cfg(test)]
-    mod test {
-        use pretty_assertions::assert_eq;
-
-        #[test]
-        fn test_interpolate_config_variables_with_single_capture() {
-            let config_string = r#"
-chains:
-  - id: ${ENVIO_NETWORK_ID}
-    start_block: 0
-"#;
-            let interpolated_config_string =
-                super::interpolate_config_variables(config_string.to_string(), |name| match name {
-                    "ENVIO_NETWORK_ID" => Some("0".to_string()),
-                    _ => None,
-                })
-                .unwrap();
-            assert_eq!(
-                interpolated_config_string,
-                r#"
-chains:
-  - id: 0
-    start_block: 0
-"#
-            );
-        }
-
-        #[test]
-        fn test_interpolate_config_variables_with_multiple_captures() {
-            let config_string = r#"
-chains:
-  - id: ${ENVIO_NETWORK_ID}
-    rpc:
-      url: ${ENVIO_ETH_RPC_URL}?api_key=${ENVIO_ETH_RPC_KEY}
-"#;
-            let interpolated_config_string =
-                super::interpolate_config_variables(config_string.to_string(), |name| match name {
-                    "ENVIO_NETWORK_ID" => Some("0".to_string()),
-                    "ENVIO_ETH_RPC_URL" => Some("https://eth.com".to_string()),
-                    "ENVIO_ETH_RPC_KEY" => Some("foo".to_string()),
-                    _ => None,
-                })
-                .unwrap();
-            assert_eq!(
-                interpolated_config_string,
-                r#"
-chains:
-  - id: 0
-    rpc:
-      url: https://eth.com?api_key=foo
-"#
-            );
-        }
-
-        #[test]
-        fn test_interpolate_config_variables_with_no_captures() {
-            let config_string = r#"
-chains:
-  - id: 0
-    start_block: 0
-"#;
-            let interpolated_config_string =
-                super::interpolate_config_variables(config_string.to_string(), |name| match name {
-                    "ENVIO_NETWORK_ID" => Some("0".to_string()),
-                    _ => None,
-                })
-                .unwrap();
-            assert_eq!(
-                interpolated_config_string,
-                r#"
-chains:
-  - id: 0
-    start_block: 0
-"#
-            );
-        }
-
-        #[test]
-        fn test_interpolate_config_variables_with_missing_env() {
-            let config_string = r#"
-chains:
-  - id: ${ENVIO_NETWORK_ID}
-    rpc:
-      url: https://eth.com?api_key=${ENVIO_ETH_API_KEY}
-"#;
-            let interpolated_config_string =
-                super::interpolate_config_variables(config_string.to_string(), |name| match name {
-                    "ENVIO_NETWORK_ID" => Some("0".to_string()),
-                    _ => None,
-                })
-                .unwrap_err();
-            assert_eq!(
-                interpolated_config_string.to_string(),
-                r#"Failed to interpolate variables into your config file. Environment variables are not present: ENVIO_ETH_API_KEY"#
-            );
-        }
-
-        #[test]
-        fn test_interpolate_config_variables_with_invalid_captures_and_missing_env() {
-            let config_string = r#"
-chains:
-  - id: ${ENVIO_NETWORK_ID}
-    rpc:
-      url: ${My RPC URL}?api_key=${}
-"#;
-            let interpolated_config_string =
-                super::interpolate_config_variables(config_string.to_string(), |name| match name {
-                    "ENVIO_NETWORK_ID" => Some("0".to_string()),
-                    _ => None,
-                })
-                .unwrap_err();
-            assert_eq!(
-                interpolated_config_string.to_string(),
-                r#"Failed to interpolate variables into your config file. Invalid environment variables are present: "My RPC URL", """#
-            );
-        }
-
-        #[test]
-        fn test_interpolate_config_variables_with_different_substituations() {
-            let config_string = r#"
-DirectSubstitution with existing env: "${EXISTING_ENV}"
-DefaultForMissing with existing env: "${EXISTING_ENV-default}"
-DefaultForMissing with existing env and many dashes: "${EXISTING_ENV----:---}"
-DefaultForMissing with missing env: "${MISSING_ENV-default}"
-DefaultForMissing with missing env and many dashes: "${MISSING_ENV----:---}"
-DefaultForMissing with missing env and empty default: "${MISSING_ENV-}"
-DefaultForMissingAndEmpty with existing env: "${EXISTING_ENV:-default}"
-DefaultForMissingAndEmpty with existing env and many dashes: "${EXISTING_ENV:----:---}"
-DefaultForMissingAndEmpty with missing env: "${MISSING_ENV:-default}"
-DefaultForMissingAndEmpty with missing env and many dashes: "${MISSING_ENV:----:---}"
-DefaultForMissingAndEmpty with missing env and empty default: "${MISSING_ENV:-}"
-DefaultForMissingAndEmpty with empty env: "${EMPTY_ENV:-default}"
-DefaultForMissingAndEmpty with empty env and many dashes: "${EMPTY_ENV:----:---}"
-DefaultForMissingAndEmpty with empty env and empty default: "${EMPTY_ENV:-}"
-"#;
-            let interpolated_config_string =
-                super::interpolate_config_variables(config_string.to_string(), |name| match name {
-                    "EXISTING_ENV" => Some("val".to_string()),
-                    "EMPTY_ENV" => Some("".to_string()),
-                    _ => None,
-                })
-                .unwrap();
-            assert_eq!(
-                interpolated_config_string,
-                r#"
-DirectSubstitution with existing env: "val"
-DefaultForMissing with existing env: "val"
-DefaultForMissing with existing env and many dashes: "val"
-DefaultForMissing with missing env: "default"
-DefaultForMissing with missing env and many dashes: "---:---"
-DefaultForMissing with missing env and empty default: ""
-DefaultForMissingAndEmpty with existing env: "val"
-DefaultForMissingAndEmpty with existing env and many dashes: "val"
-DefaultForMissingAndEmpty with missing env: "default"
-DefaultForMissingAndEmpty with missing env and many dashes: "---:---"
-DefaultForMissingAndEmpty with missing env and empty default: ""
-DefaultForMissingAndEmpty with empty env: "default"
-DefaultForMissingAndEmpty with empty env and many dashes: "---:---"
-DefaultForMissingAndEmpty with empty env and empty default: ""
-"#
-            );
         }
     }
 }
@@ -1309,21 +1036,15 @@ impl SystemConfig {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
                                 let fs = instr.field_selection.as_ref();
-                                let include_token_balances = fs
-                                    .and_then(|f| f.token_balance_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled());
-                                let include_transaction = fs
-                                    .and_then(|f| f.transaction_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled())
-                                    || include_token_balances;
-                                let include_logs = fs
-                                    .and_then(|f| f.log_fields.as_ref())
-                                    .is_some_and(|v| v.is_enabled());
+                                let selected_transaction_fields =
+                                    resolve_svm_transaction_fields(fs);
+                                let selected_block_fields = resolve_svm_block_fields(fs);
+                                let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    include_token_balances,
-                                    include_transaction,
+                                    selected_transaction_fields,
+                                    selected_block_fields,
                                     include_logs,
                                     account_filters: instr
                                         .account_filters
@@ -1424,16 +1145,14 @@ impl SystemConfig {
                 "Failed to resolve config path {0} (--config {1} resolved relative to \
                  --directory {2}). Make sure the file exists. Note that --config and \
                  ENVIO_CONFIG are interpreted relative to --directory.",
-                &project_paths.config.to_str().unwrap_or("{unknown}"),
+                project_paths.config.to_str().unwrap_or("{unknown}"),
                 project_paths.config_relative_to_root().display(),
                 project_paths.project_root.display(),
             ))?;
 
         let mut env_state = EnvState::new(&project_paths.project_root);
         let human_config_string =
-            interpolation::interpolate_config_variables(human_config_string, |name| {
-                env_state.var(name)
-            })?;
+            interpolate_config_variables(human_config_string, |name| env_state.var(name))?;
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
@@ -1556,6 +1275,7 @@ impl DataSource {
                 url: url.to_string(),
                 source_for: Some(default_for.clone()),
                 ws: None,
+                headers: None,
                 initial_block_interval: None,
                 backoff_multiplicative: None,
                 acceleration_additive: None,
@@ -2114,6 +1834,45 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
+/// Resolve an instruction's field selection into the selected transaction-field
+/// names (camelCase). The listed `transaction_fields` are deduplicated in
+/// declared order, then `token_balance_fields` appends `tokenBalances`.
+fn resolve_svm_transaction_fields(
+    fs: Option<&human_config::svm::SvmFieldSelection>,
+) -> Vec<String> {
+    let mut selected: Vec<String> = Vec::new();
+    let Some(fs) = fs else {
+        return selected;
+    };
+    for field in fs.transaction_fields.iter().flatten() {
+        let name = field.to_string();
+        if !selected.contains(&name) {
+            selected.push(name);
+        }
+    }
+    if fs.token_balance_fields == Some(true) {
+        selected.push("tokenBalances".to_string());
+    }
+    selected
+}
+
+/// Resolve an instruction's selected block fields (camelCase), in declared
+/// order. `slot`/`time`/`hash` are always included by the runtime, so they're
+/// not returned here (they aren't even selectable — see `SvmBlockField`).
+fn resolve_svm_block_fields(fs: Option<&human_config::svm::SvmFieldSelection>) -> Vec<String> {
+    let mut selected: Vec<String> = Vec::new();
+    let Some(fs) = fs else {
+        return selected;
+    };
+    for field in fs.block_fields.iter().flatten() {
+        let name = field.to_string();
+        if !selected.contains(&name) {
+            selected.push(name);
+        }
+    }
+    selected
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -2123,9 +1882,13 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    pub include_transaction: bool,
+    /// Selected parent-transaction fields (camelCase names matching the public
+    /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
+    pub selected_transaction_fields: Vec<String>,
+    /// Selected block fields (camelCase, matching `instruction.block`), excluding
+    /// the always-included `slot`. Empty = only `slot`.
+    pub selected_block_fields: Vec<String>,
     pub include_logs: bool,
-    pub include_token_balances: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -4188,6 +3951,12 @@ type Foo {
             assert!(matches!(token_metadata.abi, Abi::Svm(_)));
             assert_eq!(token_metadata.events.len(), 2);
 
+            let to_strings = |fields: &[&str]| {
+                fields
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+            };
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
@@ -4196,9 +3965,8 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.include_transaction,
+                        k.selected_transaction_fields.clone(),
                         k.include_logs,
-                        k.include_token_balances,
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -4211,8 +3979,7 @@ type Foo {
                         "CreateMetadataAccountV3",
                         Some("0x21"),
                         1,
-                        false,
-                        false,
+                        to_strings(&[]),
                         false,
                         0
                     ),
@@ -4220,8 +3987,7 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        true,
-                        false,
+                        to_strings(&["signatures"]),
                         false,
                         1
                     ),

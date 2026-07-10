@@ -979,13 +979,24 @@ export type SvmInstructionParams = {
   readonly extraAccounts: readonly string[];
 };
 
-/** Block context for a matched instruction. */
+/** Permissive fallback shape for an instruction's `block`. The generated
+ * per-instruction type narrows this to `slot`/`hash` (always present) and
+ * `time` (always present but possibly `undefined`), plus the selected
+ * `field_selection.block_fields`. */
 export type SvmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   readonly slot: number;
-  readonly time: number;
-  /** Always empty for now — reserved for the future reorg-guard route. */
+  /** Unix block time (seconds). Absent when HyperSync/Solana doesn't report a
+   * block time for this slot. */
+  readonly time?: number;
+  /** Block hash. */
   readonly hash: string;
+  /** Block height. Select via `field_selection.block_fields`. */
+  readonly height?: number;
+  /** Parent slot. Select via `field_selection.block_fields`. */
+  readonly parentSlot?: number;
+  /** Parent block hash. Select via `field_selection.block_fields`. */
+  readonly parentHash?: string;
 };
 
 export type SvmTokenBalance = {
@@ -995,24 +1006,6 @@ export type SvmTokenBalance = {
   /** u64 decimal string. Cast with BigInt(...) for arithmetic. */
   readonly preAmount?: string;
   readonly postAmount?: string;
-};
-
-/** Parent transaction surfaced when an instruction's
- * `include_transaction` flag is `true`. */
-export type SvmTransaction = {
-  readonly signatures: readonly string[];
-  readonly feePayer?: string;
-  readonly success?: boolean;
-  readonly err?: string;
-  /** Lamports. */
-  readonly fee?: bigint;
-  readonly computeUnitsConsumed?: bigint;
-  readonly accountKeys: readonly string[];
-  readonly recentBlockhash?: string;
-  readonly version?: string;
-  /** SPL Token / Token-2022 balance snapshots for this transaction.
-   * Present when `include_token_balances` is `true`. */
-  readonly tokenBalances?: readonly SvmTokenBalance[];
 };
 
 export type SvmLog = {
@@ -1033,6 +1026,8 @@ export type SvmLog = {
  * are base58 strings. */
 export type SvmInstruction<
   Params extends SvmInstructionParams = SvmInstructionParams,
+  Tx = SvmTransaction,
+  Block = SvmInstructionBlock,
 > = {
   /** Program name as declared under `programs[].name` in `config.yaml`. */
   readonly programName: string;
@@ -1050,12 +1045,20 @@ export type SvmInstruction<
   readonly d8?: string;
   /** Borsh-decoded params. Present when a schema is configured and matched. */
   readonly params?: Params;
-  /** Present when the instruction's `include_transaction` is `true`. */
-  readonly transaction?: SvmTransaction;
+  /** Parent transaction. Carries only the fields selected via this
+   * instruction's `field_selection`; unselected fields are typed as
+   * `FieldNotSelected<...>` so reading them is a compile error. Always present
+   * (`{}` when no fields are selected). */
+  readonly transaction: Tx;
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
-  readonly block: SvmInstructionBlock;
+  /** The block this instruction's slot belongs to. Carries `slot`/`hash`
+   * (always present) and `time` (always present but possibly `undefined`),
+   * plus the fields selected via this instruction's
+   * `field_selection.block_fields`; unselected fields are typed as
+   * `FieldNotSelected<...>`. */
+  readonly block: Block;
 };
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
@@ -1327,7 +1330,11 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   handler: (
                     args: SvmOnInstructionHandlerArgs<
                       Config,
-                      SvmInstruction<SvmParamsFromProgramTable<Programs[P][I]>>
+                      SvmInstruction<
+                        SvmParamsFromProgramTable<Programs[P][I]>,
+                        Programs[P][I]["transaction"],
+                        Programs[P][I]["block"]
+                      >
                     >,
                   ) => Promise<void>,
                 ) => void;
@@ -1695,6 +1702,7 @@ type EvmContractsT  = GlobalConfig extends { evm:  { contracts: infer X extends 
 type FuelChainsT    = GlobalConfig extends { fuel: { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
 type FuelContractsT = GlobalConfig extends { fuel: { contracts: infer X extends Record<string, Record<string, any>> } } ? X : {};
 type SvmChainsT     = GlobalConfig extends { svm:  { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
+type SvmProgramsT   = GlobalConfig extends { svm:  { programs:  infer X extends Record<string, Record<string, any>> } } ? X : {};
 type EntitiesT      = GlobalConfig extends { entities: infer X extends Record<string, object> } ? X : {};
 type EnumsT         = GlobalConfig extends { enums: infer X extends Record<string, any> } ? X : {};
 
@@ -1715,6 +1723,18 @@ export type EvmChainId  = IsEmptyObject<EvmChainsT>  extends true ? NotConfigure
 export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? NotConfigured<"FuelChainId", "Configure Fuel chains"> : FuelChainsT[keyof FuelChainsT]["id"];
 /** Union of all configured SVM chain IDs. */
 export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? NotConfigured<"SvmChainId",  "Configure SVM chains">  : SvmChainsT [keyof SvmChainsT ]["id"];
+
+/** The SVM parent-transaction type generated from this project's
+ *  `field_selection`: the union of every instruction's `transaction` shape,
+ *  with unselected fields typed as `FieldNotSelected<...>`. Resolves to a
+ *  `NotConfigured` hint until `envio codegen` augments {@link Global}. */
+export type SvmTransaction = IsEmptyObject<SvmProgramsT> extends true
+  ? NotConfigured<"SvmTransaction", "Configure SVM programs">
+  : {
+      [P in keyof SvmProgramsT]: {
+        [I in keyof SvmProgramsT[P]]: SvmProgramsT[P][I]["transaction"];
+      }[keyof SvmProgramsT[P]];
+    }[keyof SvmProgramsT];
 
 /** Lookup an EVM event type by contract and event name. Without generics,
  *  resolves to the discriminated union of every EVM event in the project. */

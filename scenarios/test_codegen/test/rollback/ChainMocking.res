@@ -41,14 +41,15 @@ module Make = () => {
     transactionHash: string,
   }
 
-  type makeEvent = (~blockHash: string) => Internal.event
+  type makeEvent = (~blockHash: string) => Internal.eventPayload
 
   type logConstructor = {
     transactionHash: string,
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Address.t,
-    eventConfig: Internal.evmEventConfig,
+    onEventRegistration: Internal.evmOnEventRegistration,
+    transactionIndex: int,
   }
 
   type composedEventConstructor = (
@@ -61,7 +62,7 @@ module Make = () => {
 
   let makeEventConstructor = (
     ~params: Internal.eventParams,
-    ~eventConfig: Internal.evmEventConfig,
+    ~onEventRegistration: Internal.evmOnEventRegistration,
     ~srcAddress,
     ~makeBlock: (
       ~blockNumber: int,
@@ -80,23 +81,26 @@ module Make = () => {
   ) => {
     let transactionHash =
       Crypto.hashKeccak256Any(
-        params->RescriptSchema.S.reverseConvertToJsonOrThrow(eventConfig.paramsRawEventSchema),
+        params->RescriptSchema.S.reverseConvertToJsonOrThrow(
+          onEventRegistration.eventConfig.paramsRawEventSchema,
+        ),
       )
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
+    let transaction = makeTransaction(~transactionIndex, ~transactionHash)
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       {
-        contractName: eventConfig.contractName,
-        eventName: eventConfig.name,
+        contractName: onEventRegistration.eventConfig.contractName,
+        eventName: onEventRegistration.eventConfig.name,
         params,
         srcAddress,
         chainId,
         block,
-        transaction: makeTransaction(~transactionIndex, ~transactionHash),
+        transaction,
         logIndex,
-      }->Internal.fromGenericEvent
+      }->Evm.fromPayload
     }
 
     {
@@ -104,7 +108,8 @@ module Make = () => {
       makeEvent,
       logIndex,
       srcAddress,
-      eventConfig,
+      onEventRegistration,
+      transactionIndex,
     }
   }
 
@@ -165,16 +170,16 @@ module Make = () => {
       logIndex,
       srcAddress,
       transactionHash,
-      eventConfig,
+      onEventRegistration,
+      transactionIndex,
     }): log => {
       let log = Internal.Event({
-        eventConfig: (eventConfig :> Internal.eventConfig),
-        event: makeEvent(~blockHash),
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+        payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
-        timestamp: blockTimestamp,
         blockNumber,
-        blockHash,
         logIndex,
+        transactionIndex,
       })
       {item: log, srcAddress, transactionHash}
     })
@@ -226,11 +231,13 @@ module Make = () => {
           (prev, {addresses, eventKeys}) => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
-              eventKeys->arrayHas(getEventKey((l.item->Internal.castUnsafeEventItem).eventConfig)))
+              eventKeys->arrayHas(
+                getEventKey((l.item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig),
+              ))
           },
         )
         if isLogInConfig {
-          Some(l.item)
+          Some(l)
         } else {
           None
         }
@@ -267,12 +274,17 @@ module Make = () => {
       }
     })
 
-    let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
+    let pageLogs = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
+    let parsedQueueItems = pageLogs->Array.map(l => l.item)
 
     {
       knownHeight,
       blockHashes,
       parsedQueueItems,
+      // Mock events carry their transaction and block inline on the payload, so
+      // there's no page store to merge.
+      transactionStore: None,
+      blockStore: None,
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
@@ -281,6 +293,7 @@ module Make = () => {
           totalTimeElapsed: 0.,
         }: Source.blockRangeFetchStats
       ),
+      requestStats: [],
     }
   }
 

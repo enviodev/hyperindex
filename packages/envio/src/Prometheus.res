@@ -212,7 +212,7 @@ module PreloadHandler = {
 
   type operationRef = {
     mutable pendingCount: int,
-    timerRef: Hrtime.timeRef,
+    timerRef: Performance.timeRef,
   }
   let operations: dict<operationRef> = Dict.make()
 
@@ -227,11 +227,11 @@ module PreloadHandler = {
         key,
         {
           pendingCount: 1,
-          timerRef: Hrtime.makeTimer(),
+          timerRef: Performance.now(),
         },
       )
     }
-    Hrtime.makeTimer()
+    Performance.now()
   }
 
   let endOperation = (timerRef, ~contract, ~event) => {
@@ -242,14 +242,11 @@ module PreloadHandler = {
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(
         ~labels,
-        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+        ~value=operationRef.timerRef->Performance.secondsSince,
       )
       operations->Utils.Dict.deleteInPlace(key)
     }
-    sumTimeCounter->SafeCounter.handleFloat(
-      ~labels,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-    )
+    sumTimeCounter->SafeCounter.handleFloat(~labels, ~value=timerRef->Performance.secondsSince)
     count->SafeCounter.increment(~labels)
   }
 }
@@ -339,30 +336,6 @@ module ProcessStartTimeSeconds = {
   }
 }
 
-module IndexingAddresses = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_addresses",
-    ~help="The number of addresses indexed on chain. Includes both static and dynamic addresses.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~addressesCount, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=addressesCount)
-  }
-}
-
-module IndexingMaxConcurrency = {
-  let gauge = SafeGauge.makeOrThrow(
-    ~name="envio_indexing_max_concurrency",
-    ~help="The maximum number of concurrent queries to the chain data-source.",
-    ~labelSchema=chainIdLabelsSchema,
-  )
-
-  let set = (~maxConcurrency, ~chainId) => {
-    gauge->SafeGauge.handleInt(~labels=chainId, ~value=maxConcurrency)
-  }
-}
-
 module IndexingConcurrency = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_indexing_concurrency",
@@ -426,7 +399,7 @@ module IndexingBufferSize = {
 module IndexingTargetBufferSize = {
   let gauge = PromClient.Gauge.makeGauge({
     "name": "envio_indexing_target_buffer_size",
-    "help": "The target buffer size per chain for indexing. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
+    "help": "The indexer-wide target buffer size shared across all chains. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
   })
 
   let set = (~targetBufferSize) => {
@@ -464,41 +437,6 @@ let sourceLabelsSchema = S.schema(s =>
     "chainId": s.matches(S.string->S.coerce(S.int)),
   }
 )
-
-let sourceRequestLabelsSchema = S.schema(s =>
-  {
-    "source": s.matches(S.string),
-    "chainId": s.matches(S.string->S.coerce(S.int)),
-    "method": s.matches(S.string),
-  }
-)
-
-module SourceRequestCount = {
-  let counter = SafeCounter.makeOrThrow(
-    ~name="envio_source_request_total",
-    ~help="The number of requests made to data sources.",
-    ~labelSchema=sourceRequestLabelsSchema,
-  )
-
-  let sumTimeCounter = SafeCounter.makeOrThrow(
-    ~name="envio_source_request_seconds_total",
-    ~help="Cumulative time spent on data source requests.",
-    ~labelSchema=sourceRequestLabelsSchema,
-  )
-
-  let increment = (~sourceName, ~chainId, ~method) => {
-    counter->SafeCounter.increment(
-      ~labels={"source": sourceName, "chainId": chainId, "method": method},
-    )
-  }
-
-  let addSeconds = (~sourceName, ~chainId, ~method, ~seconds) => {
-    sumTimeCounter->SafeCounter.handleFloat(
-      ~labels={"source": sourceName, "chainId": chainId, "method": method},
-      ~value=seconds,
-    )
-  }
-}
 
 module SourceHeight = {
   let gauge = SafeGauge.makeOrThrow(
@@ -776,7 +714,7 @@ module StorageLoad = {
 
   type operationRef = {
     mutable pendingCount: int,
-    timerRef: Hrtime.timeRef,
+    timerRef: Performance.timeRef,
   }
   let operations = Dict.make()
 
@@ -792,12 +730,12 @@ module StorageLoad = {
         (
           {
             pendingCount: 1,
-            timerRef: Hrtime.makeTimer(),
+            timerRef: Performance.now(),
           }: operationRef
         ),
       )
     }
-    Hrtime.makeTimer()
+    Performance.now()
   }
 
   let endOperation = (timerRef, ~storage, ~operation, ~whereSize, ~size) => {
@@ -808,14 +746,11 @@ module StorageLoad = {
     if operationRef.pendingCount === 0 {
       timeCounter->SafeCounter.handleFloat(
         ~labels,
-        ~value=operationRef.timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
+        ~value=operationRef.timerRef->Performance.secondsSince,
       )
       operations->Utils.Dict.deleteInPlace(key)
     }
-    sumTimeCounter->SafeCounter.handleFloat(
-      ~labels,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-    )
+    sumTimeCounter->SafeCounter.handleFloat(~labels, ~value=timerRef->Performance.secondsSince)
     counter->SafeCounter.increment(~labels)
     whereSizeCounter->SafeCounter.handleInt(~labels, ~value=whereSize)
     sizeCounter->SafeCounter.handleInt(~labels, ~value=size)

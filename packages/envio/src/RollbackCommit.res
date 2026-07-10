@@ -6,7 +6,10 @@
 type args = {chainId: int, rollbackToBlock: int}
 type callback = args => promise<unit>
 
-let callbacks: array<callback> = []
+// Lives in the process-wide `EnvioGlobal` record so callbacks registered
+// through a duplicate envio module instance still fire.
+let callbacks =
+  EnvioGlobal.value.rollbackCommitCallbacks->(Utils.magic: array<unknown> => array<callback>)
 
 let register = (callback: callback) => {
   callbacks->Array.push(callback)

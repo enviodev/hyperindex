@@ -559,6 +559,16 @@
             "null"
           ]
         },
+        "headers": {
+          "description": "Optional HTTP headers sent with every request to this RPC endpoint, e.g. an Authorization bearer token for gated endpoints. Values support ${ENV_VAR} interpolation.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "initial_block_interval": {
           "description": "The starting interval in range of blocks per query",
           "type": [

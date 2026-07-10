@@ -474,53 +474,65 @@
       "type": "object",
       "properties": {
         "transaction_fields": {
-          "description": "Include the parent transaction for each matched instruction. Use `true` to include all fields.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FieldSelectionValue"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "description": "Parent-transaction fields to include on each matched instruction, as a list of field names. Omit (or pass an empty list) to include no transaction.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/SvmTransactionField"
+          }
+        },
+        "block_fields": {
+          "description": "Block fields to include on each matched instruction's `block`, as a list of field names. `slot`/`time`/`hash` are always included; this adds `height`/`parentSlot`/`parentHash`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/SvmBlockField"
+          }
         },
         "log_fields": {
-          "description": "Include program logs scoped to each matched instruction. Use `true` to include all fields.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FieldSelectionValue"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Set to `true` to include program logs scoped to each matched instruction.",
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "token_balance_fields": {
-          "description": "Include SPL Token / Token-2022 balance snapshots for the parent transaction. Implies transaction_fields: true. Use `true` to include all fields.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FieldSelectionValue"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Set to `true` to include SPL Token / Token-2022 balance snapshots for the parent transaction, exposed as `transaction.tokenBalances`. Independent of `transaction_fields`.",
+          "type": [
+            "boolean",
+            "null"
           ]
         }
       },
       "additionalProperties": false
     },
-    "FieldSelectionValue": {
-      "description": "Value for a field-selection entry. `true` includes all fields;\na list of field names enables per-field selection (not yet supported).",
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
+    "SvmTransactionField": {
+      "description": "Selectable parent-transaction field names (camelCase), matching the\npublic `svmTransaction` shape. `tokenBalances` is selected via the\nseparate `token_balance_fields` toggle, so it isn't listed here.",
+      "type": "string",
+      "enum": [
+        "transactionIndex",
+        "signatures",
+        "feePayer",
+        "success",
+        "err",
+        "fee",
+        "computeUnitsConsumed",
+        "accountKeys",
+        "recentBlockhash",
+        "version"
+      ]
+    },
+    "SvmBlockField": {
+      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. `slot`/`time`/`hash` are always included,\nso everything here is opt-in on top of that trio.",
+      "type": "string",
+      "enum": [
+        "height",
+        "parentSlot",
+        "parentHash"
       ]
     },
     "ArgDef": {

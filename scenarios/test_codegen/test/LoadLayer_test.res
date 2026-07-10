@@ -14,6 +14,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -41,6 +42,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -75,6 +77,7 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~ecosystem=MockIndexer.config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -104,6 +107,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -148,6 +152,7 @@ describe("LoadLayer", () => {
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~shouldGroup=true,
       )
 
@@ -189,6 +194,7 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~ecosystem=MockIndexer.config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -232,6 +238,7 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~ecosystem=MockIndexer.config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -288,6 +295,7 @@ describe("LoadLayer", () => {
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~ecosystem=MockIndexer.config.ecosystem,
           ~shouldGroup=true,
         )
 
@@ -330,6 +338,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Eq({
           fieldName: "id",
           fieldValue: fieldValue->(Utils.magic: string => unknown),
@@ -343,6 +352,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Gt({
           fieldName: "updatesCountOnUserForTesting",
           fieldValue: fieldValue->(Utils.magic: int => unknown),
@@ -374,6 +384,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Lt({
           fieldName: "updatesCountOnUserForTesting",
           fieldValue: fieldValue->(Utils.magic: int => unknown),
@@ -419,6 +430,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Eq({
           fieldName: "address",
           fieldValue: fieldValue->(Utils.magic: string => unknown),
@@ -470,6 +482,7 @@ describe("LoadLayer", () => {
           ~entityConfig=MockIndexer.entityConfig(User),
           ~indexerState,
           ~item,
+          ~ecosystem=MockIndexer.config.ecosystem,
           ~filter=EntityFilter.Eq({
             fieldName: "address",
             fieldValue: fieldValue->(Utils.magic: string => unknown),
@@ -510,6 +523,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.In({
           fieldName: "address",
           fieldValue: fieldValues->(Utils.magic: array<string> => array<unknown>),
@@ -549,6 +563,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Gt({
           fieldName: "updatesCountOnUserForTesting",
           fieldValue: fieldValue->(Utils.magic: int => unknown),
@@ -610,6 +625,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Eq({
           fieldName: "id",
           fieldValue: fieldValue->(Utils.magic: string => unknown),
@@ -624,6 +640,7 @@ describe("LoadLayer", () => {
         ~entityConfig=MockIndexer.entityConfig(User),
         ~indexerState,
         ~item,
+        ~ecosystem=MockIndexer.config.ecosystem,
         ~filter=EntityFilter.Gt({
           fieldName: "updatesCountOnUserForTesting",
           fieldValue: fieldValue->(Utils.magic: int => unknown),
@@ -700,6 +717,7 @@ describe("LoadLayer", () => {
           ~entityConfig=MockIndexer.entityConfig(User),
           ~indexerState,
           ~item,
+          ~ecosystem=MockIndexer.config.ecosystem,
           ~filter=EntityFilter.Eq({
             fieldName: "id",
             fieldValue: fieldValue->(Utils.magic: string => unknown),
@@ -775,6 +793,7 @@ describe("LoadLayer effect cache", () => {
           ~indexerState,
           ~shouldGroup=true,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+          ~ecosystem=MockIndexer.config.ecosystem,
         )->(Utils.magic: promise<Internal.effectOutput> => promise<option<bigint>>)
 
       // Cache miss: runs the handler and seeds the in-memory cache.

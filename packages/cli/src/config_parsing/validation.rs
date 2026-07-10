@@ -136,7 +136,7 @@ impl human_config::evm::Chain {
                 return Err(anyhow!(
                     "The config file has an endBlock that is less than the startBlock for \
                      network id: {}. The endBlock must be greater than the startBlock.",
-                    &self.id.to_string()
+                    self.id
                 ));
             }
         }
@@ -356,25 +356,6 @@ pub fn validate_deserialized_svm_config_yaml(
                                         value
                                     ));
                                 }
-                            }
-                        }
-                    }
-                }
-                if let Some(fs) = &instr.field_selection {
-                    for (name, val) in [
-                        ("transaction_fields", &fs.transaction_fields),
-                        ("log_fields", &fs.log_fields),
-                        ("token_balance_fields", &fs.token_balance_fields),
-                    ] {
-                        if let Some(v) = val {
-                            if v.is_per_field() {
-                                return Err(anyhow!(
-                                    "Per-field selection is not yet supported for \
-                                     `{name}` on instruction {:?} (program {:?}). \
-                                     Use `true` to include all fields.",
-                                    instr.name,
-                                    program.name
-                                ));
                             }
                         }
                     }

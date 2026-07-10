@@ -14,7 +14,7 @@ let runPrune = async (state: IndexerState.t) => {
         await Utils.delay(1000)
       }
       let entityConfig = persistence.allEntities->Array.getUnsafe(idx)
-      let timeRef = Hrtime.makeTimer()
+      let timeRef = Performance.now()
       try {
         let () = await persistence.storage.pruneStaleEntityHistory(~entityConfig, ~safeCheckpointId)
       } catch {
@@ -30,7 +30,7 @@ let runPrune = async (state: IndexerState.t) => {
         )
       }
       Prometheus.RollbackHistoryPrune.increment(
-        ~timeSeconds=Hrtime.timeSince(timeRef)->Hrtime.toSecondsFloat,
+        ~timeSeconds=Performance.secondsSince(timeRef),
         ~entityName=entityConfig.name,
       )
     }

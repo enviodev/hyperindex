@@ -43,6 +43,33 @@ let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingA
   registrationBlock: dc.registrationBlock,
 }
 
+// All indexing addresses (config-seeded + dynamically registered) grouped by
+// chain id string, derived from the envio_addresses entities.
+let getIndexingAddressesByChain = (state: testIndexerState): dict<
+  array<Internal.indexingAddress>,
+> => {
+  let byChain = Dict.make()
+  switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
+  | Some(dcDict) =>
+    dcDict
+    ->Dict.valuesToArray
+    ->Array.forEach(entity => {
+      let dc = entity->castToEnvioAddresses
+      let chainIdStr = dc.chainId->Int.toString
+      let contracts = switch byChain->Dict.get(chainIdStr) {
+      | Some(arr) => arr
+      | None =>
+        let arr = []
+        byChain->Dict.set(chainIdStr, arr)
+        arr
+      }
+      contracts->Array.push(dc->toIndexingAddress)->ignore
+    })
+  | None => ()
+  }
+  byChain
+}
+
 let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
   // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
   // here too. TestIndexer never persists those, so there's nothing to return —
@@ -599,22 +626,10 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                   `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
                 )
               }
-              let addresses = []
-              switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
-              | Some(dcDict) =>
-                dcDict
-                ->Dict.valuesToArray
-                ->Array.forEach(
-                  entity => {
-                    let dc = entity->castToEnvioAddresses
-                    if dc.contractName === contract.name && dc.chainId === chainConfig.id {
-                      addresses->Array.push(dc->Config.EnvioAddresses.getAddress)->ignore
-                    }
-                  },
-                )
-              | None => ()
-              }
-              addresses
+              getIndexingAddressesByChain(state)
+              ->Dict.get(chainConfig.id->Int.toString)
+              ->Option.getOr([])
+              ->Array.filterMap(ia => ia.contractName === contract.name ? Some(ia.address) : None)
             },
           },
         )
@@ -685,7 +700,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             Int.compare(aId, bId)
           })
 
-          // Parse and validate all chain configs upfront before starting any workers
+          // Parse and validate the block ranges upfront before starting any workers.
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
             let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
             let chainId = switch chainIdStr->Int.fromString {
@@ -717,26 +732,9 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
             let chains: dict<chainConfig> = Dict.make()
             chains->Dict.set(chainIdStr, processChainConfig)
 
-            // Extract dynamic contracts from state.entities for each chain
-            let indexingAddressesByChain: dict<array<Internal.indexingAddress>> = Dict.make()
-            switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
-            | Some(dcDict) =>
-              dcDict
-              ->Dict.valuesToArray
-              ->Array.forEach(entity => {
-                let dc = entity->castToEnvioAddresses
-                let dcChainIdStr = dc.chainId->Int.toString
-                let contracts = switch indexingAddressesByChain->Dict.get(dcChainIdStr) {
-                | Some(arr) => arr
-                | None =>
-                  let arr = []
-                  indexingAddressesByChain->Dict.set(dcChainIdStr, arr)
-                  arr
-                }
-                contracts->Array.push(dc->toIndexingAddress)->ignore
-              })
-            | None => ()
-            }
+            // Rebuilt per chain so workers see contracts registered by earlier
+            // chains in the same process() call.
+            let indexingAddressesByChain = getIndexingAddressesByChain(state)
 
             let initialState = makeInitialState(
               ~config,
@@ -885,7 +883,7 @@ let initTestWorker = () => {
     // Create proxy storage that communicates with main thread
     let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
     let storage = TestIndexerProxyStorage.makeStorage(proxy)
-    let config = Config.loadWithoutRegistrations()
+    let config = Config.load()
     let persistence = Persistence.make(
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
@@ -898,7 +896,7 @@ let initTestWorker = () => {
     | Some(_) => ()
     }
 
-    let patchConfig = (config, _registrations) => {
+    let patchConfig = (config: Config.t, _registrations) => {
       let config = SimulateItems.patchConfig(~config, ~processConfig)
 
       // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
@@ -908,7 +906,23 @@ let initTestWorker = () => {
         config
       }
     }
-    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)->ignore
+    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)
+    ->Promise.catch(exn => {
+      // `Main.start` rejects on any fatal error: a runtime failure arrives wrapped
+      // in `Main.FatalError` (already logged), a setup throw (e.g. an invalid
+      // simulate item) arrives raw. The parent only learns of failures
+      // through the worker `error` event, which fires on an *uncaught* exception.
+      // Throwing synchronously in this catch would just reject the catch's own
+      // promise (swallowed by `ignore`); `setImmediate` re-throws outside the
+      // promise chain so it becomes uncaught and reaches the parent.
+      let toThrow = switch exn {
+      | Main.FatalError(inner) => inner
+      | _ => exn->Utils.prettifyExn
+      }
+      NodeJs.setImmediate(() => throw(toThrow))
+      Promise.resolve()
+    })
+    ->ignore
   | None =>
     Logging.error("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)

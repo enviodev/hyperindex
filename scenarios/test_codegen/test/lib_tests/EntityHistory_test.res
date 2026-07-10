@@ -483,17 +483,6 @@
 //       blockNumber: 3,
 //       logIndex: 0,
 //     }
-
-//     let orderedMultichainArg = DbFunctions.EntityHistory.Args.OrderedMultichain({
-//       safeBlockTimestamp: rollbackEventIdentifier.blockTimestamp,
-//       reorgChainId: chain_id,
-//       safeBlockNumber: rollbackEventIdentifier.blockNumber,
-//     })
-
-//     let unorderedMultichainArg = DbFunctions.EntityHistory.Args.UnorderedMultichain({
-//       reorgChainId: chain_id,
-//       safeBlockNumber: rollbackEventIdentifier.blockNumber,
-//     })
 //   }
 
 //   module Chain2 = {
@@ -618,11 +607,6 @@
 
 //   Async.it("Rollback ignores copied entities as an item in reorg threshold", async () => {
 //     let rollbackDiff = await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
-//       OrderedMultichain({
-//         reorgChainId: Mocks.GnosisBug.chain_id,
-//         safeBlockNumber: 9,
-//         safeBlockTimestamp: 9 * 5,
-//       }),
 //       ~entityConfig=module(TestEntity)->Indexer.Entities.entityModToInternal,
 //     )
 
@@ -650,7 +634,6 @@
 //     "Deleting items after reorg event should not remove the copied history item",
 //     async () => {
 //       await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
-//         ~isUnorderedMultichainMode=false,
 //         ~eventIdentifier={
 //           chainId: Mocks.GnosisBug.chain_id,
 //           blockTimestamp: 9 * 5,
@@ -784,113 +767,6 @@
 //       Js.log2(" Entity history setup exn", exn)
 //       Assert.fail("Failed setting up tables")
 //     }
-//   })
-
-//   Async.it("Returns expected diff for ordered multichain mode", async () => {
-//     let orderdMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
-//       Mocks.Chain1.orderedMultichainArg,
-//       ~entityConfig=module(TestEntity)->Indexer.Entities.entityModToInternal,
-//     ) catch {
-//     | exn =>
-//       Js.log2("getRollbackDiff exn", exn)
-//       Assert.fail("Failed to get rollback diff")
-//     }
-
-//     switch orderdMultichainRollbackDiff {
-//     | [
-//         {current: currentA, entityData: Set(entitySetA)},
-//         {current: currentB, entityData: Delete({id: entityDeleteB})},
-//       ] =>
-//       Assert.deepEqual(
-//         currentA,
-//         Mocks.Chain1.event2,
-//         ~message="First history item should haved diffed to event2",
-//       )
-//       Assert.deepEqual(
-//         entitySetA,
-//         Mocks.Entity.mockEntity2->TestEntity.castToInternal,
-//         ~message="First history item should haved diffed to mockEntity2",
-//       )
-//       Assert.deepEqual(
-//         currentB,
-//         Mocks.Chain2.event2,
-//         ~message="Second history item should haved diffed to event3",
-//       )
-//       Assert.deepEqual(
-//         entityDeleteB,
-//         Mocks.Entity.entityId2,
-//         ~message="Second history item should haved diffed a delete of entityId2",
-//       )
-//     | _ => Assert.fail("Should have a set and delete history item in diff")
-//     }
-//   })
-
-//   Async.it("Returns expected diff for unordered multichain mode", async () => {
-//     let unorderedMultichainRollbackDiff = try await Db.sql->DbFunctions.EntityHistory.getRollbackDiff(
-//       Mocks.Chain1.unorderedMultichainArg,
-//       ~entityConfig=module(TestEntity)->Indexer.Entities.entityModToInternal,
-//     ) catch {
-//     | exn =>
-//       Js.log2("getRollbackDiff exn", exn)
-//       Assert.fail("Failed to get rollback diff")
-//     }
-
-//     switch unorderedMultichainRollbackDiff {
-//     | [{current: currentA, entityData: Set(entitySetA)}] =>
-//       Assert.deepEqual(
-//         currentA,
-//         Mocks.Chain1.event2,
-//         ~message="First history item should haved diffed to event2",
-//       )
-//       Assert.deepEqual(
-//         entitySetA,
-//         Mocks.Entity.mockEntity2->TestEntity.castToInternal,
-//         ~message="First history item should haved diffed to mockEntity2",
-//       )
-//     | _ => Assert.fail("Should have only chain 1 item in diff")
-//     }
-//   })
-
-//   Async.it("Deletes current history after rollback ordered", async () => {
-//     let _ =
-//       await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
-//         ~isUnorderedMultichainMode=false,
-//         ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
-//         ~allEntities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
-//       )
-
-//     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
-//     let parsedHistoryItems =
-//       currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
-
-//     let expectedHistoryItems = Mocks.historyRows->Array.slice(~start=0, ~end=4)
-
-//     Assert.deepEqual(
-//       parsedHistoryItems->stripUndefinedFieldsInPlace,
-//       expectedHistoryItems->stripUndefinedFieldsInPlace,
-//       ~message="Should have deleted last 2 items in history",
-//     )
-//   })
-
-//   Async.it("Deletes current history after rollback unordered", async () => {
-//     let _ =
-//       await Db.sql->DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(
-//         ~isUnorderedMultichainMode=true,
-//         ~eventIdentifier=Mocks.Chain1.rollbackEventIdentifier,
-//         ~allEntities=[module(TestEntity)->Indexer.Entities.entityModToInternal],
-//       )
-
-//     let currentHistoryItems = await Db.sql->getAllMockEntityHistory
-//     let parsedHistoryItems =
-//       currentHistoryItems->S.parseJsonOrThrow(TestEntity.entityHistory.schemaRows)
-
-//     let expectedHistoryItems = Mocks.historyRows->Array.slice(~start=0, ~end=5)
-
-//     Assert.deepEqual(
-//       parsedHistoryItems->stripUndefinedFieldsInPlace,
-//       expectedHistoryItems->stripUndefinedFieldsInPlace,
-//       ~message="Should have deleted just the last item in history",
-//     )
 //   })
 
 //   Async.it("Prunes history correctly with items in reorg threshold", async () => {
@@ -1029,7 +905,7 @@
 //       Assert.fail("Failed to insert mock rows")
 //     }
 
-//     let startTime = Hrtime.makeTimer()
+//     let startTime = Performance.now()
 
 //     try {
 //       let () = await Db.sql->EntityHistory.pruneStaleEntityHistory(
@@ -1046,7 +922,7 @@
 //       Assert.fail("Failed to prune stale entity history")
 //     }
 
-//     let elapsedTime = Hrtime.timeSince(startTime)->Hrtime.toMillis->Hrtime.intFromMillis
+//     let elapsedTime = Performance.secondsSince(startTime) *. 1000.
 //     Js.log2("Elapsed time", elapsedTime)
 //   })
 // })

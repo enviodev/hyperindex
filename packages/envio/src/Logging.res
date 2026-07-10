@@ -155,46 +155,11 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }
 
-let getItemLogger = {
-  let cacheKey = "_logger"
-  (item: Internal.item) => {
-    switch item
-    ->(Utils.magic: Internal.item => dict<Pino.t>)
-    ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-    | Some(l) => l
-    | None => {
-        let l = getLogger()->child(
-          switch item {
-          | Event({eventConfig, chain, blockNumber, logIndex, event}) =>
-            {
-              "contractName": eventConfig.contractName,
-              "eventName": eventConfig.name,
-              "chainId": chain->ChainMap.Chain.toChainId,
-              "block": blockNumber,
-              "logIndex": logIndex,
-              "address": (event->Internal.toGenericEvent).srcAddress,
-            }->createChildParams
-          | Block({blockNumber, onBlockConfig}) =>
-            {
-              "onBlock": onBlockConfig.name,
-              "chainId": onBlockConfig.chainId,
-              "block": blockNumber,
-            }->createChildParams
-          },
-        )
-        item->(Utils.magic: Internal.item => dict<Pino.t>)->Dict.set(cacheKey, l)
-        l
-      }
-    }
-  }
-}
-
 @inline
-let logForItem = (item, level: Pino.logLevel, message: string, ~params=?) => {
+let logAtLevel = (logger: t, level: Pino.logLevel, message: string, ~params=?) => {
   (
-    item
-    ->getItemLogger
-    ->(Utils.magic: Pino.t => dict<(option<'a>, string) => unit>)
+    logger
+    ->(Utils.magic: t => dict<(option<'a>, string) => unit>)
     ->Dict.getUnsafe((level :> string))
   )(params, message)
 }
@@ -207,11 +172,13 @@ let noopLogger: Envio.logger = {
   errorWithExn: (_message: string, _exn) => (),
 }
 
-let getUserLogger = (item): Envio.logger => {
-  info: (message: string, ~params=?) => item->logForItem(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => item->logForItem(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => item->logForItem(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => item->logForItem(#uerror, message, ~params?),
+// Wrap a (child) logger as the user-facing `context.log`, routing through the
+// custom `u*` levels. The caller builds the per-item logger via the ecosystem.
+let userLogger = (logger: t): Envio.logger => {
+  info: (message: string, ~params=?) => logger->logAtLevel(#uinfo, message, ~params?),
+  debug: (message: string, ~params=?) => logger->logAtLevel(#udebug, message, ~params?),
+  warn: (message: string, ~params=?) => logger->logAtLevel(#uwarn, message, ~params?),
+  error: (message: string, ~params=?) => logger->logAtLevel(#uerror, message, ~params?),
   errorWithExn: (message: string, exn) =>
-    item->logForItem(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+    logger->logAtLevel(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
 }

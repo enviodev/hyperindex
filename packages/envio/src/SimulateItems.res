@@ -195,6 +195,51 @@ let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: str
   found.contents
 }
 
+let dummySrcAddress = Address.unsafeFromString("0x0000000000000000000000000000000000000000")
+
+// First address configured for `contractName` on the simulated chain. Only the
+// simulated chain is consulted — a contract's address on another chain has no
+// meaning here.
+let firstContractAddress = (~chainConfig: Config.chain, ~contractName: string): option<
+  Address.t,
+> => {
+  let found = ref(None)
+  chainConfig.contracts->Array.forEach(contract => {
+    if found.contents->Option.isNone && contract.name === contractName {
+      found := contract.addresses->Array.get(0)
+    }
+  })
+  found.contents
+}
+
+let deriveSrcAddress = (
+  ~providedSrcAddress: option<Address.t>,
+  ~eventConfig: Internal.eventConfig,
+  ~chainConfig: Config.chain,
+  ~config: Config.t,
+): Address.t => {
+  switch providedSrcAddress {
+  // Canonicalize to the configured casing; the fallback addresses below already
+  // come from the parsed config and need no normalization. Relaxed (not
+  // Config.normalizeUserAddress) so test placeholders like "0xfoo" are allowed.
+  | Some(addr) => config->Config.normalizeSimulateAddress(addr)
+  | None =>
+    if (
+      HandlerRegister.isWildcard(
+        ~contractName=eventConfig.contractName,
+        ~eventName=eventConfig.name,
+      )
+    ) {
+      dummySrcAddress
+    } else {
+      switch firstContractAddress(~chainConfig, ~contractName=eventConfig.contractName) {
+      | Some(addr) => addr
+      | None => dummySrcAddress
+      }
+    }
+  }
+}
+
 let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
   Internal.item,
 > => {
@@ -205,8 +250,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
   let currentLogIndex = ref(0)
 
   let items = []
+  // Coordinate "block:logIndex" -> the index of the first item that claimed it,
+  // used to reject two items resolving to the same (block, logIndex).
+  let seenCoordinates = Dict.make()
 
-  simulateItems->Array.forEach(rawJson => {
+  simulateItems->Array.forEachWithIndex((rawJson, itemIndex) => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (raw->getContract, raw->getEvent) {
@@ -230,44 +278,41 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       }
       let params = paramsJson->S.convertOrThrow(eventConfig.simulateParamsSchema)
 
+      // An explicit logIndex advances the auto-increment counter past itself, so a
+      // later item that omits logIndex picks up after it instead of colliding.
       let logIndex = switch item.logIndex {
-      | Some(li) => li
+      | Some(li) =>
+        if li >= currentLogIndex.contents {
+          currentLogIndex := li + 1
+        }
+        li
       | None =>
         let li = currentLogIndex.contents
         currentLogIndex := li + 1
         li
       }
 
-      let srcAddress = switch item.srcAddress {
-      | Some(addr) => addr
-      | None =>
-        // Use first address from contract config
-        let addr = ref(Address.unsafeFromString("0x0000000000000000000000000000000000000000"))
-        chainConfig.contracts->Array.forEach(contract => {
-          if contract.name === contractName {
-            switch contract.addresses->Array.get(0) {
-            | Some(a) => addr := a
-            | None => ()
-            }
-          }
-        })
-        addr.contents
-      }
+      let srcAddress = deriveSrcAddress(
+        ~providedSrcAddress=item.srcAddress,
+        ~eventConfig,
+        ~chainConfig,
+        ~config,
+      )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})
       let blockJson: option<JSON.t> =
         rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
       let transactionJson: option<JSON.t> =
         rawItem["transaction"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
-      let (block, blockNumber, timestamp, blockHash) = switch config.ecosystem.name {
+      let (block, blockNumber) = switch config.ecosystem.name {
       | Fuel =>
         let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
-        (block, blockFields.height, blockFields.time, blockFields.id)
+        (block, blockFields.height)
       | Evm =>
         let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
-        (block, blockFields.number, blockFields.timestamp, blockFields.hash)
+        (block, blockFields.number)
       | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
@@ -279,25 +324,50 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       // Update currentBlock for subsequent items
       currentBlock := blockNumber
 
+      // A simulate item must land on a distinct (block, logIndex): event ordering
+      // and the dead-input tracker both key on it. Catch explicit duplicates and
+      // explicit-vs-auto-increment collisions here, naming both offending indices.
+      let coordinate = `${blockNumber->Int.toString}:${logIndex->Int.toString}`
+      switch seenCoordinates->Dict.get(coordinate) {
+      | Some(firstIndex) =>
+        JsError.throwWithMessage(
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->Int.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+        )
+      | None => seenCoordinates->Dict.set(coordinate, itemIndex)
+      }
+
+      // Build a real registration the same way `HandlerRegister.finishRegistration`
+      // does at startup (not a stub), so the address filter and `where`
+      // behave identically to real indexing — the dead-input tracker relies
+      // on `clientAddressFilter` actually gating unrouted items.
+      let onEventRegistration = HandlerRegister.buildOnEventRegistration(
+        ~config,
+        ~chainId,
+        ~eventConfig,
+      )
+
       items
       ->Array.push(
         Internal.Event({
-          eventConfig,
-          timestamp,
+          onEventRegistration,
           chain,
           blockNumber,
-          blockHash,
           logIndex,
-          event: {
-            contractName: eventConfig.contractName,
-            eventName: eventConfig.name,
-            params,
-            chainId,
-            srcAddress,
-            logIndex,
-            transaction,
-            block,
-          }->Internal.fromGenericEvent,
+          // Simulate keeps the transaction inline on the payload, so the store
+          // key is unused.
+          transactionIndex: 0,
+          payload: (
+            {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              params,
+              chainId,
+              srcAddress,
+              logIndex,
+              transaction,
+              block,
+            }: Evm.payload
+          )->Evm.fromPayload,
         }),
       )
       ->ignore

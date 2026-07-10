@@ -34,12 +34,6 @@ type t = {
   checkpointEventsProcessed: array<int>,
 }
 
-let hasReadyItem = (fetchStates: array<FetchState.t>) => {
-  fetchStates->Array.some(fetchState => {
-    fetchState->FetchState.isActivelyIndexing && fetchState->FetchState.hasReadyItem
-  })
-}
-
 let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
@@ -172,7 +166,7 @@ let prepareBatch = (
     chainsBeforeBatch
     ->Dict.valuesToArray
     ->Array.map(chainBeforeBatch => chainBeforeBatch.fetchState)
-    ->FetchState.sortForUnorderedBatch(~batchSizeTarget)
+    ->FetchState.sortForBatch(~batchSizeTarget)
 
   let chainIdx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length

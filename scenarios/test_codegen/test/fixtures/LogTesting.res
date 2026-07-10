@@ -13,6 +13,10 @@ open Logging
 // For Logging.setLogger call
 let _ = Env.logStrategy
 
+// Per-item loggers are built by the ecosystem (the runtime gets it from
+// `config.ecosystem`); this standalone fixture constructs one directly.
+let ecosystem = Evm.make(~logger=Logging.getLogger())
+
 // Testing usage:
 trace("By default - This trace message should only be seen in the log file.")
 debug("By default - This debug message should only be seen in the log file.")
@@ -54,7 +58,7 @@ info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
 
 let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
-let userLogger = Logging.getUserLogger(item)
+let userLogger = Ecosystem.getItemUserLogger(item, ~ecosystem)
 userLogger.debug("This is a user debug message.", ~params={"child": "userLogs debug"})
 userLogger.info("This is a user info message.", ~params={"child": "userLogs debug"})
 userLogger.warn("This is a user warn message.", ~params={"child": "userLogs debug"})

@@ -4,10 +4,31 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.time
   }`)
 
-let ecosystem: Ecosystem.t = {
+// Ordered transaction field names, the field codes shared with the Rust store
+// (`SvmTxField`). Derived from the typed field list so the two can't drift;
+// `Internal.allSvmTransactionFields` is pinned to the Rust ordinal order by a test.
+let transactionFields =
+  Internal.allSvmTransactionFields->(
+    Utils.magic: array<Internal.svmTransactionField> => array<string>
+  )
+
+// One instruction's selected transaction fields → store selection bitmask.
+// Computed per event at config build and cached on the event config.
+let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+
+// Ordered block field names. The index of each is the field code shared with the
+// Rust store (`SvmBlockField`) — keep this order in sync.
+let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
+
+// `slot`/`time`/`hash` are always included; every other block field is opt-in
+// via `field_selection.block_fields`. All are materialised from the store.
+//
+// One instruction's selected block fields → store selection bitmask. Computed per
+// event at config build and cached on the event config.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+
+let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
-  blockFields: ["slot"],
-  transactionFields: [],
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
@@ -19,6 +40,23 @@ let ecosystem: Ecosystem.t = {
   // SVM has no event handlers, so there is no `onEvent` `where` value to
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
+  logger,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
+  toEventLogger: eventItem => {
+    let instruction =
+      eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+    Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "program": eventItem.onEventRegistration.eventConfig.contractName,
+        "instruction": eventItem.onEventRegistration.eventConfig.name,
+        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "slot": eventItem.blockNumber,
+        "programId": instruction.programId,
+      },
+    )
+  },
+  toRawEvent: _ => JsError.throwWithMessage("Raw events are not supported for SVM"),
 }
 
 module GetFinalizedSlot = {
@@ -54,26 +92,20 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
     getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       JsError.throwWithMessage("Svm does not support getting block hashes"),
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId,
-        ~method="getSlot",
-        ~seconds,
-      )
-      height
+      let seconds = timerRef->Performance.secondsSince
+      {Source.height, requestStats: [{Source.method: "getSlot", seconds}]}
     },
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,
       ~addressesByContractName as _,
-      ~indexingAddresses as _,
+      ~contractNameByAddress as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
+      ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
     ) => JsError.throwWithMessage("Svm does not support getting items"),

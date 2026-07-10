@@ -1,25 +1,30 @@
 open Vitest
 
 let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) => {
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
 
   let chainStates = Dict.make()
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
+    let onEventRegistrations = [
+      (MockIndexer.evmOnEventRegistration(
+        ~id="0",
+        ~contractName="Gravatar",
+        ~isWildcard=true,
+      ) :> Internal.onEventRegistration),
+    ]
+    let addresses = []
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~eventConfigs=[
-        (MockIndexer.evmEventConfig(
-          ~id="0",
-          ~contractName="Gravatar",
-          ~isWildcard=true,
-        ) :> Internal.eventConfig),
-      ],
-      ~addresses=[],
+      ~onEventRegistrations,
+      ~contractConfigs,
+      ~addresses,
       ~startBlock=0,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=chainConfig.id,
       ~knownHeight=0,
     )
@@ -27,9 +32,9 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
+      ~indexingAddresses,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
-        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
         ~isRealtime=false,
       ),
       ~reorgDetection=ReorgDetection.make(
@@ -70,7 +75,7 @@ describe("Indexer loop", () => {
   Async.it("startProcessing releases the flag once there is no work", async t => {
     let state = makeState()
 
-    await BatchProcessing.startProcessing(state, ~scheduleFetchAllChains=() => (), ~scheduleRollback=() => ())
+    await BatchProcessing.startProcessing(state, ~scheduleFetch=() => (), ~scheduleRollback=() => ())
 
     t.expect(
       state->IndexerState.isProcessing,
@@ -83,7 +88,7 @@ describe("Indexer loop", () => {
     // Simulate an in-flight loop instance.
     state->IndexerState.beginProcessing
 
-    await BatchProcessing.startProcessing(state, ~scheduleFetchAllChains=() => (), ~scheduleRollback=() => ())
+    await BatchProcessing.startProcessing(state, ~scheduleFetch=() => (), ~scheduleRollback=() => ())
 
     t.expect(
       state->IndexerState.isProcessing,

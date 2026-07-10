@@ -5,35 +5,16 @@ use napi_derive::napi;
 
 use super::borsh_decoder::DecodedInstructionJson;
 
+/// Lean per-slot block header the response carries to ReScript, used for reorg
+/// detection and each item's slot/time. Selectable fields (height, parents) are
+/// kept raw in the `BlockStore` and materialised on demand, so they aren't
+/// duplicated here.
 #[napi(object)]
 #[derive(Default, Clone)]
 pub struct Block {
     pub slot: i64,
     pub blockhash: String,
-    pub parent_slot: Option<i64>,
-    pub parent_blockhash: Option<String>,
     pub block_time: Option<i64>,
-    pub block_height: Option<i64>,
-}
-
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Transaction {
-    pub slot: i64,
-    pub transaction_index: i64,
-    pub signatures: Vec<String>,
-    pub fee_payer: Option<String>,
-    pub success: Option<bool>,
-    pub err: Option<String>,
-    /// Lamports. `u64` upstream, exposed as `BigInt` because lamports values
-    /// can theoretically exceed `i64::MAX`.
-    pub fee: Option<BigInt>,
-    pub compute_units_consumed: Option<BigInt>,
-    pub account_keys: Vec<String>,
-    pub recent_blockhash: Option<String>,
-    pub version: Option<String>,
-    pub loaded_addresses_writable: Vec<String>,
-    pub loaded_addresses_readonly: Vec<String>,
 }
 
 #[napi(object)]
@@ -92,18 +73,6 @@ pub struct Balance {
 
 #[napi(object)]
 #[derive(Default, Clone)]
-pub struct TokenBalance {
-    pub slot: i64,
-    pub transaction_index: Option<i64>,
-    pub account: Option<String>,
-    pub mint: Option<String>,
-    pub owner: Option<String>,
-    pub pre_amount: Option<String>,
-    pub post_amount: Option<String>,
-}
-
-#[napi(object)]
-#[derive(Default, Clone)]
 pub struct Reward {
     pub slot: i64,
     pub pubkey: Option<String>,
@@ -117,11 +86,9 @@ pub struct Reward {
 #[derive(Default, Clone)]
 pub struct QueryResponseData {
     pub blocks: Vec<Block>,
-    pub transactions: Vec<Transaction>,
     pub instructions: Vec<Instruction>,
     pub logs: Vec<Log>,
     pub balances: Vec<Balance>,
-    pub token_balances: Vec<TokenBalance>,
     pub rewards: Vec<Reward>,
 }
 
@@ -146,7 +113,7 @@ fn opt_hex(bytes: &Option<Vec<u8>>) -> Option<String> {
     bytes.as_deref().map(to_hex)
 }
 
-fn bigint_u64(v: u64) -> BigInt {
+pub(crate) fn bigint_u64(v: u64) -> BigInt {
     BigInt {
         sign_bit: false,
         words: vec![v],
@@ -162,43 +129,16 @@ fn u32_to_i64(v: u32) -> i64 {
     v as i64
 }
 
-impl TryFrom<simple::Block> for Block {
-    type Error = anyhow::Error;
-    fn try_from(b: simple::Block) -> Result<Self> {
+impl Block {
+    /// Build the lean header from a borrowed raw block, without taking
+    /// ownership — used when the raw block is also retained (owned) in the
+    /// `BlockStore` for on-demand field materialisation, so only the header's
+    /// own fields are cloned rather than the whole raw struct.
+    pub(crate) fn from_raw(b: &simple::Block) -> Result<Self> {
         Ok(Self {
             slot: u64_to_i64(b.slot, "block.slot")?,
-            blockhash: b.blockhash,
-            parent_slot: b
-                .parent_slot
-                .map(|v| u64_to_i64(v, "block.parent_slot"))
-                .transpose()?,
-            parent_blockhash: b.parent_blockhash,
+            blockhash: b.blockhash.clone(),
             block_time: b.block_time,
-            block_height: b
-                .block_height
-                .map(|v| u64_to_i64(v, "block.block_height"))
-                .transpose()?,
-        })
-    }
-}
-
-impl TryFrom<simple::Transaction> for Transaction {
-    type Error = anyhow::Error;
-    fn try_from(t: simple::Transaction) -> Result<Self> {
-        Ok(Self {
-            slot: u64_to_i64(t.slot, "transaction.slot")?,
-            transaction_index: u32_to_i64(t.transaction_index),
-            signatures: t.signatures,
-            fee_payer: t.fee_payer,
-            success: t.success,
-            err: t.err,
-            fee: t.fee.map(bigint_u64),
-            compute_units_consumed: t.compute_units_consumed.map(bigint_u64),
-            account_keys: t.account_keys,
-            recent_blockhash: t.recent_blockhash,
-            version: t.version,
-            loaded_addresses_writable: t.loaded_addresses_writable,
-            loaded_addresses_readonly: t.loaded_addresses_readonly,
         })
     }
 }
@@ -259,21 +199,6 @@ impl TryFrom<simple::Balance> for Balance {
     }
 }
 
-impl TryFrom<simple::TokenBalance> for TokenBalance {
-    type Error = anyhow::Error;
-    fn try_from(t: simple::TokenBalance) -> Result<Self> {
-        Ok(Self {
-            slot: u64_to_i64(t.slot, "token_balance.slot")?,
-            transaction_index: t.transaction_index.map(u32_to_i64),
-            account: t.account,
-            mint: t.mint,
-            owner: t.owner,
-            pre_amount: t.pre_amount,
-            post_amount: t.post_amount,
-        })
-    }
-}
-
 impl TryFrom<simple::Reward> for Reward {
     type Error = anyhow::Error;
     fn try_from(r: simple::Reward) -> Result<Self> {
@@ -303,12 +228,13 @@ impl TryFrom<simple::SolanaResponse> for QueryResponse {
             response_bytes: i64::try_from(r.response_bytes)
                 .with_context(|| format!("response_bytes {} overflows i64", r.response_bytes))?,
             data: QueryResponseData {
-                blocks: try_map(r.blocks)?,
-                transactions: try_map(r.transactions)?,
+                // The caller takes `r.blocks` before this conversion runs (the
+                // raw blocks go into the `BlockStore`) and fills this in
+                // afterwards from `Block::from_raw`, so it's always empty here.
+                blocks: Vec::new(),
                 instructions: try_map(r.instructions)?,
                 logs: try_map(r.logs)?,
                 balances: try_map(r.balances)?,
-                token_balances: try_map(r.token_balances)?,
                 rewards: try_map(r.rewards)?,
             },
         })

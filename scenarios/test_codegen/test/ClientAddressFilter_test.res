@@ -1,22 +1,22 @@
 open Vitest
 
 // Direct tests for the client-side address filter: the `where`-callback
-// detection (`addressFilterParamGroups`) in `LogSelection.parseEventFiltersOrThrow`
+// detection (`addressFilterParamGroups`) in `LogSelection.parseWhereOrThrow`
 // and the precompiled `clientAddressFilter` built in `EventConfigBuilder`.
 
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
-  LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
+let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1) =>
+  LogSelection.parseWhereOrThrow(
+    ~where=eventFilters,
     ~sighash=transferSighash,
     ~params=["from", "to"],
     ~contractName="ERC20",
-    ~probeChainId,
-    ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+    ~chainId,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
-describe("parseEventFiltersOrThrow — address-param detection", () => {
+describe("parseWhereOrThrow — address-param detection", () => {
   it("collects the address-filtered param (single group)", t => {
     let {filterByAddresses, addressFilterParamGroups} = parseEvm(
       ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
@@ -73,17 +73,19 @@ describe("clientAddressFilter — precompiled predicate", () => {
   ]
 
   let buildFilter = (~eventFilters: JSON.t) =>
-    EventConfigBuilder.buildEvmEventConfig(
-      ~contractName="ERC20",
-      ~eventName="Transfer",
-      ~sighash=transferSighash,
-      ~params=transferParams,
+    EventConfigBuilder.buildEvmOnEventRegistration(
+      ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+        ~contractName="ERC20",
+        ~eventName="Transfer",
+        ~sighash=transferSighash,
+        ~params=transferParams,
+      ),
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters=Some(eventFilters),
-      ~probeChainId=1,
-      ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+      ~where=Some(eventFilters),
+      ~chainId=1,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ).clientAddressFilter
 
   let addr = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
@@ -103,7 +105,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
   ])
   let makeEvent = (~from, ~to) =>
     {"params": {"from": from, "to": to}}->(
-      Utils.magic: {"params": {"from": Address.t, "to": Address.t}} => Internal.event
+      Utils.magic: {"params": {"from": Address.t, "to": Address.t}} => Internal.eventPayload
     )
 
   it("keeps events whose address param is registered at/before the block, drops the rest", t => {
@@ -164,51 +166,58 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
   // Wildcard Transfer filtering `to` by the registered ERC20 addresses; the
   // single config address is effective from block 5 (contract startBlock).
   let registeredAddr = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
-  let eventConfig = EventConfigBuilder.buildEvmEventConfig(
-    ~contractName="ERC20",
-    ~eventName="Transfer",
-    ~sighash=transferSighash,
-    ~params=transferParams,
+  let onEventRegistration = EventConfigBuilder.buildEvmOnEventRegistration(
+    ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=transferParams,
+    ),
     ~isWildcard=true,
     ~handler=None,
     ~contractRegister=None,
-    ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
-    ~probeChainId=1,
-    ~onEventBlockFilterSchema=Evm.ecosystem.onEventBlockFilterSchema,
+    ~where=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
+    ~chainId=1,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
 
   let makeItem = (~to, ~blockNumber): Internal.item =>
     Internal.Event({
-      timestamp: blockNumber * 15,
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
-      blockHash: `0x${blockNumber->Int.toString}`,
-      eventConfig: (eventConfig :> Internal.eventConfig),
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       logIndex: 0,
-      event: {"params": {"to": to}}->(
-        Utils.magic: {"params": {"to": Address.t}} => Internal.event
+      transactionIndex: 0,
+      payload: {"params": {"to": to}}->(
+        Utils.magic: {"params": {"to": Address.t}} => Internal.eventPayload
       ),
     })
 
   it("drops over-fetched events before the param-address's registration block", t => {
+    let onEventRegistrations = [(onEventRegistration :> Internal.onEventRegistration)]
+    let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetchState = FetchState.make(
-      ~eventConfigs=[(eventConfig :> Internal.eventConfig)],
-      ~addresses=[{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}],
+      ~onEventRegistrations,
+      ~contractConfigs,
+      ~addresses,
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=1000,
     )
-    let query = switch fetchState->FetchState.getNextQuery(~concurrencyLimit=10) {
+    let query = switch fetchState->FetchState.getNextQuery {
     | Ready([q]) => q
     | _ => JsError.throwWithMessage("expected a single ready query")
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updated =
       fetchState->FetchState.handleQueryResult(
+        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
         // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
@@ -218,35 +227,139 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
   })
 })
 
+describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddress events", () => {
+  // Non-wildcard Transfer for ERC20, effective from block 5 (contract startBlock).
+  // A merged partition can over-fetch an address before its effectiveStartBlock;
+  // the codegen'd srcAddress check in clientAddressFilter drops those.
+  let registeredAddr = "0x3333333333333333333333333333333333333333"->Address.unsafeFromString
+  let onEventRegistration = EventConfigBuilder.buildEvmOnEventRegistration(
+    ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
+      ~contractName="ERC20",
+      ~eventName="Transfer",
+      ~sighash=transferSighash,
+      ~params=[
+        {name: "from", abiType: "address", indexed: true},
+        {name: "to", abiType: "address", indexed: true},
+        {name: "value", abiType: "uint256", indexed: false},
+      ],
+    ),
+    ~isWildcard=false,
+    ~handler=None,
+    ~contractRegister=None,
+    ~where=None,
+    ~chainId=1,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~startBlock=5,
+  )
+
+  let makeItem = (~srcAddress, ~blockNumber): Internal.item =>
+    Internal.Event({
+      chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      blockNumber,
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+      logIndex: 0,
+      transactionIndex: 0,
+      payload: {"srcAddress": srcAddress}->(
+        Utils.magic: {"srcAddress": Address.t} => Internal.eventPayload
+      ),
+    })
+
+  it("keeps events at/after effectiveStartBlock, drops earlier ones", t => {
+    let onEventRegistrations = [(onEventRegistration :> Internal.onEventRegistration)]
+    let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
+    let fetchState = FetchState.make(
+      ~onEventRegistrations,
+      ~contractConfigs,
+      ~addresses,
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=5000,
+      ~chainId=1,
+      ~knownHeight=1000,
+    )
+    let query = switch fetchState->FetchState.getNextQuery {
+    | Ready([q]) => q
+    | _ => JsError.throwWithMessage("expected a single ready query")
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~indexingAddresses,
+        ~query,
+        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
+        ~newItems=[
+          makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
+          makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
+        ],
+      )
+    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+  })
+})
+
 // Locks the exact generated predicate source so any codegen change is visible
 // in review. Snapshots the body (what we generate) rather than the compiled
 // function's `.toString()`, which would depend on the JS engine's formatting.
 describe("buildAddressFilterBody — generated predicate source", () => {
-  it("single group, single param", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]])).toEqual(
+  it("wildcard, single group, single param", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]], ~isWildcard=true)).toEqual(
       Some(
         `var p = event.params, ic; return ((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
       ),
     )
   })
 
-  it("OR of single-param groups", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"], ["from"]])).toEqual(
+  it("wildcard, OR of single-param groups", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"], ["from"]], ~isWildcard=true)).toEqual(
       Some(
         `var p = event.params, ic; return ((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber) || ((ic = indexingAddresses[p["from"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
       ),
     )
   })
 
-  it("AND within a group", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([["from", "to"]])).toEqual(
+  it("wildcard, AND within a group", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["from", "to"]], ~isWildcard=true)).toEqual(
       Some(
         `var p = event.params, ic; return ((ic = indexingAddresses[p["from"]]) !== undefined && ic.effectiveStartBlock <= blockNumber && (ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber);`,
       ),
     )
   })
 
-  it("None when there are no groups", t => {
-    t.expect(EventConfigBuilder.buildAddressFilterBody([])).toEqual(None)
+  it("wildcard, None when there are no groups", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=true)).toEqual(None)
+  })
+
+  it("non-wildcard, no groups — checks only srcAddress", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=false)).toEqual(
+      Some(
+        `var ic; return (ic = indexingAddresses[event.srcAddress]) !== undefined && ic.effectiveStartBlock <= blockNumber;`,
+      ),
+    )
+  })
+
+  it("non-wildcard, with a param group — ANDs srcAddress and the DNF", t => {
+    t.expect(EventConfigBuilder.buildAddressFilterBody([["to"]], ~isWildcard=false)).toEqual(
+      Some(
+        `var p = event.params, ic; return (ic = indexingAddresses[event.srcAddress]) !== undefined && ic.effectiveStartBlock <= blockNumber && (((ic = indexingAddresses[p["to"]]) !== undefined && ic.effectiveStartBlock <= blockNumber));`,
+      ),
+    )
+  })
+
+  it("non-wildcard SVM — gates on event.programId ownership", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=false, ~srcAddressExpr="event.programId"),
+    ).toEqual(
+      Some(
+        `var ic; return (ic = indexingAddresses[event.programId]) !== undefined && ic.effectiveStartBlock <= blockNumber;`,
+      ),
+    )
+  })
+
+  it("wildcard SVM — None when there are no account groups", t => {
+    t.expect(
+      EventConfigBuilder.buildAddressFilterBody([], ~isWildcard=true, ~srcAddressExpr="event.programId"),
+    ).toEqual(None)
   })
 })

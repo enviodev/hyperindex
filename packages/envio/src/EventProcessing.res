@@ -39,7 +39,7 @@ let runEventHandlerOrThrow = async (
   let eventItem = item->Internal.castUnsafeEventItem
 
   //Include the load in time before handler
-  let timeBeforeHandler = Hrtime.makeTimer()
+  let timeBeforeHandler = Performance.now()
 
   try {
     let contextParams: UserContext.contextParams = {
@@ -56,7 +56,7 @@ let runEventHandlerOrThrow = async (
     await handler(
       (
         {
-          event: eventItem.event,
+          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
           context: UserContext.getHandlerContext(contextParams),
         }: Internal.handlerArgs
       ),
@@ -72,10 +72,10 @@ let runEventHandlerOrThrow = async (
       }),
     )
   }
-  let handlerDuration = timeBeforeHandler->Hrtime.timeSince->Hrtime.toSecondsFloat
+  let handlerDuration = timeBeforeHandler->Performance.secondsSince
   Prometheus.ProcessingHandler.increment(
-    ~contract=eventItem.eventConfig.contractName,
-    ~event=eventItem.eventConfig.name,
+    ~contract=eventItem.onEventRegistration.eventConfig.contractName,
+    ~event=eventItem.onEventRegistration.eventConfig.name,
     ~duration=handlerDuration,
   )
 }
@@ -90,7 +90,7 @@ let runHandlerOrThrow = async (
   ~chains: Internal.chains,
 ) => {
   switch item {
-  | Block({onBlockConfig: {handler}, blockNumber}) =>
+  | Block({onBlockRegistration: {handler}, blockNumber}) =>
     try {
       let contextParams: UserContext.contextParams = {
         item,
@@ -121,8 +121,8 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({eventConfig}) =>
-    switch eventConfig.handler {
+  | Event({onEventRegistration}) =>
+    switch onEventRegistration.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
@@ -161,7 +161,7 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({eventConfig: {handler, contractName, name: eventName}, event}) =>
+      | Event({onEventRegistration: {handler, eventConfig: {contractName, name: eventName}}}) =>
         switch handler {
         | None => ()
         | Some(handler) =>
@@ -172,7 +172,7 @@ let preloadBatchOrThrow = async (
             )
             promises->Array.push(
               handler({
-                event,
+                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
                 context: UserContext.getHandlerContext({
                   item,
                   indexerState,
@@ -200,7 +200,7 @@ let preloadBatchOrThrow = async (
           | _ => ()
           }
         }
-      | Block({onBlockConfig: {handler}, blockNumber}) =>
+      | Block({onBlockRegistration: {handler}, blockNumber}) =>
         try {
           promises->Array.push(
             handler({
@@ -264,11 +264,19 @@ let runBatchHandlersOrThrow = async (
   }
 }
 
-let registerProcessEventBatchMetrics = (~logger, ~loadDuration, ~handlerDuration) => {
-  logger->Logging.childTrace({
-    "msg": "Finished processing batch",
-    "loader_time_elapsed": loadDuration,
-    "handlers_time_elapsed": handlerDuration,
+let registerProcessEventBatchMetrics = (
+  ~logger,
+  ~batch: Batch.t,
+  ~loadDuration,
+  ~handlerDuration,
+) => {
+  batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
+    logger->Logging.childTrace({
+      "msg": "Finished processing",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "batchSize": chainAfterBatch.batchSize,
+      "progress": chainAfterBatch.progressBlockNumber,
+    })
   })
 
   Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
@@ -281,6 +289,39 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
+// Off the hot path: bulk-materialise the selected transaction and block fields
+// for the batch's store-backed (HyperSync) items and write them onto the
+// payloads, so handlers read plain objects. A batch can span chains, each with
+// its own stores and field masks, so group items by chain before materialising.
+let materializeBatchEvents = async (
+  batch: Batch.t,
+  ~chainStates: dict<ChainState.t>,
+  ~ecosystem,
+) => {
+  switch chainStates->Dict.valuesToArray {
+  // Single-chain indexers (the common case): every item belongs to the one
+  // chain, so skip the per-chain grouping and its allocations.
+  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items, ~ecosystem)
+  | _ =>
+    let itemsByChain: dict<array<Internal.item>> = Dict.make()
+    batch.items->Array.forEach(item => {
+      let chainId = item->Internal.getItemChainId->Int.toString
+      switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
+      | Some(items) => items->Array.push(item)
+      | None => itemsByChain->Dict.set(chainId, [item])
+      }
+    })
+
+    let _ = await itemsByChain
+    ->Dict.toArray
+    ->Array.map(async ((chainId, items)) => {
+      let cs = chainStates->Dict.getUnsafe(chainId)
+      await cs->ChainState.materializeBatchItems(~items, ~ecosystem)
+    })
+    ->Promise.all
+  }
+}
+
 let processEventBatch = async (
   ~batch: Batch.t,
   ~indexerState: IndexerState.t,
@@ -289,33 +330,33 @@ let processEventBatch = async (
   ~config: Config.t,
   ~chainStates: dict<ChainState.t>,
 ) => {
-  let totalBatchSize = batch.totalBatchSize
   // Compute chains state for this batch
   let chains: Internal.chains = chainStates->computeChainsState
 
   let logger = Logging.getLogger()
-  logger->Logging.childTrace({
-    "msg": "Started processing batch",
-    "totalBatchSize": totalBatchSize,
-    "chains": batch.progressedChainsById->Utils.Dict.mapValues(chainAfterBatch => {
-      {
-        "batchSize": chainAfterBatch.batchSize,
-        "progress": chainAfterBatch.progressBlockNumber,
-      }
-    }),
+
+  batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
+    logger->Logging.childTrace({
+      "msg": "Started processing",
+      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "batchSize": chainAfterBatch.batchSize,
+    })
   })
 
   try {
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
     await indexerState->Writing.awaitCapacity
 
-    let timeRef = Hrtime.makeTimer()
+    let timeRef = Performance.now()
 
     if batch.items->Utils.Array.notEmpty {
+      // Materialise store-backed transactions onto payloads before any handler
+      // (preload or execute) reads them.
+      await materializeBatchEvents(batch, ~chainStates, ~ecosystem=config.ecosystem.name)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
-    let elapsedTimeAfterLoaders = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
 
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(
@@ -327,20 +368,28 @@ let processEventBatch = async (
       )
     }
 
-    let elapsedTimeAfterProcessing = timeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
 
     indexerState->Writing.commitBatch(~batch)
 
     let loaderDuration = elapsedTimeAfterLoaders
     let handlerDuration = elapsedTimeAfterProcessing -. loaderDuration
-    registerProcessEventBatchMetrics(~logger, ~loadDuration=loaderDuration, ~handlerDuration)
+    registerProcessEventBatchMetrics(
+      ~logger,
+      ~batch,
+      ~loadDuration=loaderDuration,
+      ~handlerDuration,
+    )
     Ok()
   } catch {
   | Persistence.StorageError({message, reason}) =>
     reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(~msg=message, ~logger=item->Logging.getItemLogger)
+    ->ErrorHandling.make(
+      ~msg=message,
+      ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+    )
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }

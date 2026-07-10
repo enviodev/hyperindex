@@ -24,7 +24,9 @@ describe_skip("SvmHyperSyncClient live", () => {
         transaction: [Slot, TransactionIndex, Signatures],
       },
     }
-    let resp = await client.get(~query)
+    // The store page is exercised by SvmHyperSyncSource; here we assert the
+    // response shape only.
+    let (resp, _, _) = await client.get(~query)
     // Option-typed so an empty live response fails the shape assertion below
     // instead of throwing on the index.
     let first = resp.data.instructions->Array.get(0)
@@ -50,7 +52,6 @@ describe_skip("SvmHyperSyncClient live", () => {
         | None => false
         }
       ),
-      "hasTransactions": resp.data.transactions->Array.length > 0,
     }
     t.expect(summary).toEqual({
       "heightLooksRecent": true,
@@ -58,7 +59,6 @@ describe_skip("SvmHyperSyncClient live", () => {
       "firstProgramId": tokenMetadataProgram,
       "firstDataIsHex": true,
       "allInstructionSlotsHaveBlockTime": true,
-      "hasTransactions": true,
     })
   })
 })

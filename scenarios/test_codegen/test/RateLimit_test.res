@@ -27,17 +27,18 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
           blockTimestamp: n,
         },
       )
-      Promise.resolve(Ok(data))
+      Promise.resolve({Source.result: Ok(data), requestStats: []})
     },
-    getHeightOrThrow: () => Promise.resolve(100),
+    getHeightOrThrow: () => Promise.resolve({Source.height: 100, requestStats: []}),
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,
       ~addressesByContractName as _,
-      ~indexingAddresses as _,
+      ~contractNameByAddress as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
+      ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
     ) => JsError.throwWithMessage("Not used by rate limit test"),
@@ -50,7 +51,6 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
     let sourceManager = SourceManager.make(
       ~sources=[source],
-      ~maxPartitionConcurrency=1,
       ~isRealtime=false,
     )
 
@@ -69,7 +69,6 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     let source = makeMockSource(~rateLimitedCalls=0, ~resetMs=100)
     let sourceManager = SourceManager.make(
       ~sources=[source],
-      ~maxPartitionConcurrency=1,
       ~isRealtime=false,
     )
 
@@ -88,7 +87,6 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
       let sourceManager = SourceManager.make(
         ~sources=[source],
-        ~maxPartitionConcurrency=2,
         ~isRealtime=false,
       )
 

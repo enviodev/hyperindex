@@ -1,13 +1,26 @@
+// Fuel's concrete item payload. Erased to `Internal.eventPayload` on the item
+// and recovered here via `toPayload`.
+type payload = {
+  contractName: string,
+  eventName: string,
+  params: Internal.eventParams,
+  chainId: int,
+  srcAddress: Address.t,
+  logIndex: int,
+  transaction: Internal.eventTransaction,
+  block: Internal.eventBlock,
+}
+external fromPayload: payload => Internal.eventPayload = "%identity"
+external toPayload: Internal.eventPayload => payload = "%identity"
+
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.id
     delete fields.height
     delete fields.time
   }`)
 
-let ecosystem: Ecosystem.t = {
+let make = (~logger: Pino.t): Ecosystem.t => {
   name: Fuel,
-  blockFields: ["id", "height", "time"],
-  transactionFields: ["id"],
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "id",
@@ -22,7 +35,36 @@ let ecosystem: Ecosystem.t = {
   // Analogous to EVM, but keyed by `block.height` instead of
   // `block.number`. See `Evm.res` for the rationale on the two-stage
   // parse and the `_lte`/`_every` rejection.
+  // `S.strict` on the inner object rejects unknown `block` fields — including
+  // `block.number`, which is EVM-only; Fuel filters by `block.height`.
   onEventBlockFilterSchema: S.object(s =>
-    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
+    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))->S.strict))
   ),
+  logger,
+  toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
+  toEventLogger: eventItem =>
+    Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "contract": eventItem.onEventRegistration.eventConfig.contractName,
+        "event": eventItem.onEventRegistration.eventConfig.name,
+        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "block": eventItem.blockNumber,
+        "logIndex": eventItem.logIndex,
+        "address": (eventItem.payload->toPayload).srcAddress,
+      },
+    ),
+  toRawEvent: eventItem => {
+    let payload = eventItem.payload->toPayload
+    let header = payload.block->(Utils.magic: Internal.eventBlock => {"id": string, "time": int})
+    eventItem->RawEvent.make(
+      ~block=payload.block,
+      ~transaction=payload.transaction,
+      ~params=payload.params,
+      ~srcAddress=payload.srcAddress,
+      ~blockHash=header["id"],
+      ~blockTimestamp=header["time"],
+      ~cleanUpRawEventFieldsInPlace,
+    )
+  },
 }

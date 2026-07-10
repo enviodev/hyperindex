@@ -84,7 +84,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Blast = 81457,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     BlastSepolia = 168587773,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -199,7 +199,9 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Harmony = 1666600000,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync no longer serves Holesky (17000.hypersync.xyz no longer
+    // resolves), so it's not a HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Holesky = 17000,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -341,9 +343,12 @@ pub enum Network {
     Rinkeby = 4,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
-    Rsk = 30,
+    Robinhood = 4663,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
+    Rsk = 30,
+
+    #[subenum(NetworkWithExplorer)]
     Saakuru = 7225878,
 
     #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
@@ -383,7 +388,6 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     SophonTestnet = 531050104,
 
-    #[subenum(HypersyncChain)]
     StatusSepolia = 1660990954,
 
     #[subenum(HypersyncChain)]
@@ -602,7 +606,8 @@ impl Network {
             | Network::Megaeth
             | Network::SeiTestnet
             | Network::StatusSepolia
-            | Network::Tempo => None,
+            | Network::Tempo
+            | Network::Robinhood => None,
         }
     }
 }

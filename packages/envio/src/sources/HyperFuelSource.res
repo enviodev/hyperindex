@@ -2,6 +2,8 @@ open Source
 
 exception EventRoutingFailed
 
+let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
+
 let mintEventTag = "mint"
 let burnEventTag = "burn"
 let transferEventTag = "transfer"
@@ -11,7 +13,7 @@ type selectionConfig = {
   getRecieptsSelection: (
     ~addressesByContractName: dict<array<Address.t>>,
   ) => array<HyperFuelClient.QueryTypes.receiptSelection>,
-  eventRouter: EventRouter.t<Internal.fuelEventConfig>,
+  eventRouter: EventRouter.t<Internal.fuelOnEventRegistration>,
 }
 
 let logDataReceiptTypeSelection: array<FuelSDK.receiptType> = [LogData]
@@ -125,39 +127,40 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
 
   let contractNames = Utils.Set.make()
 
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.fuelEventConfig>)
-  ->Array.forEach(eventConfig => {
+  selection.onEventRegistrations->Array.forEach(reg => {
+    let eventConfig =
+      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
     let contractName = eventConfig.contractName
-    if !eventConfig.isWildcard {
+    let isWildcard = reg.isWildcard
+    if !isWildcard {
       let _ = contractNames->Utils.Set.add(contractName)
     }
     eventRouter->EventRouter.addOrThrow(
       eventConfig.id,
-      eventConfig,
+      reg,
       ~contractName,
       ~eventName=eventConfig.name,
       ~chain,
-      ~isWildcard=eventConfig.isWildcard,
+      ~isWildcard,
     )
 
-    switch eventConfig {
-    | {kind: Mint, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Mint)
-    | {kind: Mint} => addNonLogDataReceiptType(contractName, Mint)
-    | {kind: Burn, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Burn)
-    | {kind: Burn} => addNonLogDataReceiptType(contractName, Burn)
-    | {kind: Transfer, isWildcard: true} => {
+    switch (eventConfig.kind, isWildcard) {
+    | (Mint, true) => addNonLogDataWildcardReceiptTypes(Mint)
+    | (Mint, false) => addNonLogDataReceiptType(contractName, Mint)
+    | (Burn, true) => addNonLogDataWildcardReceiptTypes(Burn)
+    | (Burn, false) => addNonLogDataReceiptType(contractName, Burn)
+    | (Transfer, true) => {
         addNonLogDataWildcardReceiptTypes(Transfer)
         addNonLogDataWildcardReceiptTypes(TransferOut)
       }
-    | {kind: Transfer} => {
+    | (Transfer, false) => {
         addNonLogDataReceiptType(contractName, Transfer)
         addNonLogDataReceiptType(contractName, TransferOut)
       }
-    | {kind: Call, isWildcard: true} => addNonLogDataWildcardReceiptTypes(Call)
-    | {kind: Call} =>
+    | (Call, true) => addNonLogDataWildcardReceiptTypes(Call)
+    | (Call, false) =>
       JsError.throwWithMessage("Call receipt indexing currently supported only in wildcard mode")
-    | {kind: LogData({logId}), isWildcard} => {
+    | (LogData({logId}), _) => {
         let rb = logId->BigInt.fromStringOrThrow
         if isWildcard {
           wildcardLogDataRbs->Array.push(rb)->ignore
@@ -207,10 +210,25 @@ let memoGetSelectionConfig = (~chain) => {
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
+  apiToken: option<string>,
 }
 
-let make = ({chain, endpointUrl}: options): t => {
+let make = ({chain, endpointUrl, apiToken}: options): t => {
   let name = "HyperFuel"
+
+  let apiToken = switch apiToken {
+  | Some(token) => token
+  | None =>
+    JsError.throwWithMessage(`An Envio API token is required for using HyperFuel as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
+  }
+
+  let client = switch HyperFuelClient.make({url: endpointUrl, apiToken}) {
+  | client => client
+  | exception exn =>
+    exn->ErrorHandling.mkLogAndRaise(~msg="Failed to instantiate the HyperFuel client")
+  }
 
   let getSelectionConfig = memoGetSelectionConfig(~chain)
 
@@ -218,33 +236,29 @@ let make = ({chain, endpointUrl}: options): t => {
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingAddresses,
+    ~contractNameByAddress,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
+    ~itemsTarget as _,
     ~retry,
     ~logger,
   ) => {
-    let totalTimeRef = Hrtime.makeTimer()
+    let totalTimeRef = Performance.now()
 
     let selectionConfig = getSelectionConfig(selection)
     let recieptsSelection = selectionConfig.getRecieptsSelection(~addressesByContractName)
 
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="getLogs",
-    )
     let pageUnsafe = try await HyperFuel.GetLogs.query(
-      ~serverUrl=endpointUrl,
+      ~client,
       ~fromBlock,
       ~toBlock,
       ~recieptsSelection,
     ) catch {
-    | HyperSync.GetLogs.Error(error) =>
+    | HyperFuel.GetLogs.Error(error) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -288,7 +302,8 @@ let make = ({chain, endpointUrl}: options): t => {
       )
     }
 
-    let pageFetchTime = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
+    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -298,7 +313,7 @@ let make = ({chain, endpointUrl}: options): t => {
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let parsingTimeRef = Hrtime.makeTimer()
+    let parsingTimeRef = Performance.now()
 
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       let {contractId: contractAddress, receipt, block, receiptIndex} = item
@@ -313,11 +328,10 @@ let make = ({chain, endpointUrl}: options): t => {
       | Call(_) => callEventTag
       }
 
-      let eventConfig = switch selectionConfig.eventRouter->EventRouter.get(
+      let onEventRegistration = switch selectionConfig.eventRouter->EventRouter.get(
         ~tag=eventId,
-        ~indexingAddresses,
+        ~contractNameByAddress,
         ~contractAddress,
-        ~blockNumber=block.height,
       ) {
       | None => {
           let logger = Logging.createChildFrom(
@@ -335,8 +349,13 @@ let make = ({chain, endpointUrl}: options): t => {
             ~logger,
           )
         }
-      | Some(eventConfig) => eventConfig
+      | Some(onEventRegistration) => onEventRegistration
       }
+
+      let eventConfig =
+        onEventRegistration.eventConfig->(
+          Utils.magic: Internal.eventConfig => Internal.fuelEventConfig
+        )
 
       let params = switch (eventConfig, receipt) {
       | ({kind: LogData({decode})}, LogData({data})) =>
@@ -391,13 +410,14 @@ let make = ({chain, endpointUrl}: options): t => {
       }
 
       Internal.Event({
-        eventConfig: (eventConfig :> Internal.eventConfig),
-        timestamp: block.time,
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         chain,
         blockNumber: block.height,
-        blockHash: block.id,
         logIndex: receiptIndex,
-        event: {
+        // Fuel carries the transaction inline on the payload; the store key is
+        // unused (Fuel identifies transactions by hash, kept on the payload).
+        transactionIndex: 0,
+        payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
           chainId,
@@ -408,11 +428,11 @@ let make = ({chain, endpointUrl}: options): t => {
           block: block->Obj.magic,
           srcAddress: contractAddress,
           logIndex: receiptIndex,
-        }->Internal.fromGenericEvent,
+        }->Fuel.fromPayload,
       })
     })
 
-    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     // Fuel never rolls back on reorg, so block hashes here are purely informational
     // for detect-only logging via ReorgDetection.
@@ -428,7 +448,7 @@ let make = ({chain, endpointUrl}: options): t => {
     | _ => 0
     }
 
-    let totalTimeElapsed = totalTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
       totalTimeElapsed,
@@ -439,18 +459,20 @@ let make = ({chain, endpointUrl}: options): t => {
     {
       latestFetchedBlockTimestamp,
       parsedQueueItems,
+      // Fuel keeps transaction and block on the payload; no store pages.
+      transactionStore: None,
+      blockStore: None,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats,
     }
   }
 
   let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     JsError.throwWithMessage("HyperFuel does not support getting block hashes")
-
-  let jsonApiClient = EnvioApiClient.make(endpointUrl)
 
   {
     name,
@@ -460,21 +482,20 @@ let make = ({chain, endpointUrl}: options): t => {
     pollingInterval: 100,
     poweredByHyperSync: true,
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
-      let height = await HyperFuel.heightRoute->Rest.fetch((), ~client=jsonApiClient)
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-      )
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="getHeight",
-        ~seconds,
-      )
-      height
+      let timerRef = Performance.now()
+      let height = try await client->HyperFuelClient.getHeight catch {
+      | JsExn(e) =>
+        switch e->JsExn.message {
+        | Some(message) if message->isUnauthorizedError =>
+          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperFuel (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          // Retrying an unauthorized request can never succeed, so block forever
+          let _ = await Promise.make((_, _) => ())
+          0
+        | _ => throw(JsExn(e))
+        }
+      }
+      let seconds = timerRef->Performance.secondsSince
+      {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
   }

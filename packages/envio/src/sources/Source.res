@@ -7,6 +7,11 @@ type blockRangeFetchStats = {
   @as("page fetch time (s)") pageFetchTime?: float,
 }
 
+// A single backend request a source method actually made (cache/dedup hits
+// aren't requests), with the time it took. SourceManager aggregates these
+// per (source, method) into the envio_source_request_* metrics.
+type requestStat = {method: string, seconds: float}
+
 /**
 Thes response returned from a block range fetch
 */
@@ -18,10 +23,26 @@ type blockRangeFetchResponse = {
   // a within-array hash mismatch on the same block number as a reorg.
   blockHashes: array<ReorgDetection.blockData>,
   parsedQueueItems: array<Internal.item>,
+  // Page of transactions for this response's items, keyed by (blockNumber,
+  // transactionIndex); merged into the chain's store on apply. `None` for
+  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  transactionStore: option<TransactionStore.t>,
+  // Page of blocks for this response's items, keyed by block number; merged into
+  // the chain's store on apply. `None` for sources that keep the block fully
+  // inline on the payload (RPC/Fuel/Simulate).
+  blockStore: option<BlockStore.t>,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
+  requestStats: array<requestStat>,
+}
+
+type getHeightResponse = {height: int, requestStats: array<requestStat>}
+
+type getBlockHashesResponse = {
+  result: result<array<ReorgDetection.blockDataWithTimestamp>, exn>,
+  requestStats: array<requestStat>,
 }
 
 type getItemsRetry =
@@ -47,19 +68,22 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-    ~logger: Pino.t,
-  ) => promise<result<array<ReorgDetection.blockDataWithTimestamp>, exn>>,
-  getHeightOrThrow: unit => promise<int>,
+  getBlockHashes: (~blockNumbers: array<int>, ~logger: Pino.t) => promise<getBlockHashesResponse>,
+  getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~addressesByContractName: dict<array<Address.t>>,
-    ~indexingAddresses: dict<FetchState.indexingAddress>,
+    ~contractNameByAddress: dict<string>,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
+    // Soft cap on the number of primary items (logs/instructions/receipts) the
+    // source should ask its backend for, from the query's own estResponseSize.
+    // A HyperSync-backed source enforces it server-side, so a wrong estimate
+    // truncates the response instead of overshooting the shared buffer. Sources
+    // without an equivalent lever (RPC, Fuel, Simulate) ignore it.
+    ~itemsTarget: int,
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
@@ -67,4 +91,8 @@ type t = {
   // Invoked by SourceManager once a rollback target is known so the source can
   // drop any state that may now point at an orphaned chain (e.g. RPC block cache).
   onReorg?: (~rollbackTargetBlock: int) => unit,
+  // Present only on the simulate source: the items a test fed in. The chain
+  // tracks which of these never reach a handler so the run can report dead
+  // simulate inputs on completion.
+  simulateItems?: array<Internal.item>,
 }

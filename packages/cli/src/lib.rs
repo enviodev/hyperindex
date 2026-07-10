@@ -1,3 +1,4 @@
+mod block_store;
 mod cli_args;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
@@ -9,7 +10,10 @@ mod evm;
 mod evm_hypersync_source;
 mod evm_rpc_source;
 pub mod executor;
+mod field_columns;
+mod field_table;
 mod fuel;
+mod fuel_hypersync_source;
 mod hbs_templating;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
@@ -18,5 +22,6 @@ pub mod scripts;
 mod service_health;
 mod svm_hypersync_source;
 mod template_dirs;
+mod transaction_store;
 mod type_schema;
 mod utils;

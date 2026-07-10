@@ -1,7 +1,22 @@
 open Vitest
 
+// Spread into query literals so the cross-chain scheduler fields
+// (chainId/progress) don't have to be repeated; every other field is
+// overridden at the call site.
+let defaultQuery: FetchState.query = {
+  partitionId: "0",
+  fromBlock: 0,
+  toBlock: None,
+  isChunk: false,
+  estResponseSize: 0.,
+  chainId: 0,
+  progress: 0.,
+  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
+  addressesByContractName: Dict.make(),
+}
+
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Config.loadWithoutRegistrations()
+  let config = Config.load()
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
@@ -19,20 +34,24 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       Int.fromFloat(Math.random() *. Int.toFloat(max - min + 1) +. Int.toFloat(min))
     }
 
-    let eventConfigs = [
-      (MockIndexer.evmEventConfig(
+    let onEventRegistrations = [
+      (MockIndexer.evmOnEventRegistration(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
-      ) :> Internal.eventConfig),
+      ) :> Internal.onEventRegistration),
     ]
+    let addresses = []
+    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
+    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
-      ~eventConfigs,
-      ~addresses=[],
+      ~onEventRegistrations,
+      ~contractConfigs,
+      ~addresses,
       ~startBlock=0,
-      ~targetBufferSize=5000,
+      ~maxOnBlockBufferSize=5000,
       ~chainId=1,
       ~knownHeight=0,
     )
@@ -56,37 +75,38 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem = Internal.Event({
-          timestamp: currentTime.contents,
           chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
-          blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
-          eventConfig: ("Mock eventConfig in IndexerState test")->(
-            Utils.magic: string => Internal.eventConfig
+          transactionIndex: 0,
+          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
+            Utils.magic: string => Internal.onEventRegistration
           ),
-          event: (`mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`)->(
-            Utils.magic: string => Internal.event
+          payload: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
+            Utils.magic: string => Internal.eventPayload
           ),
         })
         allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
+          ...defaultQuery,
           partitionId: "0",
+          estResponseSize: 0.,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
           selection: {
             dependsOnAddresses: false,
-            eventConfigs,
+            onEventRegistrations,
           },
           addressesByContractName: Dict.make(),
-          indexingAddresses: fetchState.contents.indexingAddresses,
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
+            ~indexingAddresses,
             ~query,
             ~latestFetchedBlock={
               blockNumber: currentBlockNumber.contents,
@@ -109,11 +129,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
-      ~sourceManager=SourceManager.make(
-        ~sources=[mockSource.source],
-        ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-        ~isRealtime=false,
-      ),
+      ~indexingAddresses,
+      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
       ~reorgDetection=ReorgDetection.make(
         ~chainReorgCheckpoints=[],
@@ -141,8 +158,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
 let getItemKey = (item: Internal.item) =>
   switch item {
-  | Event({chain, blockNumber, logIndex}) => (chain->ChainMap.Chain.toChainId, blockNumber, logIndex)
-  | Block({onBlockConfig: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+  | Event({chain, blockNumber, logIndex}) => (
+      chain->ChainMap.Chain.toChainId,
+      blockNumber,
+      logIndex,
+    )
+  | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
   }
 
 // Advance each chain's fetchState to its post-batch state, simulating the loop
@@ -150,7 +171,9 @@ let getItemKey = (item: Internal.item) =>
 let advanceChains = (state: IndexerState.t, ~batch) =>
   state
   ->IndexerState.chainStates
-  ->Utils.Dict.forEach(cs => cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=false))
+  ->Utils.Dict.forEach(cs =>
+    cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=false)
+  )
 
 describe("IndexerState", () => {
   //Test was previously popBlockBatchItems
@@ -161,15 +184,14 @@ describe("IndexerState", () => {
         let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
-          timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
-          blockHash: "0x0",
           logIndex: 0,
-          eventConfig: ("Mock eventConfig in IndexerState test")->(
-            Utils.magic: string => Internal.eventConfig
+          transactionIndex: 0,
+          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
+            Utils.magic: string => Internal.onEventRegistration
           ),
-          event: (`mock initial event`)->(Utils.magic: string => Internal.event),
+          payload: `mock initial event`->(Utils.magic: string => Internal.eventPayload),
         })
 
         let numberOfMockEventsReadFromQueues = ref(0)
@@ -205,9 +227,10 @@ describe("IndexerState", () => {
 
         // Test that no events were missed
         let amountStillOnQueues =
-          state->IndexerState.chainStates
+          state
+          ->IndexerState.chainStates
           ->Dict.valuesToArray
-          ->Array.reduce(0, (accum, cs) => accum + (cs->ChainState.fetchState)->FetchState.bufferSize)
+          ->Array.reduce(0, (accum, cs) => accum + cs->ChainState.bufferSize)
 
         t.expect(
           amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
@@ -221,156 +244,170 @@ describe("IndexerState", () => {
     // applyBatchProgress must commit only progress fields and keep that
     // concurrently-advanced fetch frontier, otherwise the freshly fetched blocks
     // are silently dropped.
-    it("applyBatchProgress keeps a fetchState that advanced during the batch", t => {
-      let config = Config.loadWithoutRegistrations()
-      let eventConfigs = [
-        (
-          MockIndexer.evmEventConfig(~id="0", ~contractName="Gravatar", ~isWildcard=true) :>
-            Internal.eventConfig
-        ),
-      ]
+    it(
+      "applyBatchProgress keeps a fetchState that advanced during the batch",
+      t => {
+        let config = Config.load()
+        let onEventRegistrations = [
+          (MockIndexer.evmOnEventRegistration(
+            ~id="0",
+            ~contractName="Gravatar",
+            ~isWildcard=true,
+          ) :> Internal.onEventRegistration),
+        ]
 
-      let makeFetchState = (~chainId, ~eventBlocks) => {
-        let fetchState = ref(
-          FetchState.make(
-            ~maxAddrInPartition=Env.maxAddrInPartition,
-            ~endBlock=None,
-            ~eventConfigs,
-            ~addresses=[],
-            ~startBlock=0,
-            ~targetBufferSize=5000,
-            ~chainId,
-            ~knownHeight=0,
-          ),
-        )
-        eventBlocks->Array.forEach(blockNumber => {
-          let query: FetchState.query = {
-            partitionId: "0",
-            fromBlock: 0,
-            toBlock: None,
-            isChunk: false,
-            selection: {dependsOnAddresses: false, eventConfigs},
-            addressesByContractName: Dict.make(),
-            indexingAddresses: fetchState.contents.indexingAddresses,
-          }
-          fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
-          fetchState :=
-            fetchState.contents->FetchState.handleQueryResult(
-              ~query,
-              ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
-              ~newItems=[
-                Internal.Event({
-                  timestamp: blockNumber * 15,
-                  chain: ChainMap.Chain.makeUnsafe(~chainId),
-                  blockNumber,
-                  blockHash: `0x${blockNumber->Int.toString}`,
-                  logIndex: 0,
-                  eventConfig: ("Mock eventConfig")->(Utils.magic: string => Internal.eventConfig),
-                  event: ("Mock event")->(Utils.magic: string => Internal.event),
-                }),
-              ],
-            )
-        })
-        fetchState.contents
-      }
-
-      let makeState = (~eventBlocks): IndexerState.t => {
-        let chainStates = Dict.make()
-        config.chainMap
-        ->ChainMap.values
-        ->Array.forEach(chainConfig => {
-          let mockSource = MockIndexer.Source.make([], ~chain=#1)
-          let chainState = ChainState.make(
-            ~chainConfig,
-            ~fetchState=makeFetchState(~chainId=chainConfig.id, ~eventBlocks),
-            ~sourceManager=SourceManager.make(
-              ~sources=[mockSource.source],
-              ~maxPartitionConcurrency=Env.maxPartitionConcurrency,
-              ~isRealtime=false,
+        let makeFetchState = (~chainId, ~eventBlocks) => {
+          let addresses = []
+          let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
+          let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
+          let fetchState = ref(
+            FetchState.make(
+              ~maxAddrInPartition=Env.maxAddrInPartition,
+              ~endBlock=None,
+              ~onEventRegistrations,
+              ~contractConfigs,
+              ~addresses,
+              ~startBlock=0,
+              ~maxOnBlockBufferSize=5000,
+              ~chainId,
+              ~knownHeight=0,
             ),
-            ~reorgDetection=ReorgDetection.make(
-              ~chainReorgCheckpoints=[],
-              ~maxReorgDepth=200,
-              ~shouldRollbackOnReorg=false,
-            ),
-            ~committedProgressBlockNumber=-1,
-            ~logger=Logging.getLogger(),
           )
-          chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
+          eventBlocks->Array.forEach(
+            blockNumber => {
+              let query: FetchState.query = {
+                ...defaultQuery,
+                partitionId: "0",
+                estResponseSize: 0.,
+                fromBlock: 0,
+                toBlock: None,
+                isChunk: false,
+                selection: {dependsOnAddresses: false, onEventRegistrations},
+                addressesByContractName: Dict.make(),
+              }
+              fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
+              fetchState :=
+                fetchState.contents->FetchState.handleQueryResult(
+                  ~indexingAddresses,
+                  ~query,
+                  ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
+                  ~newItems=[
+                    Internal.Event({
+                      chain: ChainMap.Chain.makeUnsafe(~chainId),
+                      blockNumber,
+                      logIndex: 0,
+                      transactionIndex: 0,
+                      onEventRegistration: "Mock onEventRegistration"->(
+                        Utils.magic: string => Internal.onEventRegistration
+                      ),
+                      payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
+                    }),
+                  ],
+                )
+            },
+          )
+          (fetchState.contents, indexingAddresses)
+        }
+
+        let makeState = (~eventBlocks): IndexerState.t => {
+          let chainStates = Dict.make()
+          config.chainMap
+          ->ChainMap.values
+          ->Array.forEach(
+            chainConfig => {
+              let mockSource = MockIndexer.Source.make([], ~chain=#1)
+              let (fetchState, indexingAddresses) = makeFetchState(~chainId=chainConfig.id, ~eventBlocks)
+              let chainState = ChainState.make(
+                ~chainConfig,
+                ~fetchState,
+                ~indexingAddresses,
+                ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+                ~reorgDetection=ReorgDetection.make(
+                  ~chainReorgCheckpoints=[],
+                  ~maxReorgDepth=200,
+                  ~shouldRollbackOnReorg=false,
+                ),
+                ~committedProgressBlockNumber=-1,
+                ~logger=Logging.getLogger(),
+              )
+              chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
+            },
+          )
+          IndexerState.make(
+            ~config,
+            ~persistence=MockIndexer.defaultPersistence,
+            ~chainStates,
+            ~isInReorgThreshold=false,
+            ~isRealtime=false,
+            ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+          )
+        }
+
+        // The batch is created while each chain has fetched up to block 5.
+        let state = makeState(~eventBlocks=[5])
+        let batch =
+          state->IndexerState.createBatch(
+            ~processedCheckpointId=Internal.initialCheckpointId,
+            ~batchSizeTarget=10000,
+            ~isRollback=false,
+          )
+
+        let chain = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
+        let chainId = chain->ChainMap.Chain.toChainId
+
+        // A fetch lands mid-batch and appends block 15 to this chain's buffer
+        // (its batch-time snapshot held only block 5).
+        let cs = state->IndexerState.getChainState(~chain)
+        let concurrentQuery: FetchState.query = {
+          ...defaultQuery,
+          partitionId: "0",
+          estResponseSize: 0.,
+          fromBlock: 0,
+          toBlock: None,
+          isChunk: false,
+          selection: {dependsOnAddresses: false, onEventRegistrations},
+          addressesByContractName: Dict.make(),
+        }
+        cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
+        cs->ChainState.handleQueryResult(
+          ~query=concurrentQuery,
+          ~newItemsWithDcs=[],
+          ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
+          ~newItems=[
+            Internal.Event({
+              chain,
+              blockNumber: 15,
+              logIndex: 0,
+              transactionIndex: 0,
+              onEventRegistration: "Mock onEventRegistration"->(Utils.magic: string => Internal.onEventRegistration),
+              payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
+            }),
+          ],
+          ~knownHeight=cs->ChainState.knownHeight,
+          ~transactionStore=None,
+          ~blockStore=None,
+        )
+
+        state->IndexerState.applyBatchProgress(~batch)
+        let resultCs = state->IndexerState.getChainState(~chain)
+        let progressed =
+          batch.progressedChainsById
+          ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+          ->Option.getUnsafe
+
+        t.expect(
+          {
+            "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
+            // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
+            // Seeing 2 proves the current (post-fetch) fetchState was kept.
+            "bufferSize": resultCs->ChainState.bufferSize,
+          },
+          ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
+        ).toEqual({
+          "committedProgressBlockNumber": progressed.progressBlockNumber,
+          "bufferSize": 2,
         })
-        IndexerState.make(
-          ~config,
-          ~persistence=MockIndexer.defaultPersistence,
-          ~chainStates,
-          ~isInReorgThreshold=false,
-          ~isRealtime=false,
-          ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
-        )
-      }
-
-      // The batch is created while each chain has fetched up to block 5.
-      let state = makeState(~eventBlocks=[5])
-      let batch =
-        state->IndexerState.createBatch(
-          ~processedCheckpointId=Internal.initialCheckpointId,
-          ~batchSizeTarget=10000,
-          ~isRollback=false,
-        )
-
-      let chain = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
-      let chainId = chain->ChainMap.Chain.toChainId
-
-      // A fetch lands mid-batch and appends block 15 to this chain's buffer
-      // (its batch-time snapshot held only block 5).
-      let cs = state->IndexerState.getChainState(~chain)
-      let concurrentFetchState = cs->ChainState.fetchState
-      let concurrentQuery: FetchState.query = {
-        partitionId: "0",
-        fromBlock: 0,
-        toBlock: None,
-        isChunk: false,
-        selection: {dependsOnAddresses: false, eventConfigs},
-        addressesByContractName: Dict.make(),
-        indexingAddresses: concurrentFetchState.indexingAddresses,
-      }
-      concurrentFetchState->FetchState.startFetchingQueries(~queries=[concurrentQuery])
-      cs->ChainState.handleQueryResult(
-        ~query=concurrentQuery,
-        ~newItemsWithDcs=[],
-        ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
-        ~newItems=[
-          Internal.Event({
-            timestamp: 15 * 15,
-            chain,
-            blockNumber: 15,
-            blockHash: "0x15",
-            logIndex: 0,
-            eventConfig: ("Mock eventConfig")->(Utils.magic: string => Internal.eventConfig),
-            event: ("Mock event")->(Utils.magic: string => Internal.event),
-          }),
-        ],
-        ~knownHeight=concurrentFetchState.knownHeight,
-      )
-
-      state->IndexerState.applyBatchProgress(~batch)
-      let resultCs = state->IndexerState.getChainState(~chain)
-      let progressed =
-        batch.progressedChainsById
-        ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
-        ->Option.getUnsafe
-
-      t.expect(
-        {
-          "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
-          // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
-          // Seeing 2 proves the current (post-fetch) fetchState was kept.
-          "bufferSize": (resultCs->ChainState.fetchState)->FetchState.bufferSize,
-        },
-        ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
-      ).toEqual({
-        "committedProgressBlockNumber": progressed.progressBlockNumber,
-        "bufferSize": 2,
-      })
-    })
+      },
+    )
   })
 })

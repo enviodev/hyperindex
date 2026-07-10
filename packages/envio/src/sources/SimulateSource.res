@@ -6,29 +6,31 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
 
   {
     name: "SimulateSource",
+    simulateItems: items,
     sourceFor: Sync,
     chain,
     poweredByHyperSync: false,
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
-      Promise.resolve(Ok([]))
+      Promise.resolve({Source.result: Ok([]), requestStats: []})
     },
     getHeightOrThrow: () => {
       // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"
-      Promise.resolve(max(endBlock, 1))
+      Promise.resolve({Source.height: max(endBlock, 1), requestStats: []})
     },
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,
       ~addressesByContractName as _,
-      ~indexingAddresses as _,
+      ~contractNameByAddress as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,
+      ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
     ) => {
-      // Return all items on first call, empty on subsequent calls
+      // Return all items on the first call, empty on subsequent.
       let result = if delivered.contents {
         []
       } else {
@@ -41,12 +43,16 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         Source.knownHeight: reportedHeight,
         blockHashes: [],
         parsedQueueItems: result,
+        // Simulate keeps the transaction and block inline on the payload; no store pages.
+        transactionStore: None,
+        blockStore: None,
         fromBlockQueried: 0,
         latestFetchedBlockNumber: reportedHeight,
         latestFetchedBlockTimestamp: 0,
         stats: {
           totalTimeElapsed: 0.,
         },
+        requestStats: [],
       })
     },
   }

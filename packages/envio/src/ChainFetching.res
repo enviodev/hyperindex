@@ -11,7 +11,19 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => {
+  // contractRegister handlers can read event.transaction and event.block, so
+  // materialise the selected fields onto the payloads before running them. All
+  // items belong to the chain being fetched, hence its single page stores.
+  await ChainState.materializePageItems(
+    ~items=itemsWithContractRegister,
+    ~transactionStore,
+    ~blockStore,
+    ~ecosystem=config.ecosystem.name,
+  )
+
   let itemsWithDcs = []
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
@@ -38,8 +50,8 @@ let runContractRegistersOrThrow = async (
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
     let contractRegister = switch eventItem {
-    | {eventConfig: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {eventConfig: {contractRegister: None, name: eventName}} =>
+    | {onEventRegistration: {contractRegister: Some(contractRegister)}} => contractRegister
+    | {onEventRegistration: {contractRegister: None, eventConfig: {name: eventName}}} =>
       // Unexpected case, since we should pass only events with contract register to this function
       JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
@@ -67,7 +79,10 @@ let runContractRegistersOrThrow = async (
           })
           ->Promise.catch(exn => {
             params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
+            exn->ErrorHandling.mkLogAndRaise(
+              ~msg=errorMessage,
+              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+            )
           }),
         )
       } else {
@@ -75,7 +90,10 @@ let runContractRegistersOrThrow = async (
       }
     } catch {
     | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~msg=errorMessage, ~logger=item->Logging.getItemLogger)
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg=errorMessage,
+        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+      )
     }
   }
 
@@ -90,7 +108,7 @@ let rec onQueryResponse = async (
   state: IndexerState.t,
   {chain, response, query}: partitionQueryResponse,
   ~stateId,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) =>
@@ -100,6 +118,8 @@ let rec onQueryResponse = async (
     let chainState = state->IndexerState.getChainState(~chain)
     let {
       parsedQueueItems,
+      transactionStore,
+      blockStore,
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp,
       stats,
@@ -108,7 +128,7 @@ let rec onQueryResponse = async (
       fromBlockQueried,
     } = response
 
-    if knownHeight > (chainState->ChainState.fetchState).knownHeight {
+    if knownHeight > chainState->ChainState.knownHeight {
       Prometheus.SourceHeight.set(
         ~blockNumber=knownHeight,
         ~chainId=(chainState->ChainState.chainConfig).id,
@@ -126,6 +146,20 @@ let rec onQueryResponse = async (
       ~numEvents=parsedQueueItems->Array.length,
       ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
     )
+
+    let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
+      let eventItem = item->Internal.castUnsafeEventItem
+      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
+    })
+    Logging.trace({
+      "msg": "Finished querying",
+      "chainId": chain->ChainMap.Chain.toChainId,
+      "partitionId": query.partitionId,
+      "fromBlock": fromBlockQueried,
+      "toBlock": latestFetchedBlockNumber,
+      "numEvents": parsedQueueItems->Array.length,
+      "numContractRegisterEvents": numContractRegisterEvents,
+    })
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 
@@ -183,7 +217,7 @@ let rec onQueryResponse = async (
       for idx in 0 to parsedQueueItems->Array.length - 1 {
         let item = parsedQueueItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.eventConfig.contractRegister !== None {
+        if eventItem.onEventRegistration.contractRegister !== None {
           itemsWithContractRegister->Array.push(item)
         }
         // TODO: Don't really need to keep it in the queue
@@ -206,9 +240,11 @@ let rec onQueryResponse = async (
               blockTimestamp: latestFetchedBlockTimestamp,
             },
             ~query,
+            ~transactionStore,
+            ~blockStore,
           )
           ChainMetadata.stage(state)
-          scheduleFetchChain(chain)
+          scheduleFetch()
           scheduleProcessing()
         }
 
@@ -218,6 +254,8 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
+          ~transactionStore,
+          ~blockStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -234,6 +272,8 @@ and applyQueryResponse = (
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
+  ~transactionStore,
+  ~blockStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
@@ -244,6 +284,8 @@ and applyQueryResponse = (
     ~newItems,
     ~newItemsWithDcs,
     ~knownHeight,
+    ~transactionStore,
+    ~blockStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
@@ -270,8 +312,7 @@ let finishWaitingForNewBlock = (
   ~chain,
   ~knownHeight,
   ~stateId,
-  ~scheduleFetchAllChains,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
 ) =>
   if state->IndexerState.isStale(~stateId) {
@@ -289,43 +330,39 @@ let finishWaitingForNewBlock = (
       ->IndexerState.chainStates
       ->Dict.valuesToArray
       ->Array.every(cs => {
-        cs->ChainState.fetchState->FetchState.isReadyToEnterReorgThreshold
+        cs->ChainState.isReadyToEnterReorgThreshold
       })
 
     // Kick processing in case there are block handlers to run.
     if shouldEnterReorgThreshold {
       IndexerState.enterReorgThreshold(state)
-      scheduleFetchAllChains()
-    } else {
-      scheduleFetchChain(chain)
     }
+    scheduleFetch()
     scheduleProcessing()
   }
 
-let checkAndFetchForChain = async (
+let fetchChain = async (
   state: IndexerState.t,
   chain,
+  ~action,
   ~stateId,
-  ~scheduleFetchAllChains,
-  ~scheduleFetchChain,
+  ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
-    let fetchState = chainState->ChainState.fetchState
     let isRealtime = state->IndexerState.isRealtime
     let sourceManager = chainState->ChainState.sourceManager
 
-    // Only affects the WaitingForNewBlock branch of fetchNext, where
+    // Only affects the WaitingForNewBlock branch of dispatch, where
     // there's nothing to fetch. During backfill any such chain is idle.
     let reducedPolling = !isRealtime
 
     // Owns its error boundary: launch doesn't catch, so any failure here (the
-    // query, response handling, or fetchNext itself) must stop the indexer.
+    // query, response handling, or dispatch itself) must stop the indexer.
     try {
-      await sourceManager->SourceManager.fetchNext(
-        ~fetchState,
+      await chainState->ChainState.dispatch(
         ~waitForNewBlock=(~knownHeight) =>
           sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
@@ -334,25 +371,24 @@ let checkAndFetchForChain = async (
             ~chain,
             ~knownHeight,
             ~stateId,
-            ~scheduleFetchAllChains,
-            ~scheduleFetchChain,
+            ~scheduleFetch,
             ~scheduleProcessing,
           ),
         ~executeQuery=async query => {
           // Caught here (not just by the outer try) so the query promise never
-          // rejects: fetchNext spins a side-chain off it that would otherwise
+          // rejects: dispatch spins a side-chain off it that would otherwise
           // become an unhandled rejection.
           try {
             let response = await sourceManager->SourceManager.executeQuery(
               ~query,
-              ~knownHeight=fetchState.knownHeight,
+              ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
             )
             await onQueryResponse(
               state,
               {chain, response, query},
               ~stateId,
-              ~scheduleFetchChain,
+              ~scheduleFetch,
               ~scheduleProcessing,
               ~scheduleRollback,
             )
@@ -360,6 +396,7 @@ let checkAndFetchForChain = async (
           | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
           }
         },
+        ~action,
         ~stateId,
       )
     } catch {
@@ -367,31 +404,4 @@ let checkAndFetchForChain = async (
       IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
     }
   }
-}
-
-let checkAndFetchAllChains = async (
-  state: IndexerState.t,
-  ~stateId,
-  ~scheduleFetchAllChains,
-  ~scheduleFetchChain,
-  ~scheduleProcessing,
-  ~scheduleRollback,
-) => {
-  // Iterate the state's chain states so we can construct tests that don't use
-  // all chains
-  let _ = await state
-  ->IndexerState.chainStates
-  ->Dict.valuesToArray
-  ->Array.map(cs =>
-    checkAndFetchForChain(
-      state,
-      ChainMap.Chain.makeUnsafe(~chainId=(cs->ChainState.chainConfig).id),
-      ~stateId,
-      ~scheduleFetchAllChains,
-      ~scheduleFetchChain,
-      ~scheduleProcessing,
-      ~scheduleRollback,
-    )
-  )
-  ->Promise.all
 }

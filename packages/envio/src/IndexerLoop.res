@@ -15,38 +15,29 @@ let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
 // (fetch kicks process/rollback, which kick fetch again), so they're defined as
 // one `let rec` block and threaded into the operations as the only way back in.
 let start = (state: IndexerState.t) => {
-  let rec scheduleFetchAllChains = () =>
+  let rec scheduleFetch = () =>
     launch(state, () =>
-      ChainFetching.checkAndFetchAllChains(
-        state,
-        ~stateId=state->IndexerState.epoch,
-        ~scheduleFetchAllChains,
-        ~scheduleFetchChain,
-        ~scheduleProcessing,
-        ~scheduleRollback,
-      )
-    )
-  and scheduleFetchChain = chain =>
-    launch(state, () =>
-      ChainFetching.checkAndFetchForChain(
-        state,
-        chain,
-        ~stateId=state->IndexerState.epoch,
-        ~scheduleFetchAllChains,
-        ~scheduleFetchChain,
-        ~scheduleProcessing,
-        ~scheduleRollback,
+      state
+      ->IndexerState.crossChainState
+      ->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) =>
+        ChainFetching.fetchChain(
+          state,
+          chain,
+          ~action,
+          ~stateId=state->IndexerState.epoch,
+          ~scheduleFetch,
+          ~scheduleProcessing,
+          ~scheduleRollback,
+        )
       )
     )
   and scheduleProcessing = () =>
-    launch(state, () =>
-      BatchProcessing.startProcessing(state, ~scheduleFetchAllChains, ~scheduleRollback)
-    )
+    launch(state, () => BatchProcessing.startProcessing(state, ~scheduleFetch, ~scheduleRollback))
   and scheduleRollback = () =>
     launch(state, () =>
-      Rollback.rollback(state, ~scheduleFetchAllChains, ~scheduleProcessing, ~scheduleRollback)
+      Rollback.rollback(state, ~scheduleFetch, ~scheduleProcessing, ~scheduleRollback)
     )
 
-  scheduleFetchAllChains()
+  scheduleFetch()
   scheduleProcessing()
 }

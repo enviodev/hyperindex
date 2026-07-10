@@ -21,38 +21,54 @@ let uniswapV2FactoryAddress =
 // Build the event config by hand so topic0 stays the bare sighash. MockIndexer's
 // evmEventConfig embeds its `id` (sighash_topicCount) directly as topic0, which
 // is fine for unit tests against mocked sources but breaks real HyperSync queries.
+// Block number and hash are needed so HyperSync returns block data for each item;
+// otherwise blockHashes harvested from items would crash on undefined `block`.
+let pairCreatedSelectedBlockFields = Utils.Set.fromArray(
+  ([Number, Hash]: array<Internal.evmBlockField>),
+)
+
 let pairCreatedEventConfig: Internal.evmEventConfig = {
   id: pairCreatedEventId,
   contractName: "UniswapV2Factory",
   name: "PairCreated",
-  isWildcard: false,
-  filterByAddresses: false,
-  dependsOnAddresses: true,
-  startBlock: None,
-  handler: None,
-  contractRegister: None,
   paramsRawEventSchema: S.literal(%raw(`null`))
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
   simulateParamsSchema: S.unknown
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-  getEventFiltersOrThrow: _ =>
-    Static([
-      {
-        topic0: [pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe],
-        topic1: [],
-        topic2: [],
-        topic3: [],
-      },
-    ]),
-  // Block number and hash are needed so HyperSync returns block data for each item;
-  // otherwise blockHashes harvested from items would crash on undefined `block`.
-  selectedBlockFields: Utils.Set.fromArray(([Number, Hash]: array<Internal.evmBlockField>)),
+  selectedBlockFields: pairCreatedSelectedBlockFields,
   selectedTransactionFields: Utils.Set.make(),
+  transactionFieldMask: 0.,
+  blockFieldMask: Evm.eventBlockFieldMask(
+    pairCreatedSelectedBlockFields->(
+      Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+    ),
+  ),
   sighash: pairCreatedTopic0,
   topicCount: 3,
   paramsMetadata: [],
+}
+
+let pairCreatedRegistration: Internal.evmOnEventRegistration = {
+  eventConfig: (pairCreatedEventConfig :> Internal.eventConfig),
+  isWildcard: false,
+  filterByAddresses: false,
+  dependsOnAddresses: true,
+  startBlock: None,
+  handler: None,
+  contractRegister: None,
+  resolvedWhere: {
+    topicSelections: [
+      {
+        topic0: [pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe],
+        topic1: Values([]),
+        topic2: Values([]),
+        topic3: Values([]),
+      },
+    ],
+    startBlock: None,
+  },
 }
 
 // Match the on-chain ABI so the hypersync-client decoder doesn't raise
@@ -73,30 +89,15 @@ let pairCreatedEventParams: HyperSyncClient.Decoder.eventParamsInput = {
   params: pairCreatedAbi,
 }
 
-let makeIndexingAddresses = () =>
-  Dict.fromArray([
-    (
-      uniswapV2FactoryAddress->Address.toString,
-      (
-        {
-          address: uniswapV2FactoryAddress,
-          contractName: "UniswapV2Factory",
-          registrationBlock: -1,
-          effectiveStartBlock: 0,
-        }: FetchState.indexingAddress
-      ),
-    ),
-  ])
-
 let makeAddressesByContractName = () =>
   Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
 
 let makeSelection = (): FetchState.selection => {
-  eventConfigs: [(pairCreatedEventConfig :> Internal.eventConfig)],
+  onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
   dependsOnAddresses: true,
 }
 
-let makeEventRouter = () => [pairCreatedEventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain)
+let makeEventRouter = () => [pairCreatedRegistration]->EventRouter.fromEvmEventModsOrThrow(~chain)
 
 let makeHyperSyncSource = () =>
   HyperSyncSource.make({
@@ -128,10 +129,11 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressesByContractName=makeAddressesByContractName(),
-    ~indexingAddresses=makeIndexingAddresses(),
+    ~contractNameByAddress=FetchState.deriveContractNameByAddress(makeAddressesByContractName()),
     ~knownHeight=toBlock + 1000,
     ~partitionId="0",
     ~selection=makeSelection(),
+    ~itemsTarget=5000,
     ~retry=0,
     ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
   ) catch {

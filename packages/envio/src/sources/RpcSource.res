@@ -1,7 +1,5 @@
 open Source
 
-exception QueryTimout(string)
-
 // eth_getTransactionByHash/eth_getTransactionReceipt returning null is usually
 // transient: a load-balanced provider can route the lookup to a node that
 // hasn't caught up with the one that served eth_getLogs. Must stay retryable,
@@ -48,18 +46,16 @@ let getKnownRawBlockWithBackoff = async (
   ~chain,
   ~blockNumber,
   ~backoffMsOnFailure,
+  ~recordRequest: (~method: string, ~seconds: float) => unit,
 ) => {
   let currentBackoff = ref(backoffMsOnFailure)
   let result = ref(None)
 
   while result.contents->Option.isNone {
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="eth_getBlockByNumber",
-    )
+    let timerRef = Performance.now()
     switch await getKnownRawBlock(~client, ~blockNumber) {
     | exception err =>
+      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
       Logging.warn({
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
@@ -69,273 +65,115 @@ let getKnownRawBlockWithBackoff = async (
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
-    | json => result := Some(json)
+    | json =>
+      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
+      result := Some(json)
     }
   }
   result.contents->Option.getOrThrow
 }
-let getSuggestedBlockIntervalFromExn = {
-  // Unknown provider: "retry with the range 123-456"
-  let suggestedRangeRegExp = /retry with the range (\d+)-(\d+)/
-
-  // QuickNode, 1RPC, Blast: "limited to a 1000 blocks range"
-  let blockRangeLimitRegExp = /limited to a (\d+) blocks range/
-
-  // Alchemy: "up to a 500 block range"
-  let alchemyRangeRegExp = /up to a (\d+) block range/
-
-  // Cloudflare: "Max range: 3500"
-  let cloudflareRangeRegExp = /Max range: (\d+)/
-
-  // Thirdweb: "Maximum allowed number of requested blocks is 3500"
-  let thirdwebRangeRegExp = /Maximum allowed number of requested blocks is (\d+)/
-
-  // BlockPI: "limited to 2000 block"
-  let blockpiRangeRegExp = /limited to (\d+) block/
-
-  // Base: "block range too large" - fixed 2000 block limit
-  let baseRangeRegExp = /block range too large/
-
-  // evm-rpc.sei-apis.com: "block range too large (2000), maximum allowed is 1000 blocks"
-  let maxAllowedBlocksRegExp = /maximum allowed is (\d+) blocks/
-
-  // Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
-  let blastPaidRegExp = /exceeds the range allowed for your plan \(\d+ > (\d+)\)/
-
-  // Chainstack: "Block range limit exceeded" - 10000 block limit
-  let chainstackRegExp = /Block range limit exceeded./
-
-  // Coinbase: "please limit the query to at most 1000 blocks"
-  let coinbaseRegExp = /please limit the query to at most (\d+) blocks/
-
-  // PublicNode: "maximum block range: 2000"
-  let publicNodeRegExp = /maximum block range: (\d+)/
-
-  // Hyperliquid: "query exceeds max block range 1000"
-  let hyperliquidRegExp = /query exceeds max block range (\d+)/
-
-  // TODO: Reproduce how the error message looks like
-  // when we send request with numeric block range instead of hex
-  // Infura, ZkSync: "Try with this block range [0x123,0x456]"
-
-  // Future handling needed for these providers that don't suggest ranges:
-  // - Ankr: "block range is too wide"
-  // - 1RPC: "response size should not greater than 10000000 bytes"
-  // - ZkEVM: "query returned more than 10000 results"
-  // - LlamaRPC: "query exceeds max results"
-  // - Optimism: "backend response too large" or "Block range is too large"
-  // - Arbitrum: "logs matched by query exceeds limit of 10000"
-
-  let parseMessageForBlockRange = (message: string) => {
-    // Helper to extract block range from regex match
-    let extractBlockRange = (execResult, ~isMaxRange) =>
-      switch execResult->RegExp.Result.matches {
-      | [Some(blockRangeLimit)] =>
-        switch blockRangeLimit->Int.fromString {
-        | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit, isMaxRange)
+// Pulls the underlying provider error message back out of a caught exn, for
+// logging/debugging. Provider JSON-RPC errors surface as `Rpc.JsonRpcError`;
+// the paging retry decision (see `parseGetNextPageRetryError` below) surfaces
+// as a napi `JsExn` whose message is the JSON payload `EvmRpcClient.getNextPage`
+// throws, carrying the classified message (if any) under `errorMessage`.
+let getErrorMessage = (exn: exn): option<string> =>
+  switch exn {
+  | Rpc.JsonRpcError({message}) => Some(message)
+  | JsExn(e) =>
+    switch e->JsExn.message {
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch obj->Dict.get("errorMessage") {
+        | Some(String(message)) => Some(message)
         | _ => None
         }
-      | _ => None
       }
-
-    // Try each regex pattern in order
-    switch suggestedRangeRegExp->RegExp.exec(message) {
-    | Some(execResult) =>
-      switch execResult->RegExp.Result.matches {
-      | [Some(fromBlock), Some(toBlock)] =>
-        switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
-        | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
-          Some(toBlock - fromBlock + 1, false)
-        | _ => None
-        }
-      | _ => None
-      }
-    | None =>
-      // Try each provider's specific error pattern
-      switch blockRangeLimitRegExp->RegExp.exec(message) {
-      | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-      | None =>
-        switch alchemyRangeRegExp->RegExp.exec(message) {
-        | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-        | None =>
-          switch cloudflareRangeRegExp->RegExp.exec(message) {
-          | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-          | None =>
-            switch thirdwebRangeRegExp->RegExp.exec(message) {
-            | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-            | None =>
-              switch blockpiRangeRegExp->RegExp.exec(message) {
-              | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-              | None =>
-                switch maxAllowedBlocksRegExp->RegExp.exec(message) {
-                | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                | None =>
-                  switch baseRangeRegExp->RegExp.exec(message) {
-                  | Some(_) => Some(2000, true)
-                  | None =>
-                    switch blastPaidRegExp->RegExp.exec(message) {
-                    | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                    | None =>
-                      switch chainstackRegExp->RegExp.exec(message) {
-                      | Some(_) => Some(10000, true)
-                      | None =>
-                        switch coinbaseRegExp->RegExp.exec(message) {
-                        | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                        | None =>
-                          switch publicNodeRegExp->RegExp.exec(message) {
-                          | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                          | None =>
-                            switch hyperliquidRegExp->RegExp.exec(message) {
-                            | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                            | None => None
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+    | None => None
     }
+  | _ => None
   }
-
-  (exn): option<(
-    // The suggested block range
-    int,
-    // Whether it's the max range that the provider allows
-    bool,
-  )> =>
-    switch exn {
-    | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
-    | JsExn(error) =>
-      try {
-        let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrThrow(S.string)
-        parseMessageForBlockRange(message)
-      } catch {
-      | _ => None
-      }
-    | _ => None
-    }
-}
-
-type eventBatchQuery = {
-  logs: array<Rpc.GetLogs.log>,
-  latestFetchedBlockInfo: blockInfo,
-}
-
-let maxSuggestedBlockIntervalKey = "max"
-
-let getNextPage = (
-  ~fromBlock,
-  ~toBlock,
-  ~addresses,
-  ~topicQuery,
-  ~loadBlock,
-  ~syncConfig as sc: Config.sourceSync,
-  ~client,
-  ~mutSuggestedBlockIntervals,
-  ~partitionId,
-  ~sourceName,
-  ~chainId,
-): promise<eventBatchQuery> => {
-  //If the query hangs for longer than this, reject this promise to reduce the block interval
-  let queryTimoutPromise =
-    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
-      Promise.reject(
-        QueryTimout(`Query took longer than ${Int.toString(sc.queryTimeoutMillis / 1000)} seconds`),
-      )
-    )
-
-  let latestFetchedBlockPromise = loadBlock(toBlock)
-  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-  let logsPromise = Rpc.getLogs(
-    ~client,
-    ~param={
-      address: ?addresses,
-      topics: topicQuery,
-      fromBlock,
-      toBlock,
-    },
-  )->Promise.then(async logs => {
-    {
-      logs,
-      latestFetchedBlockInfo: await latestFetchedBlockPromise,
-    }
-  })
-
-  [queryTimoutPromise, logsPromise]
-  ->Promise.race
-  ->Promise.catch(err => {
-    switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
-      )
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithSuggestedToBlock({
-              toBlock: fromBlock + nextBlockIntervalTry - 1,
-            }),
-          }),
-        ),
-      )
-    | None =>
-      let executedBlockInterval = toBlock - fromBlock + 1
-      let nextBlockIntervalTry =
-        (executedBlockInterval->Int.toFloat *. sc.backoffMultiplicative)->Float.toInt
-      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithBackoff({
-              message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
-              backoffMillis: sc.backoffMillis,
-            }),
-          }),
-        ),
-      )
-    }
-  })
-}
 
 type logSelection = {
   addresses: option<array<Address.t>>,
   topicQuery: Rpc.GetLogs.topicQuery,
 }
 
+// `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
+// payload describing the retry decision:
+// `{"kind":"Retry","attemptedToBlock":int,"errorMessage":string|null,
+// "requestStats":[{"method":string,"seconds":float}],"retry":
+// {"tag":"WithSuggestedToBlock","toBlock":int} |
+// {"tag":"WithBackoff","message":string,"backoffMillis":int}}`.
+let parseGetNextPageRetryError = (exn: exn): option<(
+  int,
+  Source.getItemsRetry,
+  array<Source.requestStat>,
+)> =>
+  switch exn {
+  | JsExn(e) =>
+    switch e->JsExn.message {
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch (obj->Dict.get("kind"), obj->Dict.get("attemptedToBlock"), obj->Dict.get("retry")) {
+        | (Some(String("Retry")), Some(Number(attemptedToBlock)), Some(Object(retryObj))) =>
+          let requestStats = switch obj->Dict.get("requestStats") {
+          | Some(Array(stats)) =>
+            stats->Array.filterMap(s =>
+              switch s->JSON.Decode.object {
+              | Some(o) =>
+                switch (o->Dict.get("method"), o->Dict.get("seconds")) {
+                | (Some(String(method)), Some(Number(seconds))) => Some({Source.method, seconds})
+                | _ => None
+                }
+              | None => None
+              }
+            )
+          | _ => []
+          }
+          let retry = switch retryObj->Dict.get("tag") {
+          | Some(String("WithSuggestedToBlock")) =>
+            switch retryObj->Dict.get("toBlock") {
+            | Some(Number(toBlock)) =>
+              Some(Source.WithSuggestedToBlock({toBlock: toBlock->Float.toInt}))
+            | _ => None
+            }
+          | Some(String("WithBackoff")) =>
+            switch (retryObj->Dict.get("message"), retryObj->Dict.get("backoffMillis")) {
+            | (Some(String(message)), Some(Number(backoffMillis))) =>
+              Some(Source.WithBackoff({message, backoffMillis: backoffMillis->Float.toInt}))
+            | _ => None
+            }
+          | _ => None
+          }
+          retry->Option.map(retry => (attemptedToBlock->Float.toInt, retry, requestStats))
+        | _ => None
+        }
+      }
+    | None => None
+    }
+  | _ => None
+  }
+
 type selectionConfig = {
-  getLogSelectionOrThrow: (~addressesByContractName: dict<array<Address.t>>) => logSelection,
+  getLogSelectionsOrThrow: (
+    ~addressesByContractName: dict<array<Address.t>>,
+  ) => array<logSelection>,
 }
 
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let staticTopicSelections = []
-  let dynamicEventFilters = []
+let getSelectionConfig = (selection: FetchState.selection) => {
+  let evmOnEventRegistrations =
+    selection.onEventRegistrations->(
+      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
+    )
 
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-  ->Array.forEach(({getEventFiltersOrThrow}) => {
-    switch getEventFiltersOrThrow(chain) {
-    | Static(s) => staticTopicSelections->Array.pushMany(s)->ignore
-    | Dynamic(fn) => dynamicEventFilters->Array.push(fn)->ignore
-    }
-  })
-
-  let getLogSelectionOrThrow = switch (
-    staticTopicSelections->LogSelection.compressTopicSelections,
-    dynamicEventFilters,
-  ) {
-  | ([], []) =>
+  if evmOnEventRegistrations->Utils.Array.isEmpty {
     throw(
       Source.GetItemsError(
         UnsupportedSelection({
@@ -343,53 +181,101 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
         }),
       ),
     )
-  | ([topicSelection], []) => {
-      let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
-      (~addressesByContractName) => {
-        addresses: switch addressesByContractName->FetchState.addressesByContractNameGetAll {
-        | [] => None
-        | addresses => Some(addresses)
-        },
-        topicQuery,
-      }
-    }
-  | ([], [dynamicEventFilter]) if selection.eventConfigs->Array.length === 1 =>
-    let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
+  }
 
-    (~addressesByContractName) => {
-      let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
-      {
-        addresses: eventConfig.isWildcard ? None : Some(addresses),
-        topicQuery: switch dynamicEventFilter(addresses) {
-        | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
-        | _ =>
-          throw(
-            Source.GetItemsError(
-              UnsupportedSelection({
-                message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
-              }),
-            ),
-          )
-        },
-      }
+  // eth_getLogs takes one address list and one topic selection per request, so
+  // fan out to one request per selection. Each address-bound event is grouped by
+  // its contract and later scoped to that contract's own addresses — pooling all
+  // contracts' addresses would let one contract's query fetch a sibling's logs,
+  // which route back by address and bypass the sibling's filter (routing never
+  // re-applies it). Pure-wildcard events carry no address constraint, so they're
+  // pooled and resolved once.
+  let noAddressTopicSelections = []
+  let byContract = Dict.make()
+  let wildcardByContract = Dict.make()
+  let contractNames = Utils.Set.make()
+
+  evmOnEventRegistrations->Array.forEach(reg => {
+    let contractName = reg.eventConfig.contractName
+    let {isWildcard, dependsOnAddresses, resolvedWhere} = reg
+    if dependsOnAddresses {
+      contractNames->Utils.Set.add(contractName)->ignore
+      (isWildcard ? wildcardByContract : byContract)->Utils.Dict.pushMany(
+        contractName,
+        resolvedWhere.topicSelections,
+      )
+    } else {
+      noAddressTopicSelections
+      ->Array.pushMany(
+        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
+      )
+      ->ignore
     }
-  | _ =>
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
-        }),
-      ),
-    )
+  })
+
+  // `compressTopicSelections` folds the filter-less events into a single topic0
+  // OR-set, keeping the common case at one request.
+  let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
+    topicSelections
+    ->LogSelection.compressTopicSelections
+    ->Array.map(topicSelection => {
+      addresses,
+      topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
+    })
+
+  // Address-independent, so resolve once (the wildcard partition reuses this).
+  let noAddressLogSelections = toLogSelections(~addresses=None, noAddressTopicSelections)
+
+  let getLogSelectionsOrThrow = if contractNames->Utils.Set.size === 0 {
+    (~addressesByContractName as _) => noAddressLogSelections
+  } else {
+    (~addressesByContractName): array<logSelection> => {
+      let logSelections = noAddressLogSelections->Array.copy
+      contractNames->Utils.Set.forEach(contractName => {
+        switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        | None
+        | Some([]) => ()
+        | Some(addresses) =>
+          // Non-wildcard filters, scoped to this contract's addresses.
+          switch byContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(topicSelections) =>
+            logSelections
+            ->Array.pushMany(
+              toLogSelections(
+                ~addresses=Some(addresses),
+                topicSelections->LogSelection.materializeTopicSelections(~addresses),
+              ),
+            )
+            ->ignore
+          | None => ()
+          }
+
+          // Wildcard-by-address filters fold the address into the topics,
+          // so they still match any address.
+          switch wildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | Some(topicSelections) =>
+            logSelections
+            ->Array.pushMany(
+              toLogSelections(
+                ~addresses=None,
+                topicSelections->LogSelection.materializeTopicSelections(~addresses),
+              ),
+            )
+            ->ignore
+          | None => ()
+          }
+        }
+      })
+      logSelections
+    }
   }
 
   {
-    getLogSelectionOrThrow: getLogSelectionOrThrow,
+    getLogSelectionsOrThrow: getLogSelectionsOrThrow,
   }
 }
 
-let memoGetSelectionConfig = (~chain) =>
-  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
+let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
@@ -531,11 +417,9 @@ let makeThrowingGetEventBlock = (
   }
 }
 
-// `number`, `timestamp` and `hash` are always part of the selected block
-// fields, so they can be read from the assembled block at item construction.
+// `number` is always part of the selected block fields, so it can be read
+// from the assembled block for the item's own `blockNumber`.
 @get external getBlockNumber: Internal.eventBlock => int = "number"
-@get external getBlockTimestamp: Internal.eventBlock => int = "timestamp"
-@get external getBlockHash: Internal.eventBlock => string = "hash"
 
 // Field source classification for RPC calls
 type fieldSource = TransactionOnly | ReceiptOnly | Both
@@ -851,10 +735,11 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmEventConfig>,
+  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
   allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
   lowercaseAddresses: bool,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let make = (
@@ -867,6 +752,7 @@ let make = (
     allEventParams,
     lowercaseAddresses,
     ?ws,
+    ?headers,
   }: options,
 ): t => {
   let chainId = chain->ChainMap.Chain.toChainId
@@ -879,22 +765,48 @@ let make = (
   }
   let name = `RPC (${urlHost})`
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
+  let getSelectionConfig = memoGetSelectionConfig()
 
-  let mutSuggestedBlockIntervals = Dict.make()
+  let client = Rpc.makeClient(url, ~headers?)
+  let rpcClient = EvmRpcClient.make(
+    ~url,
+    ~allEventParams,
+    ~checksumAddresses=!lowercaseAddresses,
+    ~syncConfig,
+    ~headers?,
+  )
 
-  let client = Rpc.makeClient(url)
-  let rpcClient = EvmRpcClient.make(~url)
+  // Requests are made from shared, memoized loaders, so they can't be
+  // attributed to a single getItemsOrThrow/getHeightOrThrow/getBlockHashes
+  // call at its call site. Every actual request (cache/dedup hits never reach
+  // recordRequest) pushes here; each method drains whatever is pending when it
+  // returns. Since a push always lands in exactly one drain, per-source totals
+  // stay exact even with concurrent in-flight calls — which call happens to
+  // drain a given entry doesn't matter, since SourceManager aggregates by
+  // (source, method) regardless of which call returned it.
+  let pendingRequestStats: array<Source.requestStat> = []
+  let recordRequest = (~method, ~seconds) => {
+    pendingRequestStats->Array.push({Source.method, seconds})->ignore
+  }
+  let drainRequestStats = () => {
+    let stats = pendingRequestStats->Utils.Array.copy
+    pendingRequestStats->Utils.Array.clearInPlace
+    stats
+  }
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_getTransactionByHash",
-        )
-        Rpc.GetTransactionByHash.rawRoute->Rest.fetch(transactionHash, ~client)
+        let timerRef = Performance.now()
+        Rpc.GetTransactionByHash.rawRoute
+        ->Rest.fetch(transactionHash, ~client)
+        ->Promise.thenResolve(res => {
+          recordRequest(
+            ~method="eth_getTransactionByHash",
+            ~seconds=timerRef->Performance.secondsSince,
+          )
+          res
+        })
       },
       ~onError=(am, ~exn) => {
         Logging.error({
@@ -922,6 +834,7 @@ let make = (
           ~chain,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
+          ~recordRequest,
         )
       },
       ~onError=(am, ~exn) => {
@@ -944,12 +857,16 @@ let make = (
   let makeReceiptLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_getTransactionReceipt",
-        )
-        Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(transactionHash, ~client)
+        let timerRef = Performance.now()
+        Rpc.GetTransactionReceipt.rawRoute
+        ->Rest.fetch(transactionHash, ~client)
+        ->Promise.thenResolve(res => {
+          recordRequest(
+            ~method="eth_getTransactionReceipt",
+            ~seconds=timerRef->Performance.secondsSince,
+          )
+          res
+        })
       },
       ~onError=(am, ~exn) => {
         Logging.error({
@@ -1000,68 +917,25 @@ let make = (
     ~lowercaseAddresses,
   )
 
-  let convertLogToHyperSyncEvent = (log: Rpc.GetLogs.log): HyperSyncClient.ResponseTypes.event => {
-    let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
-      removed: log.removed,
-      index: log.logIndex,
-      transactionIndex: log.transactionIndex,
-      transactionHash: log.transactionHash,
-      blockHash: log.blockHash,
-      blockNumber: log.blockNumber,
-      address: log.address,
-      data: log.data,
-      topics: log.topics->(Utils.magic: array<string> => array<Nullable.t<EvmTypes.Hex.t>>),
-    }
-    {log: hyperSyncLog}
-  }
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.tWithParams>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None => {
-        let decoder = HyperSyncClient.Decoder.fromParams(
-          allEventParams,
-          ~checksumAddresses=!lowercaseAddresses,
-        )
-        hscDecoder := Some(decoder)
-        decoder
-      }
-    }
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~indexingAddresses,
+    ~contractNameByAddress,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
+    ~itemsTarget as _,
     ~retry,
     ~logger as _,
   ) => {
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
-
-    let suggestedBlockInterval = switch mutSuggestedBlockIntervals->Utils.Dict.dangerouslyGetNonOption(
-      maxSuggestedBlockIntervalKey,
-    ) {
-    | Some(maxSuggestedBlockInterval) => maxSuggestedBlockInterval
-    | None =>
-      mutSuggestedBlockIntervals
-      ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-      ->Option.getOr(syncConfig.initialBlockInterval)
-    }
+    let startFetchingBatchTimeRef = Performance.now()
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
     | Some(toBlock) => Pervasives.min(toBlock, knownHeight)
     | None => knownHeight
     }
-
-    let suggestedToBlock = Pervasives.min(fromBlock + suggestedBlockInterval - 1, toBlock)
-    //Defensively ensure we never query a target block below fromBlock
-    ->Pervasives.max(fromBlock)
 
     let firstBlockParentPromise =
       fromBlock > 0
@@ -1070,71 +944,60 @@ let make = (
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
-    let {getLogSelectionOrThrow} = getSelectionConfig(selection)
-    let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
+    let {getLogSelectionsOrThrow} = getSelectionConfig(selection)
+    let logSelections = getLogSelectionsOrThrow(~addressesByContractName)
 
-    let {logs, latestFetchedBlockInfo} = await getNextPage(
-      ~fromBlock,
-      ~toBlock=suggestedToBlock,
-      ~addresses,
-      ~topicQuery,
-      ~loadBlock=blockNumber =>
-        blockLoader.contents
-        ->LazyLoader.get(blockNumber)
-        ->Promise.thenResolve(parseBlockInfo),
-      ~syncConfig,
-      ~client,
-      ~mutSuggestedBlockIntervals,
-      ~partitionId,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-    )
-
-    let executedBlockInterval = suggestedToBlock - fromBlock + 1
-
-    // Increase the suggested block interval only when it was actually applied
-    // and we didn't query to a hard toBlock
-    // We also don't care about it when we have a hard max block interval
-    if (
-      executedBlockInterval >= suggestedBlockInterval &&
-        !(mutSuggestedBlockIntervals->Dict.has(maxSuggestedBlockIntervalKey))
-    ) {
-      // Increase batch size going forward, but do not increase past a configured maximum
-      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-      mutSuggestedBlockIntervals->Dict.set(
-        partitionId,
-        Pervasives.min(
-          executedBlockInterval + syncConfig.accelerationAdditive,
-          syncConfig.intervalCeiling,
+    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage({
+      fromBlock,
+      toBlockCeiling: toBlock,
+      logSelections: logSelections->Array.map(({
+        addresses,
+        topicQuery,
+      }): EvmRpcClient.logSelectionInput => {
+        ?addresses,
+        topics: topicQuery->Array.map(filter =>
+          switch filter {
+          | Rpc.GetLogs.Null => Nullable.null
+          | Single(topic) => Nullable.make([topic])
+          | Multiple(topics) => Nullable.make(topics)
+          }
         ),
-      )
-    }
-
-    // Convert RPC logs to HyperSync events
-    let hyperSyncEvents = logs->Array.map(convertLogToHyperSyncEvent)
-
-    // Decode using HyperSyncClient decoder
-    let parsedEvents = try await getHscDecoder().decodeLogs(hyperSyncEvents) catch {
+      }),
+      partitionId,
+    }) catch {
     | exn =>
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn,
-            attemptedToBlock: toBlock,
-            retry: ImpossibleForTheQuery({
-              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
+      switch exn->parseGetNextPageRetryError {
+      | Some((attemptedToBlock, retry, requestStats)) =>
+        requestStats->Array.forEach(stat =>
+          recordRequest(~method=stat.method, ~seconds=stat.seconds)
+        )
+        throw(Source.GetItemsError(FailedGettingItems({exn, attemptedToBlock, retry})))
+      | None =>
+        throw(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn,
+              attemptedToBlock: toBlock,
+              retry: WithBackoff({
+                message: "Unexpected issue while fetching events from the RPC client. Attempt a retry.",
+                backoffMillis: switch retry {
+                | 0 => 500
+                | _ => 1000 * retry
+                },
+              }),
             }),
-          }),
-        ),
-      )
+          ),
+        )
+      }
     }
+    requestStats->Array.forEach(stat => recordRequest(~method=stat.method, ~seconds=stat.seconds))
 
-    let parsedQueueItems = await logs
-    ->Array.zip(parsedEvents)
-    ->Array.filterMap(((
-      log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<dict<Internal.eventParams>>,
-    )) => {
+    let latestFetchedBlockInfo = await blockLoader.contents
+    ->LazyLoader.get(queriedToBlock)
+    ->Promise.thenResolve(parseBlockInfo)
+
+    let parsedQueueItems = await items
+    ->Array.filterMap(({log, params: maybeDecodedEvent}: EvmRpcClient.rpcEventItem) => {
       let topic0 = log.topics[0]->Option.getOr("0x0")
       let routedAddress = if lowercaseAddresses {
         log.address->Address.Evm.fromAddressLowercaseOrThrow
@@ -1144,12 +1007,15 @@ let make = (
 
       switch eventRouter->EventRouter.get(
         ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
-        ~indexingAddresses,
+        ~contractNameByAddress,
         ~contractAddress=routedAddress,
-        ~blockNumber=log.blockNumber,
       ) {
       | None => None
-      | Some(eventConfig) =>
+      | Some(onEventRegistration) =>
+        let eventConfig =
+          onEventRegistration.eventConfig->(
+            Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+          )
         switch maybeDecodedEvent
         ->Nullable.toOption
         ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
@@ -1160,7 +1026,9 @@ let make = (
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
                   log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields,
+                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+                    ),
                   ),
                 )) catch {
                 | TransactionDataNotFound({message}) =>
@@ -1194,22 +1062,21 @@ let make = (
                 }
 
                 Internal.Event({
-                  eventConfig: (eventConfig :> Internal.eventConfig),
-                  timestamp: block->getBlockTimestamp,
+                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
                   blockNumber: block->getBlockNumber,
-                  blockHash: block->getBlockHash,
                   chain,
                   logIndex: log.logIndex,
-                  event: {
+                  transactionIndex: log.transactionIndex,
+                  payload: {
                     contractName: eventConfig.contractName,
                     eventName: eventConfig.name,
                     chainId: chain->ChainMap.Chain.toChainId,
                     params: decoded,
-                    transaction,
                     block,
+                    transaction,
                     srcAddress: routedAddress,
                     logIndex: log.logIndex,
-                  }->Internal.fromGenericEvent,
+                  }->Evm.fromPayload,
                 })
               }
             )(),
@@ -1222,7 +1089,7 @@ let make = (
 
     let optFirstBlockParent = await firstBlockParentPromise
 
-    let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
@@ -1240,7 +1107,7 @@ let make = (
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }
-    logs->Array.forEach(log =>
+    items->Array.forEach(({log}) =>
       blockHashes
       ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore
@@ -1250,12 +1117,16 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
+      // RPC keeps the transaction and block inline on the payload; no store pages.
+      transactionStore: None,
+      blockStore: None,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
       blockHashes,
       fromBlockQueried: fromBlock,
+      requestStats: drainRequestStats(),
     }
   }
 
@@ -1272,21 +1143,25 @@ let make = (
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      rawBlocks
-      ->Array.map(json => {
-        let b = parseBlockInfo(json)
+      let result =
+        rawBlocks
+        ->Array.map(json => {
+          let b = parseBlockInfo(json)
 
-        (
-          {
-            blockNumber: b.number,
-            blockHash: b.hash,
-            blockTimestamp: b.timestamp,
-          }: ReorgDetection.blockDataWithTimestamp
-        )
-      })
-      ->Ok
+          (
+            {
+              blockNumber: b.number,
+              blockHash: b.hash,
+              blockTimestamp: b.timestamp,
+            }: ReorgDetection.blockDataWithTimestamp
+          )
+        })
+        ->Ok
+      {Source.result, requestStats: drainRequestStats()}
     })
-    ->Promise.catch(exn => exn->Error->Promise.resolve)
+    ->Promise.catch(exn =>
+      {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve
+    )
   }
 
   let createHeightSubscription =
@@ -1303,38 +1178,16 @@ let make = (
     getBlockHashes,
     onReorg,
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let height = try {
         await rpcClient.getHeight()
       } catch {
       | exn =>
-        let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_blockNumber",
-        )
-        Prometheus.SourceRequestCount.addSeconds(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_blockNumber",
-          ~seconds,
-        )
+        recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
         exn->throw
       }
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-      )
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-        ~seconds,
-      )
-      height
+      recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
+      {height, requestStats: drainRequestStats()}
     },
     getItemsOrThrow,
     ?createHeightSubscription,
