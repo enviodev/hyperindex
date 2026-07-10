@@ -158,23 +158,31 @@ impl EvmRpcClient {
         let decoder = DecoderCore::from_params(event_params, checksum_addresses)
             .context("build decoder")
             .map_err(map_err)?;
-        if !(0.0..1.0).contains(&cfg.backoff_multiplicative) {
+        // 0.0 would collapse every shrink to the floor of 1 block and 1.0 would
+        // never shrink at all, so both ends are excluded (this also rejects NaN).
+        if !(cfg.backoff_multiplicative > 0.0 && cfg.backoff_multiplicative < 1.0) {
             return Err(map_err(anyhow::anyhow!(
                 "backoffMultiplicative must be in (0.0, 1.0), got {}",
                 cfg.backoff_multiplicative,
             )));
         }
+        // A zero interval would make `fromBlock + interval - 1` underflow.
+        let positive_u64 = |value: i64, name: &str| {
+            u64::try_from(value)
+                .ok()
+                .filter(|v| *v > 0)
+                .ok_or_else(|| map_err(anyhow::anyhow!("{name} must be positive, got {value}")))
+        };
         let sync_config = SyncConfig {
-            initial_block_interval: u64::try_from(cfg.initial_block_interval)
-                .context("initialBlockInterval must be non-negative")
-                .map_err(map_err)?,
+            initial_block_interval: positive_u64(
+                cfg.initial_block_interval,
+                "initialBlockInterval",
+            )?,
             backoff_multiplicative: cfg.backoff_multiplicative,
             acceleration_additive: u64::try_from(cfg.acceleration_additive)
                 .context("accelerationAdditive must be non-negative")
                 .map_err(map_err)?,
-            interval_ceiling: u64::try_from(cfg.interval_ceiling)
-                .context("intervalCeiling must be non-negative")
-                .map_err(map_err)?,
+            interval_ceiling: positive_u64(cfg.interval_ceiling, "intervalCeiling")?,
             backoff_millis: u64::try_from(cfg.backoff_millis)
                 .context("backoffMillis must be non-negative")
                 .map_err(map_err)?,
@@ -279,7 +287,10 @@ impl EvmRpcClient {
                 from_block,
                 to_block,
                 source_max,
-                None,
+                Some(&format!(
+                    "Query took longer than {}ms",
+                    self.sync_config.query_timeout_millis
+                )),
                 Vec::new(),
             )),
         }
