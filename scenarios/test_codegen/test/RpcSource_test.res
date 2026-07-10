@@ -1298,15 +1298,17 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       let source = RpcSource.make({
         url: mock.url,
         chain,
-        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         allEventParams: [
           {
+            id: 0,
             sighash,
             topicCount: 1,
             eventName: eventConfig.eventConfig.name,
             contractName: eventConfig.eventConfig.contractName,
+            isWildcard: false,
             params: [],
           },
         ],

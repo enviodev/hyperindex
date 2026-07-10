@@ -559,7 +559,7 @@ type onEventRegistration = {
   // onEventRegistrations array, assigned when registration finishes (-1 until
   // then). Crosses the napi boundary so Rust-routed items resolve back by
   // array index.
-  mutable id: int,
+  id: int,
   eventConfig: eventConfig,
   handler: option<handler>,
   contractRegister: option<contractRegister>,

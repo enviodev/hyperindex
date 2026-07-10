@@ -71,7 +71,10 @@ let makeSources = (
   // items back to their registration, so enforce it here where the clients and
   // the lookup array are built (test configs bypass HandlerRegister's
   // assignment).
-  onEventRegistrations->Array.forEachWithIndex((reg, i) => reg.id = i)
+  let onEventRegistrations = onEventRegistrations->Array.mapWithIndex((reg, i) => {
+    ...reg,
+    id: i,
+  })
 
   let allEventParams = collectEventParams(onEventRegistrations)
 

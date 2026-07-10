@@ -679,8 +679,9 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                   config.ecosystem.name === Evm &&
                     (registration->getResolvedWhere).topicSelections->Utils.Array.isEmpty
                 if !isDroppedByWhere {
-                  registration.id = onEventRegistrations->Array.length
-                  onEventRegistrations->Array.push(registration)
+                  onEventRegistrations
+                  ->Array.push({...registration, id: onEventRegistrations->Array.length})
+                  ->ignore
                 }
               | None => ()
               }

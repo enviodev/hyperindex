@@ -62,8 +62,8 @@ describe("Same-signature event across contracts with different param names", () 
     // route+decode the shared Transfer log through EvmRpcClient. Routing picks
     // the owning contract's registration, so each contract's params come back
     // under its own names instead of the first-registered contract's.
-    tokenA.id = 0
-    tokenB.id = 1
+    let tokenA = {...tokenA, id: 0}
+    let tokenB = {...tokenB, id: 1}
     let allEventParams = EvmChain.collectEventParams([tokenA, tokenB])
 
     let decodeAs = async contractName => {
