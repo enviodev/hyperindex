@@ -136,7 +136,7 @@ impl human_config::evm::Chain {
                 return Err(anyhow!(
                     "The config file has an endBlock that is less than the startBlock for \
                      network id: {}. The endBlock must be greater than the startBlock.",
-                    &self.id.to_string()
+                    self.id
                 ));
             }
         }

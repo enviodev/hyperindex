@@ -459,14 +459,33 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
+// A single topic position of a resolved `where`: either static pre-encoded
+// values, or a marker for "the currently registered addresses of this
+// contract", expanded to topic values when a source query is built.
+type topicFilter =
+  | Values(array<EvmTypes.Hex.t>)
+  | ContractAddresses({contractName: string})
+
+type resolvedTopicSelection = {
+  topic0: array<EvmTypes.Hex.t>,
+  topic1: topicFilter,
+  topic2: topicFilter,
+  topic3: topicFilter,
+}
+
+// The registered `where` fully resolved at registration time for one chain.
+// `topicSelections` is in disjunctive normal form (outer array is OR);
+// an empty array means the `where` returned `false` for this chain.
+type resolvedWhere = {
+  topicSelections: array<resolvedTopicSelection>,
+  startBlock: option<int>,
+}
+
 // Per-event, per-invocation arguments passed to a `where` callback. The
 // concrete `chain` shape (which contract key it exposes) is generated per
 // event in user-project codegen — here it's an open record so codegen'd
 // types subtype-coerce into it cleanly.
 type onEventWhereArgs<'chain> = {chain: 'chain}
-
-type eventFilters =
-  Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
 type evmEventConfig = {
   ...eventConfig,
@@ -557,7 +576,7 @@ type onEventRegistration = {
 
 type evmOnEventRegistration = {
   ...onEventRegistration,
-  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+  resolvedWhere: resolvedWhere,
 }
 
 // Fuel and SVM registrations add no ecosystem-specific fetch state (their

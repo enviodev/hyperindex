@@ -7,13 +7,12 @@ type selectionConfig = {
   fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
 }
 
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
+let getSelectionConfig = (selection: FetchState.selection) => {
   let capitalizedBlockFields = Utils.Set.make()
   let capitalizedTransactionFields = Utils.Set.make()
 
-  let staticTopicSelectionsByContract = Dict.make()
-  let dynamicEventFiltersByContract = Dict.make()
-  let dynamicWildcardEventFiltersByContract = Dict.make()
+  let topicSelectionsByContract = Dict.make()
+  let wildcardTopicSelectionsByContract = Dict.make()
   let noAddressesTopicSelections = []
   let contractNames = Utils.Set.make()
 
@@ -24,7 +23,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
     let contractName = eventConfig.contractName
     let {selectedBlockFields, selectedTransactionFields} = eventConfig
-    let {dependsOnAddresses, getEventFiltersOrThrow, isWildcard} = reg
+    let {dependsOnAddresses, resolvedWhere, isWildcard} = reg
     selectedBlockFields
     ->Utils.Set.toArray
     ->Array.forEach(name =>
@@ -44,24 +43,16 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       }
     })
 
-    let eventFilters = getEventFiltersOrThrow(chain)
     if dependsOnAddresses {
       let _ = contractNames->Utils.Set.add(contractName)
-      switch eventFilters {
-      | Static(topicSelections) =>
-        staticTopicSelectionsByContract->Utils.Dict.pushMany(contractName, topicSelections)
-      | Dynamic(fn) =>
-        (
-          isWildcard ? dynamicWildcardEventFiltersByContract : dynamicEventFiltersByContract
-        )->Utils.Dict.push(contractName, fn)
-      }
+
+      (
+        isWildcard ? wildcardTopicSelectionsByContract : topicSelectionsByContract
+      )->Utils.Dict.pushMany(contractName, resolvedWhere.topicSelections)
     } else {
       noAddressesTopicSelections
       ->Array.pushMany(
-        switch eventFilters {
-        | Static(s) => s
-        | Dynamic(fn) => fn([])
-        },
+        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
       )
       ->ignore
     }
@@ -92,27 +83,26 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
       | None
       | Some([]) => ()
       | Some(addresses) =>
-        switch staticTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
+        switch topicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
         | None => ()
         | Some(topicSelections) =>
-          logSelections->Array.push(LogSelection.make(~addresses, ~topicSelections))
-        }
-        switch dynamicEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None => ()
-        | Some(fns) =>
           logSelections->Array.push(
-            LogSelection.make(~addresses, ~topicSelections=fns->Array.flatMap(fn => fn(addresses))),
+            LogSelection.make(
+              ~addresses,
+              ~topicSelections=topicSelections->LogSelection.materializeTopicSelections(~addresses),
+            ),
           )
         }
-        switch dynamicWildcardEventFiltersByContract->Utils.Dict.dangerouslyGetNonOption(
-          contractName,
-        ) {
+        // Wildcard events that filter an indexed param by registered addresses:
+        // the addresses fold into the topics, so the query itself stays
+        // address-unbound.
+        switch wildcardTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
         | None => ()
-        | Some(fns) =>
+        | Some(topicSelections) =>
           logSelections->Array.push(
             LogSelection.make(
               ~addresses=[],
-              ~topicSelections=fns->Array.flatMap(fn => fn(addresses)),
+              ~topicSelections=topicSelections->LogSelection.materializeTopicSelections(~addresses),
             ),
           )
         }
@@ -127,8 +117,7 @@ let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
   }
 }
 
-let memoGetSelectionConfig = (~chain) =>
-  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
+let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
@@ -164,7 +153,7 @@ let make = (
 ): t => {
   let name = "HyperSync"
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
+  let getSelectionConfig = memoGetSelectionConfig()
 
   let apiToken = switch apiToken {
   | Some(token) => token
