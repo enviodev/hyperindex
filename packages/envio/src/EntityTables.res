@@ -1,5 +1,5 @@
 // In-memory entity tables keyed by entity name. Extracted so both IndexerState
-// (cross-chain entities) and ChainState (per-chain isolated entities) can hold
+// (cross-chain entities) and ChainState (per-chain entities) can hold
 // them without a circular module dependency.
 type t = dict<InMemoryTable.Entity.t>
 

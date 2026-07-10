@@ -9,7 +9,7 @@ let loadById = (
   ~entityId,
 ) => {
   let chainId = item->Internal.getItemChainId
-  // Isolated entities are partitioned by chain in memory and scoped by chain in
+  // Per-chain entities are partitioned by chain in memory and scoped by chain in
   // the db, so the load group key and the load filter both carry the chain id.
   let key = entityConfig.crossChain
     ? `${entityConfig.name}.get`
@@ -374,7 +374,7 @@ let loadByFilter = (
   ~filter: EntityFilter.t,
 ) => {
   let chainId = item->Internal.getItemChainId
-  // Isolated entities are partitioned by chain in memory, so the load group key
+  // Per-chain entities are partitioned by chain in memory, so the load group key
   // is chain-specific; the db query is scoped by chain too.
   let key = entityConfig.crossChain
     ? filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)

@@ -1,0 +1,12 @@
+# A single shared id ("singleton") is written on every chain. In explicit
+# cross-chain mode each chain keeps its own row, so the per-chain counts never
+# merge. @crossChain opts an entity back into the shared behavior.
+type Counter {
+  id: ID!
+  count: Int!
+}
+
+type GlobalCounter @crossChain {
+  id: ID!
+  count: Int!
+}

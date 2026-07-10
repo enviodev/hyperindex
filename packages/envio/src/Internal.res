@@ -724,9 +724,10 @@ type genericEntityConfig<'entity> = {
   schema: S.t<'entity>,
   table: Table.table,
   storage: entityStorage,
-  // True for entities shared across chains (unordered multichain mode).
-  // False for isolated entities: their tables get a chain id column which
-  // storage writes stamp from the change's checkpoint.
+  // True for entities shared across chains (`cross_chain: all`, or marked
+  // @crossChain in explicit mode). False for per-chain entities: their tables
+  // get a chain id column which storage writes stamp from the change's
+  // checkpoint.
   crossChain: bool,
 }
 type entityConfig = genericEntityConfig<entity>
@@ -762,6 +763,10 @@ type effect = {
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,
+  // Whether the cache is shared across chains. None falls back to the
+  // config's default (Config.t.defaultCrossChain) at call time — the effect
+  // is created before the config is known.
+  crossChain: option<bool>,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
   // The number of functions that are currently running.

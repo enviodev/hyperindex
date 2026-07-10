@@ -20,7 +20,7 @@ type t = {
   mutable pendingBudget: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
-  // Isolated (non-cross-chain) entities live per chain so the same id on
+  // Per-chain (non-cross-chain) entities live per chain so the same id on
   // different chains stays distinct without key mangling.
   mutable entities: EntityTables.t,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,

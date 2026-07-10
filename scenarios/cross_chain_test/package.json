@@ -1,5 +1,5 @@
 {
-  "name": "multichain_isolated_test",
+  "name": "cross_chain_test",
   "version": "0.1.0",
   "type": "module",
   "scripts": {

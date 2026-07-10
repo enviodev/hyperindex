@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=../../../envio/evm.schema.json
 name: config1
-schema: ../schemas/schema.graphql
+schema: ../schemas/cross-chain-schema.graphql
 description: Gravatar for Ethereum
-multichain: isolated
+cross_chain: explicit
 chains:
   - id: 1
     rpc:

@@ -141,7 +141,7 @@ let handleWriteBatch = (
     }
     let entityConfig = state.entityConfigs->Dict.getUnsafe(entityName)
 
-    // Isolated entities are keyed per chain so the same id on different chains
+    // Per-chain entities are keyed per chain so the same id on different chains
     // stays distinct, mirroring the composite (id, chain_id) primary key.
     let chainIdAt = checkpointId =>
       entityConfig.crossChain

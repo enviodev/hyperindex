@@ -101,7 +101,7 @@ let runOneWrite = async (state: IndexerState.t) => {
 
     let rollback = state->IndexerState.takeRollback
 
-    // Cross-chain entities flush as a single group; isolated entities flush one
+    // Cross-chain entities flush as a single group; per-chain entities flush one
     // group per chain. The chain isn't tagged here — the write path derives it
     // from each change's checkpoint id.
     let updatedEntities =

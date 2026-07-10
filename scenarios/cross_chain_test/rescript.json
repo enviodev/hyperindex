@@ -1,5 +1,5 @@
 {
-  "name": "multichain_isolated_test",
+  "name": "cross_chain_test",
   "sources": [
     {
       "dir": "src",
@@ -18,6 +18,11 @@
   "jsx": {
     "version": 4
   },
-  "dependencies": ["rescript-schema", "envio"],
-  "compiler-flags": ["-open RescriptSchema"]
+  "dependencies": [
+    "rescript-schema",
+    "envio"
+  ],
+  "compiler-flags": [
+    "-open RescriptSchema"
+  ]
 }

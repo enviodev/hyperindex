@@ -1,7 +1,7 @@
 use super::{
     entity_parsing::IndexFieldDirection,
     field_types,
-    human_config::{self, evm::For, ColumnNameFormat, Multichain},
+    human_config::{self, evm::For, ColumnNameFormat, CrossChain},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, Ecosystem, EventKind,
         FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -39,6 +39,11 @@ pub(crate) struct PublicConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    // Present (false) only in explicit cross-chain mode. The runtime uses it
+    // as the default for effects without an explicit crossChain option:
+    // per-chain effect caches in explicit mode, shared in all mode.
+    #[serde(skip_serializing_if = "is_true")]
+    cross_chain: bool,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
@@ -57,7 +62,7 @@ struct StorageConfig {
     // Per-backend column_name_format; emitted only for the non-default
     // snake_case so the JSON stays byte-identical for existing projects.
     // The runtime uses it to spell columns it appends itself (the chain id
-    // column in isolated multichain mode).
+    // column of per-chain entities in explicit cross-chain mode).
     #[serde(skip_serializing_if = "Option::is_none")]
     postgres_column_name_format: Option<&'static str>,
     #[serde(skip_serializing_if = "is_false")]
@@ -95,8 +100,10 @@ struct EntityJson {
     // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
-    // Present (true) for every entity in unordered multichain mode; omitted
-    // in isolated mode. Storages add a chain_id column when set.
+    // Present (true) for entities shared across chains: every entity with
+    // `cross_chain: all` (the default), or `@crossChain`-marked ones in
+    // explicit mode. Omitted for per-chain entities, whose tables get a
+    // chain_id column.
     #[serde(skip_serializing_if = "is_false")]
     cross_chain: bool,
     properties: Vec<PropertyJson>,
@@ -811,7 +818,7 @@ impl SystemConfig {
                 Ok(EntityJson {
                     name: entity.name.clone(),
                     storage,
-                    cross_chain: matches!(cfg.multichain, Multichain::Unordered),
+                    cross_chain: matches!(cfg.cross_chain, CrossChain::All) || entity.cross_chain,
                     properties,
                     derived_fields,
                     composite_indices,
@@ -830,6 +837,7 @@ impl SystemConfig {
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
+            cross_chain: matches!(cfg.cross_chain, CrossChain::All),
             storage: (&cfg.storage).into(),
             evm,
             fuel,

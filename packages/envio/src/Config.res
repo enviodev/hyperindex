@@ -72,6 +72,10 @@ type t = {
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
+  // The default for effects without an explicit crossChain option: true with
+  // `cross_chain: all` (shared caches), false with `cross_chain: explicit`
+  // (per-chain caches). Entities carry their own resolved flag instead.
+  defaultCrossChain: bool,
   storage: storage,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
@@ -449,8 +453,8 @@ let parseEntitiesFromJson = (
         )
       )
 
-    // Cross-chain entities (unordered multichain mode) share rows across
-    // chains; isolated ones are chain-scoped, so their tables get a chain id
+    // Cross-chain entities share rows across chains; per-chain ones
+    // (cross_chain: explicit, without @crossChain) get a chain id
     // column. It's not part of the entity schema: storage writes stamp the
     // value from the change's checkpoint.
     let crossChain = entityJson["crossChain"]->Option.getOr(false)
@@ -528,6 +532,7 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
+    "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(publicConfigStorageSchema),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -1013,6 +1018,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
+    defaultCrossChain: publicConfig["crossChain"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
     storage: globalStorage,
     chainMap,

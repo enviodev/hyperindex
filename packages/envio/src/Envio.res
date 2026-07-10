@@ -186,6 +186,10 @@ and effectOptions<'input, 'output> = {
   rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
+  /** Whether the effect cache is shared across chains. Defaults to the
+   config's `cross_chain` option: `true` with `all` (the default), `false`
+   with `explicit` (per-chain caches). */
+  crossChain?: bool,
 }
 and effectContext = {
   log: logger,
@@ -241,6 +245,7 @@ let createEffect = (
     | Some(true) => true
     | _ => false
     },
+    crossChain: options.crossChain,
     rateLimit: switch options.rateLimit {
     | Disable => None
     | Enable({calls, per}) =>

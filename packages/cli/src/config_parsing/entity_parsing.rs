@@ -340,6 +340,9 @@ pub struct Entity {
     pub description: Option<String>,
     pub postgres: Option<bool>,
     pub clickhouse: Option<bool>,
+    // Set by the `@crossChain` directive: shares this entity across chains
+    // even when `cross_chain: explicit` keeps the rest per-chain.
+    pub cross_chain: bool,
 }
 
 impl Entity {
@@ -350,6 +353,7 @@ impl Entity {
         description: Option<String>,
         postgres: Option<bool>,
         clickhouse: Option<bool>,
+        cross_chain: bool,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -404,6 +408,7 @@ impl Entity {
             description,
             postgres,
             clickhouse,
+            cross_chain,
         })
     }
 
@@ -498,6 +503,7 @@ impl Entity {
             .context(format!("Failed parsing fields on entity {name}"))?;
 
         let (postgres, clickhouse) = parse_storage_directive(obj)?;
+        let cross_chain = parse_cross_chain_directive(obj)?;
 
         Self::new(
             name,
@@ -506,6 +512,7 @@ impl Entity {
             obj.description.clone(),
             postgres,
             clickhouse,
+            cross_chain,
         )
         .context(format!("Failed constructing entity {name}"))
     }
@@ -683,6 +690,35 @@ fn parse_storage_directive(
     }
 
     Ok((postgres, clickhouse))
+}
+
+/// Parse the optional `@crossChain` directive on an entity. With
+/// `cross_chain: explicit` in config.yaml it opts the entity back into being
+/// shared across chains; with `cross_chain: all` (the default) it's a no-op.
+fn parse_cross_chain_directive(obj: &ObjectType<String>) -> anyhow::Result<bool> {
+    let cross_chain_directives: Vec<&Directive<'_, String>> = obj
+        .directives
+        .iter()
+        .filter(|directive| directive.name == "crossChain")
+        .collect();
+
+    match cross_chain_directives.as_slice() {
+        [] => Ok(false),
+        [directive] => {
+            if !directive.arguments.is_empty() {
+                return Err(anyhow!(
+                    "Invalid @crossChain directive on `{}`. It takes no arguments.",
+                    obj.name
+                ));
+            }
+            Ok(true)
+        }
+        _ => Err(anyhow!(
+            "Invalid @crossChain directive on `{}`. Only one @crossChain directive is allowed \
+             per entity.",
+            obj.name
+        )),
+    }
 }
 
 ///  used to get the positive integers in the directives from the GraphQL schema.
@@ -1930,7 +1966,7 @@ type TestEntity {
     fn gql_type_to_rescript_type_entity() {
         let test_entity_string = String::from("TestEntity");
         let test_entity =
-            Entity::new(&test_entity_string, vec![], vec![], None, None, None).unwrap();
+            Entity::new(&test_entity_string, vec![], vec![], None, None, None, false).unwrap();
         let schema = Schema::new(vec![test_entity], vec![]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
             .to_rescript_type(&schema)

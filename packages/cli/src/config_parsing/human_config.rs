@@ -283,9 +283,9 @@ impl JsonSchema for StorageConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum Multichain {
-    Unordered,
-    Isolated,
+pub enum CrossChain {
+    All,
+    Explicit,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -406,7 +406,7 @@ impl Display for HumanConfig {
 }
 
 pub mod evm {
-    use super::{ChainContract, ChainId, GlobalContract, Multichain};
+    use super::{ChainContract, ChainId, CrossChain, GlobalContract};
     use crate::config_parsing::human_config::BaseConfig;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -472,11 +472,11 @@ pub mod evm {
         pub address_format: Option<AddressFormat>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Multichain mode: 'unordered' processes events from each chain as \
-                           they arrive and shares entities across chains; 'isolated' keeps \
-                           every chain's entities isolated from each other (default: unordered)"
+            description = "Cross-chain behavior for entities and effects: 'all' shares them \
+                           across chains; 'explicit' keeps them per-chain unless marked with \
+                           the @crossChain directive or crossChain option (default: all)"
         )]
-        pub multichain: Option<Multichain>,
+        pub cross_chain: Option<CrossChain>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -833,7 +833,7 @@ pub mod fuel {
 
     use crate::config_parsing::human_config::BaseConfig;
 
-    use super::{ChainContract, ChainId, GlobalContract, Multichain};
+    use super::{ChainContract, ChainId, CrossChain, GlobalContract};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use strum::Display;
@@ -870,11 +870,11 @@ pub mod fuel {
         pub raw_events: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Multichain mode: 'unordered' processes events from each chain as \
-                           they arrive and shares entities across chains; 'isolated' keeps \
-                           every chain's entities isolated from each other (default: unordered)"
+            description = "Cross-chain behavior for entities and effects: 'all' shares them \
+                           across chains; 'explicit' keeps them per-chain unless marked with \
+                           the @crossChain directive or crossChain option (default: all)"
         )]
-        pub multichain: Option<Multichain>,
+        pub cross_chain: Option<CrossChain>,
     }
 
     impl Display for HumanConfig {
@@ -990,7 +990,7 @@ pub mod fuel {
 pub mod svm {
     use std::fmt::Display;
 
-    use super::{BaseConfig, Multichain};
+    use super::{BaseConfig, CrossChain};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
@@ -1362,11 +1362,11 @@ pub mod svm {
         pub chains: Vec<Chain>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Multichain mode: 'unordered' processes events from each chain as \
-                           they arrive and shares entities across chains; 'isolated' keeps \
-                           every chain's entities isolated from each other (default: unordered)"
+            description = "Cross-chain behavior for entities and effects: 'all' shares them \
+                           across chains; 'explicit' keeps them per-chain unless marked with \
+                           the @crossChain directive or crossChain option (default: all)"
         )]
-        pub multichain: Option<Multichain>,
+        pub cross_chain: Option<CrossChain>,
     }
 
     impl Display for HumanConfig {
@@ -1697,7 +1697,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            multichain: None,
+            cross_chain: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -1750,7 +1750,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
-            multichain: None,
+            cross_chain: None,
             chains: vec![],
         };
 

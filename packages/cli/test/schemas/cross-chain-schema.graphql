@@ -1,0 +1,7 @@
+type PerChainEntity {
+  id: ID!
+}
+
+type SharedEntity @crossChain {
+  id: ID!
+}

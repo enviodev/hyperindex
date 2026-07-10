@@ -2,8 +2,8 @@
 // mutations route through IndexerState's domain operations; the write loop and
 // capacity/flush coordination live in Writing.
 
-// Cross-chain (unordered) entities are shared across chains; isolated entities
-// live per chain on ChainState so the same id on different chains stays distinct.
+// Cross-chain entities are shared across chains; per-chain entities live on
+// ChainState so the same id on different chains stays distinct.
 let getInMemTable = (
   state: IndexerState.t,
   ~entityConfig: Internal.entityConfig,
@@ -19,7 +19,7 @@ let getInMemTable = (
   }
 
 // Every in-memory entity table, tagged with the chain it belongs to: cross-chain
-// tables once (chain None), isolated tables once per chain. Used by the
+// tables once (chain None), per-chain tables once per chain. Used by the
 // store-wide passes (size, drop, flush) that must fan over all chains.
 let eachEntityTable = (state: IndexerState.t): array<(
   option<int>,
@@ -160,7 +160,7 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
-  // Isolated entities route per chain (removed rows carry the chain id,
+  // Per-chain entities route per chain (removed rows carry the chain id,
   // restored rows carry it in the chainId column); cross-chain ones ignore it.
   let _ = await persistence.allEntities
   ->Array.map(async entityConfig => {

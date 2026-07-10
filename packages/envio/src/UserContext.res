@@ -43,6 +43,21 @@ external makeEffectContext: (
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
+// Per-chain effects (crossChain resolved to false) scope the cache key by the
+// calling chain, so the same input on different chains caches independently —
+// both in memory and in the persisted cache table.
+let makeEffectCacheKey = (
+  effect: Internal.effect,
+  ~input: Internal.effectInput,
+  ~chainId: int,
+  ~defaultCrossChain: bool,
+) => {
+  let inputHash = input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow
+  effect.crossChain->Option.getOr(defaultCrossChain)
+    ? inputHash
+    : `${chainId->Int.toString}-${inputHash}`
+}
+
 let initEffect = (params: contextParams) => {
   let rec callEffect = (effect: Internal.effect, input: Internal.effectInput) => {
     let effectContext = makeEffectContext(
@@ -53,7 +68,11 @@ let initEffect = (params: contextParams) => {
     let effectArgs: Internal.effectArgs = {
       input,
       context: effectContext,
-      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+      cacheKey: effect->makeEffectCacheKey(
+        ~input,
+        ~chainId=params.item->Internal.getItemChainId,
+        ~defaultCrossChain=params.config.defaultCrossChain,
+      ),
       checkpointId: params.checkpointId,
     }
     LoadLayer.loadEffect(
@@ -121,7 +140,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
 
-    // The chain the handler runs on; routes isolated entities to their
+    // The chain the handler runs on; routes per-chain entities to their
     // per-chain in-memory table (ignored for cross-chain entities).
     let chainId = params.item->Internal.getItemChainId
 

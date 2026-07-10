@@ -113,16 +113,29 @@ contracts:
 
 Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. See `indexer-transactions` skill for full field lists.
 
-## multichain
+## cross_chain
 
-Root-level option controlling how entities relate across chains:
+Root-level option controlling whether entities and effect caches are shared across chains:
 
 ```yaml
-multichain: isolated # or unordered (default)
+cross_chain: explicit # or all (default)
 ```
 
-- `unordered` (default) — events are processed as soon as they arrive from each chain and entities are shared across chains.
-- `isolated` — every chain's entities are kept isolated from each other. Each entity table gets a non-nullable chain id column (`chainId`, or `chain_id` with `column_name_format: snake_case`), so entity fields with that name are rejected.
+- `all` (default) — entities and effect caches are shared across chains.
+- `explicit` — entities and effect caches are per-chain unless explicitly opted in. Each per-chain entity table gets a non-nullable chain id column (`chainId`, or `chain_id` with `column_name_format: snake_case`), so entity fields with that name are rejected.
+
+Opting back into sharing in explicit mode:
+
+- Mark an entity with the `@crossChain` directive in `schema.graphql`:
+
+  ```graphql
+  type GlobalStats @crossChain {
+    id: ID!
+    total: Int!
+  }
+  ```
+
+- Pass `crossChain: true` in `createEffect` options to share an effect's cache across chains (or `crossChain: false` to force a per-chain cache in `all` mode).
 
 Supported for all ecosystems (EVM, Fuel, SVM).
 

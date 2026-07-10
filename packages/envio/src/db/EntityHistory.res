@@ -83,7 +83,7 @@ type safeReorgBlocks = {
 let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
 
-  // Isolated entities key history by (id, chain_id), so the anchor and every
+  // Per-chain entities key history by (id, chain_id), so the anchor and every
   // join must be chain-scoped — otherwise one chain's anchor would mask another
   // chain's still-relevant history for the same id.
   let (keyCols, joinCond, psScope) = switch chainIdColumn {
@@ -131,7 +131,7 @@ let pruneStaleEntityHistory = (
 
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0.
-// For isolated entities the entity table holds one row per (id, chain_id), so
+// For per-chain entities the entity table holds one row per (id, chain_id), so
 // the "missing history" check is scoped by chain too — otherwise one chain's
 // baseline would mask another's, and the checkpoint-0 rows would collide.
 let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex, ~chainIdColumn) => {

@@ -120,11 +120,11 @@
         }
       ]
     },
-    "multichain": {
-      "description": "Multichain mode: 'unordered' processes events from each chain as they arrive and shares entities across chains; 'isolated' keeps every chain's entities isolated from each other (default: unordered)",
+    "cross_chain": {
+      "description": "Cross-chain behavior for entities and effects: 'all' shares them across chains; 'explicit' keeps them per-chain unless marked with the @crossChain directive or crossChain option (default: all)",
       "anyOf": [
         {
-          "$ref": "#/$defs/Multichain"
+          "$ref": "#/$defs/CrossChain"
         },
         {
           "type": "null"
@@ -763,11 +763,11 @@
         "lowercase"
       ]
     },
-    "Multichain": {
+    "CrossChain": {
       "type": "string",
       "enum": [
-        "unordered",
-        "isolated"
+        "all",
+        "explicit"
       ]
     }
   }

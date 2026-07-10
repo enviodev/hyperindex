@@ -82,6 +82,10 @@ export type EffectOptions<Input, Output> = {
   readonly rateLimit: RateLimit;
   /** Whether the effect should be cached. */
   readonly cache?: boolean;
+  /** Whether the effect cache is shared across chains. Defaults to the
+   * config's `cross_chain` option: `true` with `all` (the default),
+   * `false` with `explicit` (per-chain caches). */
+  readonly crossChain?: boolean;
 };
 
 /** Arguments passed to the handler function of an {@link Effect}. */
@@ -209,6 +213,10 @@ export function createEffect<
     readonly rateLimit: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
+    /** Whether the effect cache is shared across chains. Defaults to the
+     * config's `cross_chain` option: `true` with `all` (the default),
+     * `false` with `explicit` (per-chain caches). */
+    readonly crossChain?: boolean;
   },
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;

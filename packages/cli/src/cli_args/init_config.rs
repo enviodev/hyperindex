@@ -176,7 +176,7 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 address_format: None,
-                multichain: None,
+                cross_chain: None,
             })
         }
 
@@ -313,7 +313,7 @@ pub mod fuel {
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,
                 raw_events: None,
-                multichain: None,
+                cross_chain: None,
                 chains: network_configs,
             }
         }

@@ -57,7 +57,7 @@ type rollback = {
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
   changes: array<Change.t<Internal.entity>>,
-  // The chain this group belongs to for isolated entities (their tables are
+  // The chain this group belongs to for per-chain entities (their tables are
   // partitioned per chain). None for cross-chain entities, which have no chain
   // column and are never scoped by chain.
   chainId: option<int>,
@@ -112,7 +112,7 @@ type storage = {
     }>,
   >,
   // Get rollback data for entity
-  // Removed rows carry "chainId" for isolated entities so the rollback diff
+  // Removed rows carry "chainId" for per-chain entities so the rollback diff
   // can route them to the right per-chain in-memory table.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,

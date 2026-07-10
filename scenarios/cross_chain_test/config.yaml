@@ -1,9 +1,10 @@
 # yaml-language-server: $schema=../../packages/envio/evm.schema.json
-name: multichain_isolated_test
-description: Isolated multichain mode test indexer
-# Each chain's entities are kept isolated from each other; entity rows are
-# scoped by chain id (composite (id, chain_id) primary key).
-multichain: isolated
+name: cross_chain_test
+description: Explicit cross-chain mode test indexer
+# Entities and effects are per-chain unless marked @crossChain / crossChain:
+# per-chain entity rows are scoped by chain id (composite (id, chain_id)
+# primary key).
+cross_chain: explicit
 rollback_on_reorg: false
 contracts:
   - name: Counter

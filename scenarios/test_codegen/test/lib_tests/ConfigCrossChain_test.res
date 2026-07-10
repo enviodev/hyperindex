@@ -1,9 +1,9 @@
 open Vitest
 
-// Entities without crossChain (isolated multichain mode) get a chain id
-// column appended at config parse time, spelled per each backend's
-// column_name_format. Cross-chain entities (unordered mode) don't.
-describe("Multichain entity chain id column", () => {
+// Per-chain entities (crossChain: false in explicit cross-chain mode) get a
+// chain id column appended at config parse time, spelled per each backend's
+// column_name_format. Cross-chain entities don't.
+describe("Cross-chain entity chain id column", () => {
   let makePublicConfigJson: JSON.t => JSON.t = %raw(`(storage) => ({
     name: "test",
     storage,
@@ -126,7 +126,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
       )
       let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
-      let pgSchema = "multichain_write_test"
+      let pgSchema = "cross_chain_write_test"
       let sql = PgStorage.makeClient()
       let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
 
@@ -152,8 +152,8 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
           Utils.magic: dict<unknown> => Internal.entity
         )
 
-      // Isolated entities flush one group per chain; each row is stamped with the
-      // group's chain id.
+      // Per-chain entities flush one group per chain; each row is stamped with
+      // the group's chain id.
       await storage.writeBatch(
         ~batch,
         ~rollback=None,
@@ -194,7 +194,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
       )
       let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
-      let pgSchema = "multichain_composite_key_test"
+      let pgSchema = "cross_chain_composite_key_test"
       let sql = PgStorage.makeClient()
       let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
 
@@ -263,7 +263,7 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
         ~storage=%raw(`{postgres: true, postgresColumnNameFormat: "snake_case"}`),
       )
       let isolated = config.userEntitiesByName->Dict.getUnsafe("IsolatedEntity")
-      let pgSchema = "multichain_rollback_test"
+      let pgSchema = "cross_chain_rollback_test"
       let sql = PgStorage.makeClient()
       let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
 
@@ -328,4 +328,51 @@ SELECT * FROM unnest($1::TEXT[],$2::INTEGER[])ON CONFLICT("id","chainId") DO NOT
       ).toEqual(([], %raw(`[{id: "shared", chain_id: 1}]`)))
     },
   )
+})
+
+describe("Config cross-chain defaults", () => {
+  Async.it("Parses the root crossChain flag into defaultCrossChain", async t => {
+    let makeConfig: unit => JSON.t = %raw(`() => ({
+      name: "test",
+      evm: {chains: {"1": {id: 1, startBlock: 0}}},
+      storage: {postgres: true},
+      entities: [],
+    })`)
+    let allMode = makeConfig()->Config.fromPublic
+    let explicitJson = makeConfig()
+    (explicitJson->(Utils.magic: JSON.t => dict<unknown>))->Dict.set(
+      "crossChain",
+      false->(Utils.magic: bool => unknown),
+    )
+    let explicitMode = explicitJson->Config.fromPublic
+
+    t.expect((allMode.defaultCrossChain, explicitMode.defaultCrossChain)).toEqual((true, false))
+  })
+})
+
+// The persisted+in-memory effect cache key: per-chain effects prefix the input
+// hash with the calling chain id, cross-chain ones share the bare hash.
+describe("Effect cache key cross-chain scoping", () => {
+  Async.it("Scopes the cache key by chain unless the effect is cross-chain", async t => {
+    let makeEffect = (~crossChain=?, ()) =>
+      Envio.createEffect(
+        {name: "testEffect", input: S.string, output: S.string, rateLimit: Disable, ?crossChain},
+        async args => args.input,
+      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+    let input = "abc"->(Utils.magic: string => Internal.effectInput)
+    let key = (effect, ~defaultCrossChain) =>
+      effect->UserContext.makeEffectCacheKey(~input, ~chainId=137, ~defaultCrossChain)
+
+    // `cross_chain: all` (defaultCrossChain=true) shares the bare hash.
+    let sharedKey = key(makeEffect(), ~defaultCrossChain=true)
+
+    t.expect((
+      // `cross_chain: explicit` scopes unmarked effects by chain...
+      key(makeEffect(), ~defaultCrossChain=false),
+      // ...unless the effect opts in with crossChain: true...
+      key(makeEffect(~crossChain=true, ()), ~defaultCrossChain=false),
+      // ...and crossChain: false forces a per-chain cache even in all mode.
+      key(makeEffect(~crossChain=false, ()), ~defaultCrossChain=true),
+    )).toEqual((`137-${sharedKey}`, sharedKey, `137-${sharedKey}`))
+  })
 })

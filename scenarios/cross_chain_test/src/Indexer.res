@@ -197,8 +197,15 @@ module Entities = {
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("count") count?: Envio.whereOperator<int>}
   }
 
+  module GlobalCounter = {
+    type t = {id: id, count: int}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("count") count?: Envio.whereOperator<int>}
+  }
+
   type rec name<'entity> =
     | @as("Counter") Counter: name<Counter.t>
+    | @as("GlobalCounter") GlobalCounter: name<GlobalCounter.t>
 }
 
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
@@ -216,6 +223,7 @@ type handlerContext = {
   isPreload: bool,
   chain: Internal.chainInfo,
   \"Counter": handlerEntityOperations<Entities.Counter.t, Entities.Counter.getWhereFilter>,
+  \"GlobalCounter": handlerEntityOperations<Entities.GlobalCounter.t, Entities.GlobalCounter.getWhereFilter>,
 }
 
 type chainId = [#1 | #137]
@@ -394,6 +402,7 @@ type testIndexer = {
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
   \"Counter": testIndexerEntityOperations<Entities.Counter.t>,
+  \"GlobalCounter": testIndexerEntityOperations<Entities.GlobalCounter.t>,
 }
 
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""

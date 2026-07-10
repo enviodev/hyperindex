@@ -9,7 +9,7 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        HumanConfig, Multichain,
+        CrossChain, HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -159,7 +159,7 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
-    pub multichain: Multichain,
+    pub cross_chain: CrossChain,
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
@@ -318,7 +318,7 @@ const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
 /// the reserved `envio_*` columns added to entity history tables, or exceed
 /// Postgres's identifier length limit. Catch all of these at codegen time
 /// instead of failing on table creation.
-// The column appended to every entity table in isolated multichain mode,
+// The column appended to per-chain entity tables in explicit cross-chain mode,
 // spelled per the backend's column_name_format.
 pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
     match format {
@@ -330,7 +330,7 @@ pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static 
 pub fn validate_db_column_names(
     storage: &Storage,
     schema: &Schema,
-    multichain: Multichain,
+    cross_chain: CrossChain,
 ) -> anyhow::Result<()> {
     let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
     for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
@@ -367,10 +367,13 @@ pub fn validate_db_column_names(
                             empty.push(line);
                         }
                     }
-                    // Isolated multichain mode appends a chain id column to
-                    // every entity table, so a user column with that name
-                    // would collide.
-                    if multichain == Multichain::Isolated && column == chain_id_column_name(*format)
+                    // Explicit cross-chain mode appends a chain id column to
+                    // every per-chain entity table, so a user column with that
+                    // name would collide. Entities opted back into cross-chain
+                    // sharing via @crossChain keep their schema untouched.
+                    if cross_chain == CrossChain::Explicit
+                        && !entity.cross_chain
+                        && column == chain_id_column_name(*format)
                     {
                         let line = format!(
                             "  - `{}.{}` maps to the \"{column}\" column.",
@@ -457,13 +460,14 @@ pub fn validate_db_column_names(
         return Err(anyhow!(
             "Schema validation failed:\n\
              \n\
-             Entity fields that collide with the chain id column added in isolated multichain \
+             Entity fields that collide with the chain id column added in explicit cross-chain \
              mode:\n\
              {}\n\
              \n\
              Fixes:\n  \
-             - Rename the listed fields in schema.graphql. With `multichain: isolated` every \
-             entity table gets a chain id column.",
+             - Rename the listed fields in schema.graphql. With `cross_chain: explicit` every \
+             per-chain entity table gets a chain id column.\n  \
+             - Or mark the entity with @crossChain to share it across chains.",
             chain_id_reserved.join("\n")
         ));
     }
@@ -660,14 +664,14 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
-        let multichain = match &human_config {
-            HumanConfig::Evm(c) => c.multichain,
-            HumanConfig::Fuel(c) => c.multichain,
-            HumanConfig::Svm(c) => c.multichain,
+        let cross_chain = match &human_config {
+            HumanConfig::Evm(c) => c.cross_chain,
+            HumanConfig::Fuel(c) => c.cross_chain,
+            HumanConfig::Svm(c) => c.cross_chain,
         }
-        .unwrap_or(Multichain::Unordered);
+        .unwrap_or(CrossChain::All);
         validate_entity_storage(&storage, &schema)?;
-        validate_db_column_names(&storage, &schema, multichain)?;
+        validate_db_column_names(&storage, &schema, cross_chain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = project_paths.clone();
@@ -835,7 +839,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
-                    multichain,
+                    cross_chain,
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
@@ -982,7 +986,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
-                    multichain,
+                    cross_chain,
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
@@ -1125,7 +1129,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
-                    multichain,
+                    cross_chain,
                     schema,
                     field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
@@ -3319,6 +3323,7 @@ mod test {
                 description: None,
                 postgres,
                 clickhouse,
+                cross_chain: false,
             }
         }
 
@@ -3438,7 +3443,7 @@ mod test {
     // --- validate_db_column_names: snake_case column collision checks ---
 
     mod db_column_name_validation {
-        use super::super::{validate_db_column_names, Multichain, Storage};
+        use super::super::{validate_db_column_names, CrossChain, Storage};
         use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3465,15 +3470,15 @@ type Token {
             assert!(validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &schema,
-                Multichain::Unordered
+                CrossChain::All
             )
             .is_ok());
         }
 
         #[test]
-        fn isolated_multichain_reserves_chain_id_column() {
+        fn explicit_cross_chain_reserves_chain_id_column() {
             // Under snake_case, `chainId` maps to the reserved chain_id
-            // column; under original it collides verbatim. Unordered mode
+            // column; under original it collides verbatim. `cross_chain: all`
             // reserves neither.
             let camel_schema = Schema::from_string(
                 r#"
@@ -3494,7 +3499,7 @@ type Token {
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &camel_schema,
-                Multichain::Isolated,
+                CrossChain::Explicit,
             )
             .unwrap_err();
             assert_eq!(
@@ -3503,7 +3508,7 @@ type Token {
                     validate_db_column_names(
                         &storage(ColumnNameFormat::Original),
                         &camel_schema,
-                        Multichain::Isolated,
+                        CrossChain::Explicit,
                     )
                     .unwrap_err()
                     .to_string()
@@ -3513,32 +3518,54 @@ type Token {
                     validate_db_column_names(
                         &storage(ColumnNameFormat::Original),
                         &snake_schema,
-                        Multichain::Isolated,
+                        CrossChain::Explicit,
                     )
                     .is_ok(),
                     validate_db_column_names(
                         &storage(ColumnNameFormat::SnakeCase),
                         &camel_schema,
-                        Multichain::Unordered,
+                        CrossChain::All,
                     )
                     .is_ok(),
                 ),
                 (
                     "Schema validation failed:\n\
                      \n\
-                     Entity fields that collide with the chain id column added in isolated \
-                     multichain mode:\n  \
+                     Entity fields that collide with the chain id column added in explicit \
+                     cross-chain mode:\n  \
                      - `Token.chainId` maps to the \"chain_id\" column.\n\
                      \n\
                      Fixes:\n  \
-                     - Rename the listed fields in schema.graphql. With `multichain: isolated` \
-                     every entity table gets a chain id column."
+                     - Rename the listed fields in schema.graphql. With `cross_chain: explicit` \
+                     every per-chain entity table gets a chain id column.\n  \
+                     - Or mark the entity with @crossChain to share it across chains."
                         .to_string(),
                     true,
                     true,
                     true,
                 )
             );
+        }
+
+        #[test]
+        fn cross_chain_directive_lifts_chain_id_reservation() {
+            // A @crossChain entity keeps its rows shared across chains, so it
+            // gets no chain id column and may use the name freely even in
+            // explicit mode.
+            let schema = Schema::from_string(
+                r#"
+type Token @crossChain {
+  id: ID!
+  chainId: Int!
+}"#,
+            )
+            .unwrap();
+            assert!(validate_db_column_names(
+                &storage(ColumnNameFormat::SnakeCase),
+                &schema,
+                CrossChain::Explicit
+            )
+            .is_ok());
         }
 
         #[test]
@@ -3555,7 +3582,7 @@ type Token {
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &schema,
-                Multichain::Unordered,
+                CrossChain::All,
             )
             .unwrap_err();
             assert_eq!(
@@ -3592,7 +3619,7 @@ type Transfer {
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::Original),
                 &schema,
-                Multichain::Unordered,
+                CrossChain::All,
             )
             .unwrap_err();
             assert!(
@@ -3618,7 +3645,7 @@ type Token {
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &schema,
-                Multichain::Unordered,
+                CrossChain::All,
             )
             .unwrap_err();
             assert_eq!(
@@ -3648,7 +3675,7 @@ type Token {
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::Original),
                 &schema,
-                Multichain::Unordered,
+                CrossChain::All,
             )
             .unwrap_err();
             assert!(
@@ -3678,13 +3705,13 @@ type Token {{
             assert!(validate_db_column_names(
                 &storage(ColumnNameFormat::Original),
                 &schema,
-                Multichain::Unordered
+                CrossChain::All
             )
             .is_err());
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &schema,
-                Multichain::Unordered,
+                CrossChain::All,
             )
             .unwrap_err();
             assert!(
@@ -3719,16 +3746,13 @@ type Token {{
                     column_name_format: ColumnNameFormat::SnakeCase,
                 }),
             };
-            assert!(validate_db_column_names(
-                &pg_original_ch_snake,
-                &schema,
-                Multichain::Unordered
-            )
-            .is_ok());
+            assert!(
+                validate_db_column_names(&pg_original_ch_snake, &schema, CrossChain::All).is_ok()
+            );
             assert!(validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &schema,
-                Multichain::Unordered
+                CrossChain::All
             )
             .is_err());
         }
@@ -3753,7 +3777,7 @@ type Transfer {
             let err = validate_db_column_names(
                 &storage(ColumnNameFormat::SnakeCase),
                 &schema,
-                Multichain::Unordered,
+                CrossChain::All,
             )
             .unwrap_err();
             assert!(
@@ -3784,7 +3808,7 @@ type Transfer {
             assert!(validate_db_column_names(
                 &storage(ColumnNameFormat::Original),
                 &schema,
-                Multichain::Unordered
+                CrossChain::All
             )
             .is_ok());
         }
@@ -3811,7 +3835,7 @@ type Token {
                     column_name_format: ColumnNameFormat::SnakeCase,
                 }),
             };
-            assert!(validate_db_column_names(&storage, &schema, Multichain::Unordered).is_err());
+            assert!(validate_db_column_names(&storage, &schema, CrossChain::All).is_err());
         }
     }
 

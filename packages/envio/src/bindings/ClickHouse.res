@@ -409,7 +409,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     })
     ->Array.joinUnsafe(", ")
 
-  // Isolated entities are identified by (id, chain_id), so the current state is
+  // Per-chain entities are identified by (id, chain_id), so the current state is
   // taken per pair; cross-chain entities dedup by id alone.
   let limitByFields = switch entityConfig.crossChain
     ? None

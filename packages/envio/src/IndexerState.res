@@ -122,8 +122,8 @@ let make = (
     config,
     persistence,
     allEntities: persistence.allEntities,
-    // Cross-chain (unordered) entities are shared across chains; isolated
-    // entities live per-chain on ChainState.entities instead.
+    // Cross-chain entities are shared across chains; per-chain entities live
+    // on ChainState.entities instead.
     entities: EntityTables.make(persistence.allEntities->Array.filter(e => e.crossChain)),
     effects: Dict.make(),
     rollback: None,
@@ -467,10 +467,10 @@ let beginRollbackDiff = (
   ~progressBlockNumberByChainId,
 ) => {
   state.entities = EntityTables.make(state.allEntities->Array.filter(e => e.crossChain))
-  let isolatedEntities = state.allEntities->Array.filter(e => !e.crossChain)
+  let perChainEntities = state.allEntities->Array.filter(e => !e.crossChain)
   state
   ->chainStates
-  ->Utils.Dict.forEach(cs => cs->ChainState.setEntities(EntityTables.make(isolatedEntities)))
+  ->Utils.Dict.forEach(cs => cs->ChainState.setEntities(EntityTables.make(perChainEntities)))
   state.effects = Dict.make()
   state.rollback = Some({
     targetCheckpointId,
