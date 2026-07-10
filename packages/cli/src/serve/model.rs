@@ -604,12 +604,10 @@ type Token {
     #[test]
     fn entity_colliding_with_builtin_names_fails() {
         for name in ["Int", "order_by", "query_root"] {
-            let err = build(
+            let err = build_err(
                 &format!("type {name} {{ id: ID! }}"),
                 catalog(vec![relation(name, &["id"])]),
-            )
-            .unwrap_err()
-            .to_string();
+            );
             assert!(
                 err.contains("collision") && err.contains(name),
                 "unexpected error for {name}: {err}"

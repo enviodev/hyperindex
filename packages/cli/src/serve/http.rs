@@ -351,6 +351,30 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
         }
     };
 
+    // Variable numbers that don't round-trip through serde_json's f64
+    // (e.g. >19-digit integers) are re-read from the raw body text with
+    // sentinel substitution so their exact text reaches SQL parameters,
+    // as Hasura's arbitrary-precision Scientific does.
+    let variables = match variables {
+        Some(serde_json::Value::Object(_)) => {
+            let preserved = exec::validate::json_numbers::rewrite_lossy_numbers(text).and_then(
+                |(rewritten, originals)| {
+                    let reparsed: serde_json::Value = serde_json::from_str(&rewritten).ok()?;
+                    match reparsed.get("variables") {
+                        Some(serde_json::Value::Object(m)) => {
+                            let mut m = m.clone();
+                            exec::validate::json_numbers::attach_originals(&mut m, &originals);
+                            Some(serde_json::Value::Object(m))
+                        }
+                        _ => None,
+                    }
+                },
+            );
+            preserved.or(variables)
+        }
+        other => other,
+    };
+
     Ok(GraphQLRequest {
         query: Some(query),
         variables,

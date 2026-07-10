@@ -188,3 +188,19 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod debug_scratch {
+    use super::*;
+    #[test]
+    fn dbg() {
+        let src = r#"{"a": 99999999999999999999999, "b": 1.00000000000000000001, "c": 1.5}"#;
+        let (rw, orig) = rewrite_lossy_numbers(src).unwrap();
+        let parsed: Json = serde_json::from_str(&rw).unwrap();
+        panic!(
+            "a={} b={}",
+            parsed["a"].as_f64().unwrap().to_bits(),
+            parsed["b"].as_f64().unwrap().to_bits()
+        );
+    }
+}

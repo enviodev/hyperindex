@@ -169,7 +169,7 @@ pub(super) fn coerce_stream_args<'a>(
         let type_def = ctx.registry.get(&input_type);
         let mut initial: Option<V> = None;
         let mut descending = false;
-        for (key, value) in &entries {
+        for &(key, value) in &entries {
             let Some(fd) = type_def.and_then(|d| d.input_field(key)) else {
                 return Err(verr(
                     format!("{ipath}.{key}"),
@@ -177,8 +177,8 @@ pub(super) fn coerce_stream_args<'a>(
                 ));
             };
             let vpath = format!("{ipath}.{key}");
-            let v = resolve_nested(ctx, *value, &fd.ty, fd.default_value.is_some(), &vpath)?;
-            match key.as_str() {
+            let v = resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &vpath)?;
+            match key {
                 "initial_value" => initial = Some(v),
                 "ordering" if !v.is_null() => {
                     let dir = coerce_enum(ctx, v, "cursor_ordering", &vpath)?;
@@ -523,7 +523,7 @@ fn expand_aggregate_order<'a>(
                         path: chain.to_vec(),
                         remote_column: rel.remote_db_column.clone(),
                         remote_table: rel.remote_table.clone(),
-                        op: op.clone(),
+                        op: op.to_string(),
                         column: Some(col.db_name.clone()),
                     },
                     direction: order_direction(&dir),

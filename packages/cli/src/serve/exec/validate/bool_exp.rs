@@ -27,7 +27,7 @@ pub(super) fn coerce_bool_exp<'a>(
             ));
         };
         let value = resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &kpath)?;
-        match key.as_str() {
+        match key {
             "_and" | "_or" => {
                 let items = expect_list(value, &kpath)?;
                 let mut inner: Vec<ir::BoolExp> = Vec::new();
@@ -168,7 +168,7 @@ fn coerce_comparison_ops<'a>(
             }
             Ok(out)
         };
-        let compare = match op.as_str() {
+        let compare = match op {
             "_eq" => ir::CompareOp::Eq(scalar_value(value, &opath)?),
             "_neq" => ir::CompareOp::Neq(scalar_value(value, &opath)?),
             "_gt" => ir::CompareOp::Gt(scalar_value(value, &opath)?),
@@ -286,7 +286,7 @@ fn coerce_aggregate_bool_exp<'a>(
                 ));
             };
             let kv = resolve_nested(ctx, kv, &kfd.ty, kfd.default_value.is_some(), &kpath)?;
-            match key.as_str() {
+            match key {
                 "arguments" => {
                     has_arguments = true;
                     if op == "count" {
@@ -349,7 +349,7 @@ fn coerce_aggregate_bool_exp<'a>(
             remote_column: rel.remote_db_column.clone(),
             remote_table: rt.clone(),
             pred: ir::AggregatePredicate {
-                op: op.clone(),
+                op: op.to_string(),
                 columns,
                 distinct,
                 filter,

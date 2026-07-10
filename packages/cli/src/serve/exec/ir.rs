@@ -15,6 +15,7 @@ pub enum OperationKind {
     Subscription,
 }
 
+#[derive(Debug)]
 pub struct Operation {
     pub kind: OperationKind,
     pub root_fields: Vec<RootField>,
@@ -23,6 +24,7 @@ pub struct Operation {
 // Table is the overwhelmingly common variant; boxing it would cost an
 // allocation per root field for no benefit.
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum RootField {
     /// `__typename` on the root: resolves to "query_root"/"subscription_root".
     Typename { alias: String },
@@ -33,6 +35,7 @@ pub enum RootField {
     Table(TableRoot),
 }
 
+#[derive(Debug)]
 pub struct IntrospectionField {
     pub alias: String,
     /// "__schema" or "__type"
@@ -44,10 +47,12 @@ pub struct IntrospectionField {
 
 /// Selection tree for introspection resolution: pre-validated field names
 /// on the __Schema/__Type/__Field/... meta types.
+#[derive(Debug)]
 pub struct IntroSelection {
     pub items: Vec<IntroSelItem>,
 }
 
+#[derive(Debug)]
 pub struct IntroSelItem {
     pub alias: String,
     pub field: String,
@@ -56,12 +61,14 @@ pub struct IntroSelItem {
     pub selection: Option<IntroSelection>,
 }
 
+#[derive(Debug)]
 pub struct TableRoot {
     pub alias: String,
     pub table: String,
     pub kind: TableRootKind,
 }
 
+#[derive(Debug)]
 pub enum TableRootKind {
     /// `<T>(...) : [T!]!`
     Many {
@@ -88,6 +95,7 @@ pub enum TableRootKind {
     },
 }
 
+#[derive(Debug)]
 pub struct StreamCursor {
     /// db column name
     pub column: String,
@@ -99,11 +107,13 @@ pub struct StreamCursor {
 }
 
 /// Selection over a table object type.
+#[derive(Debug)]
 pub struct ObjectSelection {
     pub table: String,
     pub items: Vec<SelItem>,
 }
 
+#[derive(Debug)]
 pub enum SelItem {
     Typename {
         alias: String,
@@ -145,6 +155,7 @@ pub enum SelItem {
     },
 }
 
+#[derive(Debug)]
 pub struct AggregateSelection {
     pub table: String,
     pub items: Vec<AggSelItem>,
@@ -153,6 +164,7 @@ pub struct AggregateSelection {
     pub nodes_limit: Option<i64>,
 }
 
+#[derive(Debug)]
 pub enum AggSelItem {
     Typename {
         alias: String,
@@ -170,6 +182,7 @@ pub enum AggSelItem {
     },
 }
 
+#[derive(Debug)]
 pub enum AggFieldItem {
     Typename {
         alias: String,
@@ -189,6 +202,7 @@ pub enum AggFieldItem {
     },
 }
 
+#[derive(Debug)]
 pub enum AggOpColumn {
     Typename {
         alias: String,
@@ -205,7 +219,7 @@ pub enum AggOpColumn {
     },
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SelectArgs {
     pub where_: Option<BoolExp>,
     pub order_by: Vec<OrderByItem>,
@@ -215,6 +229,7 @@ pub struct SelectArgs {
     pub distinct_on: Vec<String>,
 }
 
+#[derive(Debug)]
 pub struct OrderByItem {
     pub target: OrderTarget,
     pub direction: OrderDirection,
@@ -230,6 +245,7 @@ pub enum OrderDirection {
     DescNullsLast,
 }
 
+#[derive(Debug)]
 pub enum OrderTarget {
     /// Order by a column of the current table (db name).
     Column { column: String },
@@ -255,6 +271,7 @@ pub enum OrderTarget {
     },
 }
 
+#[derive(Debug)]
 pub enum BoolExp {
     And(Vec<BoolExp>),
     Or(Vec<BoolExp>),
@@ -290,6 +307,7 @@ pub enum BoolExp {
     },
 }
 
+#[derive(Debug)]
 pub struct AggregatePredicate {
     /// count / bool_and / bool_or
     pub op: String,
@@ -301,6 +319,7 @@ pub struct AggregatePredicate {
     pub predicate: Vec<CompareOp>,
 }
 
+#[derive(Debug)]
 pub enum CompareOp {
     Eq(SqlValue),
     Neq(SqlValue),

@@ -249,11 +249,6 @@ pub struct CompiledRoot {
     pub cursor_slots: Vec<(usize, usize)>,
 }
 
-pub fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Option<String>>) {
-    let c = compile_root_full(pg_schema, root);
-    (c.sql, c.params)
-}
-
 pub fn compile_root_full(pg_schema: &str, root: &ir::TableRoot) -> CompiledRoot {
     let mut b = Sql::new(pg_schema, estimate_capacity(root));
     match &root.kind {
@@ -1635,6 +1630,11 @@ fn emit_in_array(b: &mut Sql, vs: &[ir::SqlValue], pg_type: &str) {
 mod tests {
     use super::*;
     use crate::serve::model::Scalar;
+
+    fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Option<String>>) {
+        let c = compile_root_full(pg_schema, root);
+        (c.sql, c.params)
+    }
 
     fn col(alias: &str, column: &str, scalar: Scalar, pg_type: &str) -> ir::SelItem {
         ir::SelItem::Column {

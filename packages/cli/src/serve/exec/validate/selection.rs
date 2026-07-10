@@ -240,8 +240,8 @@ fn collect_into<'a>(
 }
 
 fn args_equal(a: &[(String, AValue)], b: &[(String, AValue)]) -> bool {
-    let to_map = |args: &[(String, AValue)]| -> BTreeMap<&str, &AValue> {
+    fn to_map(args: &[(String, AValue)]) -> BTreeMap<&str, &AValue> {
         args.iter().map(|(k, v)| (k.as_str(), v)).collect()
-    };
+    }
     to_map(a) == to_map(b)
 }
