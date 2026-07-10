@@ -1829,11 +1829,6 @@ let getNextQuery = (
   }
 }
 
-let hasPendingQueries = ({optimizedPartitions}: t) =>
-  optimizedPartitions.idsInAscOrder->Array.some(partitionId =>
-    (optimizedPartitions.entities->Dict.getUnsafe(partitionId)).mutPendingQueries->Array.length > 0
-  )
-
 let hasReadyItem = ({buffer} as fetchState: t) => {
   switch buffer->Array.get(0) {
   | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber

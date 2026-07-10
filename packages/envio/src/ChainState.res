@@ -23,9 +23,6 @@ type t = {
   // then smoothed with an EMA on every batch (see applyBatchProgress). None
   // until the chain has processed at least one event.
   mutable chainDensity: option<float>,
-  // A chain with no density signal targets frontier + coldTargetRange;
-  // whenever it has no pending queries and still no signal, the range doubles.
-  mutable coldTargetRange: int,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -96,7 +93,6 @@ let make = (
   numEventsProcessed,
   pendingBudget: 0.,
   chainDensity,
-  coldTargetRange: 20_000,
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
@@ -422,6 +418,10 @@ let effectiveDensity = (cs: t) =>
   | (None, None) => None
   }
 
+// How far past the frontier a chain with no density signal targets while it
+// takes its first measurements.
+let coldTargetRange = 20_000
+
 // This chain's share of the indexer-wide buffer budget turned into a soft
 // target block: via density, or frontier + coldTargetRange when there's no
 // density signal yet.
@@ -435,7 +435,7 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
       fetchCeiling,
       bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
     )
-  | _ => Pervasives.min(bufferBlockNumber + cs.coldTargetRange, fetchCeiling)
+  | _ => Pervasives.min(bufferBlockNumber + coldTargetRange, fetchCeiling)
   }
 }
 
@@ -477,19 +477,6 @@ let blockAtProgress = (cs: t, ~progress) => {
 // chain, so a chain with budget can't run further ahead than the chain the
 // whole pool is prioritizing.
 let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
-  // A cold chain that went idle (queries all resolved) without producing a
-  // density signal found nothing in its window — widen it so the next probe
-  // covers more ground per round trip. Ignored once a signal exists; no reset.
-  if cs->effectiveDensity === None {
-    let fetchState = cs.fetchState
-    let frontier = fetchState->FetchState.bufferBlockNumber
-    if frontier >= fetchState.startBlock && !(fetchState->FetchState.hasPendingQueries) {
-      cs.coldTargetRange = Pervasives.min(
-        cs.coldTargetRange * 2,
-        Pervasives.max(cs->fetchCeiling - frontier, 1),
-      )
-    }
-  }
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
   let chainTargetBlock = switch maxTargetBlock {
   | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)

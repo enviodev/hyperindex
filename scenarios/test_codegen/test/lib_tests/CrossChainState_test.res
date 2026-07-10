@@ -474,14 +474,9 @@ describe("CrossChainState readiness", () => {
 })
 
 describe("ChainState cold start", () => {
-  it("targets frontier + 20k with no density signal, doubling while idle without one", t => {
-    let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
-    let before = cs->ChainState.targetBlock(~chainTargetItems=1000.)
-    // Idle (no pending queries) and still no signal at tick start -> the
-    // window doubles before the target is derived.
-    let _ = cs->ChainState.getNextQuery(~chainTargetItems=1000.)
-    let after = cs->ChainState.targetBlock(~chainTargetItems=1000.)
-    t.expect((before, after)).toEqual((20_000, 40_000))
+  it("targets frontier + 20k with no density signal", t => {
+    let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1_000_000, ~latestFetchedBlock=5_000)
+    t.expect(cs->ChainState.targetBlock(~chainTargetItems=1000.)).toBe(25_000)
   })
 
   it("caps the cold target at an endBlock inside the horizon", t => {
