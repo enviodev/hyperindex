@@ -732,6 +732,10 @@ describe("RpcSource - fieldRegistry completeness", () => {
 let chain = HyperSyncSource_test.chain
 describe("RpcSource - getSelectionConfig", () => {
   let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+  // mockAddress0 is checksummed (mixed-case); ContractAddresses topics must
+  // materialize lowercase to match the lowercase hex topics real sources return.
+  let mockAddress0LowercaseTopic =
+    mockAddress0->Address.Evm.fromAddressLowercaseOrThrow->TopicFilter.fromAddress->EvmTypes.Hex.toString
 
   it("Selection config for the most basic case with no wildcards", t => {
     let selectionConfig = {
@@ -791,7 +795,7 @@ describe("RpcSource - getSelectionConfig", () => {
     ).toEqual([
       {
         addresses: None,
-        topicQuery: [Single("event 2"), Single(mockAddress0->TopicFilter.fromAddress->EvmTypes.Hex.toString)],
+        topicQuery: [Single("event 2"), Single(mockAddress0LowercaseTopic)],
       },
     ])
   })
@@ -815,7 +819,7 @@ describe("RpcSource - getSelectionConfig", () => {
     ).toEqual([
       {
         addresses: Some([mockAddress0]),
-        topicQuery: [Single("event 2"), Single(mockAddress0->TopicFilter.fromAddress->EvmTypes.Hex.toString)],
+        topicQuery: [Single("event 2"), Single(mockAddress0LowercaseTopic)],
       },
     ])
   })
@@ -940,7 +944,7 @@ describe("RpcSource - getSelectionConfig", () => {
       },
       {
         addresses: Some([mockAddress0]),
-        topicQuery: [Single("2"), Single(mockAddress0->TopicFilter.fromAddress->EvmTypes.Hex.toString)],
+        topicQuery: [Single("2"), Single(mockAddress0LowercaseTopic)],
       },
     ])
   })
@@ -1552,6 +1556,143 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           }),
         ),
       ))
+    },
+  )
+})
+
+describe("RpcSource - getItemsOrThrow with a checksummed ContractAddresses filter", () => {
+  let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  // Checksummed (mixed-case) - the shape a contract address actually has under
+  // `address_format: checksum` (the default). This is the real HTTP request a
+  // `where: { params: { to: chain.<Contract>.addresses } }` filter produces;
+  // it must carry lowercase topics like every real RPC/HyperSync node returns,
+  // or the filter silently never matches a real emitted log.
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  Async.it(
+    "Sends a lowercase-normalized topic over the wire and parses the matching log back",
+    async t => {
+      let eventConfig = MockIndexer.evmOnEventRegistration(
+        // `id` must equal the router key derived at lookup — `sighash_topicCount`
+        ~id=`${sighash}_1`,
+        ~isWildcard=true,
+        ~dependsOnAddresses=true,
+        ~eventFilters=[
+          {
+            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: ContractAddresses({contractName: "ERC20"}),
+            topic2: Values([]),
+            topic3: Values([]),
+          },
+        ],
+      )
+
+      let expectedTopic1 =
+        mockAddress
+        ->Address.Evm.fromAddressLowercaseOrThrow
+        ->TopicFilter.fromAddress
+        ->EvmTypes.Hex.toString
+
+      // The returned log only needs topic0 to round-trip through decoding
+      // (matching `topicCount: 1` / `params: []` below) - the regression this
+      // test pins is on the outgoing request's topic1, captured separately.
+      let logJson = JSON.Object(
+        Dict.fromArray([
+          ("address", JSON.String(mockAddress->Address.toString)),
+          ("topics", JSON.Array([JSON.String(sighash)])),
+          ("data", JSON.String("0x")),
+          ("blockNumber", JSON.String("0x64")),
+          (
+            "transactionHash",
+            JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
+          ),
+          ("transactionIndex", JSON.String("0x1")),
+          ("blockHash", JSON.String("0xb64")),
+          ("logIndex", JSON.String("0x2")),
+          ("removed", JSON.Boolean(false)),
+        ]),
+      )
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x64")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+
+      // Captures the topic1 value from the real outgoing eth_getLogs HTTP
+      // request (built by the Rust RPC client), so the assertion below checks
+      // what actually goes over the wire, not just an in-process value.
+      let capturedTopic1 = ref(None)
+      let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
+        switch method {
+        | "eth_getLogs" =>
+          capturedTopic1 :=
+            switch params {
+            | JSON.Array([JSON.Object(filter)]) =>
+              switch filter->Dict.get("topics") {
+              | Some(JSON.Array(topics)) =>
+                switch topics->Array.get(1) {
+                | Some(JSON.Array([JSON.String(topic)])) => Some(topic)
+                | _ => None
+                }
+              | _ => None
+              }
+            | _ => None
+            }
+          JSON.Array([logJson])
+        | "eth_getBlockByNumber" => blockJson
+        | _ => JSON.Null
+        }
+      )
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
+            params: [],
+          },
+        ],
+        // address_format: checksum - the real default
+        lowercaseAddresses: false,
+      })
+
+      let itemsCount = try {
+        let page = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+          ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+            Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+          ),
+          ~knownHeight=100,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: false,
+            onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
+          },
+          ~itemsTarget=5000,
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource ContractAddresses casing"}),
+        )
+        mock.close()
+        page.parsedQueueItems->Array.length
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      t.expect((capturedTopic1.contents, itemsCount)).toEqual((Some(expectedTopic1), 1))
     },
   )
 })

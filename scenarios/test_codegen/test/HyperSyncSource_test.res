@@ -1,6 +1,10 @@
 open Vitest
 
 let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+// mockAddress0 is checksummed (mixed-case); ContractAddresses topics must
+// materialize lowercase to match the lowercase hex topics real sources return.
+let mockAddress0LowercaseTopic =
+  mockAddress0->Address.Evm.fromAddressLowercaseOrThrow->TopicFilter.fromAddress
 
 let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
 
@@ -196,7 +200,7 @@ describe("HyperSyncSource - getSelectionConfig", () => {
           topicSelections: [
             {
               topic0: ["event 2"->EvmTypes.Hex.fromStringUnsafe],
-              topic1: [mockAddress0->TopicFilter.fromAddress],
+              topic1: [mockAddress0LowercaseTopic],
               topic2: [],
               topic3: [],
             },
