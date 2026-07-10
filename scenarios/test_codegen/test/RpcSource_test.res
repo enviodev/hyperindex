@@ -1208,6 +1208,144 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   )
 })
 
+describe("RpcSource - getItemsOrThrow classifies real provider block-range errors", () => {
+  let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+  let eventConfig = MockIndexer.evmOnEventRegistration(~id=`${sighash}_1`)
+
+  let blockJson = JSON.Object(
+    Dict.fromArray([
+      ("number", JSON.String("0x2710")),
+      ("timestamp", JSON.String("0x64")),
+      ("hash", JSON.String("0xb64")),
+      ("parentHash", JSON.String("0xb63")),
+    ]),
+  )
+
+  let jsonRpcError = message =>
+    JSON.stringify(
+      JSON.Object(
+        Dict.fromArray([
+          ("jsonrpc", JSON.String("2.0")),
+          ("id", JSON.Number(1.)),
+          (
+            "error",
+            JSON.Object(
+              Dict.fromArray([("code", JSON.Number(-32000.)), ("message", JSON.String(message))]),
+            ),
+          ),
+        ]),
+      ),
+    )
+
+  let jsonRpcResult = result =>
+    JSON.stringify(
+      JSON.Object(
+        Dict.fromArray([("jsonrpc", JSON.String("2.0")), ("id", JSON.Number(1.)), ("result", result)]),
+      ),
+    )
+
+  // Real `eth_getLogs` error messages providers return today (see the regex
+  // comments in packages/cli/src/evm_rpc_source/classify.rs), fed through a
+  // mock JSON-RPC server so each assertion exercises the actual napi boundary
+  // instead of a hand-built exception.
+  [
+    (
+      "an unknown provider's suggested range",
+      "query exceeds max results 20000, retry with the range 6000000-6000509",
+      510,
+    ),
+    (
+      "evm-rpc.sei-apis.com's max-allowed-blocks",
+      "block range too large (2000), maximum allowed is 1000 blocks",
+      1000,
+    ),
+    ("1RPC's block range limit", "eth_getLogs is limited to a 1000 blocks range", 1000),
+    (
+      "Alchemy's block range",
+      "You can make eth_getLogs requests with up to a 500 block range. Based on your parameters, this block range should work: [0x3d7773, 0x3d7966]",
+      500,
+    ),
+    ("Cloudflare's max range", "Max range: 3500", 3500),
+    ("Thirdweb's max requested blocks", "Maximum allowed number of requested blocks is 3500", 3500),
+    ("BlockPI's limited-to range", "limited to 2000 block", 2000),
+    ("Base's fixed range", "block range too large", 2000),
+    ("Blast's paid-plan range", "exceeds the range allowed for your plan (5000 > 3000)", 3000),
+    ("Chainstack's fixed range", "Block range limit exceeded.", 10000),
+    ("Coinbase's at-most range", "please limit the query to at most 1000 blocks", 1000),
+    ("PublicNode's max block range", "maximum block range: 2000", 2000),
+    ("Hyperliquid's max block range", "query exceeds max block range 1000", 1000),
+  ]->Array.forEach(((name, message, suggestedInterval)) => {
+    Async.it(`Resizes to the suggested interval for ${name}`, async t => {
+      let mock = await MockRpcServer.start(~handler=requestBody => {
+        let method =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "method"))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("")
+        switch method {
+        | "eth_getLogs" => (200, jsonRpcError(message))
+        | _ => (200, jsonRpcResult(blockJson))
+        }
+      })
+
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        eventRouter: [eventConfig]->EventRouter.fromEvmEventModsOrThrow(~chain),
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        allEventParams: [
+          {
+            sighash,
+            topicCount: 1,
+            eventName: eventConfig.eventConfig.name,
+            contractName: eventConfig.eventConfig.contractName,
+            params: [],
+          },
+        ],
+        lowercaseAddresses: false,
+      })
+
+      let retry = try {
+        let result = try {
+          let _ = await source.getItemsOrThrow(
+            ~fromBlock=0,
+            ~toBlock=Some(1_000_000),
+            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
+              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ),
+            ~knownHeight=1_000_000,
+            ~partitionId="0",
+            ~selection={
+              dependsOnAddresses: true,
+              onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
+            },
+            ~itemsTarget=5000,
+            ~retry=0,
+            ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
+          )
+          None
+        } catch {
+        | Source.GetItemsError(FailedGettingItems({retry})) => Some(retry)
+        | Source.GetItemsError(_) => None
+        }
+        mock.close()
+        result
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      t.expect(retry).toEqual(Some(WithSuggestedToBlock({toBlock: suggestedInterval - 1})))
+    })
+  })
+})
+
 describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
   let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
   let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
