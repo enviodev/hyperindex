@@ -158,6 +158,12 @@ impl EvmRpcClient {
         let decoder = DecoderCore::from_params(event_params, checksum_addresses)
             .context("build decoder")
             .map_err(map_err)?;
+        if !(0.0..1.0).contains(&cfg.backoff_multiplicative) {
+            return Err(map_err(anyhow::anyhow!(
+                "backoffMultiplicative must be in (0.0, 1.0), got {}",
+                cfg.backoff_multiplicative,
+            )));
+        }
         let sync_config = SyncConfig {
             initial_block_interval: u64::try_from(cfg.initial_block_interval)
                 .context("initialBlockInterval must be non-negative")
@@ -211,6 +217,11 @@ impl EvmRpcClient {
         }
         let from_block = params.from_block as u64;
         let to_block_ceiling = params.to_block_ceiling as u64;
+        if to_block_ceiling < from_block {
+            return Err(map_err(anyhow::anyhow!(
+                "to_block_ceiling ({to_block_ceiling}) must be >= from_block ({from_block})",
+            )));
+        }
 
         let (suggested_interval, source_max) = self
             .intervals
