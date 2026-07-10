@@ -47,7 +47,7 @@ let renderSourceRequests = (~samples: array<SourceManager.requestStatSample>) =>
       if sample.seconds !== 0. {
         secondsOut :=
           secondsOut.contents ++
-          `\n${sourceRequestSecondsTotalName}${labels} ${sample.seconds->Float.toString}`
+          `\n${sourceRequestSecondsTotalName}${labels} ${sample.seconds->Float.toFixed(~digits=3)}`
       }
     })
     countOut.contents ++ secondsOut.contents
