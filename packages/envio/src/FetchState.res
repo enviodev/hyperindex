@@ -1368,7 +1368,7 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 }
 
 // Most parallel in-flight chunk queries a single partition may have at once.
-let maxPendingChunksPerPartition = 10
+let maxPendingChunksPerPartition = 12
 
 // Fills a gap range (a hole left between completed/pending chunks, e.g. from an
 // out-of-order partial response) unconditionally — gaps are already-committed

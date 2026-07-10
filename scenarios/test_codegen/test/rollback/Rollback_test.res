@@ -1272,7 +1272,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual((
       // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
       // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 up to
-      // the per-partition cap of 10 chunks.
+      // the per-partition cap of 12 chunks.
       [
         {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
         {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
@@ -1284,6 +1284,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
         {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
         {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
+        {"fromBlock": 166, "toBlock": Some(171), "retry": 0, "p": "0"},
+        {"fromBlock": 172, "toBlock": Some(177), "retry": 0, "p": "0"},
       ],
       // Chain 1337: partition DELETED (lfb > target), recreated fresh
       [
@@ -2981,7 +2983,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 up to the
-        // per-partition cap of 10 chunks.
+        // per-partition cap of 12 chunks.
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
@@ -2993,6 +2995,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
           {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
           {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
+          {"fromBlock": 166, "toBlock": Some(171), "retry": 0, "p": "0"},
+          {"fromBlock": 172, "toBlock": Some(177), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh
         [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "0"}],
