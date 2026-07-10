@@ -127,7 +127,7 @@ let addReorgCheckpoints = (
   ~prevCheckpointId,
   ~blockStore: BlockStore.t,
   ~shouldRollbackOnReorg,
-  ~isInReorgThreshold,
+  ~thresholdBlockNumber,
   ~fromBlockExclusive,
   ~toBlockExclusive,
   ~chainId,
@@ -137,9 +137,9 @@ let addReorgCheckpoints = (
   ~mutCheckpointBlockHashes,
   ~mutCheckpointEventsProcessed,
 ) => {
-  if shouldRollbackOnReorg && isInReorgThreshold {
+  if shouldRollbackOnReorg {
     let prevCheckpointId = ref(prevCheckpointId)
-    for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
+    for blockNumber in Pervasives.max(fromBlockExclusive + 1, thresholdBlockNumber) to toBlockExclusive - 1 {
       switch blockStore->BlockStore.getHash(blockNumber) {
       | Null.Value(hash) =>
         let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
@@ -202,6 +202,11 @@ let prepareBatch = (
       ->Option.getUnsafe
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
+    // Hashes are only meaningful for reorg detection within the chain's own
+    // threshold; below it checkpoints stay hashless (matching what the store
+    // retains after pruning).
+    let chainThresholdBlockNumber =
+      chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.maxReorgDepth
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
         let item = fetchState.buffer->Array.getUnsafe(idx)
@@ -214,7 +219,7 @@ let prepareBatch = (
               ~chainId=fetchState.chainId,
               ~blockStore=chainBeforeBatch.blockStore,
               ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
-              ~isInReorgThreshold,
+              ~thresholdBlockNumber=chainThresholdBlockNumber,
               ~prevCheckpointId=prevCheckpointId.contents,
               ~fromBlockExclusive=prevBlockNumber.contents,
               ~toBlockExclusive=blockNumber,
@@ -232,7 +237,7 @@ let prepareBatch = (
           checkpointBlockNumbers->Array.push(blockNumber)->ignore
           checkpointBlockHashes
           ->Array.push(
-            isInReorgThreshold
+            blockNumber >= chainThresholdBlockNumber
               ? chainBeforeBatch.blockStore->BlockStore.getHash(blockNumber)
               : Null.Null,
           )
@@ -263,7 +268,7 @@ let prepareBatch = (
         ~chainId=fetchState.chainId,
         ~blockStore=chainBeforeBatch.blockStore,
         ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
-        ~isInReorgThreshold,
+        ~thresholdBlockNumber=chainThresholdBlockNumber,
         ~prevCheckpointId=prevCheckpointId.contents,
         ~fromBlockExclusive=prevBlockNumber.contents,
         ~toBlockExclusive=progressBlockNumberAfterBatch + 1, // Make it inclusive

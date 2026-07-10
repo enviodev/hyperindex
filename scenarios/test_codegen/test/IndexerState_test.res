@@ -132,11 +132,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~indexingAddresses,
       ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
-      ~reorgDetection=ReorgDetection.make(
-        ~chainReorgCheckpoints=[],
-        ~maxReorgDepth=200,
-        ~shouldRollbackOnReorg=false,
-      ),
+      ~maxReorgDepth=200,
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
@@ -322,11 +318,7 @@ describe("IndexerState", () => {
                 ~fetchState,
                 ~indexingAddresses,
                 ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
-                ~reorgDetection=ReorgDetection.make(
-                  ~chainReorgCheckpoints=[],
-                  ~maxReorgDepth=200,
-                  ~shouldRollbackOnReorg=false,
-                ),
+                ~maxReorgDepth=200,
                 ~committedProgressBlockNumber=-1,
                 ~logger=Logging.getLogger(),
               )
@@ -385,7 +377,6 @@ describe("IndexerState", () => {
           ],
           ~knownHeight=cs->ChainState.knownHeight,
           ~transactionStore=None,
-          ~blockStore=None,
         )
 
         state->IndexerState.applyBatchProgress(~batch)

@@ -113,8 +113,11 @@ external materialize: (
 // hashes of blocks at or above `keepHashesFrom` for reorg detection.
 @send external prune: (t, int, ~keepHashesFrom: int) => unit = "prune"
 
-// Drop blocks above the given block (rolled back).
-@send external rollback: (t, int) => unit = "rollback"
+// Drop blocks above the given block (rolled back). With `~keepHashes` (a chain
+// rolled back alongside another chain's reorg) blocks above the target are
+// reduced to hash-only rows: their data is refetched, but the scanned hashes
+// stay valid for reorg detection.
+@send external rollback: (t, int, ~keepHashes: bool) => unit = "rollback"
 
 // Hash of a stored block, if the store still holds it.
 @send external getHash: (t, int) => Null.t<string> = "getHash"

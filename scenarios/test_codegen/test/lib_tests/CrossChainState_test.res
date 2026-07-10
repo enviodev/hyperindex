@@ -63,11 +63,7 @@ let makeChainState = (
     ~fetchState,
     ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
-    ~reorgDetection=ReorgDetection.make(
-      ~chainReorgCheckpoints=[],
-      ~maxReorgDepth=200,
-      ~shouldRollbackOnReorg=false,
-    ),
+    ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
     ~logger=Logging.getLogger(),
@@ -127,11 +123,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     ~fetchState,
     ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
-    ~reorgDetection=ReorgDetection.make(
-      ~chainReorgCheckpoints=[],
-      ~maxReorgDepth=200,
-      ~shouldRollbackOnReorg=false,
-    ),
+    ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
     ~logger=Logging.getLogger(),
   )

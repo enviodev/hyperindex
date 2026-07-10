@@ -18,9 +18,10 @@ let runContractRegistersOrThrow = async (
   // materialise the selected fields onto the payloads before running them. All
   // items belong to the chain being fetched: transactions come from its
   // response page, blocks from the chain store the page was merged into.
-  await chainState->ChainState.materializePageItems(
+  await ChainState.materializePageItems(
     ~items=itemsWithContractRegister,
     ~transactionStore,
+    ~blockStore=chainState->ChainState.blockStore,
   )
 
   let itemsWithDcs = []

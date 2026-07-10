@@ -768,16 +768,24 @@ module Source = {
                   | Some(latestFetchedBlockHash) => latestFetchedBlockHash
                   | None => `0x${latestFetchedBlockNumber->Int.toString}`
                   }
-                  let blockHashes = [
+                  let observedBlocks = [
                     (
                       {
                         blockNumber: latestFetchedBlockNumber,
                         blockHash: latestFetchedBlockHash,
-                      }: ReorgDetection.blockData
+                      }: BlockStore.inputBlock
                     ),
                   ]
                   let prevEntry = switch prevRangeLastBlock {
-                  | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                  | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
+                    Some(
+                      (
+                        {
+                          blockNumber: prevRangeLastBlock.blockNumber,
+                          blockHash: prevRangeLastBlock.blockHash,
+                        }: BlockStore.inputBlock
+                      ),
+                    )
                   | None =>
                     if fromBlock > 0 {
                       Some(
@@ -785,7 +793,7 @@ module Source = {
                           {
                             blockNumber: fromBlock - 1,
                             blockHash: `0x${(fromBlock - 1)->Int.toString}`,
-                          }: ReorgDetection.blockData
+                          }: BlockStore.inputBlock
                         ),
                       )
                     } else {
@@ -793,12 +801,11 @@ module Source = {
                     }
                   }
                   switch prevEntry {
-                  | Some(prev) => blockHashes->Array.unshift(prev)->ignore
+                  | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
                   | None => ()
                   }
                   resolve({
                     Source.knownHeight,
-                    blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
                         Internal.Event({
@@ -874,7 +881,11 @@ module Source = {
                       },
                     ),
                     transactionStore: None,
-                    blockStore: None,
+                    blockStore: BlockStore.fromJs(
+                      observedBlocks,
+                      ~ecosystem=Evm,
+                      ~shouldChecksum=false,
+                    ),
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,

@@ -269,6 +269,20 @@ impl AnyCol {
         }
     }
 
+    /// Raw bytes of a byte-backed cell (hash comparison); `None` when the row
+    /// is invalid. Panics on a non-byte-backed column.
+    pub(crate) fn cell_bytes(&self, row: usize) -> Option<&[u8]> {
+        if !self.is_valid(row) {
+            return None;
+        }
+        match self {
+            AnyCol::Fixed(c) => c.get(row),
+            AnyCol::Var(c) => c.get(row),
+            AnyCol::Str(c) => c.get(row).map(str::as_bytes),
+            _ => panic!("expected a byte-backed column"),
+        }
+    }
+
     pub(crate) fn push_missing(&mut self) {
         match self {
             AnyCol::U64(c) => c.push(None),
@@ -608,6 +622,38 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         None
     }
 
+    /// Lowest key whose incoming `field` cell conflicts with what's already
+    /// written — either the table's stored cell or an earlier row of the same
+    /// batch (a within-response duplicate with a different hash). Returns the
+    /// conflicting (key, stored, received) byte values. Run before
+    /// `merge_batch`, which would silently overwrite.
+    pub(crate) fn detect_field_conflict(
+        &self,
+        keys: &[K],
+        col: Option<&AnyCol>,
+        field: usize,
+    ) -> Option<(K, Vec<u8>, Vec<u8>)> {
+        let col = col?;
+        let mut best: Option<(K, Vec<u8>, Vec<u8>)> = None;
+        let mut batch_last_row: HashMap<K, usize> = HashMap::new();
+        for (row, key) in keys.iter().enumerate() {
+            let Some(new) = col.cell_bytes(row) else {
+                continue;
+            };
+            let old = match batch_last_row.get(key) {
+                Some(&prev_row) => col.cell_bytes(prev_row),
+                None => self.field_bytes(key, field),
+            };
+            if let Some(old) = old {
+                if old != new && best.as_ref().is_none_or(|(k, _, _)| key < k) {
+                    best = Some((key.clone(), old.to_vec(), new.to_vec()));
+                }
+            }
+            batch_last_row.insert(key.clone(), row);
+        }
+        best
+    }
+
     /// Drop rows with keys `<= up_to` (processed), except rows with keys
     /// `>= keep_from` that carry `field`: those are reduced to that one field,
     /// so it stays readable after the rest of the row is gone.
@@ -647,6 +693,37 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         let dead: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
         for k in dead {
             if let Some(slot) = self.by_key.remove(&k) {
+                self.order.remove(&k);
+                self.free_slot(slot);
+            }
+        }
+    }
+
+    /// Reduce rows with keys `> target` to `field` only (a non-reorg chain's
+    /// rollback: buffered blocks will be refetched, but the scanned hashes are
+    /// still valid for reorg detection). Rows without the field are dropped.
+    pub(crate) fn rollback_keeping_field(&mut self, target: K, field: usize) {
+        let bit = 1u64 << field;
+        let affected: Vec<K> = self
+            .order
+            .range((
+                std::ops::Bound::Excluded(target),
+                std::ops::Bound::Unbounded,
+            ))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in affected {
+            let slot = self.by_key[&k];
+            if self.masks[slot as usize] & bit != 0 {
+                let mask = self.masks[slot as usize];
+                for f in 0..self.n_fields {
+                    if f != field && mask & (1u64 << f) != 0 {
+                        self.cols[f].as_mut().unwrap().clear(slot as usize);
+                    }
+                }
+                self.masks[slot as usize] = bit;
+            } else {
+                self.by_key.remove(&k);
                 self.order.remove(&k);
                 self.free_slot(slot);
             }

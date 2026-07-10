@@ -339,6 +339,7 @@ let makeFromDbState = (
 // --- Read accessors. ---
 
 let logger = (cs: t) => cs.logger
+let blockStore = (cs: t) => cs.blockStore
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 // Reorg-scan reads over the block store, for the rollback flow: the scanned
@@ -603,9 +604,9 @@ let materializeBatchItems = async (cs: t, ~items: array<Internal.item>) => {
 // page (`None` when kept inline); blocks come from the chain store, which the
 // response's page was already merged into by `registerReorgGuard`.
 let materializePageItems = async (
-  cs: t,
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: BlockStore.t,
 ) => {
   let (txGroups, blockGroups) = items->groupBatchItems
   let _ = await Promise.all2((
@@ -613,7 +614,7 @@ let materializePageItems = async (
     | Some(store) => store->applyTransactionGroups(txGroups)
     | None => Promise.resolve()
     },
-    cs.blockStore->applyBlockGroups(blockGroups),
+    blockStore->applyBlockGroups(blockGroups),
   ))
 }
 
@@ -909,7 +910,9 @@ let rollback = (
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
-    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
+    // A non-reorg chain's scanned hashes above the target are still valid, so
+    // keep them for reorg detection while the refetch repopulates the data.
+    cs.blockStore->BlockStore.rollback(newProgressBlockNumber, ~keepHashes=!isReorgChain)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
@@ -920,7 +923,7 @@ let rollback = (
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
+      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber, ~keepHashes=false)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

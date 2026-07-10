@@ -42,6 +42,7 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Pino.t
+let blockStore: t => BlockStore.t
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
 // Reorg-scan reads over the chain's block store, for the rollback flow.
@@ -120,9 +121,9 @@ let handleQueryResult: (
 ) => unit
 let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
-  t,
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: BlockStore.t,
 ) => promise<unit>
 let registerReorgGuard: (
   t,

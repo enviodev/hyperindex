@@ -157,7 +157,11 @@ fn evm_block_col(field: EvmBlockField, blocks: &[simple_types::Block]) -> Option
         // The block number is the table key, not a column.
         Number => None,
         Timestamp => var_from(blocks, |b| b.timestamp.as_ref().map(bytes)),
-        Hash => fixed_from(blocks, 32, |b| b.hash.as_ref().map(bytes)),
+        // The hash is the reorg-detection comparison key: stored as its JS
+        // string form so pages built from JS observations (arbitrary strings in
+        // tests) compare against fetched blocks byte-for-byte. Filled by
+        // `insert_evm_blocks`, which owns the hex encoding.
+        Hash => None,
         ParentHash => fixed_from(blocks, 32, |b| b.parent_hash.as_ref().map(bytes)),
         Nonce => fixed_from(blocks, 8, |b| b.nonce.as_ref().map(bytes)),
         Sha3Uncles => fixed_from(blocks, 32, |b| b.sha3_uncles.as_ref().map(bytes)),
@@ -217,8 +221,8 @@ fn decode_evm_block_field(
                 .collect(),
         ),
         Timestamp => Column::I64(bytes_cells(col, len, |b| map_i64(&Some(b)))?),
-        Hash
-        | ParentHash
+        Hash => Column::Str(str_cells(col, len)),
+        ParentHash
         | Sha3Uncles
         | LogsBloom
         | TransactionsRoot
@@ -326,7 +330,7 @@ fn decode_svm_block_columns(
 /// Rust client path and `fromJsFuel`.
 pub struct FuelBlockRow {
     pub height: u64,
-    pub id: Option<[u8; 32]>,
+    pub id: Option<String>,
     pub time: Option<i64>,
 }
 
@@ -337,7 +341,7 @@ fn fuel_block_col(field: FuelBlockField, blocks: &[FuelBlockRow]) -> Option<AnyC
         // The height is the table key, not a column.
         Height => None,
         Time => i64_from(blocks, |b| b.time),
-        Id => fixed_from(blocks, 32, |b| b.id.as_ref().map(|h| h.as_slice())),
+        Id => str_from(blocks, |b| b.id.as_deref()),
     }
 }
 
@@ -362,7 +366,7 @@ fn decode_fuel_block_field(
                 .collect(),
         ),
         Time => Column::I64(i64_cells(col, len)),
-        Id => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_full(b))))?),
+        Id => Column::Str(str_cells(col, len)),
     })
 }
 
@@ -457,19 +461,14 @@ fn decode_hex_opt<T: Hex>(v: &Option<String>, name: &str) -> Result<Option<T>> {
         .transpose()
 }
 
-pub(crate) fn decode_hash32(s: &str, name: &str) -> Result<[u8; 32]> {
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    let mut out = [0u8; 32];
-    faster_hex::hex_decode(hex.as_bytes(), &mut out).with_context(|| format!("decoding {name}"))?;
-    Ok(out)
-}
-
 /// Rebuild a `simple_types::Block` from JS field values, so `fromJsEvm` rows
 /// go through the same column fill as fetched blocks.
 fn evm_input_to_simple(b: EvmBlockInput) -> Result<simple_types::Block> {
     Ok(simple_types::Block {
         number: Some(u64::try_from(b.number).context("block.number negative")?),
-        hash: decode_hex_opt(&b.hash, "block.hash")?,
+        // The hash column is filled from the JS string directly (see
+        // `from_js_evm`), not through the byte-typed simple block.
+        hash: None,
         parent_hash: decode_hex_opt(&b.parent_hash, "block.parentHash")?,
         nonce: b
             .nonce
@@ -524,6 +523,11 @@ pub struct BlockStore {
     inner: Mutex<Table<u64>>,
     // Fixed at construction; drives the decoder in `materialize`.
     ecosystem: Ecosystem,
+    // Lowest within-page hash conflict recorded while building a page (two
+    // observations of the same block with different hashes in one response —
+    // e.g. a rollback guard disagreeing with a returned block). Reported by
+    // `merge` alongside cross-store mismatches.
+    pending_mismatch: Mutex<Option<HashMismatch>>,
 }
 
 #[napi]
@@ -553,12 +557,13 @@ impl BlockStore {
     #[napi(factory)]
     pub fn from_js_evm(blocks: Vec<EvmBlockInput>, should_checksum: bool) -> napi::Result<Self> {
         let store = Self::with_ecosystem(Ecosystem::Evm { should_checksum });
+        let hashes: Vec<Option<String>> = blocks.iter().map(|b| b.hash.clone()).collect();
         let simple = blocks
             .into_iter()
             .map(evm_input_to_simple)
             .collect::<Result<Vec<_>>>()
             .map_err(map_err)?;
-        store.insert_evm_blocks(simple);
+        store.insert_evm_blocks_with_hashes(simple, hashes);
         Ok(store)
     }
 
@@ -577,11 +582,7 @@ impl BlockStore {
             .map(|b| {
                 Ok(FuelBlockRow {
                     height: u64::try_from(b.height).context("block.height negative")?,
-                    id: b
-                        .id
-                        .as_deref()
-                        .map(|s| decode_hash32(s, "block.id"))
-                        .transpose()?,
+                    id: b.id,
                     time: b.time,
                 })
             })
@@ -610,21 +611,38 @@ impl BlockStore {
         if std::ptr::eq(self, page) {
             return None;
         }
-        // A page and its persistent store are the same per-chain ecosystem (both
-        // derive it from the one chain config), so the decoder is unaffected by
-        // the merge.
-        debug_assert_eq!(self.ecosystem, page.ecosystem);
+        // A page and its persistent store are the same per-chain ecosystem, so
+        // the decoder is unaffected by the merge. Only the kind matters: the
+        // EVM checksum flag lives on the persistent store's decoder and may
+        // differ on a page built via `fromJs`.
+        debug_assert_eq!(
+            std::mem::discriminant(&self.ecosystem),
+            std::mem::discriminant(&page.ecosystem)
+        );
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         let field = self.hash_field();
         let from = u64::try_from(from_block).unwrap_or(0);
-        let mismatch = dst
+        let cross = dst
             .first_field_mismatch(&src, field, from)
             .map(|key| HashMismatch {
                 block_number: key as i64,
                 stored_hash: self.hash_display(dst.field_bytes(&key, field).unwrap()),
                 received_hash: self.hash_display(src.field_bytes(&key, field).unwrap()),
             });
+        // A conflict the page recorded while it was built (the same block
+        // observed twice with different hashes in one response) is a reorg
+        // signal too, subject to the same threshold.
+        let within_page = page
+            .pending_mismatch
+            .lock()
+            .unwrap()
+            .take()
+            .filter(|p| p.block_number >= from_block);
+        let mismatch = match (cross, within_page) {
+            (Some(a), Some(b)) => Some(if a.block_number <= b.block_number { a } else { b }),
+            (a, b) => a.or(b),
+        };
         if mismatch.is_none() || report_only {
             dst.append_from(&mut src);
         }
@@ -756,11 +774,15 @@ impl BlockStore {
         }
     }
 
-    /// Drop blocks above `target_block` (rolled back).
+    /// Drop blocks above `target_block` (rolled back). With `keep_hashes` set
+    /// (a chain rolled back alongside another chain's reorg), blocks above the
+    /// target are reduced to hash-only rows instead: their data is refetched,
+    /// but the scanned hashes are still valid for reorg detection.
     #[napi]
-    pub fn rollback(&self, target_block: i64) {
+    pub fn rollback(&self, target_block: i64, keep_hashes: bool) {
         let mut inner = self.inner.lock().unwrap();
         match u64::try_from(target_block) {
+            Ok(target) if keep_hashes => inner.rollback_keeping_field(target, self.hash_field()),
             Ok(target) => inner.rollback(target),
             Err(_) => inner.clear(),
         }
@@ -777,6 +799,25 @@ impl BlockStore {
         Self {
             inner: Mutex::new(Table::new(n_fields)),
             ecosystem,
+            pending_mismatch: Mutex::new(None),
+        }
+    }
+
+    /// Record a hash conflict found while inserting a batch, keeping the lowest
+    /// block number.
+    fn record_conflict(&self, conflict: Option<(u64, Vec<u8>, Vec<u8>)>) {
+        if let Some((key, stored, received)) = conflict {
+            let mut pending = self.pending_mismatch.lock().unwrap();
+            if pending
+                .as_ref()
+                .is_none_or(|p| (key as i64) < p.block_number)
+            {
+                *pending = Some(HashMismatch {
+                    block_number: key as i64,
+                    stored_hash: self.hash_display(&stored),
+                    received_hash: self.hash_display(&received),
+                });
+            }
         }
     }
 
@@ -790,13 +831,10 @@ impl BlockStore {
         }
     }
 
-    /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
-    /// EVM/Fuel hashes, the raw base58 string for SVM.
+    /// A stored hash cell in the shape JS knows it by. Hashes are stored as
+    /// their JS string form for every ecosystem, so this is a UTF-8 read.
     fn hash_display(&self, bytes: &[u8]) -> String {
-        match self.ecosystem {
-            Ecosystem::Svm => String::from_utf8_lossy(bytes).into_owned(),
-            _ => hex_full(bytes),
-        }
+        String::from_utf8_lossy(bytes).into_owned()
     }
 
     fn gather(&self, block_numbers: &[i64], masks: &[u64]) -> Vec<Option<AnyCol>> {
@@ -811,17 +849,59 @@ impl BlockStore {
     /// source while building a page). One block per number, so overlapping
     /// partition re-fetches overwrite in place instead of duplicating. Not
     /// exposed to JS.
-    pub(crate) fn insert_evm_blocks(&self, mut blocks: Vec<simple_types::Block>) {
-        blocks.retain(|b| b.number.is_some());
+    pub(crate) fn insert_evm_blocks(&self, blocks: Vec<simple_types::Block>) {
+        let hashes = blocks
+            .iter()
+            .map(|b| b.hash.as_ref().map(|h| hex_full(h.as_ref())))
+            .collect();
+        self.insert_evm_blocks_with_hashes(blocks, hashes);
+    }
+
+    /// EVM insert with the hash column supplied as strings (the fetched
+    /// blocks' hex form, or raw JS observations from `fromJsEvm`).
+    fn insert_evm_blocks_with_hashes(
+        &self,
+        mut blocks: Vec<simple_types::Block>,
+        mut hashes: Vec<Option<String>>,
+    ) {
+        let mut i = 0;
+        blocks.retain(|b| {
+            let keep = b.number.is_some();
+            if !keep {
+                hashes.remove(i);
+            } else {
+                i += 1;
+            }
+            keep
+        });
         if blocks.is_empty() {
             return;
         }
-        let keys = blocks.iter().map(|b| b.number.unwrap()).collect();
-        let cols = EvmBlockField::VARIANTS
+        let keys: Vec<u64> = blocks.iter().map(|b| b.number.unwrap()).collect();
+        let cols: Vec<Option<AnyCol>> = EvmBlockField::VARIANTS
             .iter()
-            .map(|&f| evm_block_col(f, &blocks))
+            .map(|&f| {
+                if f == EvmBlockField::Hash {
+                    str_from(&hashes, |h| h.as_deref())
+                } else {
+                    evm_block_col(f, &blocks)
+                }
+            })
             .collect();
-        self.inner.lock().unwrap().merge_batch(keys, cols);
+        self.insert_watching_hash(keys, cols);
+    }
+
+    /// Merge a batch, first recording any hash conflict it introduces (against
+    /// the table or within the batch itself).
+    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>) {
+        let field = self.hash_field();
+        let conflict = {
+            let mut inner = self.inner.lock().unwrap();
+            let conflict = inner.detect_field_conflict(&keys, cols[field].as_ref(), field);
+            inner.merge_batch(keys, cols);
+            conflict
+        };
+        self.record_conflict(conflict);
     }
 
     /// Merge one response's SVM blocks into the table, keyed by slot. Not
@@ -835,7 +915,7 @@ impl BlockStore {
             .iter()
             .map(|&f| svm_block_col(f, &blocks))
             .collect();
-        self.inner.lock().unwrap().merge_batch(keys, cols);
+        self.insert_watching_hash(keys, cols);
     }
 
     /// Merge a response's rollback-guard blocks into the page as hash-only
@@ -874,7 +954,7 @@ impl BlockStore {
             .iter()
             .map(|&f| fuel_block_col(f, &blocks))
             .collect();
-        self.inner.lock().unwrap().merge_batch(keys, cols);
+        self.insert_watching_hash(keys, cols);
     }
 
     /// Merge sparse JS SVM blocks into the table, keyed by slot.
@@ -903,7 +983,7 @@ impl BlockStore {
                 }
             })
             .collect();
-        self.inner.lock().unwrap().merge_batch(keys, cols);
+        self.insert_watching_hash(keys, cols);
         Ok(())
     }
 }
@@ -1177,7 +1257,7 @@ mod tests {
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
             .expect("materialize");
-        store.rollback(20);
+        store.rollback(20, false);
         let after_rollback = store
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
@@ -1413,6 +1493,37 @@ mod tests {
     }
 
     #[test]
+    fn merge_reports_within_page_hash_conflict() {
+        // The same block observed twice with different hashes inside one page
+        // (e.g. a rollback guard disagreeing with a returned block) is a reorg
+        // even though the page dedupes on insert.
+        let page = BlockStore::new_evm(false);
+        page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
+        page.insert_evm_blocks(vec![hashed_evm_block(11, 0xbb)]);
+
+        let persistent = BlockStore::new_evm(false);
+        let mismatch = persistent.merge(&page, 0, false).expect("mismatch");
+        assert_eq!(
+            (
+                mismatch.block_number,
+                mismatch.stored_hash,
+                mismatch.received_hash
+            ),
+            (
+                11,
+                format!("0x{}", "11".repeat(32)),
+                format!("0x{}", "bb".repeat(32))
+            )
+        );
+
+        // The same duplicate with an identical hash is fine.
+        let page = BlockStore::new_evm(false);
+        page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
+        page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
+        assert!(persistent.merge(&page, 0, false).is_none());
+    }
+
+    #[test]
     fn latest_valid_block_stops_at_first_mismatch() {
         let store = evm_page(vec![
             hashed_evm_block(10, 0x10),
@@ -1445,7 +1556,7 @@ mod tests {
         let page = BlockStore::new_fuel();
         page.insert_fuel_block_rows(vec![FuelBlockRow {
             height: 5,
-            id: Some([0xee; 32]),
+            id: Some(format!("0x{}", "ee".repeat(32))),
             time: Some(123),
         }]);
 
@@ -1486,7 +1597,7 @@ mod tests {
         let conflicting = BlockStore::new_fuel();
         conflicting.insert_fuel_block_rows(vec![FuelBlockRow {
             height: 5,
-            id: Some([0xdd; 32]),
+            id: Some(format!("0x{}", "dd".repeat(32))),
             time: Some(124),
         }]);
         let mismatch = persistent.merge(&conflicting, 0, false).expect("mismatch");

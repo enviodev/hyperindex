@@ -37,11 +37,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
-      ~reorgDetection=ReorgDetection.make(
-        ~chainReorgCheckpoints=[],
-        ~maxReorgDepth=200,
-        ~shouldRollbackOnReorg=false,
-      ),
+      ~maxReorgDepth=200,
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
