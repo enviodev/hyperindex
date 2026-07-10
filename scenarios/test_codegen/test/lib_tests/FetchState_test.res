@@ -4268,10 +4268,10 @@ describe("FetchState.getNextQuery water-fill with uneven in-flight reservations"
     }
 
     // Fresh budget = 2000 - 1500 reserved = 500. Level = 500 (partition "1"
-    // sits above it). Partition "0": 2 chunks fit the 500 budget; the 140-item
-    // leftover can't fit a third chunk and doesn't force one — far from the
-    // reservation-inflated mean.
-    t.expect(byPartition).toEqual(Dict.fromArray([("0", [(1, 180), (19, 180)])]))
+    // sits above it). Partition "0": 2 chunks fit the 500 budget + 1 forced
+    // chunk for the 140-item leftover — the only overshoot is the
+    // min-one-chunk quantization, not the reservation-inflated mean.
+    t.expect(byPartition).toEqual(Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]))
   })
 
   it("sizes an unknown-density probe to the whole leftover instead of a diluted even split", t => {
@@ -4359,24 +4359,24 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
 
   it("sizes chunk itemsTarget with the chunk headroom multiplier", t => {
     t.expect({
-      "backfill1_5x": makeFetchState()->getChunks(~chainTargetItems=1000., ~chunkItemsMultiplier=1.5),
-      "realtime3x": makeFetchState()->getChunks(~chainTargetItems=1000., ~chunkItemsMultiplier=3.),
+      "backfill1_5x": makeFetchState()->getChunks(~chainTargetItems=270., ~chunkItemsMultiplier=1.5),
+      "realtime3x": makeFetchState()->getChunks(~chainTargetItems=270., ~chunkItemsMultiplier=3.),
     }).toEqual({
-      // ceil(1.5 * 10 * 18) = 270 per chunk: 3 fit the 1000 budget.
-      "backfill1_5x": [(1, 270), (19, 270), (37, 270)],
-      // ceil(3 * 10 * 18) = 540 per chunk: the second one doesn't fit.
+      // ceil(1.5 * 10 * 18) = 270 per chunk.
+      "backfill1_5x": [(1, 270)],
+      // ceil(3 * 10 * 18) = 540 per chunk.
       "realtime3x": [(1, 540)],
     })
   })
 
-  it("emits chunks while the budget lasts, first chunk always full-size", t => {
+  it("emits chunks while the budget lasts, min one chunk per water-fill round", t => {
     t.expect({
       "budget400": makeFetchState()->getChunks(~chainTargetItems=400.),
       "budget50": makeFetchState()->getChunks(~chainTargetItems=50.),
     }).toEqual({
-      // 180 + 180 = 360 <= 400; a third chunk would exceed the budget and the
-      // 40-item leftover doesn't force one.
-      "budget400": [(1, 180), (19, 180)],
+      // 180 + 180 = 360 <= 400 in the first round; the 40-item leftover
+      // re-pours and forces one more full chunk, so no budget strands.
+      "budget400": [(1, 180), (19, 180), (37, 180)],
       // The first chunk emits full-size regardless of budget (overshoot allowed).
       "budget50": [(1, 180)],
     })

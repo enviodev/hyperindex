@@ -1490,11 +1490,6 @@ type waterFillState = {
   p: partition,
   mutable cursor: int,
   mutable chunksUsedThisCall: int,
-  // Whether a water-fill round already emitted for this partition this call.
-  // The min-one-chunk force (emit a full chunk even past the allotment) is a
-  // progress guarantee, so it applies only to a partition's first emit — a
-  // later round's leftover re-pour must not force over-budget chunks.
-  mutable emittedThisCall: bool,
   // Existing mutPendingQueries count before this call — fixed for the call,
   // used with chunksUsedThisCall against maxPendingChunksPerPartition.
   pendingCount: int,
@@ -1668,7 +1663,6 @@ let getNextQuery = (
           p,
           cursor: cursor.contents,
           chunksUsedThisCall: chunksUsedThisCall.contents,
-          emittedThisCall: false,
           pendingCount,
           queryEndBlock,
           maybeChunkRange,
@@ -1727,8 +1721,8 @@ let getNextQuery = (
       switch (fs.maybeChunkRange, p->getTrustedDensity) {
       | (Some(minHistoryRange), Some(density)) if density > 0. =>
         // Chunking active: strict chunks with a hard endBlock, sized by real
-        // density with the chunk headroom multiplier — the partition's first
-        // emit this call gets one full chunk even if the budget falls short.
+        // density with the chunk headroom multiplier — at least one full
+        // chunk this round even if the allotment falls short.
         let chunkSize = Js.Math.ceil_int(minHistoryRange->Int.toFloat *. 1.8)
         let maxChunksRemaining =
           maxPendingChunksPerPartition - fs.pendingCount - fs.chunksUsedThisCall
@@ -1750,10 +1744,7 @@ let getNextQuery = (
             ->Math.ceil
             ->Float.toInt,
           )
-          if (
-            (!fs.emittedThisCall && consumed.contents == 0.) ||
-              consumed.contents +. itemsTarget->Int.toFloat <= budget
-          ) {
+          if consumed.contents == 0. || consumed.contents +. itemsTarget->Int.toFloat <= budget {
             fs.bucket->Array.push({
               partitionId: fs.partitionId,
               fromBlock: chunkFromBlock.contents,
@@ -1772,9 +1763,6 @@ let getNextQuery = (
         }
         fs.cursor = chunkFromBlock.contents
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + created.contents
-        if created.contents > 0 {
-          fs.emittedThisCall = true
-        }
         consumed.contents
       | _ =>
         let itemsTarget = Pervasives.max(1, Math.round(budget)->Float.toInt)
@@ -1789,7 +1777,6 @@ let getNextQuery = (
         })
         fs.cursor = maxBlock + 1
         fs.chunksUsedThisCall = fs.chunksUsedThisCall + 1
-        fs.emittedThisCall = true
         itemsTarget->Int.toFloat
       }
     }
@@ -1801,11 +1788,13 @@ let getNextQuery = (
     // round. Allotments sum to exactly the poured budget, so the outcome is
     // order-independent and never exceeds it — the only overshoot left is the
     // min-one-chunk quantization in emitQueries, bounded by one chunk per
-    // partition per call (a partition's first emit only).
+    // partition per round.
     //
-    // No explicit round cap: a partition survives a round only by consuming
-    // fresh budget, so the not-filled set drains on its own and the loop also
-    // stops once the whole budget is poured.
+    // No explicit round cap: a partition survives a round only by advancing
+    // chunksUsedThisCall (capped at maxPendingChunksPerPartition) or by
+    // consuming fresh budget (every emit consumes at least 1), so the
+    // not-filled set drains on its own and the loop also stops once the whole
+    // budget is poured.
     let notFilledPartitions = ref(inRangeStates)
     let remainingBudget = ref(rangeItemsTarget)
     while notFilledPartitions.contents->Array.length > 0 && remainingBudget.contents > 0. {
@@ -1824,10 +1813,7 @@ let getNextQuery = (
           reservedByPartition->Dict.set(fs.partitionId, reserved +. consumed)
           remainingBudget := remainingBudget.contents -. consumed
 
-          // A zero-consumption emit means the allotment can't fit even one
-          // more chunk — re-pouring the same leftover at it would spin
-          // forever, so the partition is done for this call.
-          if consumed > 0. && fs->isInRange {
+          if fs->isInRange {
             next->Array.push(fs)->ignore
           }
         }
