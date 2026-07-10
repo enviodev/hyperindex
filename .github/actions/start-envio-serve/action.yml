@@ -43,7 +43,21 @@ runs:
       run: |
         if [ "$RESTART_INPUT" = "true" ]; then
           pkill -f "bin.mjs serve" || true
-          sleep 1
+          # Wait until the old process is actually gone and the port is
+          # free before starting the replacement — a fixed sleep races the
+          # OS releasing the listener.
+          for i in {1..30}; do
+            if ! pgrep -f "bin.mjs serve" >/dev/null \
+              && ! curl -sf --max-time 1 "http://localhost:$ENVIO_SERVE_PORT_INPUT/healthz" >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "old envio serve did not exit; force-killing"
+              pkill -9 -f "bin.mjs serve" || true
+              sleep 1
+            fi
+            sleep 1
+          done
         fi
         pnpm exec envio serve --port "$ENVIO_SERVE_PORT_INPUT" &
         for i in {1..60}; do

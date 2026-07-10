@@ -55,9 +55,10 @@ export function normalize(
   const data: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body.data)) {
     data[key] = Array.isArray(value)
-      ? [...value].sort((a, b) =>
-          JSON.stringify(a) < JSON.stringify(b) ? -1 : 1
-        )
+      ? [...value]
+          .map((item) => [JSON.stringify(item), item] as const)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([, item]) => item)
       : value;
   }
   return { status: response.status, body: { ...body, data } };

@@ -55,6 +55,7 @@ describe.sequential("differential subscriptions", () => {
               `INSERT INTO public."SimpleEntity" (id, value) VALUES ('sub-tmp-1', 'live');`
             );
             payloads.push(await sub.nextData());
+            session.assertNoUnconsumedData();
             sub.stop();
           } finally {
             await session.close();
@@ -82,6 +83,7 @@ describe.sequential("differential subscriptions", () => {
               `UPDATE public."User" SET "updatesCountOnUserForTesting" = 777 WHERE id = 'user-1';`
             );
             payloads.push(await sub.nextData());
+            session.assertNoUnconsumedData();
             sub.stop();
           } finally {
             await session.close();
@@ -106,6 +108,7 @@ describe.sequential("differential subscriptions", () => {
             const sub = subscribe(session, protocol, { query });
             const first = await sub.nextData();
             await sub.waitComplete();
+            session.assertNoUnconsumedData();
             return { payloads: [first] };
           } finally {
             await session.close();
@@ -166,6 +169,7 @@ describe.sequential("differential subscriptions", () => {
             payloads.push(await sub.nextData());
             payloads.push(await sub.nextData());
             payloads.push(await sub.nextData());
+            session.assertNoUnconsumedData();
             sub.stop();
           } finally {
             await session.close();
@@ -197,6 +201,7 @@ describe.sequential("differential subscriptions", () => {
             payloads.push(await sub.nextData());
             payloads.push(await sub.nextData());
             payloads.push(await sub.nextData());
+            session.assertNoUnconsumedData();
             sub.stop();
           } finally {
             await session.close();
@@ -253,6 +258,130 @@ describe.sequential("differential subscriptions", () => {
         const envio = await run(endpoints.envio);
         expect(envio.errorPayload).toEqual(hasura.errorPayload);
       }, 60_000);
+
+      // The graphql-transport-ws spec pins connection-level misuse to
+      // specific close codes (4409/4401/4429); the legacy protocol has no
+      // equivalent mandated behavior, so these three run only for the
+      // modern protocol. Hasura is the runtime oracle either way.
+      if (protocol === "graphql-transport-ws") {
+        it("duplicate subscription id on one socket closes with 4409", async () => {
+          const query = `subscription { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }`;
+
+          const run = async (url: string): Promise<number> => {
+            const session = await connect(url, protocol, { adminSecret });
+            try {
+              const sub = subscribe(session, protocol, { query }, "dup-id");
+              await sub.nextData();
+              subscribe(session, protocol, { query }, "dup-id");
+              return (await session.waitClose()).code;
+            } finally {
+              await session.close();
+            }
+          };
+
+          const hasura = await run(endpoints.hasura);
+          const envio = await run(endpoints.envio);
+          expect(envio).toEqual(hasura);
+        }, 60_000);
+
+        it("subscribe before connection_init closes with 4401", async () => {
+          const query = `subscription { SimpleEntity(limit: 1) { id } }`;
+
+          const run = async (url: string): Promise<number> => {
+            const session = await connect(url, protocol, { skipInit: true });
+            try {
+              session.send({ type: "subscribe", id: "1", payload: { query } });
+              return (await session.waitClose()).code;
+            } finally {
+              await session.close();
+            }
+          };
+
+          const hasura = await run(endpoints.hasura);
+          const envio = await run(endpoints.envio);
+          expect(envio).toEqual(hasura);
+        }, 60_000);
+
+        it("second connection_init closes with 4429", async () => {
+          const run = async (url: string): Promise<number> => {
+            const session = await connect(url, protocol, { adminSecret });
+            try {
+              session.send({ type: "connection_init", payload: {} });
+              return (await session.waitClose()).code;
+            } finally {
+              await session.close();
+            }
+          };
+
+          const hasura = await run(endpoints.hasura);
+          const envio = await run(endpoints.envio);
+          expect(envio).toEqual(hasura);
+        }, 60_000);
+      }
+
+      it("concurrent subscriptions on one socket receive independent updates", async () => {
+        const queryFor = (prefix: string) =>
+          `subscription { SimpleEntity(order_by: {id: asc}, where: {id: {_like: "${prefix}%"}}) { id value } }`;
+
+        const run = async (url: string): Promise<ScenarioResult> => {
+          const session = await connect(url, protocol, { adminSecret });
+          const payloads: unknown[] = [];
+          try {
+            const subA = subscribe(session, protocol, { query: queryFor("multi-a") });
+            const subB = subscribe(session, protocol, { query: queryFor("multi-b") });
+            payloads.push(await subA.nextData());
+            payloads.push(await subB.nextData());
+            await runSql(
+              `INSERT INTO public."SimpleEntity" (id, value) VALUES ('multi-a-1', 'a');`
+            );
+            payloads.push(await subA.nextData());
+            await runSql(
+              `INSERT INTO public."SimpleEntity" (id, value) VALUES ('multi-b-1', 'b');`
+            );
+            payloads.push(await subB.nextData());
+            // A spurious extra push on either subscription (e.g. sub B
+            // reacting to sub A's row) is exactly what this scenario must
+            // catch.
+            session.assertNoUnconsumedData();
+            subA.stop();
+            subB.stop();
+          } finally {
+            await session.close();
+            await runSql(`DELETE FROM public."SimpleEntity" WHERE id LIKE 'multi-%';`);
+          }
+          return { payloads };
+        };
+
+        const hasura = await run(endpoints.hasura);
+        const envio = await run(endpoints.envio);
+        expect(envio.payloads).toEqual(hasura.payloads);
+      }, 90_000);
+
+      it("rapid connect/disconnect churn leaves the server healthy", async () => {
+        const query = `subscription { SimpleEntity(order_by: {id: asc}, limit: 1) { id value } }`;
+
+        const run = async (url: string): Promise<ScenarioResult> => {
+          for (let i = 0; i < 5; i++) {
+            const session = await connect(url, protocol, { adminSecret });
+            subscribe(session, protocol, { query });
+            await session.close();
+          }
+          const session = await connect(url, protocol, { adminSecret });
+          try {
+            const sub = subscribe(session, protocol, { query });
+            const payload = await sub.nextData();
+            session.assertNoUnconsumedData();
+            sub.stop();
+            return { payloads: [payload] };
+          } finally {
+            await session.close();
+          }
+        };
+
+        const hasura = await run(endpoints.hasura);
+        const envio = await run(endpoints.envio);
+        expect(envio.payloads).toEqual(hasura.payloads);
+      }, 90_000);
     });
   }
 });

@@ -523,10 +523,7 @@ mod tests {
     /// Skips (doesn't fail) if Docker isn't available in this environment.
     #[test]
     fn tls_connection_verifies_server_certificate() {
-        if !docker_available() {
-            eprintln!(
-                "skipping tls_connection_verifies_server_certificate: docker is not available"
-            );
+        if super::super::test_support::skip_without_docker() {
             return;
         }
 
@@ -588,14 +585,6 @@ mod tests {
             let row = client.query_one("select 1", &[]).await.expect("query");
             assert_eq!(row.get::<_, i32>(0), 1);
         });
-    }
-
-    fn docker_available() -> bool {
-        Command::new("docker")
-            .arg("info")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
     }
 
     fn load_pem_roots(pem: &str) -> rustls::RootCertStore {

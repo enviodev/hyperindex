@@ -13,6 +13,21 @@ pub fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Returns true when the caller should skip because docker is missing.
+/// With ENVIO_REQUIRE_DOCKER=1 (set in CI) a missing docker is a hard
+/// failure instead — otherwise every docker-gated test would silently pass
+/// vacuously if docker ever vanished from the runners.
+pub fn skip_without_docker() -> bool {
+    if docker_available() {
+        return false;
+    }
+    if std::env::var("ENVIO_REQUIRE_DOCKER").as_deref() == Ok("1") {
+        panic!("docker is required (ENVIO_REQUIRE_DOCKER=1) but not available");
+    }
+    eprintln!("skipping: docker is not available");
+    true
+}
+
 pub fn run(cmd: &mut Command) -> std::process::Output {
     let output = cmd.output().expect("failed to run docker");
     assert!(

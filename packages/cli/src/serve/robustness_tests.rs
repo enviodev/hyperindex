@@ -31,7 +31,7 @@
 use super::env_config::{PgSslMode, ServeEnv};
 use super::model::ServerModel;
 use super::project_schema::ProjectSchema;
-use super::test_support::{docker_available, free_port, TestPg};
+use super::test_support::{free_port, skip_without_docker, TestPg};
 use super::{http, pg_catalog, ServeState};
 use crate::project_paths::ParsedProjectPaths;
 use futures_util::{SinkExt, StreamExt};
@@ -192,8 +192,7 @@ const SIMPLE_QUERY: &str = "{ SimpleEntity(order_by: {id: asc}, limit: 1) { id }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn postgres_outage_errors_cleanly_and_recovers_without_restart() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -251,8 +250,7 @@ async fn postgres_outage_errors_cleanly_and_recovers_without_restart() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn table_recreate_does_not_poison_statement_cache() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -297,8 +295,7 @@ async fn table_recreate_does_not_poison_statement_cache() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn frozen_postgres_is_bounded_by_the_client_query_timeout() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -331,8 +328,7 @@ async fn frozen_postgres_is_bounded_by_the_client_query_timeout() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_signal_stops_the_server() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -360,8 +356,7 @@ async fn shutdown_signal_stops_the_server() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -470,6 +465,72 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn http_transport_surface_edge_cases() {
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let client = reqwest::Client::new();
+
+    // GET /v1/graphql without WebSocket upgrade headers: axum's upgrade
+    // extractor rejects it (serve-defined behavior, pinned here — Hasura
+    // serves GraphiQL on plain GET instead).
+    let res = client
+        .get(format!("{base}/v1/graphql"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap();
+    let get_status = res.status().as_u16();
+    let get_body = res.text().await.unwrap();
+
+    let unknown_path_status = client
+        .get(format!("{base}/definitely/not/a/route"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+
+    // >2MB body trips axum's default request-body limit before GraphQL
+    // parsing (serve-defined behavior, pinned).
+    let oversized = format!(
+        "{{\"query\": \"{{ SimpleEntity {{ id }} }}\", \"pad\": \"{}\"}}",
+        "a".repeat(3 * 1024 * 1024)
+    );
+    let res = client
+        .post(format!("{base}/v1/graphql"))
+        .header("content-type", "application/json")
+        .body(oversized)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .unwrap();
+    let oversized_status = res.status().as_u16();
+    let oversized_body = res.text().await.unwrap();
+
+    assert_eq!(
+        (
+            get_status,
+            get_body,
+            unknown_path_status,
+            oversized_status,
+            oversized_body
+        ),
+        (
+            400,
+            "Connection header did not include 'upgrade'".to_string(),
+            404,
+            413,
+            "Failed to buffer the request body: length limit exceeded".to_string()
+        )
+    );
+}
+
 const SUBSCRIBE_QUERY: &str = "subscription { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }";
 
 #[tokio::test(flavor = "multi_thread")]
@@ -478,8 +539,7 @@ async fn black_holed_websocket_client_is_closed_within_30s() {
     use tokio_tungstenite::tungstenite::http::HeaderValue;
     use tokio_tungstenite::tungstenite::Message as TMessage;
 
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -575,8 +635,7 @@ async fn shutdown_closes_websocket_subscriptions_cleanly() {
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
     use tokio_tungstenite::tungstenite::Message as TMessage;
 
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -664,8 +723,7 @@ async fn shutdown_closes_websocket_subscriptions_cleanly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn aggregate_selection_count_null_args_errors_cleanly() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -723,8 +781,7 @@ async fn aggregate_selection_count_null_args_errors_cleanly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn json_field_null_path_errors_cleanly() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -757,8 +814,7 @@ async fn json_field_null_path_errors_cleanly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     // Reserve the address but do not start Postgres on it yet -- then start

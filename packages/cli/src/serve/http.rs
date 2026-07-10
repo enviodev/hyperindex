@@ -395,6 +395,81 @@ async fn ws_or_get_handler(
 mod tests {
     use super::*;
 
+    // Error shapes mirror Hasura's, matching the em-* error-matrix corpus
+    // (e.g. em-body-lone-surrogate-in-query pins the invalid-json path).
+    #[test]
+    fn request_body_decoding_errors() {
+        let decode = |body: &str| {
+            decode_request_body(body.as_bytes())
+                .map(|_| unreachable!("expected a decode error for {body:?}"))
+                .unwrap_err()
+        };
+        let shape = |e: exec::error::GraphQLError| (e.message, e.path, e.code, e.status);
+        assert_eq!(
+            [
+                decode("not json"),
+                decode("[1,2]"),
+                decode("\"query\""),
+                decode("42"),
+                decode("{}"),
+                decode("{\"query\": 5}"),
+                decode("{\"query\": \"{ x }\", \"variables\": \"v\"}"),
+                decode("{\"query\": \"{ x }\", \"variables\": [1]}"),
+            ]
+            .map(shape),
+            [
+                (
+                    "expected ident at line 1 column 2".to_string(),
+                    "$".to_string(),
+                    "invalid-json",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Array".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered String".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Number".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, key \"query\" not found".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Text failed, expected String, but encountered Number".to_string(),
+                    "$.query".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing HashMap failed, expected Object, but encountered String".to_string(),
+                    "$.variables".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing HashMap failed, expected Object, but encountered Array".to_string(),
+                    "$.variables".to_string(),
+                    "parse-failed",
+                    200
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn admin_secret_comparison() {
         assert_eq!(
