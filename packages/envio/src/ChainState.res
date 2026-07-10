@@ -13,6 +13,11 @@ type t = {
   mutable isProgressAtHead: bool,
   mutable timestampCaughtUpToHeadOrEndblock: option<Date.t>,
   mutable committedProgressBlockNumber: int,
+  // Progress of the batch currently being processed. The buffer is consumed at
+  // batch creation (see advanceAfterBatch), so this runs ahead of
+  // committedProgressBlockNumber until the batch commits — it's the true lower
+  // boundary of the remaining buffer's block span.
+  mutable processingBlockNumber: int,
   mutable numEventsProcessed: float,
   // Running sum of in-flight queries' itemsTarget, kept here so the
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
@@ -90,6 +95,7 @@ let make = (
   isProgressAtHead,
   timestampCaughtUpToHeadOrEndblock,
   committedProgressBlockNumber,
+  processingBlockNumber: committedProgressBlockNumber,
   numEventsProcessed,
   pendingBudget: 0.,
   chainDensity,
@@ -394,20 +400,48 @@ let fetchCeiling = (cs: t) => {
   }
 }
 
+// Events/block over the ready part of the buffer — a live signal that reacts
+// to what fetching just found, unlike the processing EMA which only moves as
+// batches commit.
+let readyBufferDensity = (cs: t) => {
+  let readyCount = cs.fetchState->FetchState.bufferReadyCount
+  let span = cs.fetchState->FetchState.bufferBlockNumber - cs.processingBlockNumber
+  if readyCount > 0 && span > 0 {
+    Some(readyCount->Int.toFloat /. span->Int.toFloat)
+  } else {
+    None
+  }
+}
+
+// Density used for query sizing: the higher of the processing EMA and the
+// ready-buffer density, so a stale-low EMA can't undersize queries while the
+// buffer proves the range is dense. None means the chain is cold — no density
+// signal at all.
+let effectiveDensity = (cs: t) =>
+  switch (cs.chainDensity, cs->readyBufferDensity) {
+  | (Some(ema), Some(buffer)) => Some(Pervasives.max(ema, buffer))
+  | (Some(_) as density, None) | (None, Some(_) as density) => density
+  | (None, None) => None
+  }
+
+// How far past the frontier a chain with no density signal targets while it
+// takes its first measurements.
+let coldTargetRange = 20_000
+
 // This chain's share of the indexer-wide buffer budget turned into a soft
-// target block: via chain density, or the fetch ceiling when density isn't
-// known yet.
+// target block: via density, or frontier + coldTargetRange when there's no
+// density signal yet.
 let targetBlock = (cs: t, ~chainTargetItems: float) => {
   let fetchState = cs.fetchState
   let fetchCeiling = cs->fetchCeiling
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
-  switch cs.chainDensity {
+  switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
     Pervasives.min(
       fetchCeiling,
       bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
     )
-  | _ => fetchCeiling
+  | _ => Pervasives.min(bufferBlockNumber + coldTargetRange, fetchCeiling)
   }
 }
 
@@ -465,7 +499,7 @@ let getNextQuery = (
   // top: they're already accounted and shouldn't crowd out new partitions), so
   // the waterfall's leftover flows to the next chain in the same tick instead
   // of being held by an oversized probe.
-  let chainTargetItems = switch cs.chainDensity {
+  let chainTargetItems = switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
     let rangeCost =
       density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
@@ -478,10 +512,9 @@ let getNextQuery = (
     let rangeCost =
       chainTargetBlock >= cs->fetchCeiling && cs->isReady ? rangeCost *. 3. : rangeCost
     Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
-  | _ =>
-    // No density signal yet: bound the probe so one unknown chain doesn't
-    // hold the whole pool while it takes its first measurements.
-    Pervasives.min(chainTargetItems, 5_000. +. cs.pendingBudget)
+  // No density signal: the cross-chain waterfall already clamped the handed
+  // budget to the cold-chain cap, so it's used as-is.
+  | _ => chainTargetItems
   }
   cs.fetchState->FetchState.getNextQuery(
     ~chainTargetBlock,
@@ -863,6 +896,10 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
     cs.fetchState = enteringReorgThreshold
       ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
       : chainAfterBatch.fetchState
+
+    // The batch's items just left the buffer, so the remaining buffer's span
+    // starts at the batch's progress.
+    cs.processingBlockNumber = chainAfterBatch.progressBlockNumber
   | None => ()
   }
 
@@ -949,6 +986,13 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       cs.committedProgressBlockNumber = chainAfterBatch.progressBlockNumber
+
+      // Normally already set by advanceAfterBatch at batch creation; catch up
+      // here for paths that commit progress without it.
+      cs.processingBlockNumber = Pervasives.max(
+        cs.processingBlockNumber,
+        chainAfterBatch.progressBlockNumber,
+      )
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
       // Processed blocks' transactions and blocks are no longer needed.
       cs.transactionStore->TransactionStore.prune(chainAfterBatch.progressBlockNumber)
@@ -1033,6 +1077,7 @@ let rollback = (
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
+    cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
   | None =>
     if isReorgChain {
@@ -1051,6 +1096,7 @@ let rollback = (
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,
       )
+      cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, rollbackTargetBlockNumber)
     }
   }
 }

@@ -85,6 +85,7 @@ let makeFetchingChainState = (
   ~endBlock=None,
   ~chainDensity=None,
   ~caughtUpOnce=false,
+  ~bufferBlocks=[],
 ) => {
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
@@ -117,7 +118,7 @@ let makeFetchingChainState = (
     ),
     startBlock: 0,
     endBlock,
-    buffer: [],
+    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -482,3 +483,143 @@ describe("CrossChainState readiness", () => {
   })
 })
 
+describe("ChainState cold start", () => {
+  it("targets frontier + 20k with no density signal", t => {
+    let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1_000_000, ~latestFetchedBlock=5_000)
+    t.expect(cs->ChainState.targetBlock(~chainTargetItems=1000.)).toBe(25_000)
+  })
+
+  it("caps the cold target at an endBlock inside the horizon", t => {
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=0,
+      ~endBlock=Some(5_000),
+    )
+    t.expect(cs->ChainState.targetBlock(~chainTargetItems=1000.)).toBe(5_000)
+  })
+
+  Async.it("cold leader doesn't set the alignment line", async t => {
+    // Chain 1 is cold and most behind: its 20k guess-window on a 1M-block
+    // chain maps to ~2% progress, which would cap chain 2 near block 20 if a
+    // cold chain could claim leadership. Instead chain 2 (density-bearing)
+    // sets the line and drains the rest of the pool.
+    let a = makeFetchingChainState(~chainId=1, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
+    let b = makeFetchingChainState(
+      ~chainId=2,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=500,
+      ~chainDensity=Some(10.),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
+
+    let dispatchedItemsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      dispatchedItemsByChain->Utils.Dict.setByInt(
+        chain->ChainMap.Chain.toChainId,
+        switch action {
+        | Ready(queries) =>
+          queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
+        | _ => 0.
+        },
+      )
+      Promise.resolve()
+    })
+
+    t.expect(
+      dispatchedItemsByChain,
+      ~message="Cold chain 1 gets its bounded probe; chain 2 is unconstrained by chain 1's guess",
+    ).toEqual(Dict.fromArray([("1", 5000.), ("2", 5000.)]))
+  })
+
+  Async.it("clamps a cold chain to min(5k, targetBufferSize)", async t => {
+    let probeSize = async (~targetBufferSize) => {
+      let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
+      let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize)
+      let dispatched = ref(0.)
+      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain as _, ~action) => {
+        switch action {
+        | Ready(queries) =>
+          dispatched :=
+            queries->Array.reduce(0., (acc, q: FetchState.query) =>
+              acc +. q.itemsTarget->Int.toFloat
+            )
+        | _ => ()
+        }
+        Promise.resolve()
+      })
+      dispatched.contents
+    }
+    t.expect(
+      (await probeSize(~targetBufferSize=10_000), await probeSize(~targetBufferSize=2_000)),
+      ~message="The cold probe never exceeds 5k, nor the whole pool when it's smaller",
+    ).toEqual((5000., 2000.))
+  })
+})
+
+describe("ChainState density from the ready buffer", () => {
+  it("a dense ready buffer overrides a stale-low processing EMA", t => {
+    // 100 ready items over the 101-block span (-1 committed progress ->
+    // frontier 100) prove ~1 item/block even though the EMA says 0.001.
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=100,
+      ~chainDensity=Some(0.001),
+      ~bufferBlocks=Array.make(~length=100, 50),
+    )
+    t.expect(cs->ChainState.effectiveDensity).toEqual(Some(100. /. 101.))
+  })
+
+  it("falls back to the processing EMA when the buffer is empty", t => {
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=100,
+      ~chainDensity=Some(0.5),
+    )
+    t.expect(cs->ChainState.effectiveDensity).toEqual(Some(0.5))
+  })
+
+  it("mid-batch, the span starts at the processing block, not the committed one", t => {
+    // A batch was created up to block 100, consuming the buffer's head; its
+    // progress commits only after processing. The remaining 2 ready items span
+    // the 100 blocks since the batch's progress — not the 201 since the still
+    // uncommitted progress (-1).
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=200,
+      ~bufferBlocks=[150, 160],
+    )
+    let progressedChainsById = Dict.make()
+    progressedChainsById->Utils.Dict.setByInt(
+      1,
+      (
+        {
+          batchSize: 5,
+          progressBlockNumber: 100,
+          sourceBlockNumber: 1_000_000,
+          totalEventsProcessed: 5.,
+          fetchState: (cs->ChainState.toChainBeforeBatch).fetchState,
+          isProgressAtHeadWhenBatchCreated: false,
+        }: Batch.chainAfterBatch
+      ),
+    )
+    cs->ChainState.advanceAfterBatch(
+      ~batch={...emptyBatch, progressedChainsById},
+      ~enteringReorgThreshold=false,
+    )
+    t.expect(cs->ChainState.effectiveDensity).toEqual(Some(2. /. 100.))
+  })
+
+  it("ready items alone take the chain out of cold mode before the first batch commits", t => {
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1_000_000,
+      ~latestFetchedBlock=100,
+      ~bufferBlocks=[50],
+    )
+    t.expect(cs->ChainState.effectiveDensity).toEqual(Some(1. /. 101.))
+  })
+})

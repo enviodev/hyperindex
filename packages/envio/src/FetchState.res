@@ -1388,7 +1388,10 @@ let pushGapFillQueries = (
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
   let cost = ref(0.)
-  if rangeFromBlock <= knownHeight && maxChunks > 0 {
+
+  // Gaps past the chain's target block wait: they regenerate from the
+  // pending-walk each tick and fill once the target reaches them.
+  if rangeFromBlock <= Pervasives.min(knownHeight, chainTargetBlock) && maxChunks > 0 {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
@@ -1730,10 +1733,13 @@ let getNextQuery = (
         let created = ref(0)
         let chunkFromBlock = ref(fs.cursor)
         let budgetLeft = ref(true)
+        // No chunk starts past chainTargetBlock; an emitted chunk still keeps
+        // its full span (chunkToBlock may exceed the target — only
+        // endBlock/mergeBlock are hard bounds).
         while (
           budgetLeft.contents &&
           created.contents < maxChunksRemaining &&
-          chunkFromBlock.contents <= maxBlock
+          chunkFromBlock.contents <= Pervasives.min(maxBlock, chainTargetBlock)
         ) {
           let chunkToBlock = Pervasives.min(chunkFromBlock.contents + chunkSize - 1, maxBlock)
           let itemsTarget = Pervasives.max(

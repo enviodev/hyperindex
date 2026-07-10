@@ -60,6 +60,7 @@ let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
 let chainDensity: t => option<float>
+let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
 let isReadyToEnterReorgThreshold: t => bool
 

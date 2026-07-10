@@ -1348,8 +1348,18 @@ describe("E2E tests", () => {
 
     // Step 2: Register DC1 at block 5000, DC2 at block 25100
     // Gap = 25099 - 4999 = 20100 > tooFarBlockRange(20000) → separate partitions
+    // The 100 plain events at blocks 3000-3099 give the chain a density signal
+    // (ready-buffer density immediately, the processing EMA once the batch
+    // commits). Without one the chain is cold and its target block is capped at
+    // frontier + 20k, which would gate the far partitions this merge
+    // choreography relies on fetching in parallel — and the density must be
+    // high enough that the chain-level range-cost budget affords DC2's full
+    // 10-chunk pipeline below.
     sourceMock.resolveGetItemsOrThrow(
       [
+        ...Array.fromInitializer(~length=100, i => (
+          {blockNumber: 3000 + i, logIndex: 0}: MockIndexer.Source.itemMock
+        )),
         {
           blockNumber: 5000,
           logIndex: 0,
@@ -1371,7 +1381,7 @@ describe("E2E tests", () => {
       ],
       ~latestFetchedBlockNumber=25100,
     )
-    // Batch writes because P0 advances and items at blocks 5000,25100 are processable
+    // Batch writes because P0 advances and the items at blocks 3000-3099 are processable
     await indexerMock.getBatchWritePromise()
 
     // DC1 = partition "2" at lfb=4999, DC2 = partition "3" at lfb=25099

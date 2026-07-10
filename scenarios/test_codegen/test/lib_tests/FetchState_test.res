@@ -4306,6 +4306,97 @@ describe("FetchState.getNextQuery water-fill with uneven in-flight reservations"
   })
 })
 
+describe("FetchState.getNextQuery target containment", () => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makePartition = (
+    ~latestFetchedBlock,
+    ~knownDensity,
+    ~mergeBlock=None,
+    ~mutPendingQueries=[],
+  ): FetchState.partition => {
+    id: "0",
+    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+    mergeBlock,
+    dynamicContract: None,
+    mutPendingQueries,
+    prevQueryRange: knownDensity ? 10 : 0,
+    prevPrevQueryRange: knownDensity ? 10 : 0,
+    prevRangeSize: knownDensity ? 100 : 0, // density = 100 / 10 = 10 items/block
+    latestBlockRangeUpdateBlock: 0,
+  }
+
+  let makeFetchState = (partition): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[partition],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: partition.latestFetchedBlock.blockNumber,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 10000,
+    firstEventBlock: Some(0),
+  }
+
+  it("gates chunk starts at the target block even when a far mergeBlock allows more", t => {
+    // mergeBlock=1000 gives the partition a 1000-block hard range; the budget
+    // affords 10 chunks. Only chunks STARTING at or below chainTargetBlock=50
+    // may be emitted (chunkSize = ceil(10 * 1.8) = 18 -> starts 1, 19, 37);
+    // the last chunk keeps its full span past the target.
+    let fetchState = makeFetchState(
+      makePartition(~latestFetchedBlock=0, ~knownDensity=true, ~mergeBlock=Some(1000)),
+    )
+    let emitted = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=50,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.toBlock))
+    | _ => []
+    }
+    t.expect(emitted).toEqual([(1, Some(18)), (19, Some(36)), (37, Some(54))])
+  })
+
+  it("defers a gap past the target block, then fills it once the target reaches it", t => {
+    // Gap [101, 199] sits between the fetched frontier (100) and a pending
+    // chunk starting at 200.
+    let makeGappedFetchState = () =>
+      makeFetchState(
+        makePartition(
+          ~latestFetchedBlock=100,
+          ~knownDensity=false,
+          ~mutPendingQueries=[
+            {fromBlock: 200, toBlock: Some(219), isChunk: true, itemsTarget: 100, fetchedBlock: None},
+          ],
+        ),
+      )
+    let emitted = (~chainTargetBlock) =>
+      switch makeGappedFetchState()->FetchState.getNextQuery(
+        ~chainTargetBlock,
+        ~chainTargetItems=10_000.,
+      ) {
+      | Ready(queries) =>
+        Some(queries->Array.map((q: FetchState.query) => (q.fromBlock, q.toBlock)))
+      | NothingToQuery => None
+      | WaitingForNewBlock => Some([(-1, None)])
+      }
+    t.expect(
+      (emitted(~chainTargetBlock=50), emitted(~chainTargetBlock=150)),
+      ~message="Target below the gap defers it; target inside the gap fills it",
+    ).toEqual((None, Some([(101, Some(199))])))
+  })
+})
+
 describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => {
   // Single partition with density 10 items/block and chunk history 10 ->
   // chunkSize = ceil(10 * 1.8) = 18, so a chunk costs 180 items at multiplier
