@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "envio": "file:../../packages/envio",
-    "viem": "2.46.2"
+    "viem": "2.54.0"
   },
   "engines": {
     "node": ">=22.0.0"
