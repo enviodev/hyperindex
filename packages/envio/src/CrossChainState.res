@@ -19,7 +19,7 @@ type t = {
 let calculateTargetBufferSize = () =>
   switch Env.targetBufferSize {
   | Some(size) => size
-  | None => 50_000
+  | None => 100_000
   }
 
 let make = (
@@ -257,7 +257,10 @@ let checkAndFetch = async (
             ),
           )
         None
-      | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress))
+      // 5% margin past the leader's line: chains whose progress tracks the
+      // leader closely would otherwise flap in and out of the clamp as
+      // leadership alternates, stalling their pipeline every other tick.
+      | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.05))
       }
       switch cs->ChainState.getNextQuery(
         ~chainTargetItems,
@@ -269,7 +272,7 @@ let checkAndFetch = async (
       | Ready(queries) => {
           let consumed =
             queries->Array.reduce(0., (acc, query: FetchState.query) =>
-              acc +. query.itemsTarget->Int.toFloat
+              acc +. query.itemsEst->Int.toFloat
             )
 
           let partitions = Dict.make()

@@ -19,7 +19,7 @@ type t = {
   // boundary of the remaining buffer's block span.
   mutable processingBlockNumber: int,
   mutable numEventsProcessed: float,
-  // Running sum of in-flight queries' itemsTarget, kept here so the
+  // Running sum of in-flight queries' itemsEst, kept here so the
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
@@ -372,8 +372,7 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +.
-    queries->Array.reduce(0., (acc, query) => acc +. query.itemsTarget->Int.toFloat)
+    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsEst->Int.toFloat)
 }
 
 // Drop every in-flight query and release their reservations together, keeping
@@ -501,16 +500,12 @@ let getNextQuery = (
   // of being held by an oversized probe.
   let chainTargetItems = switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
+    // No extra headroom here: the budget is reserved in honest itemsEst units,
+    // and truncation safety lives in the itemsTarget server cap (sized with
+    // chunkItemsMultiplier at query creation) — multiplying the budget cap too
+    // would compound the two and hold budget away from other chains.
     let rangeCost =
       density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
-    // 3x headroom only for a chain already caught up once and polling the
-    // head: there a single query covers the whole remaining range, and a
-    // slightly denser-than-expected range would otherwise truncate at the
-    // server cap and force an immediate catch-up query for the last blocks.
-    // During backfill the range never fits one query anyway, so headroom
-    // would just hold budget away from other chains.
-    let rangeCost =
-      chainTargetBlock >= cs->fetchCeiling && cs->isReady ? rangeCost *. 3. : rangeCost
     Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
   // No density signal: the cross-chain waterfall already clamped the handed
   // budget to the cold-chain cap, so it's used as-is.
@@ -795,7 +790,7 @@ let handleQueryResult = (
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
-  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsTarget->Int.toFloat)
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsEst->Int.toFloat)
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.
