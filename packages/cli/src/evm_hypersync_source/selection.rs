@@ -151,16 +151,16 @@ pub(crate) struct BuiltSelection {
 }
 
 /// Builds per-query log selections from the registrations passed at client
-/// construction. Registrations are keyed by their chain-scoped sequential id;
-/// a query names the ids of its partition's selection plus the partition's
-/// current addresses per contract.
+/// construction. Registrations are keyed by their chain-scoped sequential
+/// index; a query names the indexes of its partition's selection plus the
+/// partition's current addresses per contract.
 pub(crate) struct SelectionBuilder {
     registrations: HashMap<i64, RegistrationSelection>,
 }
 
 impl SelectionBuilder {
     pub(crate) fn from_registrations(
-        registrations: &[super::types::EventRegistrationInput],
+        registrations: &[super::types::OnEventRegistration],
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for reg in registrations {
@@ -309,7 +309,7 @@ impl SelectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evm_hypersync_source::types::EventRegistrationInput;
+    use crate::evm_hypersync_source::types::OnEventRegistration;
 
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -324,8 +324,8 @@ mod tests {
         is_wildcard: bool,
         depends_on_addresses: bool,
         topic1: Option<Vec<String>>,
-    ) -> EventRegistrationInput {
-        EventRegistrationInput {
+    ) -> OnEventRegistration {
+        OnEventRegistration {
             index: id,
             sighash: sighash.to_string(),
             topic_count: 1,

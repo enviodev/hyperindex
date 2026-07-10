@@ -21,7 +21,7 @@ use decode::DecoderCore;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
-    encode_address, map_hex_string, map_i64, Block, EventRegistrationInput, ParamValue,
+    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue,
     RollbackGuard,
 };
 
@@ -56,7 +56,7 @@ impl EvmHypersyncClient {
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
-        event_registrations: Vec<EventRegistrationInput>,
+        event_registrations: Vec<OnEventRegistration>,
     ) -> napi::Result<EvmHypersyncClient> {
         init_logger(cfg.log_level.as_deref());
 
@@ -695,7 +695,7 @@ mod tests {
     // unrouted logs are dropped.
     fn zero_event_decoder() -> DecoderCore {
         DecoderCore::from_registrations(
-            &[crate::evm_hypersync_source::types::EventRegistrationInput {
+            &[crate::evm_hypersync_source::types::OnEventRegistration {
                 index: 0,
                 sighash: format!("0x{}", "00".repeat(32)),
                 topic_count: 1,

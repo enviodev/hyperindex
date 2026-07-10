@@ -9,7 +9,7 @@ use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
 use crate::evm_hypersync_source::types::{
-    sol_value_to_param, EventRegistrationInput, Log, ParamMeta, ParamValue,
+    sol_value_to_param, OnEventRegistration, Log, ParamMeta, ParamValue,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -55,7 +55,7 @@ impl MetaKey {
 /// `MetaKey` when they emit the same-signature event; the positional decode is
 /// shared, the param names are not.
 struct EventVariant {
-    index: i64,
+    on_event_registration_index: i64,
     params: Vec<ParamMeta>,
 }
 
@@ -65,15 +65,15 @@ struct EventVariant {
 /// topic count), so the first variant's layout backs the shared `decoder` and
 /// `apply_names` keys names off each variant.
 ///
-/// `wildcard`/`by_contract_name` index into `variants` and route a log to its
-/// registration: the log's address resolves to a contract name (via the
-/// partition's address index), the contract's own variant wins, and anything
-/// else falls back to the wildcard variant.
+/// `wildcard_variant_idx`/`variant_idx_by_contract_name` index into `variants`
+/// and route a log to its registration: the log's address resolves to a
+/// contract name (via the partition's address index), the contract's own
+/// variant wins, and anything else falls back to the wildcard variant.
 struct RegisteredEvent {
     decoder: DynSolEvent,
     variants: Vec<EventVariant>,
-    wildcard: Option<usize>,
-    by_contract_name: HashMap<String, usize>,
+    wildcard_variant_idx: Option<usize>,
+    variant_idx_by_contract_name: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ pub(crate) struct DecoderCore {
 
 impl DecoderCore {
     pub(crate) fn from_registrations(
-        registrations: &[EventRegistrationInput],
+        registrations: &[OnEventRegistration],
         checksum_addresses: bool,
     ) -> Result<Self> {
         let mut events: HashMap<MetaKey, RegisteredEvent> = HashMap::new();
@@ -99,8 +99,8 @@ impl DecoderCore {
                     e.insert(RegisteredEvent {
                         decoder,
                         variants: Vec::new(),
-                        wildcard: None,
-                        by_contract_name: HashMap::new(),
+                        wildcard_variant_idx: None,
+                        variant_idx_by_contract_name: HashMap::new(),
                     })
                 }
             };
@@ -124,7 +124,7 @@ impl DecoderCore {
             // wildcard variant per key.
             let variant_idx = event.variants.len();
             if event
-                .by_contract_name
+                .variant_idx_by_contract_name
                 .insert(ep.contract_name.clone(), variant_idx)
                 .is_some()
             {
@@ -137,16 +137,16 @@ impl DecoderCore {
             }
             if ep.is_wildcard {
                 anyhow::ensure!(
-                    event.wildcard.is_none(),
+                    event.wildcard_variant_idx.is_none(),
                     "Another event is already registered with the same signature that would \
                      interfere with wildcard filtering: {} for contract {}",
                     ep.event_name,
                     ep.contract_name,
                 );
-                event.wildcard = Some(variant_idx);
+                event.wildcard_variant_idx = Some(variant_idx);
             }
             event.variants.push(EventVariant {
-                index: ep.index,
+                on_event_registration_index: ep.index,
                 params: ep.params.clone(),
             });
         }
@@ -208,8 +208,12 @@ impl DecoderCore {
         };
 
         let variant_idx = match contract_name {
-            Some(name) => event.by_contract_name.get(name).copied().or(event.wildcard),
-            None => event.wildcard,
+            Some(name) => event
+                .variant_idx_by_contract_name
+                .get(name)
+                .copied()
+                .or(event.wildcard_variant_idx),
+            None => event.wildcard_variant_idx,
         };
         let variant = match variant_idx {
             Some(idx) => &event.variants[idx],
@@ -228,7 +232,7 @@ impl DecoderCore {
             .context("decode log")?;
 
         Ok(Some(RoutedEvent {
-            index: variant.index,
+            index: variant.on_event_registration_index,
             params: ParamValue::Obj(apply_names(
                 decoded,
                 &variant.params,
@@ -351,7 +355,7 @@ mod tests {
             .to_string();
 
         let core = DecoderCore::from_registrations(
-            &[EventRegistrationInput {
+            &[OnEventRegistration {
                 index: 7,
                 sighash: real_sighash.clone(),
                 topic_count: 1,
@@ -426,7 +430,7 @@ mod tests {
             .unwrap()
             .selector()
             .to_string();
-        let variant = |contract: &str, params| EventRegistrationInput {
+        let variant = |contract: &str, params| OnEventRegistration {
             index: 0,
             sighash: sighash.clone(),
             topic_count: 2,
@@ -465,7 +469,7 @@ mod tests {
                 .unwrap()
                 .selector()
                 .to_string();
-        let variant = |contract: &str, params| EventRegistrationInput {
+        let variant = |contract: &str, params| OnEventRegistration {
             index: 0,
             sighash: sighash.clone(),
             topic_count: 3,

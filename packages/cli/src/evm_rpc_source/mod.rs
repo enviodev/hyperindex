@@ -12,7 +12,7 @@ mod interval;
 use crate::evm_hypersync_source::decode::DecoderCore;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, EventRegistrationInput, Log as DecoderLog, ParamValue,
+    encode_address, OnEventRegistration, Log as DecoderLog, ParamValue,
 };
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
@@ -153,7 +153,7 @@ impl EvmRpcClient {
     #[napi(factory)]
     pub fn new(
         cfg: EvmRpcClientConfig,
-        event_registrations: Vec<EventRegistrationInput>,
+        event_registrations: Vec<OnEventRegistration>,
         checksum_addresses: bool,
     ) -> napi::Result<EvmRpcClient> {
         let http_req_timeout_millis = cfg
