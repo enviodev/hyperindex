@@ -289,8 +289,12 @@ pub struct ParamMeta {
     pub components: Option<Vec<ParamMeta>>,
 }
 
+/// The full per-(event, chain) registration crossing the boundary once at
+/// client construction: decode metadata (`sighash`/`topic_count`/`params`),
+/// routing identity (`id`/`contract_name`/`is_wildcard`), and the fetch state
+/// queries are built from (`topic_selections`, field selections).
 #[napi(object)]
-pub struct EventParamsInput {
+pub struct EventRegistrationInput {
     /// Chain-scoped sequential registration id; returned on every routed item
     /// so JS resolves the registration by array index.
     pub id: i64,
@@ -299,7 +303,18 @@ pub struct EventParamsInput {
     pub event_name: String,
     pub contract_name: String,
     pub is_wildcard: bool,
+    /// Whether the query for this event must be scoped to (or derived from)
+    /// the contract's registered addresses.
+    pub depends_on_addresses: bool,
     pub params: Vec<ParamMeta>,
+    /// The registration's resolved `where` in disjunctive normal form (outer
+    /// array is OR). Empty means the event is never fetched.
+    pub topic_selections: Vec<crate::evm_hypersync_source::selection::TopicSelectionInput>,
+    /// Block fields this event's handler reads (HyperSync field selection).
+    pub block_fields: Vec<crate::evm_hypersync_source::query::BlockField>,
+    /// Transaction fields this event's handler reads (HyperSync field
+    /// selection).
+    pub transaction_fields: Vec<crate::evm_hypersync_source::query::TransactionField>,
 }
 
 pub enum ParamValue {

@@ -1,123 +1,5 @@
 open Source
 
-type selectionConfig = {
-  getLogSelectionOrThrow: (
-    ~addressesByContractName: dict<array<Address.t>>,
-  ) => array<LogSelection.t>,
-  fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-}
-
-let getSelectionConfig = (selection: FetchState.selection) => {
-  let capitalizedBlockFields = Utils.Set.make()
-  let capitalizedTransactionFields = Utils.Set.make()
-
-  let topicSelectionsByContract = Dict.make()
-  let wildcardTopicSelectionsByContract = Dict.make()
-  let noAddressesTopicSelections = []
-  let contractNames = Utils.Set.make()
-
-  selection.onEventRegistrations
-  ->(Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>)
-  ->Array.forEach(reg => {
-    let eventConfig =
-      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    let contractName = eventConfig.contractName
-    let {selectedBlockFields, selectedTransactionFields} = eventConfig
-    let {dependsOnAddresses, resolvedWhere, isWildcard} = reg
-    selectedBlockFields
-    ->Utils.Set.toArray
-    ->Array.forEach(name =>
-      capitalizedBlockFields
-      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
-      ->ignore
-    )
-    selectedTransactionFields
-    ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      // transactionIndex is read off the log (the store key), so it never needs
-      // to be requested as a transaction column — and requesting it alone would
-      // pull the whole transaction table for nothing.
-      let fieldName = (name :> string)
-      if fieldName != "transactionIndex" {
-        capitalizedTransactionFields->Utils.Set.add(fieldName->Utils.String.capitalize)->ignore
-      }
-    })
-
-    if dependsOnAddresses {
-      let _ = contractNames->Utils.Set.add(contractName)
-
-      (
-        isWildcard ? wildcardTopicSelectionsByContract : topicSelectionsByContract
-      )->Utils.Dict.pushMany(contractName, resolvedWhere.topicSelections)
-    } else {
-      noAddressesTopicSelections
-      ->Array.pushMany(
-        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
-      )
-      ->ignore
-    }
-  })
-
-  let fieldSelection: HyperSyncClient.QueryTypes.fieldSelection = {
-    log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-    block: capitalizedBlockFields
-    ->Utils.Set.toArray
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.blockField>),
-    transaction: capitalizedTransactionFields
-    ->Utils.Set.toArray
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
-  }
-
-  let noAddressesLogSelection = LogSelection.make(
-    ~addresses=[],
-    ~topicSelections=noAddressesTopicSelections,
-  )
-
-  let getLogSelectionOrThrow = (~addressesByContractName): array<LogSelection.t> => {
-    let logSelections = []
-    if noAddressesLogSelection.topicSelections->Utils.Array.isEmpty->not {
-      logSelections->Array.push(noAddressesLogSelection)
-    }
-    contractNames->Utils.Set.forEach(contractName => {
-      switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | None
-      | Some([]) => ()
-      | Some(addresses) =>
-        switch topicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None => ()
-        | Some(topicSelections) =>
-          logSelections->Array.push(
-            LogSelection.make(
-              ~addresses,
-              ~topicSelections=topicSelections->LogSelection.materializeTopicSelections(~addresses),
-            ),
-          )
-        }
-        // Wildcard events that filter an indexed param by registered addresses:
-        // the addresses fold into the topics, so the query itself stays
-        // address-unbound.
-        switch wildcardTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None => ()
-        | Some(topicSelections) =>
-          logSelections->Array.push(
-            LogSelection.make(
-              ~addresses=[],
-              ~topicSelections=topicSelections->LogSelection.materializeTopicSelections(~addresses),
-            ),
-          )
-        }
-      }
-    })
-    logSelections
-  }
-
-  {
-    getLogSelectionOrThrow,
-    fieldSelection,
-  }
-}
-
-let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
@@ -127,7 +9,9 @@ let isUnauthorizedError = (message: string) => message->String.includes("401 Una
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
-  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
+  // The chain's registration inputs, mirrored to the Rust client which owns
+  // query construction, routing, and decoding.
+  eventRegistrations: array<HyperSyncClient.Registration.input>,
   // The chain's registrations, indexed by their sequential id — Rust routes
   // each log and echoes the id back on the item.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
@@ -143,7 +27,7 @@ let make = (
   {
     chain,
     endpointUrl,
-    allEventParams,
+    eventRegistrations,
     onEventRegistrations,
     apiToken,
     clientTimeoutMillis,
@@ -154,8 +38,6 @@ let make = (
   }: options,
 ): t => {
   let name = "HyperSync"
-
-  let getSelectionConfig = memoGetSelectionConfig()
 
   let apiToken = switch apiToken {
   | Some(token) => token
@@ -169,7 +51,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventParams=allEventParams,
+    ~eventRegistrations,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -213,22 +95,15 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~contractNameByAddress,
+    ~contractNameByAddress as _,
     ~knownHeight,
     ~partitionId as _,
-    ~selection,
+    ~selection: FetchState.selection,
     ~itemsTarget,
     ~retry,
-    ~logger,
+    ~logger as _,
   ) => {
     let totalTimeRef = Performance.now()
-
-    let selectionConfig = selection->getSelectionConfig
-
-    let logSelections = try selectionConfig.getLogSelectionOrThrow(~addressesByContractName) catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
-    }
 
     let startFetchingBatchTimeRef = Performance.now()
 
@@ -237,10 +112,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~client,
       ~fromBlock,
       ~toBlock,
-      ~logSelections,
-      ~fieldSelection=selectionConfig.fieldSelection,
       ~maxNumLogs=itemsTarget,
-      ~contractNameByAddress,
+      ~registrationIds=selection.onEventRegistrations->Array.map(reg => reg.id),
+      ~addressesByContractName,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(

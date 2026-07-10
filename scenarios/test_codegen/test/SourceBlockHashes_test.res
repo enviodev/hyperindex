@@ -82,15 +82,11 @@ let pairCreatedAbi: array<Internal.paramMeta> = [
   {name: "allPairs", abiType: "uint256", indexed: false},
 ]
 
-let pairCreatedEventParams: HyperSyncClient.Decoder.eventParamsInput = {
-  id: 0,
-  sighash: pairCreatedTopic0,
-  topicCount: 3,
-  eventName: "PairCreated",
-  contractName: "UniswapV2Factory",
-  isWildcard: false,
-  params: pairCreatedAbi,
-}
+// The registration input mirrors pairCreatedRegistration, with the on-chain
+// ABI attached so decoding works on real logs.
+let pairCreatedEventRegistrations = EvmChain.collectEventRegistrations([
+  pairCreatedRegistration,
+])->Array.map(reg => {...reg, params: pairCreatedAbi})
 
 let makeAddressesByContractName = () =>
   Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
@@ -104,7 +100,7 @@ let makeHyperSyncSource = () =>
   HyperSyncSource.make({
     chain,
     endpointUrl: "https://eth.hypersync.xyz",
-    allEventParams: [pairCreatedEventParams],
+    eventRegistrations: pairCreatedEventRegistrations,
     onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
@@ -121,7 +117,7 @@ let makeRpcSource = () =>
     onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
-    allEventParams: [pairCreatedEventParams],
+    eventRegistrations: pairCreatedEventRegistrations,
     lowercaseAddresses: true,
   })
 

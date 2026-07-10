@@ -10,8 +10,9 @@ mod client;
 mod interval;
 
 use crate::evm_hypersync_source::decode::DecoderCore;
+use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, EventParamsInput, Log as DecoderLog, ParamValue,
+    encode_address, EventRegistrationInput, Log as DecoderLog, ParamValue,
 };
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
@@ -111,15 +112,6 @@ impl RawLog {
 }
 
 #[napi(object)]
-pub struct LogSelectionInput {
-    pub addresses: Option<Vec<String>>,
-    /// One entry per topic position. `None` matches any value; `Some(values)`
-    /// matches any of the listed topic hashes (a one-element list is an exact
-    /// match). The JS side flattens its `Single | Multiple | Null` filter here.
-    pub topics: Vec<Option<Vec<String>>>,
-}
-
-#[napi(object)]
 pub struct RequestStat {
     pub method: String,
     pub seconds: f64,
@@ -132,12 +124,12 @@ pub struct NextPageParams {
     /// internally from the partition's AIMD-suggested interval and returned
     /// on `NextPageResponse`.
     pub to_block_ceiling: i64,
-    pub log_selections: Vec<LogSelectionInput>,
     pub partition_id: String,
-    /// The partition's address → contract-name index used to route each log
-    /// to its registration. Keys use the client's address normalization
-    /// (lowercase or checksummed).
-    pub contract_name_by_address: HashMap<String, String>,
+    /// The partition's registration selection, by chain-scoped id. Log
+    /// selections and the routing index are derived internally from the
+    /// registrations passed at construction.
+    pub registration_ids: Vec<i64>,
+    pub addresses_by_contract_name: HashMap<String, Vec<String>>,
 }
 
 #[napi(object)]
@@ -151,6 +143,7 @@ pub struct NextPageResponse {
 pub struct EvmRpcClient {
     inner: JsonRpcClient,
     decoder: DecoderCore,
+    selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     intervals: IntervalState,
 }
@@ -160,7 +153,7 @@ impl EvmRpcClient {
     #[napi(factory)]
     pub fn new(
         cfg: EvmRpcClientConfig,
-        event_params: Vec<EventParamsInput>,
+        event_registrations: Vec<EventRegistrationInput>,
         checksum_addresses: bool,
     ) -> napi::Result<EvmRpcClient> {
         let http_req_timeout_millis = cfg
@@ -171,8 +164,11 @@ impl EvmRpcClient {
             });
         let inner =
             JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
-        let decoder = DecoderCore::from_params(event_params, checksum_addresses)
+        let decoder = DecoderCore::from_registrations(&event_registrations, checksum_addresses)
             .context("build decoder")
+            .map_err(map_err)?;
+        let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
+            .context("build selection builder")
             .map_err(map_err)?;
         // 0.0 would collapse every shrink to the floor of 1 block and 1.0 would
         // never shrink at all, so both ends are excluded (this also rejects NaN).
@@ -209,9 +205,26 @@ impl EvmRpcClient {
         Ok(EvmRpcClient {
             inner,
             decoder,
+            selection_builder,
             sync_config,
             intervals: IntervalState::new(),
         })
+    }
+
+    /// Exposes the query's log selections for a given registration selection
+    /// and address index — used by tests and for debugging what a partition
+    /// would fetch.
+    #[napi]
+    pub fn build_log_selections(
+        &self,
+        registration_ids: Vec<i64>,
+        addresses_by_contract_name: HashMap<String, Vec<String>>,
+    ) -> napi::Result<Vec<BuiltLogSelection>> {
+        let built = self
+            .selection_builder
+            .build(&registration_ids, &addresses_by_contract_name)
+            .map_err(map_err)?;
+        Ok(built.log_selections)
     }
 
     #[napi]
@@ -255,14 +268,19 @@ impl EvmRpcClient {
             .min(to_block_ceiling)
             .max(from_block);
 
-        let contract_name_by_address = std::sync::Arc::new(params.contract_name_by_address);
+        let built = self
+            .selection_builder
+            .build(&params.registration_ids, &params.addresses_by_contract_name)
+            .map_err(map_err)?;
+        let log_selections = built.log_selections;
+        let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
         let page_result = tokio::time::timeout(
             timeout,
             self.fetch_page(
                 from_block,
                 to_block,
-                &params.log_selections,
+                &log_selections,
                 &contract_name_by_address,
             ),
         )
@@ -381,7 +399,7 @@ impl EvmRpcClient {
         &self,
         from_block: u64,
         to_block: u64,
-        selections: &[LogSelectionInput],
+        selections: &[BuiltLogSelection],
         contract_name_by_address: &std::sync::Arc<HashMap<String, String>>,
     ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
         if selections.is_empty() {
@@ -394,8 +412,7 @@ impl EvmRpcClient {
                 .fetch_logs_raw(
                     from_block as i64,
                     to_block as i64,
-                    selection.addresses.clone(),
-                    selection.topics.clone(),
+                    selection,
                     contract_name_by_address.clone(),
                 )
                 .await;
@@ -437,17 +454,26 @@ impl EvmRpcClient {
         &self,
         from_block: i64,
         to_block: i64,
-        addresses: Option<Vec<String>>,
-        topics: Vec<Option<Vec<String>>>,
+        selection: &BuiltLogSelection,
         contract_name_by_address: std::sync::Arc<HashMap<String, String>>,
     ) -> Result<Vec<RpcEventItem>, RpcError> {
+        // eth_getLogs topic filters: `null` matches any value at a position;
+        // trailing match-any positions are trimmed entirely.
+        let mut topics: Vec<Option<&Vec<String>>> = selection
+            .topics
+            .iter()
+            .map(|values| if values.is_empty() { None } else { Some(values) })
+            .collect();
+        while matches!(topics.last(), Some(None)) {
+            topics.pop();
+        }
         let mut filter = json!({
             "fromBlock": format!("0x{:x}", from_block),
             "toBlock": format!("0x{:x}", to_block),
             "topics": topics,
         });
-        if let Some(addresses) = addresses {
-            filter["address"] = json!(addresses);
+        if !selection.addresses.is_empty() {
+            filter["address"] = json!(selection.addresses);
         }
 
         let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;

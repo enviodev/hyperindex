@@ -7,36 +7,40 @@ let testApiToken =
 
 describe_skip("Test Hyperliquid broken transaction response", () => {
   Async.it("should handle broken transaction response", async _t => {
+    let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
     let page = await HyperSync.GetLogs.query(
       ~client=HyperSyncClient.make(
         ~url="https://645749.hypersync.xyz",
         ~apiToken=testApiToken,
         ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-        ~eventParams=[],
+        ~eventRegistrations=[
+          {
+            id: 0,
+            sighash: transferSighash,
+            topicCount: 3,
+            eventName: "Transfer",
+            contractName: "ERC20",
+            isWildcard: true,
+            dependsOnAddresses: false,
+            params: [],
+            topicSelections: [
+              {
+                topic0: [transferSighash],
+                topic1: Some([]),
+                topic2: Some([]),
+                topic3: Some([]),
+              },
+            ],
+            blockFields: [],
+            transactionFields: ["Hash"],
+          },
+        ],
       ),
       ~fromBlock=12403138,
       ~toBlock=Some(12403139),
-      ~logSelections=[
-        {
-          addresses: [],
-          topicSelections: [
-            {
-              topic0: [
-                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"->EvmTypes.Hex.fromStringUnsafe,
-              ],
-              topic1: [],
-              topic2: [],
-              topic3: [],
-            },
-          ],
-        },
-      ],
-      ~fieldSelection={
-        log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-        transaction: [Hash],
-      },
       ~maxNumLogs=5000,
-      ~contractNameByAddress=Dict.make(),
+      ~registrationIds=[0],
+      ~addressesByContractName=Dict.make(),
     )
 
     Console.log(page)

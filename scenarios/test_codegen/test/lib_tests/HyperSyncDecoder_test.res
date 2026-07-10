@@ -28,8 +28,22 @@ let decodeSingle = async (
   )
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
   let decoded = await NativeDecoder.decodeLogs(
-    ~eventParams=[
-      {id: 0, sighash, topicCount, eventName, contractName: "TestContract", isWildcard: false, params},
+    ~eventRegistrations=[
+      {
+        id: 0,
+        sighash,
+        topicCount,
+        eventName,
+        contractName: "TestContract",
+        isWildcard: false,
+        dependsOnAddresses: true,
+        params,
+        topicSelections: [
+          {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
+        ],
+        blockFields: [],
+        transactionFields: [],
+      },
     ],
     ~logs=[log],
     ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
@@ -57,8 +71,11 @@ let noneIndexedLog = (
 
 describe("EVM event decoding via EvmRpcClient.getLogs", () => {
   Async.it("produces named params directly for different indexed layouts", async t => {
+    let topicSelections: array<HyperSyncClient.Registration.topicSelectionInput> = [
+      {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
+    ]
     let decoded = await NativeDecoder.decodeLogs(
-      ~eventParams=[
+      ~eventRegistrations=[
         {
           id: 0,
           sighash,
@@ -66,6 +83,10 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           eventName: "Transfer",
           contractName: "TestContract",
           isWildcard: false,
+          dependsOnAddresses: true,
+          topicSelections,
+          blockFields: [],
+          transactionFields: [],
           params: [
             {name: "from", abiType: "address", indexed: true},
             {name: "to", abiType: "address", indexed: true},
@@ -79,6 +100,10 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           eventName: "Transfer",
           contractName: "TestContract",
           isWildcard: false,
+          dependsOnAddresses: true,
+          topicSelections,
+          blockFields: [],
+          transactionFields: [],
           params: [
             {name: "from", abiType: "address", indexed: false},
             {name: "to", abiType: "address", indexed: false},
@@ -126,7 +151,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
 
   Async.it("handles empty params", async t => {
     let decoded = await NativeDecoder.decodeLogs(
-      ~eventParams=[
+      ~eventRegistrations=[
         {
           id: 0,
           sighash: toEventSelector("event Empty()"),
@@ -134,6 +159,17 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           eventName: "Empty",
           contractName: "TestContract",
           isWildcard: false,
+          dependsOnAddresses: true,
+          topicSelections: [
+            {
+              topic0: [toEventSelector("event Empty()")],
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: [],
           params: [],
         },
       ],

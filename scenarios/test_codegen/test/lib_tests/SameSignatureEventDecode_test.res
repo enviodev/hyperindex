@@ -64,11 +64,11 @@ describe("Same-signature event across contracts with different param names", () 
     // under its own names instead of the first-registered contract's.
     let tokenA = {...tokenA, id: 0}
     let tokenB = {...tokenB, id: 1}
-    let allEventParams = EvmChain.collectEventParams([tokenA, tokenB])
+    let allEventRegistrations = EvmChain.collectEventRegistrations([tokenA, tokenB])
 
     let decodeAs = async contractName => {
       let decoded = await NativeDecoder.decodeLogs(
-        ~eventParams=allEventParams,
+        ~eventRegistrations=allEventRegistrations,
         ~logs=[transferLog],
         ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, contractName)]),
       )

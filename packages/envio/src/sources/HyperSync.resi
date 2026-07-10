@@ -32,10 +32,9 @@ module GetLogs: {
     ~client: HyperSyncClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~logSelections: array<LogSelection.t>,
-    ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
     ~maxNumLogs: int,
-    ~contractNameByAddress: dict<string>,
+    ~registrationIds: array<int>,
+    ~addressesByContractName: dict<array<Address.t>>,
   ) => promise<logsQueryPage>
 }
 

@@ -7,7 +7,7 @@ let mockAddress = "0x000000000000000000000000000000000000abcd"
 // DecoderCore. Returns only the routed items, each carrying its registration
 // id and flat decoded params.
 let decodeLogs = async (
-  ~eventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
+  ~eventRegistrations: array<HyperSyncClient.Registration.input>,
   ~logs: array<(array<string>, string)>,
   ~contractNameByAddress=Dict.make(),
 ): array<EvmRpcClient.rpcEventItem> => {
@@ -38,14 +38,22 @@ let decodeLogs = async (
     ~url=mock.url,
     ~checksumAddresses=false,
     ~syncConfig=EvmChain.getSyncConfig({}),
-    ~allEventParams=eventParams,
+    ~eventRegistrations,
   )
+  // Invert the routing index back into the address form the client expects.
+  let addressesByContractName = Dict.make()
+  contractNameByAddress->Dict.forEachWithKey((contractName, address) => {
+    addressesByContractName->Utils.Dict.push(
+      contractName,
+      address->Address.unsafeFromString,
+    )
+  })
   let {items} = try await client.getNextPage({
     fromBlock: 0,
     toBlockCeiling: 0,
-    logSelections: [{topics: []}],
     partitionId: "0",
-    contractNameByAddress,
+    registrationIds: eventRegistrations->Array.map(reg => reg.id),
+    addressesByContractName,
   }) catch {
   | exn =>
     mock.close()

@@ -15,52 +15,54 @@ let transferParams: array<Internal.paramMeta> = [
   {name: "value", abiType: "uint256", indexed: false},
 ]
 
-let transferEventParam: HyperSyncClient.Decoder.eventParamsInput = {
+let transferEventRegistration: HyperSyncClient.Registration.input = {
   id: 42,
   sighash: transferSighash,
   topicCount: 3,
   eventName: "Transfer",
   contractName: "ERC20",
   isWildcard: false,
+  dependsOnAddresses: true,
   params: transferParams,
+  topicSelections: [
+    {
+      topic0: [transferSighash],
+      topic1: Some([]),
+      topic2: Some([]),
+      topic3: Some([]),
+    },
+  ],
+  blockFields: ["Number", "Hash", "Timestamp"],
+  transactionFields: ["Hash", "From", "To"],
 }
 
-// Client is created with lowercase addresses, so routing keys must be lowercase.
-let contractNameByAddress = Dict.fromArray([
-  (usdcAddress->Address.toString->String.toLowerCase, "ERC20"),
-])
 
-let makeClient = (~eventParams) =>
+
+let makeClient = (~eventRegistrations) =>
   HyperSyncClient.make(
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-    ~eventParams,
+    ~eventRegistrations,
     ~enableChecksumAddresses=false,
   )
 
 let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
-let runQuery = async (~client: HyperSyncClient.t) => {
+let runQuery = async (~client: HyperSyncClient.t, ~registrationIds=[42]) => {
   let (res, _txStore, _blockStore) = await client.getEventItems(
-    ~contractNameByAddress,
     ~query={
       fromBlock,
-      toBlockExclusive: toBlock + 1,
-      logs: [
-        {
-          address: [usdcAddress],
-          topics: HyperSyncClient.QueryTypes.makeTopicSelection(
-            ~topic0=[transferSighash->EvmTypes.Hex.fromStringUnsafe],
-          ),
-        },
-      ],
-      fieldSelection: {
-        log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-        block: [Number, Hash, Timestamp],
-        transaction: [Hash, From, To],
-      },
+      toBlock: Some(toBlock),
+      maxNumLogs: 10_000,
+      registrationIds,
+      addressesByContractName: Dict.fromArray([
+        (
+          "ERC20",
+          [usdcAddress->Address.toString->String.toLowerCase->Address.unsafeFromString],
+        ),
+      ]),
     },
   )
   res
@@ -68,7 +70,7 @@ let runQuery = async (~client: HyperSyncClient.t) => {
 
 describe("HyperSync client getEventItems (live)", () => {
   Async.it("returns decoded event items for a real block range", async t => {
-    let client = makeClient(~eventParams=[transferEventParam])
+    let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let res = await runQuery(~client)
 
     let summary = {
@@ -106,24 +108,38 @@ describe("HyperSync client getEventItems (live)", () => {
   })
 
   Async.it("getHeight returns a height past the queried range", async t => {
-    let client = makeClient(~eventParams=[transferEventParam])
+    let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let height = await client.getHeight()
 
     t.expect(height > toBlock).toEqual(true)
   })
 
   Async.it("drops items whose topic0 doesn't match any registered sig", async t => {
-    let unrelatedEventParam: HyperSyncClient.Decoder.eventParamsInput = {
+    // A wildcard registration whose topic0 is the Transfer sighash, so the
+    // query fetches Transfer logs, but the decoder is only registered for an
+    // unrelated 1-topic signature — every fetched log routes nowhere.
+    let unrelatedEventRegistration: HyperSyncClient.Registration.input = {
       id: 0,
       sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
       topicCount: 1,
       eventName: "Unrelated",
       contractName: "Unrelated",
-      isWildcard: false,
+      isWildcard: true,
+      dependsOnAddresses: false,
       params: [],
+      topicSelections: [
+        {
+          topic0: [transferSighash],
+          topic1: Some([]),
+          topic2: Some([]),
+          topic3: Some([]),
+        },
+      ],
+      blockFields: [],
+      transactionFields: [],
     }
-    let client = makeClient(~eventParams=[unrelatedEventParam])
-    let res = await runQuery(~client)
+    let client = makeClient(~eventRegistrations=[unrelatedEventRegistration])
+    let res = await runQuery(~client, ~registrationIds=[0])
 
     t.expect(res.items->Array.length).toEqual(0)
   })
@@ -140,7 +156,7 @@ describe("HyperSync client getHeight with corrupted token", () => {
         ~url="https://eth.hypersync.xyz",
         ~apiToken="this-is-a-corrupted-token",
         ~httpReqTimeoutMillis=5000,
-        ~eventParams=[],
+        ~eventRegistrations=[],
         ~enableChecksumAddresses=false,
       )
 

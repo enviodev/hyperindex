@@ -152,7 +152,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~url=mock.url,
       ~checksumAddresses=false,
       ~syncConfig,
-      ~allEventParams=[
+      ~eventRegistrations=[
         {
           id: 3,
           sighash: transferSighash,
@@ -160,7 +160,18 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           eventName: "Transfer",
           contractName: "ERC20",
           isWildcard: false,
+          dependsOnAddresses: true,
           params: transferParams,
+          topicSelections: [
+            {
+              topic0: [transferSighash],
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: [],
         },
       ],
     )
@@ -168,10 +179,13 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     let {items, toBlock} = await client.getNextPage({
       fromBlock: 100,
       toBlockCeiling: 100,
-      logSelections: [{topics: [Nullable.make([transferSighash])]}],
       partitionId: "0",
-      contractNameByAddress: Dict.fromArray([
-        ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "ERC20"),
+      registrationIds: [3],
+      addressesByContractName: Dict.fromArray([
+        (
+          "ERC20",
+          ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"->Address.unsafeFromString],
+        ),
       ]),
     })
     // Lock down the outgoing request contract (hex block bounds + topic nesting)
@@ -209,7 +223,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           "value": "1000",
         },
       ],
-      `{"method":"eth_getLogs","params":[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]]}],"id":1,"jsonrpc":"2.0"}`->JSON.parseOrThrow,
+      `{"method":"eth_getLogs","params":[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]],"address":["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"]}],"id":1,"jsonrpc":"2.0"}`->JSON.parseOrThrow,
     ))
   })
 
@@ -222,7 +236,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~url=mock.url,
       ~checksumAddresses=false,
       ~syncConfig,
-      ~allEventParams=[
+      ~eventRegistrations=[
         {
           id: 3,
           sighash: transferSighash,
@@ -230,7 +244,18 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           eventName: "Transfer",
           contractName: "ERC20",
           isWildcard: false,
+          dependsOnAddresses: true,
           params: transferParams,
+          topicSelections: [
+            {
+              topic0: [transferSighash],
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: [],
         },
       ],
     )
@@ -238,9 +263,14 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     let {items} = await client.getNextPage({
       fromBlock: 1,
       toBlockCeiling: 1,
-      logSelections: [{topics: []}],
       partitionId: "0",
-      contractNameByAddress: Dict.make(),
+      registrationIds: [3],
+      addressesByContractName: Dict.fromArray([
+        (
+          "ERC20",
+          ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"->Address.unsafeFromString],
+        ),
+      ]),
     })
     mock.close()
 
@@ -252,15 +282,41 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ~status=200,
       ~body=`{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"eth_getLogs is limited to a 1000 blocks range"}}`,
     )
-    let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+    let client = EvmRpcClient.make(
+      ~url=mock.url,
+      ~checksumAddresses=false,
+      ~syncConfig,
+      ~eventRegistrations=[
+        {
+          id: 0,
+          sighash: transferSighash,
+          topicCount: 1,
+          eventName: "Transfer",
+          contractName: "ERC20",
+          isWildcard: true,
+          dependsOnAddresses: false,
+          params: [],
+          topicSelections: [
+            {
+              topic0: [transferSighash],
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: [],
+        },
+      ],
+    )
 
     let exn = try {
       let _ = await client.getNextPage({
         fromBlock: 0,
         toBlockCeiling: 5000,
-        logSelections: [{topics: []}],
         partitionId: "0",
-        contractNameByAddress: Dict.make(),
+        registrationIds: [0],
+        addressesByContractName: Dict.make(),
       })
       None
     } catch {

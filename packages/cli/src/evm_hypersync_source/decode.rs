@@ -9,7 +9,7 @@ use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
 use crate::evm_hypersync_source::types::{
-    sol_value_to_param, EventParamsInput, Log, ParamMeta, ParamValue,
+    sol_value_to_param, EventRegistrationInput, Log, ParamMeta, ParamValue,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -83,12 +83,12 @@ pub(crate) struct DecoderCore {
 }
 
 impl DecoderCore {
-    pub(crate) fn from_params(
-        event_params: Vec<EventParamsInput>,
+    pub(crate) fn from_registrations(
+        registrations: &[EventRegistrationInput],
         checksum_addresses: bool,
     ) -> Result<Self> {
         let mut events: HashMap<MetaKey, RegisteredEvent> = HashMap::new();
-        for ep in event_params {
+        for ep in registrations {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
             let event = match events.entry(key) {
@@ -147,7 +147,7 @@ impl DecoderCore {
             }
             event.variants.push(EventVariant {
                 id: ep.id,
-                params: ep.params,
+                params: ep.params.clone(),
             });
         }
 
@@ -350,14 +350,18 @@ mod tests {
             .selector()
             .to_string();
 
-        let core = DecoderCore::from_params(
-            vec![EventParamsInput {
+        let core = DecoderCore::from_registrations(
+            &[EventRegistrationInput {
                 id: 7,
                 sighash: real_sighash.clone(),
                 topic_count: 1,
                 event_name: "ApprovalRenamed".to_string(),
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
+                depends_on_addresses: false,
+                topic_selections: vec![],
+                block_fields: vec![],
+                transaction_fields: vec![],
                 params: vec![
                     ParamMeta {
                         name: "owner".to_string(),
@@ -422,18 +426,22 @@ mod tests {
             .unwrap()
             .selector()
             .to_string();
-        let variant = |contract: &str, params| EventParamsInput {
+        let variant = |contract: &str, params| EventRegistrationInput {
             id: 0,
             sighash: sighash.clone(),
             topic_count: 2,
             event_name: "Foo".to_string(),
             contract_name: contract.to_string(),
             is_wildcard: false,
+            depends_on_addresses: false,
+            topic_selections: vec![],
+            block_fields: vec![],
+            transaction_fields: vec![],
             params,
         };
 
-        let err = DecoderCore::from_params(
-            vec![
+        let err = DecoderCore::from_registrations(
+            &[
                 variant(
                     "C1",
                     vec![pm("a", "uint256", true), pm("b", "uint256", false)],
@@ -457,18 +465,22 @@ mod tests {
                 .unwrap()
                 .selector()
                 .to_string();
-        let variant = |contract: &str, params| EventParamsInput {
+        let variant = |contract: &str, params| EventRegistrationInput {
             id: 0,
             sighash: sighash.clone(),
             topic_count: 3,
             event_name: "Transfer".to_string(),
             contract_name: contract.to_string(),
             is_wildcard: false,
+            depends_on_addresses: false,
+            topic_selections: vec![],
+            block_fields: vec![],
+            transaction_fields: vec![],
             params,
         };
 
-        DecoderCore::from_params(
-            vec![
+        DecoderCore::from_registrations(
+            &[
                 variant(
                     "TokenA",
                     vec![

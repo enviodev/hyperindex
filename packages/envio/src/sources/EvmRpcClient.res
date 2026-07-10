@@ -18,22 +18,15 @@ type rpcEventItem = {
   params: Internal.eventParams,
 }
 
-// `addresses` omitted matches any address (a wildcard selection). Each `topics`
-// position is `null` (match any) or a list of accepted topic hashes; the
-// single-match case is a one-element list.
-type logSelectionInput = {
-  addresses?: array<Address.t>,
-  topics: array<Nullable.t<array<string>>>,
-}
-
 type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
-  logSelections: array<logSelectionInput>,
   partitionId: string,
-  // The partition's address → contract-name index used for routing. Keys use
-  // the client's address normalization (lowercase or checksummed).
-  contractNameByAddress: dict<string>,
+  // The partition's registration selection, by chain-scoped id. Log
+  // selections and the routing index are derived on the Rust side from the
+  // registrations passed at construction.
+  registrationIds: array<int>,
+  addressesByContractName: dict<array<Address.t>>,
 }
 
 type nextPageResponse = {
@@ -46,13 +39,19 @@ type nextPageResponse = {
 type t = {
   getHeight: unit => promise<int>,
   getNextPage: nextPageParams => promise<nextPageResponse>,
+  // Exposes the query's log selections for a given registration selection and
+  // address index — for tests and debugging what a partition would fetch.
+  buildLogSelections: (
+    array<int>,
+    dict<array<Address.t>>,
+  ) => array<HyperSyncClient.Registration.builtLogSelection>,
 }
 
 @send
 external classNew: (
   Core.evmRpcClientCtor,
   cfg,
-  array<HyperSyncClient.Decoder.eventParamsInput>,
+  array<HyperSyncClient.Registration.input>,
   ~checksumAddresses: bool,
 ) => t = "new"
 
@@ -91,7 +90,7 @@ let make = (
   ~syncConfig: Config.sourceSync,
   ~httpReqTimeoutMillis=?,
   ~headers=?,
-  ~allEventParams=[],
+  ~eventRegistrations=[],
 ) => {
   let client = Core.getAddon().evmRpcClient->classNew(
     {
@@ -105,11 +104,12 @@ let make = (
       backoffMillis: syncConfig.backoffMillis,
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
     },
-    allEventParams,
+    eventRegistrations,
     ~checksumAddresses,
   )
   {
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
     getNextPage: params => client.getNextPage(params)->Promise.catch(coerceErrorOrThrow),
+    buildLogSelections: (ids, addresses) => client.buildLogSelections(ids, addresses),
   }
 }

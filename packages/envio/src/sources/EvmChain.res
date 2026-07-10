@@ -39,25 +39,44 @@ let getSyncConfig = (
   }
 }
 
-let collectEventParams = (onEventRegistrations: array<Internal.evmOnEventRegistration>): array<
-  HyperSyncClient.Decoder.eventParamsInput,
-> => {
-  let result = []
-  onEventRegistrations->Array.forEach(reg => {
+let toTopicFilterInput = (filter: Internal.topicFilter): HyperSyncClient.Registration.topicFilterInput =>
+  switch filter {
+  | Values(values) => Some(values->EvmTypes.Hex.toStrings)
+  | ContractAddresses(_) => None
+  }
+
+let collectEventRegistrations = (
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
+): array<HyperSyncClient.Registration.input> => {
+  onEventRegistrations->Array.map(reg => {
     let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    result
-    ->Array.push({
-      HyperSyncClient.Decoder.id: reg.id,
+    {
+      HyperSyncClient.Registration.id: reg.id,
       sighash: event.sighash,
       topicCount: event.topicCount,
       eventName: event.name,
       contractName: event.contractName,
       isWildcard: reg.isWildcard,
+      dependsOnAddresses: reg.dependsOnAddresses,
       params: event.paramsMetadata,
-    })
-    ->ignore
+      topicSelections: reg.resolvedWhere.topicSelections->Array.map((
+        ts
+      ): HyperSyncClient.Registration.topicSelectionInput => {
+        topic0: ts.topic0->EvmTypes.Hex.toStrings,
+        topic1: ts.topic1->toTopicFilterInput,
+        topic2: ts.topic2->toTopicFilterInput,
+        topic3: ts.topic3->toTopicFilterInput,
+      }),
+      // Capitalized to match the Rust BlockField/TransactionField string
+      // enums.
+      blockFields: event.selectedBlockFields
+      ->Utils.Set.toArray
+      ->Array.map(name => (name :> string)->Utils.String.capitalize),
+      transactionFields: event.selectedTransactionFields
+      ->Utils.Set.toArray
+      ->Array.map(name => (name :> string)->Utils.String.capitalize),
+    }
   })
-  result
 }
 
 let makeSources = (
@@ -76,14 +95,14 @@ let makeSources = (
     id: i,
   })
 
-  let allEventParams = collectEventParams(onEventRegistrations)
+  let eventRegistrations = collectEventRegistrations(onEventRegistrations)
 
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
       HyperSyncSource.make({
         chain,
         endpointUrl,
-        allEventParams,
+        eventRegistrations,
         onEventRegistrations,
         apiToken: Env.envioApiToken,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
@@ -102,7 +121,7 @@ let makeSources = (
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
       onEventRegistrations,
-      allEventParams,
+      eventRegistrations,
       lowercaseAddresses,
       ?ws,
       ?headers,
