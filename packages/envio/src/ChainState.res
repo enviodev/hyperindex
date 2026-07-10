@@ -23,6 +23,9 @@ type t = {
   // then smoothed with an EMA on every batch (see applyBatchProgress). None
   // until the chain has processed at least one event.
   mutable chainDensity: option<float>,
+  // A chain with no density signal targets frontier + coldTargetRange;
+  // whenever it has no pending queries and still no signal, the range doubles.
+  mutable coldTargetRange: int,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -93,6 +96,7 @@ let make = (
   numEventsProcessed,
   pendingBudget: 0.,
   chainDensity,
+  coldTargetRange: 20_000,
   reorgDetection,
   safeCheckpointTracking,
   transactionStore,
@@ -394,20 +398,44 @@ let fetchCeiling = (cs: t) => {
   }
 }
 
+// Events/block over the ready part of the buffer — a live signal that reacts
+// to what fetching just found, unlike the processing EMA which only moves as
+// batches commit.
+let readyBufferDensity = (cs: t) => {
+  let readyCount = cs.fetchState->FetchState.bufferReadyCount
+  let span = cs.fetchState->FetchState.bufferBlockNumber - cs.committedProgressBlockNumber
+  if readyCount > 0 && span > 0 {
+    Some(readyCount->Int.toFloat /. span->Int.toFloat)
+  } else {
+    None
+  }
+}
+
+// Density used for query sizing: the higher of the processing EMA and the
+// ready-buffer density, so a stale-low EMA can't undersize queries while the
+// buffer proves the range is dense. None means the chain is cold — no density
+// signal at all.
+let effectiveDensity = (cs: t) =>
+  switch (cs.chainDensity, cs->readyBufferDensity) {
+  | (Some(ema), Some(buffer)) => Some(Pervasives.max(ema, buffer))
+  | (Some(_) as density, None) | (None, Some(_) as density) => density
+  | (None, None) => None
+  }
+
 // This chain's share of the indexer-wide buffer budget turned into a soft
-// target block: via chain density, or the fetch ceiling when density isn't
-// known yet.
+// target block: via density, or frontier + coldTargetRange when there's no
+// density signal yet.
 let targetBlock = (cs: t, ~chainTargetItems: float) => {
   let fetchState = cs.fetchState
   let fetchCeiling = cs->fetchCeiling
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
-  switch cs.chainDensity {
+  switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
     Pervasives.min(
       fetchCeiling,
       bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
     )
-  | _ => fetchCeiling
+  | _ => Pervasives.min(bufferBlockNumber + cs.coldTargetRange, fetchCeiling)
   }
 }
 
@@ -449,6 +477,19 @@ let blockAtProgress = (cs: t, ~progress) => {
 // chain, so a chain with budget can't run further ahead than the chain the
 // whole pool is prioritizing.
 let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
+  // A cold chain that went idle (queries all resolved) without producing a
+  // density signal found nothing in its window — widen it so the next probe
+  // covers more ground per round trip. Ignored once a signal exists; no reset.
+  if cs->effectiveDensity === None {
+    let fetchState = cs.fetchState
+    let frontier = fetchState->FetchState.bufferBlockNumber
+    if frontier >= fetchState.startBlock && !(fetchState->FetchState.hasPendingQueries) {
+      cs.coldTargetRange = Pervasives.min(
+        cs.coldTargetRange * 2,
+        Pervasives.max(cs->fetchCeiling - frontier, 1),
+      )
+    }
+  }
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
   let chainTargetBlock = switch maxTargetBlock {
   | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
@@ -460,7 +501,7 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   // top: they're already accounted and shouldn't crowd out new partitions), so
   // the waterfall's leftover flows to the next chain in the same tick instead
   // of being held by an oversized probe.
-  let chainTargetItems = switch cs.chainDensity {
+  let chainTargetItems = switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
     let rangeCost =
       density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
@@ -473,10 +514,9 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
     let rangeCost =
       chainTargetBlock >= cs->fetchCeiling && cs->isReady ? rangeCost *. 3. : rangeCost
     Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
-  | _ =>
-    // No density signal yet: bound the probe so one unknown chain doesn't
-    // hold the whole pool while it takes its first measurements.
-    Pervasives.min(chainTargetItems, 5_000. +. cs.pendingBudget)
+  // No density signal: the cross-chain waterfall already clamped the handed
+  // budget to the cold-chain cap, so it's used as-is.
+  | _ => chainTargetItems
   }
   cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
 }

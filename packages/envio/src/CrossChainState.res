@@ -217,6 +217,11 @@ let checkAndFetch = async (
     ),
   )
 
+  // A chain with no density signal probes blind, so it only gets a bounded
+  // slice of the pool — one unknown chain shouldn't hold the whole budget
+  // while it takes its first measurements.
+  let coldChainBudget = Pervasives.min(5_000., crossChainState.targetBufferSize->Int.toFloat)
+
   let actionByChain = Dict.make()
   let maxProgress = ref(None)
   crossChainState
@@ -229,8 +234,15 @@ let checkAndFetch = async (
       // chain whose source hasn't reported doesn't unconstrain everyone else.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
     } else {
-      let chainTargetItems = remaining.contents +. cs->ChainState.pendingBudget
+      let isCold = cs->ChainState.effectiveDensity === None
+      let chainTargetItems =
+        (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
+        cs->ChainState.pendingBudget
       let maxTargetBlock = switch maxProgress.contents {
+      | None if isCold =>
+        // A cold chain's target is a guess — it doesn't set the alignment
+        // line; the first density-bearing chain after it does.
+        None
       | None =>
         // The most-behind chain sets the alignment line for everyone after it.
         maxProgress :=
