@@ -164,7 +164,7 @@ Initialize from a local json ABI file
 
 * `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
-  Possible values: `greeter`, `erc20`, `feature-external-calls`, `feature-factory`
+  Possible values: `greeter`, `erc20`, `feature-external-calls`, `feature-factory`, `feature-topic-filter`
 
 
 
