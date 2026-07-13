@@ -330,6 +330,9 @@ type eventPayload
 @get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
 @set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
 
+// The log's emitting address (EVM/Fuel; the program id carries it for SVM).
+@get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,

@@ -105,7 +105,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
-            ~indexingAddresses,
             ~query,
             ~latestFetchedBlock={
               blockNumber: currentBlockNumber.contents,
@@ -288,7 +287,6 @@ describe("IndexerState", () => {
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
                 fetchState.contents->FetchState.handleQueryResult(
-                  ~indexingAddresses,
                   ~query,
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[

@@ -395,11 +395,14 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
         let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
-          let items = parse(~simulateItems, ~config, ~chainConfig)
           let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
+          // Parse with the process's startBlock so items default into the range
+          // the source will be queried over; the source now filters by range.
+          let chainConfig = {...chainConfig, startBlock, endBlock}
+          let items = parse(~simulateItems, ~config, ~chainConfig)
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
-          {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
+          {...chainConfig, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }
       | None => chainConfig

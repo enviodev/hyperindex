@@ -1315,12 +1315,10 @@ newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let handleQueryResult = (
   fetchState: t,
-  ~indexingAddresses: IndexingAddresses.t,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
 ): t => {
-  let newItems = newItems->filterByClientAddress(~indexingAddresses)
   fetchState->updateInternal(
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,

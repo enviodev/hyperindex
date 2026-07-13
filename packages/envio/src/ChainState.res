@@ -780,12 +780,7 @@ let handleQueryResult = (
 
   cs.fetchState =
     fs
-    ->FetchState.handleQueryResult(
-      ~indexingAddresses=cs.indexingAddresses,
-      ~query,
-      ~latestFetchedBlock,
-      ~newItems,
-    )
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
