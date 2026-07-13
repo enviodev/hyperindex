@@ -872,9 +872,6 @@ module Source = {
                   ~knownHeight=knownHeight,
                   ~prevRangeLastBlock=?,
                 ) => {
-                  let onEventRegistration = onEventRegistrationRef.contents->Option.getOrThrow(
-                    ~message="MockSource on-event registration was not installed before resolving items",
-                  )
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
@@ -915,6 +912,10 @@ module Source = {
                     blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
+                        let onEventRegistration =
+                          onEventRegistrationRef.contents->Option.getOrThrow(
+                            ~message="MockSource on-event registration was not installed before resolving items",
+                          )
                         let payload: Evm.payload = {
                           contractName: "Gravatar",
                           eventName: "MockEvent",
