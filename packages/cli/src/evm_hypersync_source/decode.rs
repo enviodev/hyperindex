@@ -9,7 +9,7 @@ use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
 use crate::evm_hypersync_source::types::{
-    sol_value_to_param, EventParamsInput, Log, ParamMeta, ParamValue,
+    sol_value_to_param, OnEventRegistration, Log, ParamMeta, ParamValue,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -55,7 +55,7 @@ impl MetaKey {
 /// `MetaKey` when they emit the same-signature event; the positional decode is
 /// shared, the param names are not.
 struct EventVariant {
-    contract_name: String,
+    on_event_registration_index: i64,
     params: Vec<ParamMeta>,
 }
 
@@ -64,9 +64,16 @@ struct EventVariant {
 /// same indexed count, different positions) can't be told apart by (topic0,
 /// topic count), so the first variant's layout backs the shared `decoder` and
 /// `apply_names` keys names off each variant.
+///
+/// `wildcard_variant_idx`/`variant_idx_by_contract_name` index into `variants`
+/// and route a log to its registration: the log's address resolves to a
+/// contract name (via the partition's address index), the contract's own
+/// variant wins, and anything else falls back to the wildcard variant.
 struct RegisteredEvent {
     decoder: DynSolEvent,
     variants: Vec<EventVariant>,
+    wildcard_variant_idx: Option<usize>,
+    variant_idx_by_contract_name: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -76,12 +83,12 @@ pub(crate) struct DecoderCore {
 }
 
 impl DecoderCore {
-    pub(crate) fn from_params(
-        event_params: Vec<EventParamsInput>,
+    pub(crate) fn from_registrations(
+        registrations: &[OnEventRegistration],
         checksum_addresses: bool,
     ) -> Result<Self> {
         let mut events: HashMap<MetaKey, RegisteredEvent> = HashMap::new();
-        for ep in event_params {
+        for ep in registrations {
             let key = MetaKey::parse(&ep.sighash, ep.topic_count)
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
             let event = match events.entry(key) {
@@ -92,6 +99,8 @@ impl DecoderCore {
                     e.insert(RegisteredEvent {
                         decoder,
                         variants: Vec::new(),
+                        wildcard_variant_idx: None,
+                        variant_idx_by_contract_name: HashMap::new(),
                     })
                 }
             };
@@ -110,9 +119,35 @@ impl DecoderCore {
                     ep.event_name,
                 );
             }
+            // Routing backstop mirroring the registration-time validation on
+            // the JS side: one variant per contract per key, and at most one
+            // wildcard variant per key.
+            let variant_idx = event.variants.len();
+            if event
+                .variant_idx_by_contract_name
+                .insert(ep.contract_name.clone(), variant_idx)
+                .is_some()
+            {
+                anyhow::bail!(
+                    "Duplicate event detected: {} for contract {} shares the same topic0 and \
+                     topic count with another event of the contract",
+                    ep.event_name,
+                    ep.contract_name,
+                );
+            }
+            if ep.is_wildcard {
+                anyhow::ensure!(
+                    event.wildcard_variant_idx.is_none(),
+                    "Another event is already registered with the same signature that would \
+                     interfere with wildcard filtering: {} for contract {}",
+                    ep.event_name,
+                    ep.contract_name,
+                );
+                event.wildcard_variant_idx = Some(variant_idx);
+            }
             event.variants.push(EventVariant {
-                contract_name: ep.contract_name,
-                params: ep.params,
+                on_event_registration_index: ep.index,
+                params: ep.params.clone(),
             });
         }
 
@@ -122,7 +157,15 @@ impl DecoderCore {
         })
     }
 
-    pub(crate) fn decode_napi(&self, log: &Log) -> Result<Option<ParamValue>> {
+    pub(crate) fn checksummed_addresses(&self) -> bool {
+        self.checksummed_addresses
+    }
+
+    pub(crate) fn route_and_decode_napi(
+        &self,
+        log: &Log,
+        contract_name: Option<&str>,
+    ) -> Result<Option<RoutedEvent>> {
         let topics: Vec<Option<LogArgument>> = log
             .topics
             .iter()
@@ -135,21 +178,45 @@ impl DecoderCore {
             .context("decode topics")?;
         let data = log.data.as_ref().context("get log.data")?;
         let data = Data::decode_hex(data).context("decode data")?;
-        self.decode_with_topics_and_data(&topics, &data)
+        self.route_and_decode(&topics, &data, contract_name)
     }
 
-    pub(crate) fn decode_simple(&self, log: &simple_types::Log) -> Result<Option<ParamValue>> {
+    pub(crate) fn route_and_decode_simple(
+        &self,
+        log: &simple_types::Log,
+        contract_name: Option<&str>,
+    ) -> Result<Option<RoutedEvent>> {
         let data = log.data.as_ref().context("get log.data")?;
-        self.decode_with_topics_and_data(&log.topics, data)
+        self.route_and_decode(&log.topics, data, contract_name)
     }
 
-    fn decode_with_topics_and_data(
+    /// Routes a log to its registration and decodes with that registration's
+    /// param names. `contract_name` is the log address's owning contract per
+    /// the partition's address index; the contract's own variant wins, anything
+    /// else falls back to the key's wildcard variant. `Ok(None)` means the log
+    /// routes nowhere — unknown signature or no matching variant — and is
+    /// dropped by the caller.
+    fn route_and_decode(
         &self,
         topics: &[Option<LogArgument>],
         data: &Data,
-    ) -> Result<Option<ParamValue>> {
+        contract_name: Option<&str>,
+    ) -> Result<Option<RoutedEvent>> {
         let event = match self.events.get(&MetaKey::from_topics(topics)?) {
             Some(e) => e,
+            None => return Ok(None),
+        };
+
+        let variant_idx = match contract_name {
+            Some(name) => event
+                .variant_idx_by_contract_name
+                .get(name)
+                .copied()
+                .or(event.wildcard_variant_idx),
+            None => event.wildcard_variant_idx,
+        };
+        let variant = match variant_idx {
+            Some(idx) => &event.variants[idx],
             None => return Ok(None),
         };
 
@@ -164,31 +231,20 @@ impl DecoderCore {
             )
             .context("decode log")?;
 
-        // One positional decode, named once per contract. JS routes by address
-        // and picks `params[contractName]`, so two contracts that share a
-        // signature but name their params differently each get their own names.
-        // The common single-contract case consumes the decode without cloning.
-        let by_contract = match event.variants.as_slice() {
-            [variant] => vec![(
-                variant.contract_name.clone(),
-                ParamValue::Obj(apply_names(
-                    decoded,
-                    &variant.params,
-                    self.checksummed_addresses,
-                )?),
-            )],
-            variants => variants
-                .iter()
-                .map(|variant| {
-                    let fields =
-                        apply_names(decoded.clone(), &variant.params, self.checksummed_addresses)?;
-                    Ok((variant.contract_name.clone(), ParamValue::Obj(fields)))
-                })
-                .collect::<Result<Vec<_>>>()?,
-        };
-
-        Ok(Some(ParamValue::Obj(by_contract)))
+        Ok(Some(RoutedEvent {
+            index: variant.on_event_registration_index,
+            params: ParamValue::Obj(apply_names(
+                decoded,
+                &variant.params,
+                self.checksummed_addresses,
+            )?),
+        }))
     }
+}
+
+pub(crate) struct RoutedEvent {
+    pub index: i64,
+    pub params: ParamValue,
 }
 
 fn apply_names(
@@ -298,12 +354,18 @@ mod tests {
             .selector()
             .to_string();
 
-        let core = DecoderCore::from_params(
-            vec![EventParamsInput {
+        let core = DecoderCore::from_registrations(
+            &[OnEventRegistration {
+                index: 7,
                 sighash: real_sighash.clone(),
                 topic_count: 1,
                 event_name: "ApprovalRenamed".to_string(),
                 contract_name: "TestContract".to_string(),
+                is_wildcard: false,
+                depends_on_addresses: false,
+                topic_selections: vec![],
+                block_fields: vec![],
+                transaction_fields: vec![],
                 params: vec![
                     ParamMeta {
                         name: "owner".to_string(),
@@ -334,24 +396,20 @@ mod tests {
             ..Default::default()
         };
 
-        let decoded = core
-            .decode_napi(&log)
+        let routed = core
+            .route_and_decode_napi(&log, Some("TestContract"))
             .unwrap()
             .expect("renamed event must decode under its real sighash");
 
-        match decoded {
-            ParamValue::Obj(contracts) => match contracts.as_slice() {
-                [(contract, ParamValue::Obj(fields))] if contract == "TestContract" => {
-                    match fields.as_slice() {
-                        [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt(_))]
-                            if owner == "owner" && value == "value" =>
-                        {
-                            assert_eq!(owner_hex, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-                        }
-                        _ => panic!("unexpected decoded fields"),
-                    }
+        assert_eq!(routed.index, 7);
+        match routed.params {
+            ParamValue::Obj(fields) => match fields.as_slice() {
+                [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt(_))]
+                    if owner == "owner" && value == "value" =>
+                {
+                    assert_eq!(owner_hex, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
                 }
-                _ => panic!("unexpected decoded contracts"),
+                _ => panic!("unexpected decoded fields"),
             },
             _ => panic!("expected an object of params"),
         }
@@ -372,18 +430,30 @@ mod tests {
             .unwrap()
             .selector()
             .to_string();
-        let variant = |params| EventParamsInput {
+        let variant = |contract: &str, params| OnEventRegistration {
+            index: 0,
             sighash: sighash.clone(),
             topic_count: 2,
             event_name: "Foo".to_string(),
-            contract_name: "C".to_string(),
+            contract_name: contract.to_string(),
+            is_wildcard: false,
+            depends_on_addresses: false,
+            topic_selections: vec![],
+            block_fields: vec![],
+            transaction_fields: vec![],
             params,
         };
 
-        let err = DecoderCore::from_params(
-            vec![
-                variant(vec![pm("a", "uint256", true), pm("b", "uint256", false)]),
-                variant(vec![pm("a", "uint256", false), pm("b", "uint256", true)]),
+        let err = DecoderCore::from_registrations(
+            &[
+                variant(
+                    "C1",
+                    vec![pm("a", "uint256", true), pm("b", "uint256", false)],
+                ),
+                variant(
+                    "C2",
+                    vec![pm("a", "uint256", false), pm("b", "uint256", true)],
+                ),
             ],
             false,
         )
@@ -399,16 +469,22 @@ mod tests {
                 .unwrap()
                 .selector()
                 .to_string();
-        let variant = |contract: &str, params| EventParamsInput {
+        let variant = |contract: &str, params| OnEventRegistration {
+            index: 0,
             sighash: sighash.clone(),
             topic_count: 3,
             event_name: "Transfer".to_string(),
             contract_name: contract.to_string(),
+            is_wildcard: false,
+            depends_on_addresses: false,
+            topic_selections: vec![],
+            block_fields: vec![],
+            transaction_fields: vec![],
             params,
         };
 
-        DecoderCore::from_params(
-            vec![
+        DecoderCore::from_registrations(
+            &[
                 variant(
                     "TokenA",
                     vec![

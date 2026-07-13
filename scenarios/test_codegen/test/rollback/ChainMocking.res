@@ -37,6 +37,7 @@ module Crypto = {
 module Make = () => {
   type log = {
     item: Internal.item,
+    onEventRegistration: Internal.evmOnEventRegistration,
     srcAddress: Address.t,
     transactionHash: string,
   }
@@ -181,7 +182,7 @@ module Make = () => {
         logIndex,
         transactionIndex,
       })
-      {item: log, srcAddress, transactionHash}
+      {item: log, onEventRegistration, srcAddress, transactionHash}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -232,7 +233,9 @@ module Make = () => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
               eventKeys->arrayHas(
-                getEventKey((l.item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig),
+                getEventKey(
+                  l.onEventRegistration.eventConfig,
+                ),
               ))
           },
         )

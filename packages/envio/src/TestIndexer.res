@@ -863,8 +863,8 @@ let initTestWorker = () => {
     | Some(_) => ()
     }
 
-    let patchConfig = (config: Config.t, _registrations) => {
-      let config = SimulateItems.patchConfig(~config, ~processConfig)
+    let patchConfig = (config: Config.t, registrationsByChainId) => {
+      let config = SimulateItems.patchConfig(~config, ~processConfig, ~registrationsByChainId)
 
       // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
       if exitAfterFirstEventBlock {

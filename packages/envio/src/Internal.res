@@ -555,6 +555,11 @@ type svmInstructionEventConfig = {
 // must stay directly constructable), and the evm→base cast in sources is sound
 // by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
+  // Chain-scoped sequential index — the registration's position in the
+  // chain's onEventRegistrations array, assigned when registration finishes
+  // (-1 until then). Native-routed items reference their registration by this
+  // index across the napi boundary; sources resolve it before creating an item.
+  index: int,
   eventConfig: eventConfig,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
@@ -601,8 +606,9 @@ type indexingAddress = {
 
 type dcs = array<indexingAddress>
 
-// Duplicate the type from item
-// to make item properly unboxed
+// Duplicate the type from item to keep item properly unboxed. Runtime event
+// items carry the registration their source already resolved from the
+// ChainState-owned registration array.
 type eventItem = private {
   kind: [#0],
   onEventRegistration: onEventRegistration,
