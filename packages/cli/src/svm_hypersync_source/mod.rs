@@ -34,7 +34,7 @@ use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
 use hypersync_client_solana::simple_types as simple;
 
 use crate::block_store::BlockStore;
-use crate::request_stats::{error_with_request_stats, RequestStat};
+use crate::request_stats::{error_with_request_stats, RequestStat, QUERY_BLOCK_HASHES_METHOD};
 use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
@@ -232,7 +232,7 @@ impl SvmHypersyncClient {
             let started = Instant::now();
             let response = self.get_raw(query).await;
             request_stats.push(RequestStat {
-                method: "getBlockHashes".to_string(),
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
                 seconds: started.elapsed().as_secs_f64(),
             });
             let response =
@@ -247,10 +247,17 @@ impl SvmHypersyncClient {
             cursor = next_slot;
         }
 
-        // A successor can only prove a missing suffix. Interior omissions
-        // already have a returned descendant, so another later block cannot
-        // repair their parent link.
-        if aggregate.missing_hashes(block_numbers).contains(&to_slot) {
+        let upper_slot_needs_successor_proof =
+            aggregate.missing_hashes(block_numbers).contains(&to_slot);
+
+        // An interior skipped slot has a later block inside the bounded
+        // response whose (parent_slot, parent_blockhash) link proves the gap.
+        // A skipped `to_slot` has no such descendant in [from_slot, to_slot],
+        // so fetch exactly one successor. Its parent link either proves that
+        // the upper slot was skipped or leaves it missing as an invalid
+        // response; without this lookup a valid skipped upper slot would be
+        // retried forever.
+        if upper_slot_needs_successor_proof {
             let successor_query = SvmQuery {
                 from_slot: to_slot_exclusive,
                 include_all_blocks: Some(true),
@@ -261,7 +268,7 @@ impl SvmHypersyncClient {
             let started = Instant::now();
             let successor_response = self.get_raw(successor_query).await;
             request_stats.push(RequestStat {
-                method: "getBlockHashes".to_string(),
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
                 seconds: started.elapsed().as_secs_f64(),
             });
             let successor_response = successor_response

@@ -7,7 +7,7 @@ use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
 use crate::block_store::BlockStore;
-use crate::request_stats::{error_with_request_stats, RequestStat};
+use crate::request_stats::{error_with_request_stats, RequestStat, QUERY_BLOCK_HASHES_METHOD};
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -132,11 +132,6 @@ impl EvmHypersyncClient {
                 "block numbers must be non-negative"
             )));
         }
-        if to_block - from_block > 1_000 {
-            return Err(map_err(anyhow::anyhow!(
-                "Invalid block data request. Range of block numbers is too large. Max range is 1000. Requested range: {from_block}-{to_block}"
-            )));
-        }
         let to_block_exclusive = to_block
             .checked_add(1)
             .context("block range upper bound overflow")
@@ -159,7 +154,7 @@ impl EvmHypersyncClient {
             let started = Instant::now();
             let response = self.get_raw(query).await;
             request_stats.push(RequestStat {
-                method: "getBlockHashes".to_string(),
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
                 seconds: started.elapsed().as_secs_f64(),
             });
             let response =

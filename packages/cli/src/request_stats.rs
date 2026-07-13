@@ -1,5 +1,7 @@
 use napi_derive::napi;
 
+pub(crate) const QUERY_BLOCK_HASHES_METHOD: &str = "queryBlockHashes";
+
 /// Timing for one backend request. Multiple entries may be returned for a
 /// single source operation when that operation paginates internally.
 #[napi(object)]
@@ -42,14 +44,17 @@ mod tests {
         let error = error_with_request_stats(
             napi::Error::from_reason("RATE_LIMITED:2500"),
             &[RequestStat {
-                method: "getBlockHashes".to_string(),
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
                 seconds: 0.25,
             }],
         );
         let payload: serde_json::Value = serde_json::from_str(&error.reason).unwrap();
         assert_eq!(payload["kind"], "RequestFailed");
         assert_eq!(payload["message"], "RATE_LIMITED:2500");
-        assert_eq!(payload["requestStats"][0]["method"], "getBlockHashes");
+        assert_eq!(
+            payload["requestStats"][0]["method"],
+            QUERY_BLOCK_HASHES_METHOD
+        );
         assert_eq!(payload["requestStats"][0]["seconds"], 0.25);
     }
 }

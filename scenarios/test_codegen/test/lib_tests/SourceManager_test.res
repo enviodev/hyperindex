@@ -91,7 +91,7 @@ describe("native request failures", () => {
   it("keeps timings and maps a wrapped HyperSync rate limit", t => {
     let exn = try {
       JsError.throwWithMessage(
-        `{"kind":"RequestFailed","message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
+        `{"kind":"RequestFailed","message":"RATE_LIMITED:2500","requestStats":[{"method":"queryBlockHashes","seconds":0.25}]}`,
       )
     } catch {
     | exn => exn
@@ -99,7 +99,7 @@ describe("native request failures", () => {
     let failure = exn->Source.unpackNativeRequestFailure
 
     t.expect(failure.requestStats).toEqual([
-      {Source.method: "getBlockHashes", seconds: 0.25},
+      {Source.method: "queryBlockHashes", seconds: 0.25},
     ])
     switch exn->HyperSync.mapRateLimitedExn {
     | Source.RateLimited({resetMs}) => t.expect(resetMs).toEqual(2500)
