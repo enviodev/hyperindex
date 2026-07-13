@@ -11,6 +11,7 @@ mod interval;
 
 use crate::evm_hypersync_source::decode::DecoderCore;
 use crate::evm_hypersync_source::types::{EventParamsInput, Log as DecoderLog, ParamValue};
+use crate::request_stats::RequestStat;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use interval::{IntervalState, SyncConfig};
@@ -105,12 +106,6 @@ pub struct LogSelectionInput {
     /// matches any of the listed topic hashes (a one-element list is an exact
     /// match). The JS side flattens its `Single | Multiple | Null` filter here.
     pub topics: Vec<Option<Vec<String>>>,
-}
-
-#[napi(object)]
-pub struct RequestStat {
-    pub method: String,
-    pub seconds: f64,
 }
 
 #[napi(object)]

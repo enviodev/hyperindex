@@ -561,81 +561,18 @@ let make = (
     }
   }
 
-  // Fetch (slot, blockhash, blockTime) for blocks in an inclusive slot range,
-  // paginating on the server's `nextSlot` cursor. `toSlot` is exclusive on the
-  // wire, so we request `maxSlot + 1`; the caller filters to the exact slots.
-  let queryBlockDataRange = async (~fromSlot, ~toSlot) => {
-    let blockDatas = []
-    let requestStats = []
-    let fromRef = ref(fromSlot)
-    let keepGoing = ref(true)
-    while keepGoing.contents {
-      let query: SvmHyperSyncClient.query = {
-        fromSlot: fromRef.contents,
-        toSlot: toSlot + 1,
-        includeAllBlocks: true,
-        fields: {block: [Slot, Blockhash, BlockTime]},
-        maxNumBlocks: 1000,
-      }
-      let timerRef = Performance.now()
-      // Block-only query; the store pages are empty.
-      let (resp, _, _) = await client.get(~query)
-      requestStats
-      ->Array.push({Source.method: "getBlockHashes", seconds: timerRef->Performance.secondsSince})
-      ->ignore
-      resp.data.blocks->Array.forEach(b =>
-        blockDatas
-        ->Array.push({
-          ReorgDetection.blockNumber: b.slot,
-          blockHash: b.blockhash,
-          blockTimestamp: b.blockTime->Option.getOr(0),
-        })
-        ->ignore
-      )
-
-      // `nextSlot` is the (exclusive) resume cursor. Stop once it passes the
-      // range, or fails to advance — the latter guards against an infinite loop.
-      if resp.nextSlot > toSlot || resp.nextSlot <= fromRef.contents {
-        keepGoing := false
-      } else {
-        fromRef := resp.nextSlot
+  let getBlockHashes = async (~blockNumbers, ~logger as _) => {
+    let (result, requestStats) = try {
+      let (blockStore, requestStats) = await client.getBlockHashes(~blockNumbers)
+      (Ok(blockStore), requestStats)
+    } catch {
+    | exn => {
+        let failure = exn->Source.unpackNativeRequestFailure
+        (Error(failure.cause), failure.requestStats)
       }
     }
-    (blockDatas, requestStats)
+    {Source.result, requestStats}
   }
-
-  let getBlockHashes = async (~blockNumbers, ~logger as _) =>
-    switch blockNumbers->Array.get(0) {
-    | None => {Source.result: Ok([]), requestStats: []}
-    | Some(firstSlot) =>
-      try {
-        let minSlot = ref(firstSlot)
-        let maxSlot = ref(firstSlot)
-        let requested = Utils.Set.make()
-        blockNumbers->Array.forEach(slot => {
-          if slot < minSlot.contents {
-            minSlot := slot
-          }
-          if slot > maxSlot.contents {
-            maxSlot := slot
-          }
-          requested->Utils.Set.add(slot)->ignore
-        })
-        let (blockDatas, requestStats) = await queryBlockDataRange(
-          ~fromSlot=minSlot.contents,
-          ~toSlot=maxSlot.contents,
-        )
-        // Keep one entry per requested slot; drop duplicates and unrelated slots.
-        {
-          Source.result: Ok(
-            blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)),
-          ),
-          requestStats,
-        }
-      } catch {
-      | exn => {Source.result: Error(exn), requestStats: []}
-      }
-    }
 
   {
     name,

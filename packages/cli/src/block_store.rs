@@ -6,7 +6,6 @@
 //! plain JS objects. The store lives on the ReScript `ChainState`; fetch
 //! responses merge in, and rows are pruned or rolled back by block.
 
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
@@ -533,14 +532,12 @@ fn evm_input_to_simple(b: EvmBlockInput) -> Result<simple_types::Block> {
     })
 }
 
-/// The store's lock-guarded state: the table plus the lowest within-page hash
-/// conflict recorded while building a page (two observations of the same block
-/// with different hashes in one response — e.g. a rollback guard disagreeing
-/// with a returned block). The conflict is accumulated across the page's
-/// insert calls and reported by `merge` alongside cross-store mismatches.
+/// The store's lock-guarded state: the table plus the lowest hash conflict
+/// recorded while building a response. A response carrying this marker must
+/// be discarded and retried before it is merged into the persistent store.
 struct Inner {
     table: Table<u64>,
-    pending_mismatch: Option<HashMismatch>,
+    response_conflict: Option<HashMismatch>,
 }
 
 #[napi]
@@ -636,14 +633,14 @@ impl BlockStore {
         Ok(store)
     }
 
-    /// Move every row from `page` into this store (merging a fetch-response
-    /// page into the persistent per-chain store), comparing hashes on the way:
-    /// the lowest page block at or above `from_block` whose hash differs from
-    /// the stored one is reported as a reorg. A block without a hash on either
-    /// side is skipped by the comparison. On a mismatch nothing is merged — the
-    /// stored (scanned) hashes stay intact for the rollback comparison — unless
-    /// `report_only` is set (detect-only mode), which merges anyway so the
-    /// overwritten hash doesn't re-report on every response.
+    /// Move every row from `page` into the persistent store, comparing hashes
+    /// on the way: the lowest page block at or above `from_block` whose hash
+    /// differs from the stored one is reported as a reorg. A block without a
+    /// hash on either side is skipped. The source manager validates that `page`
+    /// has no response-internal conflict before calling this method. On a
+    /// mismatch nothing is merged — the stored (scanned) hashes stay intact for
+    /// rollback — unless `report_only` is set (detect-only mode), which merges
+    /// anyway so the overwritten hash doesn't re-report on every response.
     #[napi]
     pub fn merge(
         &self,
@@ -675,21 +672,119 @@ impl BlockStore {
                 stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
                 received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
             });
-        // A conflict the page recorded while it was built (the same block
-        // observed twice with different hashes in one response) is a reorg
-        // signal too, subject to the same threshold.
-        let within_page = src
-            .pending_mismatch
-            .take()
-            .filter(|p| p.block_number >= from_block);
-        let mismatch = match (cross, within_page) {
-            (Some(a), Some(b)) => Some(if a.block_number <= b.block_number { a } else { b }),
-            (a, b) => a.or(b),
-        };
-        if mismatch.is_none() || report_only {
+        debug_assert!(
+            src.response_conflict.is_none(),
+            "response stores must be validated before persistent merge"
+        );
+        if cross.is_none() || report_only {
             dst.table.append_from(&mut src.table);
         }
-        mismatch
+        cross
+    }
+
+    /// Append a backend page to a logical response store. Unlike `merge`, this
+    /// always appends rows: an internal conflict invalidates the complete
+    /// response, so the caller will discard the aggregate and retry it. The
+    /// lowest conflict is retained only for diagnostics.
+    #[napi]
+    pub fn append_page(&self, page: &BlockStore) {
+        if std::ptr::eq(self, page) {
+            return;
+        }
+        debug_assert_eq!(
+            std::mem::discriminant(&self.ecosystem),
+            std::mem::discriminant(&page.ecosystem)
+        );
+        let mut dst = self.inner.lock().unwrap();
+        let mut src = page.inner.lock().unwrap();
+        let field = self.hash_field();
+        let cross = dst
+            .table
+            .first_field_mismatch(&src.table, field, 0)
+            .map(|key| HashMismatch {
+                block_number: key as i64,
+                stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
+                received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
+            });
+        let conflict = lowest_conflict(cross, src.response_conflict.take());
+        if let Some(conflict) = conflict {
+            record_conflict(&mut dst.response_conflict, conflict);
+        }
+        dst.table.append_from(&mut src.table);
+    }
+
+    /// Return the response-internal conflict, if one was recorded while this
+    /// store was built. This is non-consuming so callers can log it before
+    /// discarding the complete response.
+    #[napi]
+    pub fn response_conflict(&self) -> Option<HashMismatch> {
+        self.inner.lock().unwrap().response_conflict.clone()
+    }
+
+    /// Return requested block numbers that are not covered by this response.
+    /// EVM/Fuel require an exact block hash. SVM also accepts a missing slot
+    /// when a later returned block proves, through a consistent
+    /// (parent_slot, parent_blockhash) link, that the current fork skipped it.
+    #[napi]
+    pub fn missing_hashes(&self, block_numbers: Vec<i64>) -> Vec<i64> {
+        let inner = self.inner.lock().unwrap();
+        let field = self.hash_field();
+        let request_from = block_numbers
+            .iter()
+            .filter_map(|&n| u64::try_from(n).ok())
+            .min()
+            .unwrap_or(0);
+        block_numbers
+            .into_iter()
+            .filter(|n| {
+                let Some(key) = u64::try_from(*n).ok() else {
+                    return true;
+                };
+                if inner.table.field_bytes(&key, field).is_some() {
+                    return false;
+                }
+                match self.ecosystem {
+                    Ecosystem::Svm => {
+                        !Self::svm_response_proves_skipped_slot(&inner.table, key, request_from)
+                    }
+                    _ => true,
+                }
+            })
+            .collect()
+    }
+
+    /// Compare a validated response store with the persistent store in request
+    /// order, stopping at the first mismatch. The highest matching requested
+    /// block is the rollback target.
+    #[napi]
+    pub fn latest_valid_block_from_store(
+        &self,
+        response: &BlockStore,
+        block_numbers: Vec<i64>,
+    ) -> Option<i64> {
+        if std::ptr::eq(self, response) {
+            return block_numbers.into_iter().max();
+        }
+        let persistent = self.inner.lock().unwrap();
+        let received = response.inner.lock().unwrap();
+        let field = self.hash_field();
+        let mut requested = block_numbers;
+        requested.sort_unstable();
+        requested.dedup();
+        let mut previous = None;
+        for block_number in requested {
+            let key = match u64::try_from(block_number) {
+                Ok(key) => key,
+                Err(_) => return previous,
+            };
+            let stored = persistent.table.field_bytes(&key, field);
+            let fetched = received.table.field_bytes(&key, field);
+            match (stored, fetched) {
+                (Some(stored), Some(fetched)) if stored == fetched => previous = Some(block_number),
+                _ => return previous,
+            }
+        }
+        previous
     }
 
     /// Hash of a stored block, if the store still holds it. Feeds the persisted
@@ -721,39 +816,6 @@ impl BlockStore {
             .into_iter()
             .map(|k| k as i64)
             .collect()
-    }
-
-    /// The highest of the given (number, hash) pairs that still matches the
-    /// stored hash, walking them ascending and stopping at the first pair that
-    /// mismatches or is no longer stored — the reorg rollback target.
-    #[napi]
-    pub fn latest_valid_block(
-        &self,
-        block_numbers: Vec<i64>,
-        hashes: Vec<String>,
-    ) -> napi::Result<Option<i64>> {
-        if block_numbers.len() != hashes.len() {
-            return Err(napi::Error::from_reason(format!(
-                "latestValidBlock column length mismatch: block_numbers={}, hashes={}",
-                block_numbers.len(),
-                hashes.len()
-            )));
-        }
-        let pairs: BTreeMap<i64, String> = block_numbers.into_iter().zip(hashes).collect();
-        let inner = self.inner.lock().unwrap();
-        let field = self.hash_field();
-        let mut prev = None;
-        for (n, h) in pairs {
-            let stored = u64::try_from(n)
-                .ok()
-                .and_then(|k| inner.table.field_bytes(&k, field))
-                .map(|b| self.hash_display(b));
-            match stored {
-                Some(s) if s == h => prev = Some(n),
-                _ => return Ok(prev),
-            }
-        }
-        Ok(prev)
     }
 
     /// Bulk-materialise blocks in columnar form, one row per `block_numbers[i]`
@@ -812,11 +874,11 @@ impl BlockStore {
     pub fn prune(&self, up_to_block: i64, keep_hashes_from: i64) {
         if let Ok(up_to) = u64::try_from(up_to_block) {
             let keep_from = u64::try_from(keep_hashes_from).unwrap_or(0);
-            self.inner
-                .lock()
-                .unwrap()
-                .table
-                .prune_keeping_field(up_to, keep_from, self.hash_field());
+            self.inner.lock().unwrap().table.prune_keeping_field(
+                up_to,
+                keep_from,
+                self.hash_field(),
+            );
         }
     }
 
@@ -828,9 +890,9 @@ impl BlockStore {
     pub fn rollback(&self, target_block: i64, keep_hashes: bool) {
         let mut inner = self.inner.lock().unwrap();
         match u64::try_from(target_block) {
-            Ok(target) if keep_hashes => {
-                inner.table.rollback_keeping_field(target, self.hash_field())
-            }
+            Ok(target) if keep_hashes => inner
+                .table
+                .rollback_keeping_field(target, self.hash_field()),
             Ok(target) => inner.table.rollback(target),
             Err(_) => inner.table.clear(),
         }
@@ -838,6 +900,38 @@ impl BlockStore {
 }
 
 impl BlockStore {
+    /// A missing SVM slot is a confirmed skip only when the first returned
+    /// descendant links around it. For links whose parent is inside the
+    /// requested range, also require the returned parent's hash to match the
+    /// child's parent_blockhash; otherwise the response omitted or mixed a
+    /// block. A parent below the request boundary is outside response coverage,
+    /// so the complete link pair on the child is the available boundary proof.
+    fn svm_response_proves_skipped_slot(
+        table: &Table<u64>,
+        missing_slot: u64,
+        request_from: u64,
+    ) -> bool {
+        let hash_field = SvmBlockField::Hash as usize;
+        let parent_slot_field = SvmBlockField::ParentSlot as usize;
+        let parent_hash_field = SvmBlockField::ParentHash as usize;
+        let Some(child_slot) = table.first_key_after_with_field(&missing_slot, hash_field) else {
+            return false;
+        };
+        let Some(parent_slot) = table.field_u64(&child_slot, parent_slot_field) else {
+            return false;
+        };
+        let Some(parent_hash) = table.field_bytes(&child_slot, parent_hash_field) else {
+            return false;
+        };
+        if parent_slot >= missing_slot {
+            return false;
+        }
+        match table.field_bytes(&parent_slot, hash_field) {
+            Some(hash) => hash == parent_hash,
+            None => parent_slot < request_from,
+        }
+    }
+
     fn with_ecosystem(ecosystem: Ecosystem) -> Self {
         let n_fields = match ecosystem {
             Ecosystem::Evm { .. } => EvmBlockField::VARIANTS.len(),
@@ -847,7 +941,7 @@ impl BlockStore {
         Self {
             inner: Mutex::new(Inner {
                 table: Table::new(n_fields),
-                pending_mismatch: None,
+                response_conflict: None,
             }),
             ecosystem,
         }
@@ -877,7 +971,11 @@ impl BlockStore {
             .iter()
             .map(|&n| u64::try_from(n).ok())
             .collect();
-        self.inner.lock().unwrap().table.gather_scratch(&keys, masks)
+        self.inner
+            .lock()
+            .unwrap()
+            .table
+            .gather_scratch(&keys, masks)
     }
 
     /// Merge one response's EVM blocks into the table (called by the HyperSync
@@ -907,17 +1005,14 @@ impl BlockStore {
             .detect_field_conflict(&keys, cols[field].as_ref(), field);
         inner.table.merge_batch(keys, cols);
         if let Some((key, stored, received)) = conflict {
-            if inner
-                .pending_mismatch
-                .as_ref()
-                .is_none_or(|p| (key as i64) < p.block_number)
-            {
-                inner.pending_mismatch = Some(HashMismatch {
+            record_conflict(
+                &mut inner.response_conflict,
+                HashMismatch {
                     block_number: key as i64,
                     stored_hash: self.hash_display(&stored),
                     received_hash: self.hash_display(&received),
-                });
-            }
+                },
+            );
         }
     }
 
@@ -1005,13 +1100,37 @@ impl BlockStore {
     }
 }
 
-/// A reorg detected while merging a page: the lowest in-threshold block whose
-/// received hash differs from the stored (previously scanned) one.
+/// A block-hash conflict recorded while building a response or comparing it
+/// with the persistent store.
+#[derive(Clone)]
 #[napi(object)]
 pub struct HashMismatch {
     pub block_number: i64,
     pub stored_hash: String,
     pub received_hash: String,
+}
+
+fn lowest_conflict(
+    first: Option<HashMismatch>,
+    second: Option<HashMismatch>,
+) -> Option<HashMismatch> {
+    match (first, second) {
+        (Some(a), Some(b)) => Some(if a.block_number <= b.block_number {
+            a
+        } else {
+            b
+        }),
+        (a, b) => a.or(b),
+    }
+}
+
+fn record_conflict(target: &mut Option<HashMismatch>, conflict: HashMismatch) {
+    if target
+        .as_ref()
+        .is_none_or(|existing| conflict.block_number < existing.block_number)
+    {
+        *target = Some(conflict);
+    }
 }
 
 /// Ordered EVM block-field names — the single source of truth the ReScript
@@ -1051,6 +1170,21 @@ mod tests {
             slot,
             blockhash: "hash".to_string(),
             block_time: Some(123),
+            ..Default::default()
+        }
+    }
+
+    fn linked_svm_block(
+        slot: u64,
+        hash: &str,
+        parent_slot: u64,
+        parent_hash: &str,
+    ) -> solana_simple::Block {
+        solana_simple::Block {
+            slot,
+            blockhash: hash.to_string(),
+            parent_slot: Some(parent_slot),
+            parent_blockhash: Some(parent_hash.to_string()),
             ..Default::default()
         }
     }
@@ -1510,16 +1644,15 @@ mod tests {
     }
 
     #[test]
-    fn merge_reports_within_page_hash_conflict() {
+    fn response_conflict_is_not_a_reorg() {
         // The same block observed twice with different hashes inside one page
-        // (e.g. a rollback guard disagreeing with a returned block) is a reorg
-        // even though the page dedupes on insert.
+        // (e.g. a rollback guard disagreeing with a returned block) invalidates
+        // the response even though the page dedupes on insert.
         let page = BlockStore::new_evm(false);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0xbb)]);
 
-        let persistent = BlockStore::new_evm(false);
-        let mismatch = persistent.merge(&page, 0, false).expect("mismatch");
+        let mismatch = page.response_conflict().expect("response conflict");
         assert_eq!(
             (
                 mismatch.block_number,
@@ -1533,38 +1666,110 @@ mod tests {
             )
         );
 
+        // The aggregate retains conflicts across backend pages too.
+        let aggregate = BlockStore::new_evm(false);
+        aggregate.append_page(&page);
+        assert!(aggregate.response_conflict().is_some());
+
         // The same duplicate with an identical hash is fine.
         let page = BlockStore::new_evm(false);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
-        assert!(persistent.merge(&page, 0, false).is_none());
+        assert!(page.response_conflict().is_none());
     }
 
     #[test]
-    fn latest_valid_block_stops_at_first_mismatch() {
-        let store = evm_page(vec![
+    fn response_store_comparison_and_coverage_stay_in_rust() {
+        let persistent = evm_page(vec![
             hashed_evm_block(10, 0x10),
             hashed_evm_block(11, 0x11),
             hashed_evm_block(12, 0x12),
         ]);
-        let h = |b: &str| format!("0x{}", b.repeat(32));
+        let response = evm_page(vec![hashed_evm_block(10, 0x10), hashed_evm_block(11, 0xbb)]);
+
+        assert_eq!(response.missing_hashes(vec![10, 11, 12]), vec![12]);
+        assert_eq!(
+            persistent.latest_valid_block_from_store(&response, vec![10, 11, 12]),
+            Some(10)
+        );
+
+        let response = evm_page(vec![hashed_evm_block(12, 0x12)]);
+        assert_eq!(
+            persistent.latest_valid_block_from_store(&response, vec![10, 11, 12]),
+            None
+        );
+    }
+
+    #[test]
+    fn svm_coverage_accepts_only_parent_linked_skipped_slots() {
+        // The first descendant jumps from slot 10 to slot 13, proving that
+        // slots 11 and 12 do not exist on this fork. Because slot 10 is in the
+        // response, its hash must also agree with the child's parent hash.
+        let response = BlockStore::new_svm();
+        response.insert_svm_blocks(vec![
+            linked_svm_block(10, "h10", 9, "h9"),
+            linked_svm_block(13, "h13", 10, "h10"),
+        ]);
+        assert!(response.missing_hashes(vec![10, 11, 12, 13]).is_empty());
+
+        // A parent outside the requested range cannot be returned by the
+        // bounded query, so the complete link on the descendant is sufficient
+        // to prove a skipped prefix.
+        let boundary_response = BlockStore::new_svm();
+        boundary_response.insert_svm_blocks(vec![linked_svm_block(13, "h13", 10, "h10")]);
+        assert!(boundary_response
+            .missing_hashes(vec![11, 12, 13])
+            .is_empty());
+
+        // A child that names the missing slot as its parent proves omission,
+        // not a skipped slot.
+        let omitted_parent = BlockStore::new_svm();
+        omitted_parent.insert_svm_blocks(vec![linked_svm_block(13, "h13", 11, "h11")]);
+        assert_eq!(
+            omitted_parent.missing_hashes(vec![11, 12, 13]),
+            vec![11, 12]
+        );
+
+        // If the named parent is in the response, both parts of the link must
+        // agree; mixing blocks from two forks must remain inconsistent.
+        let mixed_fork = BlockStore::new_svm();
+        mixed_fork.insert_svm_blocks(vec![
+            linked_svm_block(10, "other-h10", 9, "h9"),
+            linked_svm_block(13, "h13", 10, "h10"),
+        ]);
+        assert_eq!(
+            mixed_fork.missing_hashes(vec![10, 11, 12, 13]),
+            vec![11, 12]
+        );
+
+        // A missing upper bound has no descendant link and therefore remains
+        // unverified until the source fetches one successor block.
+        assert_eq!(response.missing_hashes(vec![14]), vec![14]);
+    }
+
+    #[test]
+    fn append_page_detects_cross_page_conflict_but_keeps_rows() {
+        let aggregate = evm_page(vec![hashed_evm_block(10, 0x10)]);
+        let next = evm_page(vec![hashed_evm_block(10, 0xaa), hashed_evm_block(11, 0x11)]);
+
+        aggregate.append_page(&next);
+
+        assert_eq!(
+            aggregate.get_hash(11),
+            Some(format!("0x{}", "11".repeat(32)))
+        );
+        let conflict = aggregate.response_conflict().expect("cross-page conflict");
         assert_eq!(
             (
-                store
-                    .latest_valid_block(vec![10, 11, 12], vec![h("10"), h("11"), h("12")])
-                    .unwrap(),
-                store
-                    .latest_valid_block(vec![10, 11, 12], vec![h("10"), h("bb"), h("12")])
-                    .unwrap(),
-                store
-                    .latest_valid_block(vec![10, 11], vec![h("aa"), h("11")])
-                    .unwrap(),
-                // A block the store no longer holds counts as a mismatch.
-                store
-                    .latest_valid_block(vec![10, 99], vec![h("10"), h("99")])
-                    .unwrap(),
+                conflict.block_number,
+                conflict.stored_hash,
+                conflict.received_hash
             ),
-            (Some(12), Some(10), None, Some(10))
+            (
+                10,
+                format!("0x{}", "10".repeat(32)),
+                format!("0x{}", "aa".repeat(32))
+            )
         );
     }
 

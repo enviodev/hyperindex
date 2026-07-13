@@ -97,9 +97,17 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
 }
 
 let capturedQueries: array<SvmHyperSyncClient.query> = []
+let capturedBlockHashRequests: array<array<int>> = []
 
 let mockClient: SvmHyperSyncClient.t = {
   getHeight: () => Promise.resolve(slot + 1000),
+  getBlockHashes: (~blockNumbers) => {
+    capturedBlockHashRequests->Array.push(blockNumbers)->ignore
+    Promise.resolve((
+      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      [{Source.method: "getBlockHashes", seconds: 0.25}],
+    ))
+  },
   get: (~query) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the stores from raw transactions/blocks; the
@@ -144,6 +152,19 @@ let makeSource = (~onEventRegistrations=[makeReg()]) => {
 let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
+  Async.it("delegates block-hash range handling to the Rust client", async t => {
+    let source = makeSource()
+    let blockNumbers = [slot - 2, slot, slot + 3]
+
+    let response = await source.getBlockHashes(
+      ~blockNumbers,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource block hashes"}),
+    )
+
+    t.expect(capturedBlockHashRequests->Utils.Array.lastUnsafe).toEqual(blockNumbers)
+    t.expect(response.requestStats).toEqual([{Source.method: "getBlockHashes", seconds: 0.25}])
+  })
+
   Async.it("omits block on the item and requests opted-in table columns", async t => {
     let source = makeSource()
     let reg = makeReg()
@@ -239,8 +260,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           dependsOnAddresses: true,
         },
         ~itemsTarget=5000,
-        ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
@@ -300,8 +321,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           dependsOnAddresses: true,
         },
         ~itemsTarget=5000,
-        ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)

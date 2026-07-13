@@ -159,6 +159,63 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
   sourceManager->stopRateLimitTimeout
 }
 
+// A response is trusted only after its BlockStore has proved that it is
+// internally coherent. `requiredBlockNumbers` is used by getBlockHashes to
+// reject a response that simply omitted one of the requested hashes.
+let validateResponseBlockStore = (
+  ~method: string,
+  ~blockStore: BlockStore.t,
+  ~requiredBlockNumbers: array<int>=[],
+) => {
+  let conflict = blockStore->BlockStore.responseConflict->Null.toOption
+  let missingBlockNumbers = blockStore->BlockStore.missingHashes(requiredBlockNumbers)
+  switch conflict {
+  | Some({blockNumber, storedHash, receivedHash}) =>
+    throw(Source.InconsistentResponse({
+      method,
+      blockNumber: Some(blockNumber),
+      storedHash: Some(storedHash),
+      receivedHash: Some(receivedHash),
+      missingBlockNumbers,
+    }))
+  | None if missingBlockNumbers->Array.length > 0 =>
+    throw(Source.InconsistentResponse({
+      method,
+      blockNumber: None,
+      storedHash: None,
+      receivedHash: None,
+      missingBlockNumbers,
+    }))
+  | None => ()
+  }
+}
+
+let retryInconsistentResponse = async (
+  sourceState: sourceState,
+  ~retry: int,
+  ~logger: Pino.t,
+  ~method: string,
+  ~err: exn,
+) => {
+  // A short first retry handles a provider changing forks during the query;
+  // repeated failures use the normal source health/failover cadence.
+  let backoffMillis = retry === 0 ? 100 : Pervasives.min(1000 * retry, 60_000)
+  let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
+  logger->log({
+    "msg": `Source returned an internally inconsistent ${method} response. Retrying the complete request.`,
+    "retry": retry,
+    "backOffMilliseconds": backoffMillis,
+    "err": err->Utils.prettifyExn,
+  })
+  let shouldSwitch = retry >= 2 && retry->mod(2) === 0
+  if shouldSwitch {
+    sourceState.lastFailedAt = Some(Date.now())
+  }
+  if !shouldSwitch {
+    await Utils.delay(backoffMillis)
+  }
+}
+
 let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
   sourceManager.sourcesState->Array.forEach(({source}) => {
     switch source.onReorg {
@@ -745,12 +802,28 @@ let executeQuery = async (
         ~logger,
       )
       sourceState->recordRequestStats(response.requestStats)
+      validateResponseBlockStore(
+        ~method="getItems",
+        ~blockStore=response.blockStore,
+      )
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs}) =>
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
+
+    | Source.InconsistentResponse(_) as err => {
+        await retryInconsistentResponse(
+          sourceState,
+          ~retry,
+          ~logger,
+          ~method="getItems",
+          ~err,
+        )
+        source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=query.fromBlock - 1))
+        retryRef := retryRef.contents + 1
+      }
 
     | Source.GetItemsError(error) =>
       switch error {
@@ -887,6 +960,11 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       sourceState->recordRequestStats(res.requestStats)
       switch res.result {
       | Ok(data) =>
+        validateResponseBlockStore(
+          ~method="getBlockHashes",
+          ~blockStore=data,
+          ~requiredBlockNumbers=blockNumbers,
+        )
         sourceState.lastFailedAt = None
         responseRef := Some(data)
       | Error(exn) => throw(exn)
@@ -895,6 +973,22 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     | Source.RateLimited({resetMs}) =>
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
+
+    | Source.InconsistentResponse(_) as err => {
+        await retryInconsistentResponse(
+          sourceState,
+          ~retry,
+          ~logger,
+          ~method="getBlockHashes",
+          ~err,
+        )
+        let lowestRequestedBlock = blockNumbers->Array.reduce(
+          blockNumbers->Array.get(0)->Option.getOr(0),
+          Pervasives.min,
+        )
+        source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=lowestRequestedBlock - 1))
+        retryRef := retryRef.contents + 1
+      }
 
     | exn =>
       let backoffMillis = switch retry {

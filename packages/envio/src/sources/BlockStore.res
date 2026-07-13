@@ -5,9 +5,11 @@
 // materialised in bulk, off the JS thread, in columnar form and zipped into
 // plain JS objects on the main thread.
 //
-// The store also owns reorg detection: merging a page compares the hashes of
-// blocks both sides carry and reports the lowest in-threshold mismatch, and
-// pruning keeps the hash of processed blocks still inside the reorg threshold.
+// The store also owns response validation and reorg detection. A response page
+// records conflicts found while it is built; SourceManager rejects those pages
+// before the persistent store is touched. Merging a validated page compares
+// only persistent-vs-response hashes, and pruning keeps the hash of processed
+// blocks still inside the reorg threshold.
 type t
 
 @send external newEvm: (Core.blockStoreCtor, ~shouldChecksum: bool) => t = "newEvm"
@@ -99,6 +101,26 @@ type hashMismatch = {
 @send
 external merge: (t, t, ~fromBlock: int, ~reportOnly: bool) => Null.t<hashMismatch> = "merge"
 
+// Append a backend page to a logical response store. This always appends rows;
+// any conflict is retained as response metadata for SourceManager to validate.
+@send
+external appendPage: (t, t) => unit = "appendPage"
+
+// A conflict observed within the response itself. Such a response is
+// discarded and retried, rather than treated as a chain reorg.
+@send external responseConflict: t => Null.t<hashMismatch> = "responseConflict"
+
+// Requested block numbers not covered by this response. SVM gaps count as
+// covered only when a later block's parent slot/hash link proves the fork
+// skipped them.
+@send external missingHashes: (t, array<int>) => array<int> = "missingHashes"
+
+// Compare a validated response store against the persistent store in ascending
+// block order and stop at the first mismatch.
+@send
+external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> =
+  "latestValidBlockFromStore"
+
 // Bulk-materialise blocks off the JS thread, one row per `blockNumbers[i]` key,
 // decoding only the fields set in that row's own `masks[i]`. Result is aligned
 // with the input.
@@ -126,10 +148,3 @@ external materialize: (
 @send
 external getHashedBlockNumbers: (t, ~fromBlock: int, ~belowBlock: int) => array<int> =
   "getHashedBlockNumbers"
-
-// The highest of the given (number, hash) pairs that still matches the stored
-// hash, walking them ascending and stopping at the first pair that mismatches
-// or is no longer stored.
-@send
-external latestValidBlock: (t, ~blockNumbers: array<int>, ~hashes: array<string>) => Null.t<int> =
-  "latestValidBlock"

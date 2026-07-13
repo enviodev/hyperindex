@@ -407,17 +407,18 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger) =>
-    HyperSync.queryBlockDataMulti(
-      ~client,
-      ~blockNumbers,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~logger,
-    )->Promise.thenResolve(((queryRes, requestStats)) => {
-      Source.result: queryRes->HyperSync.mapExn,
-      requestStats,
-    })
+  let getBlockHashes = async (~blockNumbers, ~logger as _) => {
+    let (result, requestStats) = try {
+      let (blockStore, requestStats) = await client.getBlockHashes(~blockNumbers)
+      (Ok(blockStore), requestStats)
+    } catch {
+    | exn => {
+        let failure = exn->Source.unpackNativeRequestFailure
+        (Error(exn->HyperSync.mapRateLimitedExn), failure.requestStats)
+      }
+    }
+    {Source.result, requestStats}
+  }
 
   {
     name,

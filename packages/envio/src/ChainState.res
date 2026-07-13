@@ -235,7 +235,13 @@ let makeInternal = (
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     )
-    blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)->ignore
+    switch seedPage->BlockStore.responseConflict->Null.toOption {
+    | Some({blockNumber}) =>
+      JsError.throwWithMessage(
+        `Conflicting reorg checkpoints for block ${blockNumber->Int.toString} while restoring chain state`,
+      )
+    | None => blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)->ignore
+    }
   }
 
   make(
@@ -353,12 +359,13 @@ let getReorgThresholdBlockNumbersBelow = (cs: t, ~blockNumber) =>
 
 let getLatestValidScannedBlock = (
   cs: t,
-  ~blockNumbersAndHashes: array<ReorgDetection.blockDataWithTimestamp>,
+  ~blockStore: BlockStore.t,
+  ~blockNumbers: array<int>,
 ) =>
   cs.blockStore
-  ->BlockStore.latestValidBlock(
-    ~blockNumbers=blockNumbersAndHashes->Array.map(b => b.blockNumber),
-    ~hashes=blockNumbersAndHashes->Array.map(b => b.blockHash),
+  ->BlockStore.latestValidBlockFromStore(
+    blockStore,
+    blockNumbers,
   )
   ->Null.toOption
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking

@@ -889,6 +889,12 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
+  let resetCachedLoaders = () => {
+    blockLoader := makeBlockLoader()
+    transactionLoader := makeTransactionLoader()
+    receiptLoader := makeReceiptLoader()
+  }
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -1143,11 +1149,9 @@ let make = (
   }
 
   let onReorg = (~rollbackTargetBlock as _) => {
-    // Drop cached block/transaction/receipt data — after a reorg the cached
-    // entries may refer to orphaned-chain values.
-    blockLoader := makeBlockLoader()
-    transactionLoader := makeTransactionLoader()
-    receiptLoader := makeReceiptLoader()
+    // Drop cached block/transaction/receipt data — after a reorg or an
+    // internally inconsistent response these may refer to orphaned-chain values.
+    resetCachedLoaders()
   }
 
   let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
@@ -1155,21 +1159,17 @@ let make = (
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      let result =
-        rawBlocks
-        ->Array.map(json => {
-          let b = parseBlockInfo(json)
-
-          (
-            {
-              blockNumber: b.number,
-              blockHash: b.hash,
-              blockTimestamp: b.timestamp,
-            }: ReorgDetection.blockDataWithTimestamp
-          )
-        })
-        ->Ok
-      {Source.result, requestStats: drainRequestStats()}
+      let blockStore = rawBlocks
+      ->Array.map(json => {
+        let b = parseBlockInfo(json)
+        {
+          BlockStore.blockNumber: b.number,
+          blockHash: b.hash,
+          blockTimestamp: b.timestamp,
+        }
+      })
+      ->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
+      {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
     })
     ->Promise.catch(exn =>
       {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve

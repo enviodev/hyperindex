@@ -309,7 +309,7 @@ module Make = () => {
         blockTimestamp,
         blockHash,
         blockNumber,
-      }): ReorgDetection.blockDataWithTimestamp => {
+      }): BlockStore.inputBlock => {
         blockTimestamp,
         blockHash,
         blockNumber,

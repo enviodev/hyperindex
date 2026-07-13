@@ -472,6 +472,15 @@ impl StoreCol {
             _ => panic!("expected a byte-backed column"),
         }
     }
+
+    /// Raw unsigned integer cell. The caller must have checked the row's mask
+    /// bit, because primitive store columns do not carry per-slot validity.
+    fn cell_u64(&self, slot: usize) -> u64 {
+        match self {
+            StoreCol::U64(v) => v[slot],
+            _ => panic!("expected a u64 column"),
+        }
+    }
 }
 
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
@@ -601,6 +610,27 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.cols[field]
             .as_ref()
             .and_then(|c| c.cell_bytes(slot as usize))
+    }
+
+    /// Unsigned integer value of `field` for `key`, if the row carries it.
+    pub(crate) fn field_u64(&self, key: &K, field: usize) -> Option<u64> {
+        let &slot = self.by_key.get(key)?;
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field].as_ref().map(|c| c.cell_u64(slot as usize))
+    }
+
+    /// First key after `after` whose row carries `field`.
+    pub(crate) fn first_key_after_with_field(&self, after: &K, field: usize) -> Option<K> {
+        let bit = 1u64 << field;
+        self.order
+            .range((
+                std::ops::Bound::Excluded(after.clone()),
+                std::ops::Bound::Unbounded,
+            ))
+            .find(|(_, &slot)| self.masks[slot as usize] & bit != 0)
+            .map(|(key, _)| key.clone())
     }
 
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ.

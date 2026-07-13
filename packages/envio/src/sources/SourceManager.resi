@@ -69,7 +69,7 @@ let getBlockHashes: (
   t,
   ~blockNumbers: array<int>,
   ~isRealtime: bool,
-) => promise<array<ReorgDetection.blockDataWithTimestamp>>
+) => promise<BlockStore.t>
 
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.
