@@ -447,16 +447,12 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
 }
 
 // Block range that cross-chain progress alignment maps fractions over: from
-// the first block that can hold this chain's events to the last block it will
-// fetch.
+// the first block that can hold this chain's events to the last block it can
+// fetch right now.
 let progressRange = (cs: t) => {
   let fetchState = cs.fetchState
   let lower = fetchState.firstEventBlock->Option.getOr(fetchState.startBlock)
-  let upper = switch fetchState.endBlock {
-  | Some(endBlock) => endBlock
-  | None => fetchState.knownHeight
-  }
-  (lower, upper)
+  (lower, cs->fetchCeiling)
 }
 
 // A degenerate range (chain already at or past its last block) maps to 1 so it
