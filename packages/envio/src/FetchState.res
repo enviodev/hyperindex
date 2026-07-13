@@ -1890,8 +1890,8 @@ let getNextQuery = (
         // the shared budget non-positive, do not let the rest of this round
         // create more queries from a stale water level. idsInAscOrder puts the
         // least-advanced partitions first; after the admitted query completes,
-        // it advances behind untouched peers, so later ticks make progress
-        // without starving the skipped partitions.
+        // it either advances or rotates behind tied peers, so later ticks make
+        // progress without starving the skipped partitions.
         if remainingBudget.contents > 0. {
           let reserved = reservedByPartition->Dict.getUnsafe(fs.partitionId)
           let budget = level -. reserved
