@@ -46,15 +46,6 @@ let makeSources = (
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
-  // The index <-> array-position invariant is what lets sources resolve
-  // Rust-routed items back to their registration, so enforce it here where
-  // the clients and the lookup array are built (test configs bypass
-  // HandlerRegister's assignment).
-  let onEventRegistrations = onEventRegistrations->Array.mapWithIndex((reg, i) => {
-    ...reg,
-    index: i,
-  })
-
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
       HyperSyncSource.make({

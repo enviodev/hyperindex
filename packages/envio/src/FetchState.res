@@ -1305,7 +1305,7 @@ let handleQueryResult = (
   let newItems = newItems->Array.filter(item =>
     switch item {
     | Internal.Event({payload, blockNumber}) as item =>
-      switch (item->Internal.castUnsafeEventItem->Internal.getItemOnEventRegistration).clientAddressFilter {
+      switch (item->Internal.castUnsafeEventItem).onEventRegistration.clientAddressFilter {
       | Some(filter) =>
         filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
       | None => true

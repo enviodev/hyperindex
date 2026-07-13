@@ -10,7 +10,7 @@ let itemKey = (item: Internal.item): string =>
     `${chain
       ->ChainMap.Chain.toChainId
       ->Int.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
-  | _ => "" // non-event items are never a provided simulate input
+  | Internal.Block(_) => ""
   }
 
 // `index` is the item's position in its chain's `simulate` array, reported back

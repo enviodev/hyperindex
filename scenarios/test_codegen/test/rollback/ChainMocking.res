@@ -37,6 +37,7 @@ module Crypto = {
 module Make = () => {
   type log = {
     item: Internal.item,
+    onEventRegistration: Internal.evmOnEventRegistration,
     srcAddress: Address.t,
     transactionHash: string,
   }
@@ -174,17 +175,14 @@ module Make = () => {
       transactionIndex,
     }): log => {
       let log = Internal.Event({
-        onEventRegistrationIndex: Internal.addOnEventRegistration(
-          ~chainId=self.chainConfig.id,
-          (onEventRegistration :> Internal.onEventRegistration),
-        ),
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
         chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
         blockNumber,
         logIndex,
         transactionIndex,
       })
-      {item: log, srcAddress, transactionHash}
+      {item: log, onEventRegistration, srcAddress, transactionHash}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -236,11 +234,7 @@ module Make = () => {
             (addresses->arrayHas(l.srcAddress) &&
               eventKeys->arrayHas(
                 getEventKey(
-                  (
-                    l.item
-                    ->Internal.castUnsafeEventItem
-                    ->Internal.getItemOnEventRegistration
-                  ).eventConfig,
+                  l.onEventRegistration.eventConfig,
                 ),
               ))
           },

@@ -29,12 +29,10 @@ let makeItem = (
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
     "chain": ChainMap.Chain.makeUnsafe(~chainId=materializeChainId),
-    "onEventRegistrationIndex": Internal.addOnEventRegistration(
-      ~chainId=materializeChainId,
+    "onEventRegistration":
       {
         "eventConfig": {"transactionFieldMask": transactionMask, "blockFieldMask": blockMask},
       }->(Utils.magic: {..} => Internal.onEventRegistration),
-    ),
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)
 }

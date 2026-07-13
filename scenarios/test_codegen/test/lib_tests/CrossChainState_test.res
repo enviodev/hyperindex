@@ -6,12 +6,10 @@ let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({
     chain: ChainMap.Chain.makeUnsafe(~chainId=1),
     blockNumber,
-    onEventRegistrationIndex: Internal.addOnEventRegistration(
-      ~chainId=1,
+    onEventRegistration:
       "Mock onEventRegistration in CrossChainState test"->(
         Utils.magic: string => Internal.onEventRegistration
       ),
-    ),
     logIndex: 0,
     transactionIndex: 0,
     payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
@@ -26,8 +24,8 @@ let makeChainState = (
   ~firstEventBlock,
   ~bufferBlocks=[],
   ~isProgressAtHead=false,
+  ~onEventRegistrations=[],
 ) => {
-  let onEventRegistrations = []
   let addresses = []
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
@@ -66,6 +64,7 @@ let makeChainState = (
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~onEventRegistrations,
     ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
@@ -161,6 +160,28 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
   )
   CrossChainState.make(~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
 }
+
+let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
+  ({
+    ...MockIndexer.evmOnEventRegistration(~contractName),
+    index,
+  }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
+
+describe("ChainState event registration ownership", () => {
+  it("rejects a registration whose index differs from its ChainState position", t => {
+    t.expect(() =>
+      makeChainState(
+        ~chainId=1,
+        ~knownHeight=10,
+        ~frontier=10,
+        ~firstEventBlock=0,
+        ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
+      )->ignore
+    ).toThrowError(
+      "Invalid onEvent registration index for chain 1: ContractA.EventWithoutFields has index 4, but its ChainState position is 0.",
+    )
+  })
+})
 
 describe("CrossChainState fetch control", () => {
   it("priorityOrder visits the furthest-behind chain first", t => {
@@ -304,4 +325,3 @@ describe("CrossChainState readiness", () => {
     }).toEqual({"aReady": true, "bReady": true, "isRealtime": true})
   })
 })
-

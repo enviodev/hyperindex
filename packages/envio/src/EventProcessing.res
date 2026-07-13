@@ -73,7 +73,7 @@ let runEventHandlerOrThrow = async (
     )
   }
   let handlerDuration = timeBeforeHandler->Performance.secondsSince
-  let eventConfig = (eventItem->Internal.getItemOnEventRegistration).eventConfig
+  let eventConfig = eventItem.onEventRegistration.eventConfig
   Prometheus.ProcessingHandler.increment(
     ~contract=eventConfig.contractName,
     ~event=eventConfig.name,
@@ -123,7 +123,7 @@ let runHandlerOrThrow = async (
       )
     }
   | Event(_) =>
-    switch (item->Internal.castUnsafeEventItem->Internal.getItemOnEventRegistration).handler {
+    switch (item->Internal.castUnsafeEventItem).onEventRegistration.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
@@ -164,7 +164,7 @@ let preloadBatchOrThrow = async (
       switch item {
       | Event(_) =>
         let {handler, eventConfig: {contractName, name: eventName}} =
-          item->Internal.castUnsafeEventItem->Internal.getItemOnEventRegistration
+          (item->Internal.castUnsafeEventItem).onEventRegistration
         switch handler {
         | None => ()
         | Some(handler) =>

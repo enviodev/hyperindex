@@ -4,7 +4,7 @@
 
 type t = {
   logger: Pino.t,
-  // The chain's registrations, indexed by each item's `onEventRegistrationIndex`.
+  // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
   // The chain-wide address index. Not `mutable`: the dict is mutated in place by
@@ -63,6 +63,18 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
   addresses
 }
 
+let validateOnEventRegistrations = (
+  ~chainId: int,
+  registrations: array<Internal.onEventRegistration>,
+) =>
+  registrations->Array.forEachWithIndex((registration, expectedIndex) => {
+    if registration.index !== expectedIndex {
+      JsError.throwWithMessage(
+        `Invalid onEvent registration index for chain ${chainId->Int.toString}: ${registration.eventConfig.contractName}.${registration.eventConfig.name} has index ${registration.index->Int.toString}, but its ChainState position is ${expectedIndex->Int.toString}.`,
+      )
+    }
+  })
+
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
@@ -79,21 +91,24 @@ let make = (
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
-  logger,
-  fetchState,
-  onEventRegistrations,
-  indexingAddresses,
-  sourceManager,
-  chainConfig,
-  isProgressAtHead,
-  timestampCaughtUpToHeadOrEndblock,
-  committedProgressBlockNumber,
-  numEventsProcessed,
-  pendingBudget: 0.,
-  reorgDetection,
-  safeCheckpointTracking,
-  transactionStore,
-  blockStore,
+  validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
+  {
+    logger,
+    fetchState,
+    onEventRegistrations,
+    indexingAddresses,
+    sourceManager,
+    chainConfig,
+    isProgressAtHead,
+    timestampCaughtUpToHeadOrEndblock,
+    committedProgressBlockNumber,
+    numEventsProcessed,
+    pendingBudget: 0.,
+    reorgDetection,
+    safeCheckpointTracking,
+    transactionStore,
+    blockStore,
+  }
 }
 
 let makeInternal = (
@@ -122,10 +137,6 @@ let makeInternal = (
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
     ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
-
-  // Items carry only `onEventRegistrationIndex`; consumers resolve the full
-  // registration through this per-chain array.
-  Internal.setOnEventRegistrations(~chainId=chainConfig.id, ~registrations=onEventRegistrations)
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
@@ -470,7 +481,7 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
       | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
       | None =>
         let {transactionIndex} = eventItem
-        let mask = (eventItem->Internal.getItemOnEventRegistration).eventConfig.transactionFieldMask
+        let mask = eventItem.onEventRegistration.eventConfig.transactionFieldMask
         if mask != 0. {
           anyTransactionFieldSelected := true
         }
@@ -497,7 +508,7 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
         switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
         | Some(_) => () // RPC/simulate/Fuel carry the block inline.
         | None =>
-          let mask = (eventItem->Internal.getItemOnEventRegistration).eventConfig.blockFieldMask
+          let mask = eventItem.onEventRegistration.eventConfig.blockFieldMask
           let last = blockItemGroups->Array.length - 1
           if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
             blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)
