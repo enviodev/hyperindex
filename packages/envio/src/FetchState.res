@@ -1319,10 +1319,9 @@ let registerDynamicContracts = (
   }
 }
 
-// Drop events rejected by the precompiled client-side address predicate. This
-// is exposed separately from handleQueryResult so ChainFetching can apply it
-// before contract-register handlers run; otherwise a discarded event can still
-// mutate the indexing-address set and create partitions.
+// Drop events rejected by the precompiled client-side address predicate.
+// ChainFetching applies this to each response immediately before routing the
+// accepted items to contract-register handlers.
 let filterQueryItems = (items: array<Internal.item>, ~indexingAddresses: IndexingAddresses.t) =>
   items->Array.filter(item =>
     switch item {
@@ -1340,19 +1339,15 @@ let filterQueryItems = (items: array<Internal.item>, ~indexingAddresses: Indexin
 Updates fetchState with a response for a given query.
 Returns Error if the partition with given query cannot be found (unexpected)
 
-newItems are ordered earliest to latest (as they are returned from the worker).
-The production response path passes itemsAreFiltered=true after filtering before
-contract registration; the fallback keeps direct callers safe.
+newItems are ordered earliest to latest (as they are returned from the worker)
+and have already been filtered by the response-handling path.
 */
 let handleQueryResult = (
   fetchState: t,
-  ~indexingAddresses: IndexingAddresses.t,
-  ~itemsAreFiltered=false,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
 ): t => {
-  let newItems = itemsAreFiltered ? newItems : newItems->filterQueryItems(~indexingAddresses)
   fetchState->updateInternal(
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,

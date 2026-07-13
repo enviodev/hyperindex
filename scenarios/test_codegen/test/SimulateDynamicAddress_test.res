@@ -60,10 +60,10 @@ Async.it("routes a non-wildcard event for a contract registered in an earlier pr
   t.expect(tokens).toEqual([expectedToken])
 })
 
-// A contract registered within the same process() call is accepted too: the
-// simulate path no longer pre-checks srcAddress against a static snapshot, so the
-// non-wildcard event reaches its handler instead of being rejected.
-Async.it("accepts a non-wildcard event for a contract registered in the same process() call", async t => {
+// A response is expected to contain events only for addresses included in its
+// original query. A later item cannot use an address registered by an earlier
+// item in that same response; the new address applies to future queries.
+Async.it("rejects an event for an address registered in the same response", async t => {
   let indexer = Indexer.createTestIndexer()
 
   let error = try {
@@ -75,22 +75,39 @@ Async.it("accepts a non-wildcard event for a contract registered in the same pro
   | JsExn(err) => err->JsExn.message
   }
 
-  t.expect(error).toEqual(None)
+  t.expect(error).toEqual(
+    Some(
+      `simulate: 1 item you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:` ++ "\n  - chain 1337: 1",
+    ),
+  )
 })
 
-// Regression: an explicit logIndex on the first item must not steal the auto
-// item's slot. [explicit 0, auto] resolves to logIndex 0 then 1 (not two zeros),
-// so createNft registers newNft before transferNft routes and the token lands.
-Async.it("accepts an explicit logIndex followed by an auto-increment item", async t => {
+// An explicit logIndex on the first item must not steal the auto item's slot.
+// [explicit 0, auto] resolves to logIndex 0 then 1 (not two zeros); the second
+// item is still rejected because its address was not part of the original query.
+Async.it("keeps auto-increment distinct after an explicit logIndex", async t => {
   let indexer = Indexer.createTestIndexer()
-  let _ = await indexer.process({
-    chains: {
-      \"1337": {startBlock: 1, endBlock: 100, simulate: [{...createNft, logIndex: 0}, transferNft]},
-    },
-  })
 
-  let tokens = await indexer.\"Token".getAll()
-  t.expect(tokens).toEqual([expectedToken])
+  let error = try {
+    let _ = await indexer.process({
+      chains: {
+        \"1337": {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [{...createNft, logIndex: 0}, transferNft],
+        },
+      },
+    })
+    None
+  } catch {
+  | JsExn(err) => err->JsExn.message
+  }
+
+  t.expect(error).toEqual(
+    Some(
+      `simulate: 1 item you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:` ++ "\n  - chain 1337: 1",
+    ),
+  )
 })
 
 // With nothing registering newNft (no factory item, no earlier process() call),

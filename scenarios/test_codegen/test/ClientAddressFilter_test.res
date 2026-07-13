@@ -156,7 +156,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
   })
 })
 
-describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
+describe("FetchState.filterQueryItems applies clientAddressFilter before result handling", () => {
   let transferParams: array<EventConfigBuilder.paramMeta> = [
     {name: "from", abiType: "address", indexed: true},
     {name: "to", abiType: "address", indexed: true},
@@ -218,19 +218,22 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     | _ => JsError.throwWithMessage("expected a single ready query")
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let newItems = [
+      makeItem(~to=registeredAddr, ~blockNumber=10),
+      makeItem(~to=registeredAddr, ~blockNumber=3),
+    ]->FetchState.filterQueryItems(~indexingAddresses)
     let updated =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
         // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
-        ~newItems=[makeItem(~to=registeredAddr, ~blockNumber=10), makeItem(~to=registeredAddr, ~blockNumber=3)],
+        ~newItems,
       )
     t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })
 })
 
-describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddress events", () => {
+describe("FetchState.filterQueryItems drops over-fetched non-wildcard srcAddress events", () => {
   // Non-wildcard Transfer for ERC20, effective from block 5 (contract startBlock).
   // A merged partition can over-fetch an address before its effectiveStartBlock;
   // the codegen'd srcAddress check in clientAddressFilter drops those.
@@ -291,15 +294,15 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     | _ => JsError.throwWithMessage("expected a single ready query")
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let newItems = [
+      makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
+      makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
+    ]->FetchState.filterQueryItems(~indexingAddresses)
     let updated =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
-        ~newItems=[
-          makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
-          makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
-        ],
+        ~newItems,
       )
     t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })

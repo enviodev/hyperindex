@@ -1859,7 +1859,7 @@ describe("FetchState.getNextQuery & integration", () => {
   }
 
   it("Emulate first indexer queries with a static event", t => {
-    let (fetchState, indexingAddresses) = makeInitial()
+    let (fetchState, _indexingAddresses) = makeInitial()
 
     t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
 
@@ -1909,7 +1909,6 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={
         blockNumber: 10,
@@ -1973,7 +1972,7 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Emulate first indexer queries with block lag configured", t => {
-    let (fetchState, indexingAddresses) = makeInitial(~blockLag=2)
+    let (fetchState, _indexingAddresses) = makeInitial(~blockLag=2)
 
     t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
 
@@ -2032,7 +2031,6 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={
         blockNumber: 8,
@@ -2146,7 +2144,6 @@ describe("FetchState.getNextQuery & integration", () => {
     let updatedFetchState =
       fetchStateWithDcs
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=queries->Array.getUnsafe(0),
         ~latestFetchedBlock={
           blockNumber: 10,
@@ -2155,7 +2152,6 @@ describe("FetchState.getNextQuery & integration", () => {
         ~newItems=[],
       )
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=queries->Array.getUnsafe(1),
         ~latestFetchedBlock={
           blockNumber: 2,
@@ -2266,7 +2262,6 @@ describe("FetchState.getNextQuery & integration", () => {
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
     let fetchState = makeIntermidiateDcMerge(~maxAddrInPartition=4, ~knownHeight=11)
-    let indexingAddresses = makeIntermidiateIndex()
     t.expect(
       fetchState->getNextQuery,
       ~message="Although, if we pass it through partition optimization, it should merge partitions now",
@@ -2310,7 +2305,6 @@ describe("FetchState.getNextQuery & integration", () => {
     // When it didn't finish fetching to the target partition block
     fetchState->FetchState.startFetchingQueries(~queries=[p2Query])
     let fetchStateWithResponse1 = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query=p2Query,
       ~latestFetchedBlock={
         blockNumber: 9,
@@ -2343,7 +2337,6 @@ describe("FetchState.getNextQuery & integration", () => {
     fetchStateWithResponse1->FetchState.startFetchingQueries(~queries)
 
     let fetchStateWithResponse2 = fetchStateWithResponse1->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query=queries->Array.getUnsafe(0),
       ~latestFetchedBlock={
         blockNumber: 10,
@@ -2697,7 +2690,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
 describe("FetchState unit tests for specific cases", () => {
   it("Should merge events in correct order on merging", t => {
-    let (base, indexingAddresses) = makeInitial()
+    let (base, _indexingAddresses) = makeInitial()
     let normalSelection = base.normalSelection
     let fetchState = base->FetchState.updateInternal(
       ~optimizedPartitions=FetchState.OptimizedPartitions.make(
@@ -2762,7 +2755,6 @@ describe("FetchState unit tests for specific cases", () => {
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={
         blockNumber: 10,
@@ -2783,7 +2775,7 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Sorts newItems when source returns them unsorted", t => {
-    let (base, indexingAddresses) = makeInitial()
+    let (base, _indexingAddresses) = makeInitial()
     let fetchState = base
 
     let unsorted = [
@@ -2808,7 +2800,6 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
         ~newItems=unsorted,
@@ -2834,7 +2825,7 @@ describe("FetchState unit tests for specific cases", () => {
     // FetchState with 2 partitions,
     // one of them reached the head
     // another reached max queue size
-    let (fetchState, indexingAddresses) = makeFs(
+    let (fetchState, _indexingAddresses) = makeFs(
       ~onEventRegistrations=[
         (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
         wildcard,
@@ -2878,13 +2869,11 @@ describe("FetchState unit tests for specific cases", () => {
     let fetchState =
       fetchState
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=query0,
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
         ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=0)],
       )
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=query1,
         ~latestFetchedBlock=getBlockData(~blockNumber=2),
         ~newItems=[],
@@ -2946,7 +2935,6 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let fetchStateWithEvents =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[
           mockEvent(~blockNumber=6, ~logIndex=2),
@@ -2975,7 +2963,7 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Returns NoItem when there is an empty partition at block 0", t => {
-    let (fetchState, indexingAddresses) = makeFs(
+    let (fetchState, _indexingAddresses) = makeFs(
       ~onEventRegistrations=[
         (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
       ],
@@ -3014,7 +3002,6 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[mockEvent(~blockNumber=0, ~logIndex=1)],
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
@@ -3114,7 +3101,7 @@ describe("FetchState unit tests for specific cases", () => {
       {...makeInitialFs(~startBlock=10), endBlock: Some(9)}->FetchState.isActivelyIndexing,
       ~message=`Shouldn't be active if endBlock is less than the startBlock`,
     ).toEqual(false)
-    let (_, indexingAddresses) = makeInitial()
+    let (_, _indexingAddresses) = makeInitial()
     let fetchState = {
       ...makeInitialFs(),
       endBlock: Some(0),
@@ -3134,7 +3121,6 @@ describe("FetchState unit tests for specific cases", () => {
     t.expect(
       fetchState
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[mockEvent(~blockNumber=0)],
         ~latestFetchedBlock={blockNumber: -1, blockTimestamp: 0},
@@ -3145,7 +3131,7 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("isFetchingAtHead", t => {
-    let (_, indexingAddresses) = makeInitial()
+    let (_, _indexingAddresses) = makeInitial()
     let fetchToHead = (fetchState: FetchState.t, ~latestFetchedBlockNumber) => {
       let query: FetchState.query = {
         ...defaultQuery,
@@ -3160,7 +3146,6 @@ describe("FetchState unit tests for specific cases", () => {
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[],
         ~latestFetchedBlock={blockNumber: latestFetchedBlockNumber, blockTimestamp: 0},
@@ -3219,7 +3204,6 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       let fetchState =
         fetchState->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query,
           ~newItems=[
             mockEvent(~blockNumber=6, ~logIndex=2),
@@ -3288,7 +3272,6 @@ describe("FetchState unit tests for specific cases", () => {
       //Response with updated fetch state
       let fetchStateWithBothDcsAndQueryAResponse =
         fetchStateWithDcB->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query=queryA,
           ~latestFetchedBlock=getBlockData(~blockNumber=400),
           ~newItems=[],
@@ -3350,12 +3333,11 @@ describe("FetchState.sortForBatch", () => {
 
   // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
   let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
-    let (fs0, indexingAddresses) = makeInitial(~knownHeight=10)
+    let (fs0, _indexingAddresses) = makeInitial(~knownHeight=10)
     let query = mkQuery(fs0)
     fs0->FetchState.startFetchingQueries(~queries=[query])
     let fs =
       fs0->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
         ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
@@ -3650,7 +3632,7 @@ describe("Dynamic contracts with start blocks", () => {
 
 describe("FetchState progress tracking", () => {
   let makeFetchStateWith = (~latestBlock: int, ~queueBlocks: array<(int, int)>): FetchState.t => {
-    let (fs0, indexingAddresses) = makeInitial(~knownHeight=1000)
+    let (fs0, _indexingAddresses) = makeInitial(~knownHeight=1000)
     let query = {
       ...defaultQuery,
       FetchState.partitionId: "0",
@@ -3664,7 +3646,6 @@ describe("FetchState progress tracking", () => {
     }
     fs0->FetchState.startFetchingQueries(~queries=[query])
     fs0->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
       ~newItems=queueBlocks->Array.map(((b, l)) => mockEvent(~blockNumber=b, ~logIndex=l)),
@@ -3743,7 +3724,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       fetchStateWithTwoPartitions->FetchState.startFetchingQueries(~queries=[query0])
       let fetchStateWithLargeQueue =
         fetchStateWithTwoPartitions->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query=query0,
           ~latestFetchedBlock={blockNumber: 30, blockTimestamp: 30 * 15},
           ~newItems=largeQueueEvents,
@@ -3798,7 +3778,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let fetchStateSmallQueue =
         fetchState
         ->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query=query3,
           ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
           ~newItems=[mockEvent(~blockNumber=5)],
@@ -3927,7 +3906,7 @@ describe("Stale query response should not overwrite block range", () => {
   }
 
   it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
-    let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100000)
+    let (fetchState, _indexingAddresses) = makeInitial(~knownHeight=100000)
 
     // -- Query 1: uncapped query from block 0 --
     let q1 = switch fetchState->getNextQuery {
@@ -3942,7 +3921,6 @@ describe("Stale query response should not overwrite block range", () => {
       fetchState
       ->FetchState.updateKnownHeight(~knownHeight=100000)
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=q1,
         ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
         ~newItems=[mockEvent(~blockNumber=100)],
@@ -3970,7 +3948,6 @@ describe("Stale query response should not overwrite block range", () => {
     // shouldUpdateBlockRange: None toBlock => 1000 < 99990 = true
     let fs2 =
       fs1->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=q2,
         ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000 * 15},
         ~newItems=[mockEvent(~blockNumber=600)],
@@ -4005,7 +3982,6 @@ describe("Stale query response should not overwrite block range", () => {
     // blockRange = 2500 - 1901 + 1 = 600
     let fs3 =
       fs2->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=chunkB,
         ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
         ~newItems=[],
@@ -4023,7 +3999,6 @@ describe("Stale query response should not overwrite block range", () => {
     // So prevQueryRange should NOT change
     let fs4 =
       fs3->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=chunkA,
         ~latestFetchedBlock={blockNumber: 1500, blockTimestamp: 1500 * 15},
         ~newItems=[],
@@ -4088,7 +4063,7 @@ describe("FetchState.getNextQuery stops admission after a water-fill overshoot",
 
   it("admits one overshooting partition per call and rotates to the skipped laggard", t => {
     let fetchState = makeTwoPartitionFetchState()
-    let (_, indexingAddresses) = makeInitial()
+    let (_, _indexingAddresses) = makeInitial()
     let firstQueries = switch fetchState->FetchState.getNextQuery(
       ~chainTargetBlock=10000,
       ~chainTargetItems=100.,
@@ -4104,7 +4079,6 @@ describe("FetchState.getNextQuery stops admission after a water-fill overshoot",
     fetchState->FetchState.startFetchingQueries(~queries=firstQueries)
     let afterFirst =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=firstQuery,
         // Model a response that consumed its query cap without advancing even
         // one complete block. Partition 1 must still receive the next budget.
@@ -4592,12 +4566,11 @@ describe("Cap-hit truncation does not update chunk history", () => {
   }
 
   let runPartialResponse = (~itemsCount) => {
-    let (_, indexingAddresses) = makeInitial()
+    let (_, _indexingAddresses) = makeInitial()
     let fetchState = makeFetchState()
     fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
     let updated =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=chunkQuery,
         ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
         ~newItems=Array.fromInitializer(~length=itemsCount, i =>
