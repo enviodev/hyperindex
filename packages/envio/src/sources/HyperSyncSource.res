@@ -68,7 +68,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let {transactionIndex, logIndex, srcAddress} = item
 
     Internal.Event({
-      onEventRegistrationIndex: item.onEventRegistrationIndex,
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
       chain,
       blockNumber: item.blockNumber,
       logIndex,

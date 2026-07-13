@@ -348,18 +348,16 @@ let parse = (
         ~chainId,
         ~eventConfig,
       )
-      // Append into the chain's registration array — the same one chain-state
-      // startup installs for item resolution — so simulate item indexes stay
-      // valid after startup replaces the per-chain registry entry.
+      // Append into the registration array that the chain state will own and
+      // put that same registration object directly on the simulated item.
       let onEventRegistrationIndex = onEventRegistrations->Array.length
-      onEventRegistrations
-      ->Array.push({...onEventRegistration, index: onEventRegistrationIndex})
-      ->ignore
+      let onEventRegistration = {...onEventRegistration, index: onEventRegistrationIndex}
+      onEventRegistrations->Array.push(onEventRegistration)->ignore
 
       items
       ->Array.push(
         Internal.Event({
-          onEventRegistrationIndex,
+          onEventRegistration,
           chain,
           blockNumber,
           logIndex,

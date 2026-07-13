@@ -79,12 +79,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           logIndex,
           transactionIndex: 0,
-          onEventRegistrationIndex: Internal.addOnEventRegistration(
-            ~chainId=id,
+          onEventRegistration:
             "Mock onEventRegistration in IndexerState test"->(
               Utils.magic: string => Internal.onEventRegistration
             ),
-          ),
           payload: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
             Utils.magic: string => Internal.eventPayload
           ),
@@ -191,12 +189,10 @@ describe("IndexerState", () => {
           blockNumber: 0,
           logIndex: 0,
           transactionIndex: 0,
-          onEventRegistrationIndex: Internal.addOnEventRegistration(
-            ~chainId=MockConfig.chain1->ChainMap.Chain.toChainId,
+          onEventRegistration:
             "Mock onEventRegistration in IndexerState test"->(
               Utils.magic: string => Internal.onEventRegistration
             ),
-          ),
           payload: `mock initial event`->(Utils.magic: string => Internal.eventPayload),
         })
 
@@ -303,12 +299,10 @@ describe("IndexerState", () => {
                       blockNumber,
                       logIndex: 0,
                       transactionIndex: 0,
-                      onEventRegistrationIndex: Internal.addOnEventRegistration(
-                        ~chainId,
+                      onEventRegistration:
                         "Mock onEventRegistration"->(
                           Utils.magic: string => Internal.onEventRegistration
                         ),
-                      ),
                       payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
                     }),
                   ],
@@ -388,10 +382,8 @@ describe("IndexerState", () => {
               blockNumber: 15,
               logIndex: 0,
               transactionIndex: 0,
-              onEventRegistrationIndex: Internal.addOnEventRegistration(
-                ~chainId=chain->ChainMap.Chain.toChainId,
+              onEventRegistration:
                 "Mock onEventRegistration"->(Utils.magic: string => Internal.onEventRegistration),
-              ),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
           ],

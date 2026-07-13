@@ -920,7 +920,7 @@ let make = (
                 }
 
                 Internal.Event({
-                  onEventRegistrationIndex,
+                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
                   blockNumber: block->getBlockNumber,
                   chain,
                   logIndex: log.logIndex,

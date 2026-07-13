@@ -145,8 +145,8 @@ let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("omits block on the item and requests opted-in table columns", async t => {
-    let source = makeSource()
     let reg = makeReg()
+    let source = makeSource(~onEventRegistrations=[reg])
 
     let response = await source.getItemsOrThrow(
       ~fromBlock=slot - 10,
@@ -167,11 +167,12 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
 
     let item = switch response.parsedQueueItems {
-    | [Internal.Event({blockNumber, payload})] =>
+    | [Internal.Event({blockNumber, payload, onEventRegistration})] =>
       let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
       Some({
         "blockNumber": blockNumber,
         "block": instruction.block,
+        "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
       })
     | _ => None
     }
@@ -185,6 +186,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         // `block` is omitted here; it's materialised from the store at batch
         // prep, which this test doesn't run.
         "block": None,
+        "usesSourceRegistration": true,
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.

@@ -236,51 +236,8 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
 
 // ============== Build topic filter getters ==============
 
-let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
-  // Indexed array/tuple values match on the keccak256 of their ABI encoding
-  if abiType->String.endsWith("]") || abiType->String.startsWith("(") {
-    (value => TopicFilter.fromAbiValue(~abiType, value))->(
-      Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-    )
-  } else {
-    switch abiType {
-    | "address" =>
-      // Lowercase before encoding so mixed-case (checksummed) user input
-      // still matches the lowercase hex topics returned by sources.
-
-      (
-        (value: string) =>
-          value->String.toLowerCase->Address.unsafeFromString->TopicFilter.fromAddress
-      )->(Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-
-    | "bool" =>
-      TopicFilter.fromBool->(Utils.magic: (bool => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | "string" =>
-      TopicFilter.fromDynamicString->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | "bytes" =>
-      TopicFilter.fromDynamicBytes->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("uint") =>
-      TopicFilter.fromBigInt->(Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | t if t->String.startsWith("int") =>
-      TopicFilter.fromSignedBigInt->(
-        Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("bytes") =>
-      TopicFilter.castToHexUnsafe->(
-        Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | other => JsError.throwWithMessage(`Unsupported topic filter ABI type: ${other}`)
-    }
-  }
-}
+let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => value =>
+  Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
 let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)

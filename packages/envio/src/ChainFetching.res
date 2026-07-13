@@ -49,7 +49,7 @@ let runContractRegistersOrThrow = async (
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem->Internal.getItemOnEventRegistration {
+    let contractRegister = switch eventItem.onEventRegistration {
     | {contractRegister: Some(contractRegister)} => contractRegister
     | {contractRegister: None, eventConfig: {name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
@@ -149,7 +149,7 @@ let rec onQueryResponse = async (
 
     let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
       let eventItem = item->Internal.castUnsafeEventItem
-      (eventItem->Internal.getItemOnEventRegistration).contractRegister !== None
+      eventItem.onEventRegistration.contractRegister !== None
         ? count + 1
         : count
     })
@@ -219,7 +219,7 @@ let rec onQueryResponse = async (
       for idx in 0 to parsedQueueItems->Array.length - 1 {
         let item = parsedQueueItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
-        if (eventItem->Internal.getItemOnEventRegistration).contractRegister !== None {
+        if eventItem.onEventRegistration.contractRegister !== None {
           itemsWithContractRegister->Array.push(item)
         }
         // TODO: Don't really need to keep it in the queue
