@@ -93,6 +93,12 @@ let getContractAddresses = (indexingAddresses: t, ~contractName): array<Address.
 // type. Don't reach for this elsewhere; use the domain accessors above.
 let rawForFilter = (indexingAddresses: t): dict<indexingAddress> => indexingAddresses
 
+// A response-local overlay: address lookups fall back to the real registry via
+// the prototype, while newly discovered addresses remain own properties on the
+// overlay. This avoids copying very large registries just to resolve same-page
+// contract-registration dependencies.
+let makeFilterOverlay: t => t = %raw(`indexingAddresses => Object.create(indexingAddresses)`)
+
 let register = (indexingAddresses: t, additions: dict<indexingAddress>) => {
   let _ = Utils.Dict.mergeInPlace(indexingAddresses, additions)
 }

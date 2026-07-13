@@ -28,6 +28,10 @@ let getContractAddresses: (t, ~contractName: string) => array<Address.t>
 // prefer the domain accessors so the opaque type stays enforced.
 let rawForFilter: t => dict<indexingAddress>
 
+// Lightweight response-local overlay used while contract-register dependencies
+// are resolved. Reads fall back to the underlying registry; writes stay local.
+let makeFilterOverlay: t => t
+
 let register: (t, dict<indexingAddress>) => unit
 
 // Deletes addresses registered after `targetBlockNumber` from the index in place.

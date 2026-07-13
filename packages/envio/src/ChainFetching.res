@@ -8,6 +8,11 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+type filteredQueryItems = {
+  newItems: array<Internal.item>,
+  newItemsWithDcs: array<Internal.item>,
+}
+
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
@@ -24,8 +29,6 @@ let runContractRegistersOrThrow = async (
     ~ecosystem=config.ecosystem.name,
   )
 
-  let itemsWithDcs = []
-
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
     let eventItem = item->Internal.castUnsafeEventItem
     let {blockNumber} = eventItem
@@ -37,10 +40,7 @@ let runContractRegistersOrThrow = async (
     }
 
     switch item->Internal.getItemDcs {
-    | None => {
-        item->Internal.setItemDcs([dc])
-        itemsWithDcs->Array.push(item)
-      }
+    | None => item->Internal.setItemDcs([dc])
     | Some(dcs) => dcs->Array.push(dc)
     }
   }
@@ -101,7 +101,91 @@ let runContractRegistersOrThrow = async (
     let _ = await Promise.all(promises)
   }
 
-  itemsWithDcs
+  ()
+}
+
+let hasContractRegister = (item: Internal.item) => {
+  let eventItem = item->Internal.castUnsafeEventItem
+  eventItem.onEventRegistration.contractRegister !== None
+}
+
+let hasDynamicContracts = (item: Internal.item) =>
+  switch item->Internal.getItemDcs {
+  | Some(dcs) => dcs->Utils.Array.notEmpty
+  | None => false
+  }
+
+// Resolve response-local dynamic-address dependencies in layers. Each layer is
+// filtered before its contract-register handlers run; registrations produced by
+// accepted items extend only a response-local address view used to retry the
+// remaining items. The real chain state is mutated once, after the stale-state
+// check in applyQueryResponse.
+//
+// This keeps handlers within a layer concurrent while allowing a factory event
+// to register an address used by a later event in the same response.
+let filterAndRunContractRegistersOrThrow = async (
+  ~chainState: ChainState.t,
+  ~items: array<Internal.item>,
+  ~config: Config.t,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
+) => {
+  let acceptedItems = Utils.Set.make()
+  let remainingItems = ref(items)
+  let queryFilterAddresses: ref<option<IndexingAddresses.t>> = ref(None)
+  let shouldContinue = ref(true)
+
+  while shouldContinue.contents && remainingItems.contents->Utils.Array.notEmpty {
+    let acceptedInRound = switch queryFilterAddresses.contents {
+    | Some(indexingAddresses) =>
+      chainState->ChainState.filterQueryItems(~items=remainingItems.contents, ~indexingAddresses)
+    | None => chainState->ChainState.filterQueryItems(~items=remainingItems.contents)
+    }
+    let acceptedInRoundSet = acceptedInRound->Utils.Set.fromArray
+    acceptedItems->Utils.Set.addMany(acceptedInRound)
+    remainingItems :=
+      remainingItems.contents->Array.filter(item => !(acceptedInRoundSet->Utils.Set.has(item)))
+
+    let itemsWithContractRegister = acceptedInRound->Array.filter(hasContractRegister)
+    switch itemsWithContractRegister {
+    | [] => shouldContinue := false
+    | _ => {
+        let _ = await runContractRegistersOrThrow(
+          ~itemsWithContractRegister,
+          ~config,
+          ~transactionStore,
+          ~blockStore,
+        )
+
+        if remainingItems.contents->Utils.Array.notEmpty {
+          let indexingAddresses = switch queryFilterAddresses.contents {
+          | Some(indexingAddresses) => indexingAddresses
+          | None => {
+              let indexingAddresses = chainState->ChainState.makeQueryFilterAddresses
+              queryFilterAddresses := Some(indexingAddresses)
+              indexingAddresses
+            }
+          }
+          let numAdditions = chainState->ChainState.extendQueryFilterAddresses(
+            ~indexingAddresses,
+            ~items=itemsWithContractRegister,
+          )
+          if numAdditions === 0 {
+            shouldContinue := false
+          }
+        } else {
+          shouldContinue := false
+        }
+      }
+    }
+  }
+
+  let newItems = items->Array.filter(item => acceptedItems->Utils.Set.has(item))
+  let result: filteredQueryItems = {
+    newItems,
+    newItemsWithDcs: newItems->Array.filter(hasDynamicContracts),
+  }
+  result
 }
 
 let rec onQueryResponse = async (
@@ -212,22 +296,9 @@ let rec onQueryResponse = async (
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
-      // Apply temporal/address predicates before contract-register handlers.
-      // A rejected event must neither enter the buffer nor mutate the set of
-      // addresses and partitions through a registration side effect.
-      let newItems = chainState->ChainState.filterQueryItems(~items=parsedQueueItems)
-      let itemsWithContractRegister = []
-      for idx in 0 to newItems->Array.length - 1 {
-        let item = newItems->Array.getUnsafe(idx)
-        let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.onEventRegistration.contractRegister !== None {
-          itemsWithContractRegister->Array.push(item)
-        }
-      }
-
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
-      let proceed = (~newItemsWithDcs) =>
+      let proceed = (~newItems, ~newItemsWithDcs) =>
         if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
@@ -248,18 +319,15 @@ let rec onQueryResponse = async (
           scheduleProcessing()
         }
 
-      switch itemsWithContractRegister {
-      | [] => proceed(~newItemsWithDcs=[])
-      | _ =>
-        switch await runContractRegistersOrThrow(
-          ~itemsWithContractRegister,
-          ~config=state->IndexerState.config,
-          ~transactionStore,
-          ~blockStore,
-        ) {
-        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-        | newItemsWithDcs => proceed(~newItemsWithDcs)
-        }
+      switch await filterAndRunContractRegistersOrThrow(
+        ~chainState,
+        ~items=parsedQueueItems,
+        ~config=state->IndexerState.config,
+        ~transactionStore,
+        ~blockStore,
+      ) {
+      | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+      | {newItems, newItemsWithDcs} => proceed(~newItems, ~newItemsWithDcs)
       }
     }
   }

@@ -362,8 +362,40 @@ let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
 let chainDensity = (cs: t) => cs.chainDensity
-let filterQueryItems = (cs: t, ~items) =>
-  items->FetchState.filterQueryItems(~indexingAddresses=cs.indexingAddresses)
+let filterQueryItems = (cs: t, ~items, ~indexingAddresses=cs.indexingAddresses) =>
+  items->FetchState.filterQueryItems(~indexingAddresses)
+let makeQueryFilterAddresses = (cs: t) =>
+  cs.indexingAddresses->IndexingAddresses.makeFilterOverlay
+let extendQueryFilterAddresses = (cs: t, ~indexingAddresses, ~items) => {
+  let additions: dict<IndexingAddresses.indexingAddress> = Dict.make()
+  items->Array.forEach(item => {
+    switch item->Internal.getItemDcs {
+    | Some(dcs) =>
+      dcs->Array.forEach(dc => {
+        let address = dc.address->Address.toString
+        if (
+          indexingAddresses->IndexingAddresses.get(address)->Option.isNone &&
+          additions->Utils.Dict.dangerouslyGetNonOption(address)->Option.isNone
+        ) {
+          additions->Dict.set(
+            address,
+            IndexingAddresses.makeIndexingAddress(
+              ~contract=dc,
+              ~contractConfigs=cs.fetchState.contractConfigs,
+            ),
+          )
+        }
+      })
+    | None => ()
+    }
+  })
+
+  let numAdditions = additions->Utils.Dict.size
+  if numAdditions > 0 {
+    indexingAddresses->IndexingAddresses.register(additions)
+  }
+  numAdditions
+}
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
 let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
