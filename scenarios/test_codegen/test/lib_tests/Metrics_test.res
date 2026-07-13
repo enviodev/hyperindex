@@ -41,7 +41,7 @@ describe("Metrics.renderSourceRequests", () => {
             chainId: 1,
             method: "getLogs",
             count: 3,
-            seconds: 1.5,
+            seconds: 816.8360346669994,
           },
           {
             SourceManager.sourceName: "RPC (host)",
@@ -61,7 +61,7 @@ envio_source_request_total{source="HyperSync",chainId="1",method="getLogs"} 3
 envio_source_request_total{source="RPC (host)",chainId="137",method="heightSubscription"} 1
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
-envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 1.5`,
+envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 816.836`,
       )
     },
   )
