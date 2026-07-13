@@ -1370,6 +1370,13 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 // Most parallel in-flight chunk queries a single partition may have at once.
 let maxPendingChunksPerPartition = 12
 
+// Target size of an open-ended probe. When the fresh budget can't give every
+// probe partition this many items, the water-fill would spray a sub-item
+// allotment across all of them — each floored to a 1-item query — so instead
+// the budget is concentrated onto the neediest ⌈budget / minQueryItems⌉
+// partitions and the rest wait for a tick with more budget.
+let minQueryItems = 100.
+
 // Fills a gap range (a hole left between completed/pending chunks, e.g. from an
 // out-of-order partial response) unconditionally — gaps are already-committed
 // range, not subject to this tick's water-fill budget. Priced by the
@@ -1724,6 +1731,44 @@ let getNextQuery = (
       fs.pendingCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
 
     let inRangeStates = fillStates->Array.filter(isInRange)
+
+    // Whether a partition's emit will chunk (a full, density-sized query) rather
+    // than fall back to an open-ended probe — mirrors emitQueries' branch.
+    let willChunk = (fs: waterFillState) =>
+      switch (fs.maybeChunkRange, fs.p->getTrustedDensity) {
+      | (Some(_), Some(density)) if density > 0. => true
+      | _ => false
+      }
+
+    // Cap how many open-ended probes this tick's fresh budget fans out to. Only
+    // probes flood: a thin budget split across many of them gives each a
+    // sub-minQueryItems allotment that the emit floors to a 1-item query — a
+    // burst of near-empty fetches. Serve the neediest (lowest current footprint)
+    // ⌈rangeItemsTarget / minQueryItems⌉ probes, always at least one so the
+    // fetch-priority chain still advances, and let the rest wait until freed
+    // reservations grow the budget. Chunk partitions self-limit (each emit is a
+    // full density-sized chunk) so they always run; ample budget leaves every
+    // probe served too, so normal fan-out is untouched.
+    let probeStates = inRangeStates->Array.filter(fs => !(fs->willChunk))
+    let maxProbes = Pervasives.max(1, Js.Math.ceil_int(rangeItemsTarget /. minQueryItems))
+    let inRangeStates = if probeStates->Array.length <= maxProbes {
+      inRangeStates
+    } else {
+      let keptProbeIds =
+        probeStates
+        ->Array.toSorted((a, b) =>
+          Float.compare(
+            reservedByPartition->Dict.getUnsafe(a.partitionId),
+            reservedByPartition->Dict.getUnsafe(b.partitionId),
+          )
+        )
+        ->Array.slice(~start=0, ~end=maxProbes)
+        ->Array.map(fs => fs.partitionId)
+        ->Utils.Set.fromArray
+      inRangeStates->Array.filter(fs =>
+        fs->willChunk || keptProbeIds->Utils.Set.has(fs.partitionId)
+      )
+    }
 
     // Emits this round's queries for one partition, given its water-fill
     // allotment. Mutates fs.cursor/chunksUsedThisCall and returns the

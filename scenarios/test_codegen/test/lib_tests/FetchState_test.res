@@ -4342,6 +4342,46 @@ describe("FetchState.getNextQuery water-fill with uneven in-flight reservations"
       ]),
     )
   })
+
+  it("concentrates a thin budget onto a few probes instead of spraying a 1-item query per partition", t => {
+    let fetchState = makeFetchState(
+      [
+        mockAddress0,
+        mockAddress1,
+        mockAddress2,
+        mockAddress3,
+        mockAddress4,
+        mockAddress5,
+        mockAddress6,
+      ]->Array.mapWithIndex((address, i) =>
+        makePartition(~id=i->Int.toString, ~address, ~knownDensity=false, ~pendingItemsTarget=None)
+      ),
+    )
+
+    // Fresh budget 300 across 7 unknown-density partitions would water-fill to
+    // ~43 each — 7 near-empty probes. Cap at ⌈300 / minQueryItems⌉ = 3 neediest
+    // partitions, each taking a full 100-item probe; the rest wait for a later
+    // tick.
+    let makeProbe = (~id, ~address): FetchState.query => {
+      partitionId: id,
+      fromBlock: 1,
+      toBlock: None,
+      isChunk: false,
+      itemsTarget: 100,
+      itemsEst: 100,
+      selection: normalSelection,
+      addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    }
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=300.),
+    ).toEqual(
+      FetchState.Ready([
+        makeProbe(~id="0", ~address=mockAddress0),
+        makeProbe(~id="1", ~address=mockAddress1),
+        makeProbe(~id="2", ~address=mockAddress2),
+      ]),
+    )
+  })
 })
 
 describe("FetchState.getNextQuery target containment", () => {
