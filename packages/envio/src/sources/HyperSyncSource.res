@@ -1,123 +1,5 @@
 open Source
 
-type selectionConfig = {
-  getLogSelectionOrThrow: (
-    ~addressesByContractName: dict<array<Address.t>>,
-  ) => array<LogSelection.t>,
-  fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-}
-
-let getSelectionConfig = (selection: FetchState.selection) => {
-  let capitalizedBlockFields = Utils.Set.make()
-  let capitalizedTransactionFields = Utils.Set.make()
-
-  let topicSelectionsByContract = Dict.make()
-  let wildcardTopicSelectionsByContract = Dict.make()
-  let noAddressesTopicSelections = []
-  let contractNames = Utils.Set.make()
-
-  selection.onEventRegistrations
-  ->(Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>)
-  ->Array.forEach(reg => {
-    let eventConfig =
-      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    let contractName = eventConfig.contractName
-    let {selectedBlockFields, selectedTransactionFields} = eventConfig
-    let {dependsOnAddresses, resolvedWhere, isWildcard} = reg
-    selectedBlockFields
-    ->Utils.Set.toArray
-    ->Array.forEach(name =>
-      capitalizedBlockFields
-      ->Utils.Set.add((name :> string)->Utils.String.capitalize)
-      ->ignore
-    )
-    selectedTransactionFields
-    ->Utils.Set.toArray
-    ->Array.forEach(name => {
-      // transactionIndex is read off the log (the store key), so it never needs
-      // to be requested as a transaction column — and requesting it alone would
-      // pull the whole transaction table for nothing.
-      let fieldName = (name :> string)
-      if fieldName != "transactionIndex" {
-        capitalizedTransactionFields->Utils.Set.add(fieldName->Utils.String.capitalize)->ignore
-      }
-    })
-
-    if dependsOnAddresses {
-      let _ = contractNames->Utils.Set.add(contractName)
-
-      (
-        isWildcard ? wildcardTopicSelectionsByContract : topicSelectionsByContract
-      )->Utils.Dict.pushMany(contractName, resolvedWhere.topicSelections)
-    } else {
-      noAddressesTopicSelections
-      ->Array.pushMany(
-        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
-      )
-      ->ignore
-    }
-  })
-
-  let fieldSelection: HyperSyncClient.QueryTypes.fieldSelection = {
-    log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-    block: capitalizedBlockFields
-    ->Utils.Set.toArray
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.blockField>),
-    transaction: capitalizedTransactionFields
-    ->Utils.Set.toArray
-    ->(Utils.magic: array<string> => array<HyperSyncClient.QueryTypes.transactionField>),
-  }
-
-  let noAddressesLogSelection = LogSelection.make(
-    ~addresses=[],
-    ~topicSelections=noAddressesTopicSelections,
-  )
-
-  let getLogSelectionOrThrow = (~addressesByContractName): array<LogSelection.t> => {
-    let logSelections = []
-    if noAddressesLogSelection.topicSelections->Utils.Array.isEmpty->not {
-      logSelections->Array.push(noAddressesLogSelection)
-    }
-    contractNames->Utils.Set.forEach(contractName => {
-      switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | None
-      | Some([]) => ()
-      | Some(addresses) =>
-        switch topicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None => ()
-        | Some(topicSelections) =>
-          logSelections->Array.push(
-            LogSelection.make(
-              ~addresses,
-              ~topicSelections=topicSelections->LogSelection.materializeTopicSelections(~addresses),
-            ),
-          )
-        }
-        // Wildcard events that filter an indexed param by registered addresses:
-        // the addresses fold into the topics, so the query itself stays
-        // address-unbound.
-        switch wildcardTopicSelectionsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None => ()
-        | Some(topicSelections) =>
-          logSelections->Array.push(
-            LogSelection.make(
-              ~addresses=[],
-              ~topicSelections=topicSelections->LogSelection.materializeTopicSelections(~addresses),
-            ),
-          )
-        }
-      }
-    })
-    logSelections
-  }
-
-  {
-    getLogSelectionOrThrow,
-    fieldSelection,
-  }
-}
-
-let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
@@ -127,8 +9,8 @@ let isUnauthorizedError = (message: string) => message->String.includes("401 Una
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
-  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
-  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
+  // The chain's registrations, indexed by their sequential `index`.
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
@@ -141,8 +23,7 @@ let make = (
   {
     chain,
     endpointUrl,
-    allEventParams,
-    eventRouter,
+    onEventRegistrations,
     apiToken,
     clientTimeoutMillis,
     lowercaseAddresses,
@@ -152,8 +33,6 @@ let make = (
   }: options,
 ): t => {
   let name = "HyperSync"
-
-  let getSelectionConfig = memoGetSelectionConfig()
 
   let apiToken = switch apiToken {
   | Some(token) => token
@@ -167,7 +46,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventParams=allEventParams,
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
+      onEventRegistrations,
+    ),
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -180,15 +61,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     )
   }
 
-  exception UndefinedValue
-
   let makeEventBatchQueueItem = (
     item: HyperSyncClient.EventItems.item,
-    ~params: Internal.eventParams,
     ~onEventRegistration: Internal.evmOnEventRegistration,
   ): Internal.item => {
     let {transactionIndex, logIndex, srcAddress} = item
-    let chainId = chain->ChainMap.Chain.toChainId
 
     Internal.Event({
       onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
@@ -201,8 +78,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       payload: {
         contractName: onEventRegistration.eventConfig.contractName,
         eventName: onEventRegistration.eventConfig.name,
-        chainId,
-        params,
+        chainId: chain->ChainMap.Chain.toChainId,
+        params: item.params,
         srcAddress,
         logIndex,
       }->Evm.fromPayload,
@@ -213,22 +90,15 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~contractNameByAddress,
+    ~contractNameByAddress as _,
     ~knownHeight,
     ~partitionId as _,
-    ~selection,
+    ~selection: FetchState.selection,
     ~itemsTarget,
     ~retry,
-    ~logger,
+    ~logger as _,
   ) => {
     let totalTimeRef = Performance.now()
-
-    let selectionConfig = selection->getSelectionConfig
-
-    let logSelections = try selectionConfig.getLogSelectionOrThrow(~addressesByContractName) catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed getting log selection for the query")
-    }
 
     let startFetchingBatchTimeRef = Performance.now()
 
@@ -237,9 +107,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~client,
       ~fromBlock,
       ~toBlock,
-      ~logSelections,
-      ~fieldSelection=selectionConfig.fieldSelection,
       ~maxNumLogs=itemsTarget,
+      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
+      ~addressesByContractName,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(
@@ -309,63 +179,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
-    let handleDecodeFailure = (
-      ~onEventRegistration: Internal.evmOnEventRegistration,
-      ~logIndex,
-      ~blockNumber,
-      ~chainId,
-      ~exn,
-    ) => {
-      if !onEventRegistration.isWildcard {
-        //Wildcard events can be parsed as undefined if the number of topics
-        //don't match the event with the given topic0
-        //Non wildcard events should be expected to be parsed
-        let msg = `Event ${onEventRegistration.eventConfig.name} was unexpectedly parsed as undefined`
-        let logger = Logging.createChildFrom(
-          ~logger,
-          ~params={
-            "chainId": chainId,
-            "blockNumber": blockNumber,
-            "logIndex": logIndex,
-            "decoder": "hypersync-client",
-          },
-        )
-        exn->ErrorHandling.mkLogAndRaise(~msg, ~logger)
-      }
-    }
-
     pageUnsafe.items->Array.forEach(item => {
-      let chainId = chain->ChainMap.Chain.toChainId
-      let maybeEventConfig =
-        eventRouter->EventRouter.get(
-          ~tag=EventRouter.getEvmEventId(
-            ~sighash=item.topic0->EvmTypes.Hex.toString,
-            ~topicCount=item.topicCount,
-          ),
-          ~contractNameByAddress,
-          ~contractAddress=item.srcAddress,
-        )
-
-      switch maybeEventConfig {
-      | None => () //ignore events that aren't registered
-      | Some(onEventRegistration) =>
-        switch item.params
-        ->Nullable.toOption
-        ->Option.flatMap(Dict.get(_, onEventRegistration.eventConfig.contractName)) {
-        | Some(params) =>
-          parsedQueueItems
-          ->Array.push(makeEventBatchQueueItem(item, ~params, ~onEventRegistration))
-          ->ignore
-        | None =>
-          handleDecodeFailure(
-            ~onEventRegistration,
-            ~logIndex=item.logIndex,
-            ~blockNumber=item.blockNumber,
-            ~chainId,
-            ~exn=UndefinedValue,
-          )
-        }
-      }
+      let onEventRegistration =
+        onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
+      parsedQueueItems
+      ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
+      ->ignore
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince

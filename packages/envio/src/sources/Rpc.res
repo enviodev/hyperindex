@@ -82,38 +82,6 @@ let decimalFloatSchema: S.schema<float> = S.string->S.transform(s => {
 })
 
 module GetLogs = {
-  @unboxed
-  type topicFilter = Single(hex) | Multiple(array<hex>) | @as(null) Null
-  type topicQuery = array<topicFilter>
-
-  let makeTopicQuery = (~topic0=[], ~topic1=[], ~topic2=[], ~topic3=[]) => {
-    let topics = [topic0, topic1, topic2, topic3]
-
-    let isLastTopicEmpty = () =>
-      switch topics->Utils.Array.last {
-      | Some([]) => true
-      | _ => false
-      }
-
-    //Remove all empty topics from the end of the array
-    while isLastTopicEmpty() {
-      topics->Array.pop->ignore
-    }
-
-    let toTopicFilter = topic => {
-      switch topic {
-      | [] => Null
-      | [single] => Single(single->EvmTypes.Hex.toString)
-      | multiple => Multiple(multiple->EvmTypes.Hex.toStrings)
-      }
-    }
-
-    topics->Array.map(toTopicFilter)
-  }
-
-  let mapTopicQuery = ({topic0, topic1, topic2, topic3}: Internal.topicSelection): topicQuery =>
-    makeTopicQuery(~topic0, ~topic1, ~topic2, ~topic3)
-
   type log = {
     address: Address.t,
     topics: array<hex>,

@@ -77,7 +77,8 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
 let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Internal.Event({
   chain: ChainMap.Chain.makeUnsafe(~chainId),
   blockNumber,
-  onEventRegistration: Utils.magic("Mock onEventRegistration in fetchstate test"),
+  onEventRegistration:
+    Utils.magic("Mock onEventRegistration in fetchstate test"),
   logIndex,
   transactionIndex: 0,
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
