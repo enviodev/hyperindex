@@ -307,20 +307,27 @@ let makeMockSourceRegistration = (~index): Internal.onEventRegistration => {
 }
 
 type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
-let mockSourceRegistrationRefs: Utils.WeakMap.t<Source.t, mockSourceRegistrationRef> =
-  Utils.WeakMap.make()
+type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef}
+
+@get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
+
+let setMockSourceState = (source: Source.t, state: mockSourceState) => {
+  source
+  ->Utils.Object.definePropertyWithValue("__mockSourceState", {enumerable: false, value: state})
+  ->ignore
+}
 
 let installMockSourceRegistrations = (
   ~config: Config.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
 ) =>
   config.chainMap->ChainMap.values->Array.forEach(chainConfig => {
-    let sourceRegistrationRefs = switch chainConfig.sourceConfig {
+    let sourceStates = switch chainConfig.sourceConfig {
     | Config.CustomSources(sources) =>
-      sources->Array.filterMap(source => mockSourceRegistrationRefs->Utils.WeakMap.get(source))
+      sources->Array.filterMap(source => source->getMockSourceState)
     | _ => []
     }
-    if !(sourceRegistrationRefs->Utils.Array.isEmpty) {
+    if !(sourceStates->Utils.Array.isEmpty) {
       let key = chainConfig.id->Int.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
@@ -336,8 +343,8 @@ let installMockSourceRegistrations = (
         ~index=registrations.onEventRegistrations->Array.length,
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
-      sourceRegistrationRefs->Array.forEach(registrationRef =>
-        registrationRef := Some(mockRegistration)
+      sourceStates->Array.forEach(state =>
+        state.onEventRegistrationRef := Some(mockRegistration)
       )
     }
   })
@@ -735,7 +742,7 @@ module Source = {
     let heightSubscriptionCalls = []
     let heightSubscriptionCallbacks: array<int => unit> = []
     let heightSubscriptionUnsubscribed = ref(false)
-    let onEventRegistrationRef: mockSourceRegistrationRef = ref(None)
+    let state: mockSourceState = {onEventRegistrationRef: ref(None)}
 
     // With the function we keep only the pending calls,
     // and remove the resolved ones automatically.
@@ -913,7 +920,7 @@ module Source = {
                     parsedQueueItems: items->Array.map(
                       item => {
                         let onEventRegistration =
-                          onEventRegistrationRef.contents->Option.getOrThrow(
+                          state.onEventRegistrationRef.contents->Option.getOrThrow(
                             ~message="MockSource on-event registration was not installed before resolving items",
                           )
                         let payload: Evm.payload = {
@@ -974,7 +981,7 @@ module Source = {
           | false => None
           },
         }
-        mockSourceRegistrationRefs->Utils.WeakMap.set(source, onEventRegistrationRef)->ignore
+        setMockSourceState(source, state)
         source
       },
     }
