@@ -1287,6 +1287,26 @@ let registerDynamicContracts = (
   }
 }
 
+// Drop events an address-param filter rejects. A merged partition may
+// over-fetch a wildcard event whose indexed address param references an
+// address registered after the log's block; `clientAddressFilter` is the
+// param-level analogue of EventRouter's srcAddress effectiveStartBlock check.
+let filterByClientAddress = (
+  items: array<Internal.item>,
+  ~indexingAddresses: IndexingAddresses.t,
+): array<Internal.item> =>
+  items->Array.filter(item =>
+    switch item {
+    | Internal.Event({onEventRegistration, payload, blockNumber}) =>
+      switch onEventRegistration.clientAddressFilter {
+      | Some(filter) =>
+        filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
+      | None => true
+      }
+    | _ => true
+    }
+  )
+
 /*
 Updates fetchState with a response for a given query.
 Returns Error if the partition with given query cannot be found (unexpected)
@@ -1300,21 +1320,7 @@ let handleQueryResult = (
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
 ): t => {
-  // Drop events an address-param filter rejects. A merged partition may
-  // over-fetch a wildcard event whose indexed address param references an
-  // address registered after the log's block; `clientAddressFilter` is the
-  // param-level analogue of EventRouter's srcAddress effectiveStartBlock check.
-  let newItems = newItems->Array.filter(item =>
-    switch item {
-    | Internal.Event({onEventRegistration, payload, blockNumber}) =>
-      switch onEventRegistration.clientAddressFilter {
-      | Some(filter) =>
-        filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
-      | None => true
-      }
-    | _ => true
-    }
-  )
+  let newItems = newItems->filterByClientAddress(~indexingAddresses)
   fetchState->updateInternal(
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,

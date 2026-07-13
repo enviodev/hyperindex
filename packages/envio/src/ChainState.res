@@ -745,6 +745,9 @@ let materializePageItems = async (
   ))
 }
 
+let filterByClientAddress = (cs: t, items: array<Internal.item>): array<Internal.item> =>
+  items->FetchState.filterByClientAddress(~indexingAddresses=cs.indexingAddresses)
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,

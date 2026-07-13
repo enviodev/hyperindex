@@ -225,6 +225,15 @@ let rec onQueryResponse = async (
         newItems->Array.push(item)
       }
 
+      // Drop over-fetched events (a merged partition returning an address before
+      // its effectiveStartBlock, or a wildcard param referencing an address
+      // registered after the log's block) from the contract-register set before
+      // running their handlers, so they don't spawn dynamic contracts. The buffer
+      // is filtered after registration (in handleQueryResult), so events
+      // referencing a same-batch registration still route to their handlers.
+      let itemsWithContractRegister =
+        chainState->ChainState.filterByClientAddress(itemsWithContractRegister)
+
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
       let proceed = (~newItemsWithDcs) =>
