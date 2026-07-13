@@ -61,6 +61,7 @@ let bufferReadyCount: t => int
 let getProgressPercentage: t => float
 let chainDensity: t => option<float>
 let effectiveDensity: t => option<float>
+let filterQueryItems: (t, ~items: array<Internal.item>) => array<Internal.item>
 let hasReadyItem: t => bool
 let isReadyToEnterReorgThreshold: t => bool
 

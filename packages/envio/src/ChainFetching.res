@@ -212,17 +212,17 @@ let rec onQueryResponse = async (
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
+      // Apply temporal/address predicates before contract-register handlers.
+      // A rejected event must neither enter the buffer nor mutate the set of
+      // addresses and partitions through a registration side effect.
+      let newItems = chainState->ChainState.filterQueryItems(~items=parsedQueueItems)
       let itemsWithContractRegister = []
-      let newItems = []
-      for idx in 0 to parsedQueueItems->Array.length - 1 {
-        let item = parsedQueueItems->Array.getUnsafe(idx)
+      for idx in 0 to newItems->Array.length - 1 {
+        let item = newItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
         if eventItem.onEventRegistration.contractRegister !== None {
           itemsWithContractRegister->Array.push(item)
         }
-        // TODO: Don't really need to keep it in the queue
-        // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
-        newItems->Array.push(item)
       }
 
       // Re-check staleness: contract registration is async, so the chain state

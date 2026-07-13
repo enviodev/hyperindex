@@ -362,6 +362,8 @@ let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
 let chainDensity = (cs: t) => cs.chainDensity
+let filterQueryItems = (cs: t, ~items) =>
+  items->FetchState.filterQueryItems(~indexingAddresses=cs.indexingAddresses)
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
 let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
@@ -487,6 +489,7 @@ let getNextQuery = (
   ~chunkItemsMultiplier=1.,
   ~maxTargetBlock=?,
 ) => {
+  let effectiveDensity = cs->effectiveDensity
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
   let chainTargetBlock = switch maxTargetBlock {
   | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
@@ -498,7 +501,7 @@ let getNextQuery = (
   // top: they're already accounted and shouldn't crowd out new partitions), so
   // the waterfall's leftover flows to the next chain in the same tick instead
   // of being held by an oversized probe.
-  let chainTargetItems = switch cs->effectiveDensity {
+  let chainTargetItems = switch effectiveDensity {
   | Some(density) if density > 0. =>
     // No extra headroom here: the budget is reserved in honest itemsEst units,
     // and truncation safety lives in the itemsTarget server cap (sized with
@@ -514,6 +517,7 @@ let getNextQuery = (
   cs.fetchState->FetchState.getNextQuery(
     ~chainTargetBlock,
     ~chainTargetItems,
+    ~chainDensity=effectiveDensity,
     ~chunkItemsMultiplier,
   )
 }
@@ -783,6 +787,7 @@ let handleQueryResult = (
     fs
     ->FetchState.handleQueryResult(
       ~indexingAddresses=cs.indexingAddresses,
+      ~itemsAreFiltered=true,
       ~query,
       ~latestFetchedBlock,
       ~newItems,

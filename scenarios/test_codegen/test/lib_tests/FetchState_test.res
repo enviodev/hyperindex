@@ -4037,54 +4037,36 @@ describe("Stale query response should not overwrite block range", () => {
   })
 })
 
-describe("FetchState.getNextQuery water-fill round is order-independent", () => {
-  // Partition "0" has a trusted density (2 responses) with a chunk cost
-  // (1800) that overshoots its round share (ipb=1000): forced to take at
-  // least one full chunk, it overshoots regardless of who's processed
-  // before/after it. Partition "1" has no signal, so it sizes exactly to
-  // whatever share it's given. Before the round-share fix, an earlier
-  // partition's overshoot shrank a shared running counter that capped
-  // whoever came after it in the same round — so which partition ran first
-  // changed the result (and could even push total consumption above
-  // rangeBudget). With the fix, every partition's share is ipb - reserved,
-  // fixed for the whole round, so the outcome doesn't depend on order.
+describe("FetchState.getNextQuery stops admission after a water-fill overshoot", () => {
+  // Both partitions have a trusted density and a minimum chunk cost of 180.
+  // A 100-item chain target cannot hold even one full chunk. The first,
+  // least-advanced partition is allowed to make progress, then admission must
+  // stop instead of creating one overshooting query for every partition.
+  // Even if that query makes zero block progress, tie-order rotation gives the
+  // untouched partition the next turn, so the admission limit cannot strand it.
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
 
-  let makeTwoPartitionFetchState = (~order: array<string>): FetchState.t => {
-    let overshootPartition: FetchState.partition = {
-      id: "overshoot",
-      latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
-      selection: normalSelection,
-      addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
-      mergeBlock: None,
-      dynamicContract: None,
-      mutPendingQueries: [],
-      prevQueryRange: 10,
-      prevPrevQueryRange: 10,
-      prevRangeSize: 1000, // density = 1000 / 10 = 100 items/block
-      latestBlockRangeUpdateBlock: 0,
-    }
-    let unknownPartition: FetchState.partition = {
-      id: "unknown",
-      latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
-      selection: normalSelection,
-      addressesByContractName: Dict.fromArray([("MockContract", [mockAddress1])]),
-      mergeBlock: None,
-      dynamicContract: None,
-      mutPendingQueries: [],
-      prevQueryRange: 0,
-      prevPrevQueryRange: 0,
-      prevRangeSize: 0,
-      latestBlockRangeUpdateBlock: 0,
-    }
-    let byId = Dict.fromArray([
-      ("overshoot", overshootPartition),
-      ("unknown", unknownPartition),
-    ])
-    let partitions = order->Array.map(id => byId->Dict.getUnsafe(id))
+  let makePartition = (~id, ~address): FetchState.partition => {
+    id,
+    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: [],
+    prevQueryRange: 10,
+    prevPrevQueryRange: 10,
+    prevRangeSize: 100, // density = 100 / 10 = 10 items/block
+    latestBlockRangeUpdateBlock: 0,
+  }
+
+  let makeTwoPartitionFetchState = (): FetchState.t => {
     {
       optimizedPartitions: FetchState.OptimizedPartitions.make(
-        ~partitions,
+        ~partitions=[
+          makePartition(~id="0", ~address=mockAddress0),
+          makePartition(~id="1", ~address=mockAddress1),
+        ],
         ~maxAddrInPartition=2,
         ~nextPartitionIndex=2,
         ~dynamicContracts=Utils.Set.make(),
@@ -4104,33 +4086,40 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
     }
   }
 
-  let getItemsTargetByPartition = nextQuery =>
-    switch nextQuery {
-    | FetchState.Ready(queries) =>
-      queries->Array.map((q: FetchState.query) => (q.partitionId, q.itemsTarget))
+  it("admits one overshooting partition per call and rotates to the skipped laggard", t => {
+    let fetchState = makeTwoPartitionFetchState()
+    let (_, indexingAddresses) = makeInitial()
+    let firstQueries = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=10000,
+      ~chainTargetItems=100.,
+    ) {
+    | Ready(queries) => queries
+    | _ => JsError.throwWithMessage("expected the first partition query")
+    }
+    t.expect(
+      firstQueries->Array.map((q: FetchState.query) => q.partitionId),
+    ).toEqual(["0"])
+
+    let firstQuery = firstQueries->Array.getUnsafe(0)
+    fetchState->FetchState.startFetchingQueries(~queries=firstQueries)
+    let afterFirst =
+      fetchState->FetchState.handleQueryResult(
+        ~indexingAddresses,
+        ~query=firstQuery,
+        // Model a response that consumed its query cap without advancing even
+        // one complete block. Partition 1 must still receive the next budget.
+        ~latestFetchedBlock={blockNumber: 0, blockTimestamp: 0},
+        ~newItems=[],
+      )
+
+    let secondPartitionIds = switch afterFirst->FetchState.getNextQuery(
+      ~chainTargetBlock=10000,
+      ~chainTargetItems=100.,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => q.partitionId)
     | _ => []
     }
-
-  it("gives the same per-partition totals regardless of which partition is processed first", t => {
-    let resultA =
-      makeTwoPartitionFetchState(~order=["overshoot", "unknown"])
-      ->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.)
-      ->getItemsTargetByPartition
-      ->Dict.fromArray
-
-    let resultB =
-      makeTwoPartitionFetchState(~order=["unknown", "overshoot"])
-      ->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.)
-      ->getItemsTargetByPartition
-      ->Dict.fromArray
-
-    t.expect(
-      (resultA, resultB),
-      ~message="Same totals whichever partition the round processes first",
-    ).toEqual((
-      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
-      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
-    ))
+    t.expect(secondPartitionIds).toEqual(["1"])
   })
 })
 
@@ -4341,6 +4330,40 @@ describe("FetchState.getNextQuery water-fill with uneven in-flight reservations"
         },
       ]),
     )
+  })
+
+  it("sizes open-ended probes from their remaining target range and chain density", t => {
+    let behind = makePartition(
+      ~id="0",
+      ~address=mockAddress0,
+      ~knownDensity=false,
+      ~pendingItemsTarget=None,
+    )
+    let ahead = {
+      ...makePartition(
+        ~id="1",
+        ~address=mockAddress1,
+        ~knownDensity=false,
+        ~pendingItemsTarget=None,
+      ),
+      latestFetchedBlock: {blockNumber: 50, blockTimestamp: 750},
+    }
+    let fetchState = makeFetchState([behind, ahead])
+
+    let targets = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=1000.,
+      ~chainDensity=Some(10.),
+    ) {
+    | Ready(queries) =>
+      queries->Array.map((q: FetchState.query) => (q.partitionId, q.fromBlock, q.itemsTarget))
+    | _ => []
+    }
+
+    // Partition 0 has 100 inclusive blocks left: 100 * 10 / 2 = 500.
+    // Partition 1 has 50: 50 * 10 / 2 = 250. Previously both probes used
+    // their 500-item water-fill allotment regardless of their cursor.
+    t.expect(targets).toEqual([("0", 1, 500), ("1", 51, 250)])
   })
 })
 
