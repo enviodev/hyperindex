@@ -20,6 +20,9 @@ type t = {
   mutable pendingBudget: float,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
+  // Isolated (non-cross-chain) entities live per chain so the same id on
+  // different chains stays distinct without key mangling.
+  mutable entities: EntityTables.t,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
@@ -72,6 +75,7 @@ let make = (
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
+  ~entities=EntityTables.make([]),
   ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
@@ -88,6 +92,7 @@ let make = (
   pendingBudget: 0.,
   reorgDetection,
   safeCheckpointTracking,
+  entities,
   transactionStore,
   blockStore,
 }
@@ -232,6 +237,7 @@ let makeInternal = (
     ~committedProgressBlockNumber=progressBlockNumber,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
+    ~entities=EntityTables.make(config.allEntities->Array.filter(e => !e.crossChain)),
     ~transactionStore=TransactionStore.make(
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
@@ -330,6 +336,8 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
+let entities = (cs: t) => cs.entities
+let setEntities = (cs: t, entities) => cs.entities = entities
 
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.

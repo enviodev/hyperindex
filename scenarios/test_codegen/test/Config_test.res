@@ -456,6 +456,7 @@ describe("Config.fromPublic", () => {
       "enums": {},
       "entities": [{
         "name": "User",
+        "crossChain": true,
         "description": "A user of the protocol",
         "properties": [
           { "name": "id", "type": "string", "description": "The user's address" },

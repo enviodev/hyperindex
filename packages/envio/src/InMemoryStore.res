@@ -2,11 +2,58 @@
 // mutations route through IndexerState's domain operations; the write loop and
 // capacity/flush coordination live in Writing.
 
+// Cross-chain (unordered) entities are shared across chains; isolated entities
+// live per chain on ChainState so the same id on different chains stays distinct.
 let getInMemTable = (
   state: IndexerState.t,
   ~entityConfig: Internal.entityConfig,
+  ~chainId: int,
 ): InMemoryTable.Entity.t =>
-  state->IndexerState.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
+  if entityConfig.crossChain {
+    state->IndexerState.entities->EntityTables.get(~entityName=entityConfig.name)
+  } else {
+    state
+    ->IndexerState.getChainState(~chain=ChainMap.Chain.makeUnsafe(~chainId))
+    ->ChainState.entities
+    ->EntityTables.get(~entityName=entityConfig.name)
+  }
+
+// Every in-memory entity table, tagged with the chain it belongs to: cross-chain
+// tables once (chain None), isolated tables once per chain. Used by the
+// store-wide passes (size, drop, flush) that must fan over all chains.
+let eachEntityTable = (state: IndexerState.t): array<(
+  option<int>,
+  Internal.entityConfig,
+  InMemoryTable.Entity.t,
+)> => {
+  let result = []
+  state
+  ->IndexerState.allEntities
+  ->Array.forEach(entityConfig => {
+    if entityConfig.crossChain {
+      result
+      ->Array.push((
+        None,
+        entityConfig,
+        state->IndexerState.entities->EntityTables.get(~entityName=entityConfig.name),
+      ))
+      ->ignore
+    } else {
+      state
+      ->IndexerState.chainStates
+      ->Utils.Dict.forEach(cs => {
+        result
+        ->Array.push((
+          Some((cs->ChainState.chainConfig).id),
+          entityConfig,
+          cs->ChainState.entities->EntityTables.get(~entityName=entityConfig.name),
+        ))
+        ->ignore
+      })
+    }
+  })
+  result
+}
 
 let getEffectInMemTable = (state: IndexerState.t, ~effect: Internal.effect) => {
   let key = effect.name
@@ -113,10 +160,10 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
+  // Isolated entities route per chain (removed rows carry the chain id,
+  // restored rows carry it in the chainId column); cross-chain ones ignore it.
   let _ = await persistence.allEntities
   ->Array.map(async entityConfig => {
-    let entityTable = state->getInMemTable(~entityConfig)
-
     let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
@@ -124,7 +171,10 @@ let prepareRollbackDiff = async (
 
     removedIdsResult->Array.forEach(data => {
       deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-      entityTable->InMemoryTable.Entity.set(
+      let chainId = entityConfig.crossChain ? 0 : data["chainId"]->Option.getOr(0)
+      state
+      ->getInMemTable(~entityConfig, ~chainId)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Delete({
           entityId: data["id"],
@@ -140,7 +190,12 @@ let prepareRollbackDiff = async (
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryTable.Entity.set(
+      let chainId = entityConfig.crossChain
+        ? 0
+        : (entity->(Utils.magic: Internal.entity => {"chainId": int}))["chainId"]
+      state
+      ->getInMemTable(~entityConfig, ~chainId)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Set({
           entityId: entity.id,
@@ -159,7 +214,6 @@ let prepareRollbackDiff = async (
 }
 
 let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
-  let inMemTable = state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
   let committedCheckpointId = state->IndexerState.committedCheckpointId
 
   let itemIdx = ref(0)
@@ -168,6 +222,9 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpoint)
     let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpoint)
     let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpoint)
+
+    let inMemTable =
+      state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig, ~chainId)
 
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)

@@ -13,7 +13,9 @@ expression: json
   "rawEvents": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true
+    "postgresColumnNameFormat": "snake_case",
+    "clickhouse": true,
+    "clickhouseColumnNameFormat": "snake_case"
   },
   "evm": {
     "chains": {
@@ -124,6 +126,7 @@ expression: json
         "postgres": true,
         "clickhouse": true
       },
+      "crossChain": true,
       "properties": [
         {
           "name": "id",
@@ -176,6 +179,7 @@ expression: json
         "postgres": true,
         "clickhouse": true
       },
+      "crossChain": true,
       "properties": [
         {
           "name": "id",
@@ -192,6 +196,7 @@ expression: json
       "storage": {
         "clickhouse": true
       },
+      "crossChain": true,
       "properties": [
         {
           "name": "id",

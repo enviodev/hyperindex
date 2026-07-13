@@ -724,6 +724,10 @@ type genericEntityConfig<'entity> = {
   schema: S.t<'entity>,
   table: Table.table,
   storage: entityStorage,
+  // True for entities shared across chains (unordered multichain mode).
+  // False for isolated entities: their tables get a chain id column which
+  // storage writes stamp from the change's checkpoint.
+  crossChain: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

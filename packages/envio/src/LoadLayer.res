@@ -8,25 +8,37 @@ let loadById = (
   ~ecosystem,
   ~entityId,
 ) => {
-  let key = `${entityConfig.name}.get`
-  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
+  let chainId = item->Internal.getItemChainId
+  // Isolated entities are partitioned by chain in memory and scoped by chain in
+  // the db, so the load group key and the load filter both carry the chain id.
+  let key = entityConfig.crossChain
+    ? `${entityConfig.name}.get`
+    : `${entityConfig.name}.get.${chainId->Int.toString}`
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~chainId)
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
 
+    let idFilter = EntityFilter.In({
+      fieldName: Table.idFieldName,
+      fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+    })
+    let filter = entityConfig.crossChain
+      ? idFilter
+      : EntityFilter.And({
+          filters: [
+            idFilter,
+            Eq({fieldName: "chainId", fieldValue: chainId->(Utils.magic: int => unknown)}),
+          ],
+        })
+
     // Since LoadManager.call prevents registering entities already in the in-memory store,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      (
-        await storage.loadOrThrow(
-          ~table=entityConfig.table,
-          ~filter=EntityFilter.In({
-            fieldName: Table.idFieldName,
-            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-          }),
-        )
-      )->(Utils.magic: array<unknown> => array<Internal.entity>)
+      (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(
+        Utils.magic: array<unknown> => array<Internal.entity>
+      )
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(
@@ -361,8 +373,15 @@ let loadByFilter = (
   ~ecosystem,
   ~filter: EntityFilter.t,
 ) => {
-  let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
-  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
+  let chainId = item->Internal.getItemChainId
+  // Isolated entities are partitioned by chain in memory, so the load group key
+  // is chain-specific; the db query is scoped by chain too.
+  let key = entityConfig.crossChain
+    ? filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
+    : `${filter->EntityFilter.toOperationKey(
+          ~entityName=entityConfig.name,
+        )}.${chainId->Int.toString}`
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~chainId)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
@@ -379,6 +398,14 @@ let loadByFilter = (
 
     let _ = await queries
     ->Array.map(async filter => {
+      let filter = entityConfig.crossChain
+        ? filter
+        : EntityFilter.And({
+            filters: [
+              filter,
+              Eq({fieldName: "chainId", fieldValue: chainId->(Utils.magic: int => unknown)}),
+            ],
+          })
       try {
         let entities =
           (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(

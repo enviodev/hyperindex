@@ -172,6 +172,37 @@ importers:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
 
+  scenarios/multichain_isolated_test:
+    dependencies:
+      envio:
+        specifier: file:../../packages/envio
+        version: link:../../packages/envio
+      viem:
+        specifier: 2.54.0
+        version: 2.54.0(typescript@6.0.3)
+    devDependencies:
+      '@glennsl/rescript-jest':
+        specifier: ^0.9.2
+        version: 0.9.2
+      '@rescript/runtime':
+        specifier: 12.2.0
+        version: 12.2.0
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      rescript:
+        specifier: 12.2.0
+        version: 12.2.0
+      rescript-schema:
+        specifier: 9.5.1
+        version: 9.5.1(rescript@12.2.0)
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.0
+        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
+
   scenarios/svm_flow_xray:
     dependencies:
       envio:

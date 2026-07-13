@@ -22,6 +22,7 @@ let publicConfigJson: JSON.t = %raw(`{
   "enums": {},
   "entities": [{
     "name": "Snapshot",
+    "crossChain": true,
     "properties": [
       { "name": "id", "type": "string" },
       { "name": "transactionIndex", "type": "int", "postgresDbName": "transaction_index", "isIndex": true },
@@ -29,12 +30,14 @@ let publicConfigJson: JSON.t = %raw(`{
     ]
   }, {
     "name": "Token",
+    "crossChain": true,
     "properties": [
       { "name": "id", "type": "string" },
       { "name": "tokenId", "type": "int", "clickhouseDbName": "token_id" }
     ]
   }, {
     "name": "User",
+    "crossChain": true,
     "properties": [
       { "name": "id", "type": "string" }
     ]

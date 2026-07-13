@@ -119,6 +119,17 @@
           "type": "null"
         }
       ]
+    },
+    "multichain": {
+      "description": "Multichain mode: 'unordered' processes events from each chain as they arrive and shares entities across chains; 'isolated' keeps every chain's entities isolated from each other (default: unordered)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Multichain"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -750,6 +761,13 @@
       "enum": [
         "checksum",
         "lowercase"
+      ]
+    },
+    "Multichain": {
+      "type": "string",
+      "enum": [
+        "unordered",
+        "isolated"
       ]
     }
   }

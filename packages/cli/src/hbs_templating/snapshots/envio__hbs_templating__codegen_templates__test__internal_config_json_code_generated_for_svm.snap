@@ -297,6 +297,7 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "crossChain": true,
       "properties": [
         {
           "name": "id",

@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2753
 expression: json
 ---
 {
@@ -99,6 +98,7 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "crossChain": true,
       "properties": [
         {
           "name": "id",
@@ -147,6 +147,7 @@ expression: json
     },
     {
       "name": "RelatedEntity",
+      "crossChain": true,
       "properties": [
         {
           "name": "id",
