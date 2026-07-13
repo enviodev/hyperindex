@@ -233,6 +233,122 @@ type contractRegister<'a> = Internal.genericContractRegister<
 >
 module Transaction = Indexer.Transaction
 
+type mockSourceHandler = Internal.genericHandlerArgs<
+  eventLog<unknown>,
+  handlerContext,
+> => promise<unit>
+type mockSourceContractRegister = contractRegister<unit>
+type mockSourceEvent = {
+  __mockHandler?: mockSourceHandler,
+  __mockContractRegister?: mockSourceContractRegister,
+}
+
+// MockSource items choose their callback at response time, after ChainState has
+// already been created. Install one stable registration up front and dispatch
+// through callback metadata carried only by the test payload.
+let makeMockSourceRegistration = (~index): Internal.onEventRegistration => {
+  let handler: Internal.handler = args => {
+    let args = args->(
+      Utils.magic: Internal.handlerArgs => Internal.genericHandlerArgs<
+        eventLog<unknown>,
+        handlerContext,
+      >
+    )
+    let event = args.event->(Utils.magic: eventLog<unknown> => mockSourceEvent)
+    if args.context.isPreload {
+      Promise.resolve()
+    } else {
+      switch event.__mockHandler {
+      | Some(handler) => handler(args)
+      | None => Promise.resolve()
+      }
+    }
+  }
+  let contractRegister: Internal.contractRegister = args => {
+    let args = args->(
+      Utils.magic: Internal.contractRegisterArgs => Internal.genericContractRegisterArgs<
+        Internal.genericEvent<unit, Indexer.Block.t, Indexer.Transaction.t>,
+        Indexer.contractRegisterContext,
+      >
+    )
+    let event = args.event->(Utils.magic: Internal.genericEvent<unit, _, _> => mockSourceEvent)
+    switch event.__mockContractRegister {
+    | Some(contractRegister) => contractRegister(args)
+    | None => Promise.resolve()
+    }
+  }
+  ({
+    index,
+    eventConfig: ({
+      id: "MockEvent",
+      // Keep the synthetic registration in the same address-dependent fetch
+      // partition as the generated test registrations. MockSource ignores the
+      // query selection, while ChainState still owns and resolves this slot.
+      contractName: "Gravatar",
+      name: "MockEvent",
+      paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
+      simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+      selectedBlockFields: Utils.Set.make(),
+      selectedTransactionFields: Utils.Set.make(),
+      transactionFieldMask: 0.,
+      blockFieldMask: 0.,
+      sighash: "",
+      topicCount: 1,
+      paramsMetadata: [],
+    }: Internal.evmEventConfig :> Internal.eventConfig),
+    isWildcard: false,
+    filterByAddresses: false,
+    dependsOnAddresses: true,
+    startBlock: None,
+    handler: Some(handler),
+    contractRegister: Some(contractRegister),
+    resolvedWhere: {topicSelections: [], startBlock: None},
+  }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
+}
+
+type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
+type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef}
+
+@get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
+
+let setMockSourceState = (source: Source.t, state: mockSourceState) => {
+  source
+  ->Utils.Object.definePropertyWithValue("__mockSourceState", {enumerable: false, value: state})
+  ->ignore
+}
+
+let installMockSourceRegistrations = (
+  ~config: Config.t,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+) =>
+  config.chainMap->ChainMap.values->Array.forEach(chainConfig => {
+    let sourceStates = switch chainConfig.sourceConfig {
+    | Config.CustomSources(sources) =>
+      sources->Array.filterMap(source => source->getMockSourceState)
+    | _ => []
+    }
+    if !(sourceStates->Utils.Array.isEmpty) {
+      let key = chainConfig.id->Int.toString
+      let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some(registrations) => registrations
+      | None =>
+        let registrations: HandlerRegister.chainRegistrations = {
+          onEventRegistrations: [],
+          onBlockRegistrations: [],
+        }
+        registrationsByChainId->Dict.set(key, registrations)
+        registrations
+      }
+      let mockRegistration = makeMockSourceRegistration(
+        ~index=registrations.onEventRegistrations->Array.length,
+      )
+      registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
+      sourceStates->Array.forEach(state =>
+        state.onEventRegistrationRef := Some(mockRegistration)
+      )
+    }
+  })
+
 module Indexer = {
   type metric = {
     value: string,
@@ -320,6 +436,7 @@ module Indexer = {
     }
 
     let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
+    installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
@@ -625,6 +742,7 @@ module Source = {
     let heightSubscriptionCalls = []
     let heightSubscriptionCallbacks: array<int => unit> = []
     let heightSubscriptionUnsubscribed = ref(false)
+    let state: mockSourceState = {onEventRegistrationRef: ref(None)}
 
     // With the function we keep only the pending calls,
     // and remove the resolved ones automatically.
@@ -713,7 +831,7 @@ module Source = {
         heightSubscriptionCallbacks->Utils.Array.clearInPlace
       },
       source: {
-        {
+        let source: Source.t = {
           name: "MockSource",
           sourceFor,
           poweredByHyperSync: false,
@@ -814,75 +932,34 @@ module Source = {
                     Source.knownHeight,
                     parsedQueueItems: items->Array.map(
                       item => {
+                        let onEventRegistration =
+                          state.onEventRegistrationRef.contents->Option.getOrThrow(
+                            ~message="MockSource on-event registration was not installed before resolving items",
+                          )
+                        let payload: Evm.payload = {
+                          contractName: "Gravatar",
+                          eventName: "MockEvent",
+                          params: %raw(`{}`),
+                          chainId: chain->ChainMap.Chain.toChainId,
+                          srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+                          logIndex: item.logIndex,
+                          block: {
+                            "number": item.blockNumber,
+                            "timestamp": item.blockNumber,
+                            "hash": `0x${item.blockNumber->Int.toString}`,
+                          }->Utils.magic,
+                        }
+                        let _ = %raw(`Object.defineProperties(payload, {
+                          __mockHandler: {value: item.handler},
+                          __mockContractRegister: {value: item.contractRegister},
+                        })`)
                         Internal.Event({
-                          onEventRegistration: ({
-                            eventConfig: ({
-                              id: "MockEvent",
-                              contractName: "MockContract",
-                              name: "MockEvent",
-                              paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
-                              simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
-                              selectedBlockFields: Utils.Set.make(),
-                              selectedTransactionFields: Utils.Set.make(),
-                              transactionFieldMask: 0.,
-                              blockFieldMask: 0.,
-                              sighash: "",
-                              topicCount: 1,
-                              paramsMetadata: [],
-                            }: Internal.evmEventConfig :> Internal.eventConfig),
-                            isWildcard: false,
-                            filterByAddresses: false,
-                            dependsOnAddresses: false,
-                            startBlock: None,
-                            handler: switch item.handler {
-                            | Some(handler) =>
-                              (
-                                ({context} as args) => {
-                                  // We don't want preload optimization for the tests
-                                  if context.isPreload {
-                                    Promise.resolve()
-                                  } else {
-                                    handler(args)
-                                  }
-                                }
-                              )->(
-                                Utils.magic: (
-                                  Internal.genericHandlerArgs<
-                                    eventLog<unknown>,
-                                    handlerContext,
-                                  > => promise<unit>
-                                ) => option<Internal.handler>
-                              )
-
-                            | None => None
-                            },
-                            contractRegister: item.contractRegister->(
-                              Utils.magic: option<contractRegister<unit>> => option<
-                                Internal.contractRegister,
-                              >
-                            ),
-                            resolvedWhere: {
-                              topicSelections: [],
-                              startBlock: None,
-                            },
-                          }: Internal.evmOnEventRegistration :> Internal.onEventRegistration),
+                          onEventRegistration,
                           chain,
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
                           transactionIndex: 0,
-                          payload: {
-                            contractName: "MockContract",
-                            eventName: "MockEvent",
-                            params: %raw(`{}`),
-                            chainId: chain->ChainMap.Chain.toChainId,
-                            srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-                            logIndex: item.logIndex,
-                            block: {
-                              "number": item.blockNumber,
-                              "timestamp": item.blockNumber,
-                              "hash": `0x${item.blockNumber->Int.toString}`,
-                            }->Utils.magic,
-                          }->Evm.fromPayload,
+                          payload: payload->Evm.fromPayload,
                         })
                       },
                     ),
@@ -921,6 +998,8 @@ module Source = {
           | false => None
           },
         }
+        setMockSourceState(source, state)
+        source
       },
     }
   }
@@ -1004,6 +1083,7 @@ let evmOnEventRegistration = (
     paramsMetadata: [],
   }
   {
+    index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses,

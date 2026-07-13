@@ -8,6 +8,7 @@ let configAddresses: Config.chain => array<Internal.indexingAddress>
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=?,
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
