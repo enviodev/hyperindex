@@ -403,6 +403,47 @@ describe("CrossChainState fetch control", () => {
     },
   )
 
+  Async.it(
+    "checkAndFetch aligns progress against the currently reachable end block",
+    async t => {
+      let leader = makeFetchingChainState(
+        ~chainId=1,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=0,
+        ~endBlock=Some(1_000_000_000),
+        ~chainDensity=Some(1.),
+      )
+      let follower = makeFetchingChainState(
+        ~chainId=2,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=0,
+        ~chainDensity=Some(1.),
+      )
+      let cm = makeCrossChainState(
+        ~chainStatesList=[leader, follower],
+        ~targetBufferSize=3000,
+      )
+
+      let estimatesByChain = Dict.make()
+      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+        estimatesByChain->Utils.Dict.setByInt(
+          chain->ChainMap.Chain.toChainId,
+          switch action {
+          | Ready(queries) =>
+            queries->Array.reduce(0, (total, query: FetchState.query) => total + query.itemsEst)
+          | _ => 0
+          },
+        )
+        Promise.resolve()
+      })
+
+      t.expect(
+        estimatesByChain,
+        ~message="A future endBlock must not clamp the follower near its starting frontier",
+      ).toEqual(Dict.fromArray([("1", 1000), ("2", 1000)]))
+    },
+  )
+
   it("getNextQuery caps the budget at the plain range cost regardless of caught-up status", t => {
     let makeChain = (~caughtUpOnce) =>
       makeFetchingChainState(
