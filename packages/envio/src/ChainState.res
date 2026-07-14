@@ -512,7 +512,6 @@ let getNextQuery = (
     ~chainTargetBlock,
     ~chainTargetItems,
     ~chunkItemsMultiplier,
-    ~chainDensity=?cs->effectiveDensity,
   )
 }
 

@@ -561,8 +561,10 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "0",
-          itemsTarget: 16_667,
-          itemsEst: 16_667,
+          // Starts at block 5 vs partition "2"'s block 2, so it covers less of
+          // the range to the target and gets a smaller probe.
+          itemsTarget: 11_111,
+          itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -572,10 +574,9 @@ describe("SourceManager fetchNext", () => {
         {
           ...defaultQuery,
           partitionId: "1",
-          // Every unknown-density probe gets the same even split of the fresh
-          // budget (round(50_000 / 3)), regardless of processing order.
-          itemsTarget: 16_667,
-          itemsEst: 16_667,
+          // Starts furthest ahead (block 6), so it gets the smallest probe.
+          itemsTarget: 9_259,
+          itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,

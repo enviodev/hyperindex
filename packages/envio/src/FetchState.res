@@ -1518,18 +1518,15 @@ type waterFillState = {
 // A partition with a trusted positive density (two or more responses — see
 // getMinHistoryRange) generates real, density-sized chunks toward the target.
 // Any other partition (no signal, one noisy sample, or a density-0 estimate)
-// generates one open-ended probe sized to its even share of the budget
-// (freshBudget / inRangeCount), so several unknown-density partitions
-// still probe in parallel within one budget.
+// generates one open-ended probe sized to the events its range to the target is
+// expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1) /
+// inRangeCount — so several unknown-density partitions probe in parallel within
+// one budget, each scaled by how much of the range it still has to cover.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
   ~chunkItemsMultiplier: float=1.,
-  // Chain-level event density (items/block), when known. Sizes an open-ended
-  // probe by the events its range to the target is expected to hold; falls back
-  // to an even budget share when the chain is cold or already at the target.
-  ~chainDensity: option<float>=?,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1687,11 +1684,22 @@ let getNextQuery = (
       fs.pendingCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
 
     let inRangeStates = fillStates->Array.filter(isInRange)
-    // Each open-ended probe reserves an even share of the fresh budget, divided
-    // by the partitions actually fetching this tick (not every partition — so
-    // budget isn't stranded on ones below the head, waiting, or already done).
     let inRangeCount = inRangeStates->Array.length
+    // Even share of the fresh budget across the partitions actually fetching
+    // this tick (not every partition — so budget isn't stranded on ones below
+    // the head, waiting, or already done). The fallback when there's no range to
+    // the target.
     let probeShare = inRangeCount == 0 ? 0. : freshBudget /. inRangeCount->Int.toFloat
+    // Items/block the budget implies over the range those partitions cover this
+    // tick — from the furthest-behind in-range cursor to the target. A probe
+    // covering less of that range (its partition sits further ahead) gets
+    // proportionally fewer items; one starting at the frontier gets the full
+    // even share.
+    let frontierCursor =
+      inRangeStates->Array.reduce(chainTargetBlock, (min, fs) => fs.cursor < min ? fs.cursor : min)
+    let rangeToTarget = chainTargetBlock - frontierCursor + 1
+    let rangeTargetDensity =
+      inRangeCount > 0 && rangeToTarget > 0 ? freshBudget /. rangeToTarget->Int.toFloat : 0.
 
     // Phase B: generate each in-range partition's candidates — strict chunks
     // toward the target sized by real density (up to the pending-chunk cap), or,
@@ -1746,22 +1754,21 @@ let getNextQuery = (
         }
       | _ =>
         // Size the probe by the events its range to the target is expected to
-        // hold — chainDensity × (chainTargetBlock − fromBlock + 1), split across
-        // all partitions. When the chain has no density, or the partition is
-        // already at the target (no range), fall back to an even share of the
-        // fresh budget so several unknown-density partitions still probe in
-        // parallel.
-        let itemsTarget = switch chainDensity {
-        | Some(density) if density > 0. && chainTargetBlock > fs.cursor =>
+        // hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1), split
+        // across the partitions fetching this tick. With no range to the target
+        // fall back to an even share of the fresh budget, so cold chains and
+        // caught-up partitions still probe.
+        let itemsTarget = if rangeToTarget > 0 {
           Pervasives.max(
             1,
             Math.round(
-              density *.
+              rangeTargetDensity *.
               (chainTargetBlock - fs.cursor + 1)->Int.toFloat /.
-              partitionsCount->Int.toFloat,
+              inRangeCount->Int.toFloat,
             )->Float.toInt,
           )
-        | _ => Pervasives.max(1, Math.round(probeShare)->Float.toInt)
+        } else {
+          Pervasives.max(1, Math.round(probeShare)->Float.toInt)
         }
         candidates
         ->Array.push({
