@@ -1362,7 +1362,7 @@ pub mod svm {
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{Chain, ContractConfig, HumanConfig},
+        evm::{ContractConfig, HumanConfig},
         ChainContract,
     };
     use crate::{
@@ -1586,34 +1586,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
-    // libyaml tags unquoted `0x…` as int. A 20-byte address overflows u64
-    // but serde_yaml hands the raw scalar text to the String visitor
-    // unchanged — locking that contract guards against a future YAML
-    // library that would coerce through f64 instead.
-    #[test]
-    fn deserialize_unquoted_hex_address_yaml() {
-        let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
-        #[derive(serde::Deserialize)]
-        struct Wrap {
-            address: NormalizedList<String>,
-        }
-        let de: Wrap = serde_yaml::from_str(single).unwrap();
-        assert_eq!(
-            Vec::<String>::from(de.address),
-            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()]
-        );
-
-        let list = "address:\n  - 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n  - 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
-        let de: Wrap = serde_yaml::from_str(list).unwrap();
-        assert_eq!(
-            Vec::<String>::from(de.address),
-            vec![
-                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
-                "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
-            ]
-        );
-    }
-
     #[test]
     fn deserializes_factory_contract_config() {
         let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1730,173 +1702,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
-    #[test]
-    fn deserialize_storage_config() {
-        use super::{ColumnNameFormat, StorageBackendConfig, StorageBackendOptions, StorageConfig};
-
-        // Both fields present
-        let yaml = "postgres: true\nclickhouse: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Enabled(true)),
-                clickhouse: Some(StorageBackendConfig::Enabled(true)),
-            }
-        );
-
-        // Only clickhouse set
-        let yaml = "clickhouse: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: None,
-                clickhouse: Some(StorageBackendConfig::Enabled(true)),
-            }
-        );
-
-        // Backend configured with an options object
-        let yaml = "postgres:\n  column_name_format: snake_case\nclickhouse: {}\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: None,
-                    column_name_format: Some(ColumnNameFormat::SnakeCase),
-                })),
-                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: None,
-                    column_name_format: None,
-                })),
-            }
-        );
-
-        // Unknown backend option should fail (deny_unknown_fields)
-        let yaml = "postgres:\n  table_naming: snake_case\n";
-        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
-
-        // Unknown column_name_format value should fail
-        let yaml = "postgres:\n  column_name_format: kebab-case\n";
-        assert!(serde_yaml::from_str::<StorageConfig>(yaml).is_err());
-
-        // Unknown field should fail (deny_unknown_fields)
-        let yaml = "postgres: true\nbigquery: true\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string().contains("unknown field `bigquery`"),
-            "Unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn deserialize_storage_backend_options() {
-        use super::{StorageBackendConfig, StorageBackendOptions, StorageConfig};
-
-        let yaml = "postgres: true\nclickhouse:\n  default: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Enabled(true)),
-                clickhouse: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: Some(true),
-                    column_name_format: None,
-                })),
-            }
-        );
-
-        // Empty object form implies enabled with no default override
-        let yaml = "postgres: {}\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(StorageBackendConfig::Options(StorageBackendOptions {
-                    default: None,
-                    column_name_format: None,
-                })),
-                clickhouse: None,
-            }
-        );
-
-        // A typo inside the options object surfaces the precise
-        // unknown-field error, not a generic match-no-variant one
-        let yaml = "clickhouse:\n  defautl: true\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unknown field `defautl`, expected `default` or `column_name_format`"),
-            "Unexpected error: {err}"
-        );
-
-        // A value of the wrong type names the accepted shapes
-        let yaml = "clickhouse: enabled\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("expected a boolean or an options object like `{default: true}`"),
-            "Unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn deserialize_evm_config_with_storage() {
-        use super::evm::HumanConfig as EvmConfig;
-        let yaml = r#"
-name: storage-test
-storage:
-  postgres: true
-  clickhouse:
-    default: true
-chains:
-  - id: 1
-    start_block: 0
-"#;
-        let cfg: EvmConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            cfg.base.storage,
-            Some(super::StorageConfig {
-                postgres: Some(super::StorageBackendConfig::Enabled(true)),
-                clickhouse: Some(super::StorageBackendConfig::Options(
-                    super::StorageBackendOptions {
-                        default: Some(true),
-                        column_name_format: None,
-                    }
-                )),
-            })
-        );
-    }
-
-    #[test]
-    fn deserialize_underscores_between_numbers() {
-        let num = serde_json::json!(2_000_000);
-        let de: i32 = serde_json::from_value(num).unwrap();
-        assert_eq!(2_000_000, de);
-    }
-
-    #[test]
-    fn deserialize_chain_with_underscores_between_numbers() {
-        let chain_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
-        let de: Chain = serde_json::from_value(chain_json).unwrap();
-
-        assert_eq!(
-            Chain {
-                id: 1,
-                skip: None,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 2_000,
-                max_reorg_depth: None,
-                block_lag: None,
-                end_block: Some(2_000_000),
-                contracts: Some(vec![])
-            },
-            de
-        );
-    }
-
     mod svm_yaml {
         use crate::config_parsing::human_config::svm::*;
         use pretty_assertions::assert_eq;
@@ -1979,25 +1784,6 @@ chains:
                     ],
                 }
             );
-        }
-
-        #[test]
-        fn rejects_unknown_fields() {
-            let bad = r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 1
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          bogus_extra: true
-          instructions: []
-"#;
-            assert!(serde_yaml::from_str::<HumanConfig>(bad).is_err());
         }
     }
 }

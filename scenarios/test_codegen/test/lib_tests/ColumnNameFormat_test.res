@@ -1,47 +1,59 @@
 open Vitest
 
-// Mirrors the public config the CLI emits when the backends configure
-// different `column_name_format`s: the resolved column names arrive as
-// per-property `dbName` (Postgres) and `clickhouseDbName` (ClickHouse)
-// values. Snapshot uses snake_case in Postgres only; Token uses snake_case
-// in ClickHouse only.
-let publicConfigJson: JSON.t = %raw(`{
-  "version": "0.0.1-dev",
-  "name": "test",
-  "storage": { "postgres": true, "clickhouse": true },
-  "evm": {
-    "chains": {
-      "ethereumMainnet": {
-        "id": 1,
-        "startBlock": 0,
-        "rpcs": [{ "url": "https://eth.com", "for": "sync" }]
-      }
-    },
-    "addressFormat": "checksum"
-  },
-  "enums": {},
-  "entities": [{
-    "name": "Snapshot",
-    "properties": [
-      { "name": "id", "type": "string" },
-      { "name": "transactionIndex", "type": "int", "postgresDbName": "transaction_index", "isIndex": true },
-      { "name": "tokenOwner", "type": "entity", "postgresDbName": "token_owner_id", "linkedEntity": "User", "entity": "User" }
-    ]
-  }, {
-    "name": "Token",
-    "properties": [
-      { "name": "id", "type": "string" },
-      { "name": "tokenId", "type": "int", "clickhouseDbName": "token_id" }
-    ]
-  }, {
-    "name": "User",
-    "properties": [
-      { "name": "id", "type": "string" }
-    ]
-  }]
-}`)
+let config = MockIndexerConfig.parseYaml(
+  ~schema=`
+type Snapshot {
+  id: ID!
+  transactionIndex: Int! @index
+  tokenOwner: User!
+}
 
-let config = Config.fromPublic(publicConfigJson)
+type User {
+  id: ID!
+}
+`,
+  `
+name: column-names
+storage:
+  postgres:
+    default: true
+    column_name_format: snake_case
+  clickhouse:
+    default: true
+    column_name_format: original
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+).config
+
+let reverseFormatConfig = MockIndexerConfig.parseYaml(
+  ~schema=`
+type Token {
+  id: ID!
+  tokenId: Int!
+}
+`,
+  `
+name: reverse-column-names
+storage:
+  postgres:
+    default: true
+    column_name_format: original
+  clickhouse:
+    default: true
+    column_name_format: snake_case
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+).config
 let snapshotEntity = config.userEntitiesByName->Dict.getUnsafe("Snapshot")
 
 // The entity record keeps the API field names from schema.graphql
@@ -166,7 +178,7 @@ ORDER BY (id, envio_checkpoint_id)`)
   })
 
   it("renames ClickHouse columns independently from Postgres", t => {
-    let tokenEntity = config.userEntitiesByName->Dict.getUnsafe("Token")
+    let tokenEntity = reverseFormatConfig.userEntitiesByName->Dict.getUnsafe("Token")
     let pgQuery = PgStorage.makeCreateTableQuery(
       tokenEntity.table,
       ~pgSchema="test_schema",
