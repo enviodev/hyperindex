@@ -111,8 +111,8 @@ external appendPage: (t, t) => unit = "appendPage"
 @send external responseConflict: t => Null.t<hashMismatch> = "responseConflict"
 
 // Requested block numbers not covered by this response. SVM gaps count as
-// covered only when a later block's parent slot/hash link proves the fork
-// skipped them.
+// covered when HyperSync's cursor has fully processed their half-open range;
+// parent slot/hash links are validated separately as response consistency.
 @send external missingHashes: (t, array<int>) => array<int> = "missingHashes"
 
 // Compare a validated response store against the persistent store in ascending

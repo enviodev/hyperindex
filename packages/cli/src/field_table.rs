@@ -621,18 +621,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.cols[field].as_ref().map(|c| c.cell_u64(slot as usize))
     }
 
-    /// First key after `after` whose row carries `field`.
-    pub(crate) fn first_key_after_with_field(&self, after: &K, field: usize) -> Option<K> {
-        let bit = 1u64 << field;
-        self.order
-            .range((
-                std::ops::Bound::Excluded(after.clone()),
-                std::ops::Bound::Unbounded,
-            ))
-            .find(|(_, &slot)| self.masks[slot as usize] & bit != 0)
-            .map(|(key, _)| key.clone())
-    }
-
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ.
     pub(crate) fn first_field_mismatch(
         &self,

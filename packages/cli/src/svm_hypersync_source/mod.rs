@@ -187,9 +187,8 @@ impl SvmHypersyncClient {
     }
 
     /// Fetch the inclusive range spanning `block_numbers` into one response
-    /// store. Parent links prove skipped slots; if the bounded response leaves
-    /// a gap unresolved at its upper edge, append the first successor block so
-    /// its link can close that gap.
+    /// store. Each advancing cursor proves its half-open range was processed;
+    /// missing block rows inside that coverage are skipped slots.
     #[napi]
     pub async fn get_block_hashes(
         &self,
@@ -240,45 +239,22 @@ impl SvmHypersyncClient {
             let (next_slot, page_store) = block_hash_page(response)
                 .map_err(map_err)
                 .map_err(|error| error_with_request_stats(error, &request_stats))?;
+            if next_slot <= cursor {
+                let error = map_err(anyhow::anyhow!(
+                    "SVM block hash query made no progress: cursor={cursor}, next_slot={next_slot}"
+                ));
+                return Err(error_with_request_stats(error, &request_stats));
+            }
             aggregate.append_page(&page_store);
-            if next_slot > to_slot || next_slot <= cursor {
-                break;
+            aggregate
+                .mark_svm_coverage(cursor, next_slot.min(to_slot_exclusive))
+                .map_err(map_err)
+                .map_err(|error| error_with_request_stats(error, &request_stats))?;
+            if next_slot >= to_slot_exclusive {
+                return Ok((aggregate, request_stats));
             }
             cursor = next_slot;
         }
-
-        let upper_slot_needs_successor_proof =
-            aggregate.missing_hashes(block_numbers).contains(&to_slot);
-
-        // An interior skipped slot has a later block inside the bounded
-        // response whose (parent_slot, parent_blockhash) link proves the gap.
-        // A skipped `to_slot` has no such descendant in [from_slot, to_slot],
-        // so fetch exactly one successor. Its parent link either proves that
-        // the upper slot was skipped or leaves it missing as an invalid
-        // response; without this lookup a valid skipped upper slot would be
-        // retried forever.
-        if upper_slot_needs_successor_proof {
-            let successor_query = SvmQuery {
-                from_slot: to_slot_exclusive,
-                include_all_blocks: Some(true),
-                fields: Some(fields),
-                max_num_blocks: Some(1),
-                ..Default::default()
-            };
-            let started = Instant::now();
-            let successor_response = self.get_raw(successor_query).await;
-            request_stats.push(RequestStat {
-                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
-                seconds: started.elapsed().as_secs_f64(),
-            });
-            let successor_response = successor_response
-                .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            let (_, successor_store) = block_hash_page(successor_response)
-                .map_err(map_err)
-                .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            aggregate.append_page(&successor_store);
-        }
-        Ok((aggregate, request_stats))
     }
 }
 
