@@ -1483,7 +1483,7 @@ let pushGapFillQueries = (
 
 // Per-partition state carried from the gap-fill/cursor walk to candidate
 // generation.
-type waterFillState = {
+type partitionFillState = {
   partitionId: string,
   p: partition,
   cursor: int,
@@ -1582,27 +1582,13 @@ let getNextQuery = (
 
     // Existing in-flight itemsEst across all partitions — already spent against
     // this chain's budget, so the fresh budget for new queries is what's left
-    // of chainTargetItems after it.
+    // of chainTargetItems after it. Summed in the Phase A sweep below.
     let chainReserved = ref(0.)
-    for idx in 0 to partitionsCount - 1 {
-      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
-      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-      for pqIdx in 0 to p.mutPendingQueries->Array.length - 1 {
-        chainReserved :=
-          chainReserved.contents +.
-          (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsEst->Int.toFloat
-      }
-    }
-
-    // The tick's fresh budget: chainTargetItems minus what's already in flight.
-    let freshBudget = Pervasives.max(0., chainTargetItems -. chainReserved.contents)
 
     // Position of each partition in idsInAscOrder, so an accepted query routes
-    // back to its bucket and the output stays in idsInAscOrder.
+    // back to its bucket and the output stays in idsInAscOrder. Filled in the
+    // Phase A sweep below.
     let partitionIndexById = Dict.make()
-    for idx in 0 to partitionsCount - 1 {
-      partitionIndexById->Dict.set(optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx), idx)
-    }
 
     // Every candidate query for this tick — gap-fill holes (Phase A) plus each
     // in-range partition's chunks/probe toward the target (Phase B) — generated
@@ -1620,7 +1606,13 @@ let getNextQuery = (
     for idx in 0 to partitionsCount - 1 {
       let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+      partitionIndexById->Dict.set(partitionId, idx)
       let pendingCount = p.mutPendingQueries->Array.length
+      for pqIdx in 0 to pendingCount - 1 {
+        chainReserved :=
+          chainReserved.contents +.
+          (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsEst->Int.toFloat
+      }
       let queryEndBlock = computeQueryEndBlock(p)
       let maybeChunkRange = getMinHistoryRange(p)
 
@@ -1675,7 +1667,10 @@ let getNextQuery = (
       }
     }
 
-    let isInRange = (fs: waterFillState) =>
+    // The tick's fresh budget: chainTargetItems minus what's already in flight.
+    let freshBudget = Pervasives.max(0., chainTargetItems -. chainReserved.contents)
+
+    let isInRange = (fs: partitionFillState) =>
       fs.cursor <= chainTargetBlock &&
       switch fs.queryEndBlock {
       | Some(eb) => fs.cursor <= eb
@@ -1721,14 +1716,22 @@ let getNextQuery = (
         let chunkSize = Js.Math.ceil_int(minHistoryRange->Int.toFloat *. 1.8)
         let maxChunksRemaining =
           maxPendingChunksPerPartition - fs.pendingCount - fs.chunksUsedThisCall
-        let created = ref(0)
-        let chunkFromBlock = ref(fs.cursor)
         // No chunk starts past chainTargetBlock; an emitted chunk still keeps
         // its full span (chunkToBlock may exceed the target — only
         // endBlock/mergeBlock are hard bounds).
+        let chunkStartCeiling = Pervasives.min(maxBlock, chainTargetBlock)
+        let created = ref(0)
+        let chunkFromBlock = ref(fs.cursor)
+        // Stop once this partition alone has generated more than the whole fresh
+        // budget: the acceptance pass can hand a single partition at most the
+        // budget plus one overshoot query, so further chunks could never be
+        // accepted. Bounds generation (and the candidate sort) when the budget
+        // is small relative to the pending-chunk cap.
+        let generatedItems = ref(0.)
         while (
           created.contents < maxChunksRemaining &&
-            chunkFromBlock.contents <= Pervasives.min(maxBlock, chainTargetBlock)
+          chunkFromBlock.contents <= chunkStartCeiling &&
+          generatedItems.contents <= freshBudget
         ) {
           let chunkToBlock = Pervasives.min(chunkFromBlock.contents + chunkSize - 1, maxBlock)
           let rawEst = density *. (chunkToBlock - chunkFromBlock.contents + 1)->Int.toFloat
@@ -1749,6 +1752,7 @@ let getNextQuery = (
             addressesByContractName: p.addressesByContractName,
           })
           ->ignore
+          generatedItems := generatedItems.contents +. itemsEst->Int.toFloat
           chunkFromBlock := chunkToBlock + 1
           created := created.contents + 1
         }
@@ -1790,16 +1794,17 @@ let getNextQuery = (
     // single overshoot); everything after it waits for a tick with more budget.
     // Accepted queries route back to their partition bucket, so the output stays
     // in idsInAscOrder with each partition's queries in fromBlock order.
+    candidates->Array.sort((a, b) => Int.compare(a.fromBlock, b.fromBlock))
+    let candidatesCount = candidates->Array.length
     let remainingBudget = ref(freshBudget)
-    candidates
-    ->Array.toSorted((a, b) => Int.compare(a.fromBlock, b.fromBlock))
-    ->Array.forEach(query =>
-      if remainingBudget.contents > 0. {
-        let partitionIdx = partitionIndexById->Dict.getUnsafe(query.partitionId)
-        queriesByPartitionIndex->Array.getUnsafe(partitionIdx)->Array.push(query)->ignore
-        remainingBudget := remainingBudget.contents -. query.itemsEst->Int.toFloat
-      }
-    )
+    let acceptIdx = ref(0)
+    while remainingBudget.contents > 0. && acceptIdx.contents < candidatesCount {
+      let query = candidates->Array.getUnsafe(acceptIdx.contents)
+      let partitionIdx = partitionIndexById->Dict.getUnsafe(query.partitionId)
+      queriesByPartitionIndex->Array.getUnsafe(partitionIdx)->Array.push(query)->ignore
+      remainingBudget := remainingBudget.contents -. query.itemsEst->Int.toFloat
+      acceptIdx := acceptIdx.contents + 1
+    }
 
     let queries = queriesByPartitionIndex->Array.flat
 
