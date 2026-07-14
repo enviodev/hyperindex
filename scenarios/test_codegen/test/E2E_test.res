@@ -1710,4 +1710,89 @@ describe("E2E tests", () => {
       ).toEqual([{value: "1", labels: Dict.make()}])
     },
   )
+
+  // Regression (production): at realtime, when one chain falls far behind (a
+  // large new range that drains the shared fetch-buffer budget), a second chain
+  // that is only slightly behind its own head must keep polling for new blocks.
+  // The buggy scheduler drops such a chain as NothingToQuery (it is below its
+  // head, so it won't wait, yet the drained budget leaves it no query), so it is
+  // never dispatched — it stops fetching AND stops polling getHeightOrThrow, and
+  // its head tracking goes silent.
+  Async.it(
+    "Multichain realtime: a near-head chain keeps polling while another chain backfills a large range",
+    async t => {
+      let leaderSource = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let followerSource = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {chain: #1337, sourceConfig: Config.CustomSources([leaderSource.source])},
+          {chain: #100, sourceConfig: Config.CustomSources([followerSource.source])},
+        ],
+        ~shouldRollbackOnReorg=false,
+        ~targetBufferSize=1000,
+      )
+      await Utils.delay(0)
+
+      // Phase 1: both chains catch up to head (block 100) and become realtime.
+      // A handful of events on each seeds a density signal.
+      leaderSource.resolveGetHeightOrThrow(100)
+      followerSource.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      leaderSource.resolveGetItemsOrThrow(
+        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+      followerSource.resolveGetItemsOrThrow(
+        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="both chains reach realtime",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+
+      // Both chains are now at head, parked on a realtime getHeightOrThrow poll.
+      let followerPollsBefore = followerSource.getHeightOrThrowCalls->Array.length
+
+      // Phase 2: divergent new heights. The leader jumps far ahead (a large
+      // backlog whose reservation drains the shared fetch-buffer budget); the
+      // follower advances only a little past its own head.
+      leaderSource.resolveGetHeightOrThrow(1_000_000)
+      followerSource.resolveGetHeightOrThrow(105)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Drive the leader's backfill for several ticks, keeping it far behind (so
+      // it stays the budget-draining leader). Each response re-runs the
+      // cross-chain dispatch, so the follower is re-evaluated every tick.
+      for _ in 0 to 4 {
+        await MockIndexer.Helper.waitItemsQuery(leaderSource)
+        let call = leaderSource.getItemsOrThrowCalls->Array.getUnsafe(0)
+        let fromBlock = call.payload["fromBlock"]
+        call.resolve(
+          [{blockNumber: fromBlock + 20, logIndex: 0}, {blockNumber: fromBlock + 60, logIndex: 0}],
+          ~latestFetchedBlockNumber=fromBlock + 99,
+        )
+        await indexerMock.getBatchWritePromise()
+      }
+
+      // The follower is below its own head (frontier 100 < head 105) but starved
+      // of budget. It must keep polling for new blocks rather than going silent.
+      t.expect(
+        followerSource.getHeightOrThrowCalls->Array.length > followerPollsBefore,
+        ~message="follower keeps polling getHeightOrThrow while the leader backfills a large range",
+      ).toBe(true)
+    },
+  )
 })
