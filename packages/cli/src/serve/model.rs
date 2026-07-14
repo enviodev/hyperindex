@@ -431,6 +431,13 @@ mod tests {
             startup_retry_budget_ms: 0,
             healthz_timeout_ms: 1_000,
             ws_ping_interval_ms: 15_000,
+            ws_connection_init_timeout_ms: 3_000,
+            ws_max_connections: 1_000,
+            ws_max_operations_per_connection: 50,
+            ws_max_operations: 1_000,
+            ws_max_concurrent_polls: 1,
+            ws_poll_interval_ms: 1_000,
+            ws_max_message_bytes: 1024 * 1024,
         }
     }
 

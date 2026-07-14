@@ -47,6 +47,14 @@ pub struct ServeState {
     /// How often idle WebSocket connections get a protocol-level ping; a
     /// connection that sends no pong/traffic within 2x this gets closed.
     pub ws_ping_interval: std::time::Duration,
+    /// Maximum time an upgraded socket may wait for connection_init.
+    pub ws_connection_init_timeout: std::time::Duration,
+    pub ws_max_connections: usize,
+    pub ws_max_operations_per_connection: usize,
+    pub ws_max_operations: usize,
+    pub ws_max_concurrent_polls: usize,
+    pub ws_poll_interval: std::time::Duration,
+    pub ws_max_message_bytes: usize,
 }
 
 pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
@@ -60,6 +68,13 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
         pg_ssl_mode = env.pg_ssl.as_str(),
         pool_max_size = env.pool_max_size,
         ws_ping_interval_ms = env.ws_ping_interval_ms,
+        ws_connection_init_timeout_ms = env.ws_connection_init_timeout_ms,
+        ws_max_connections = env.ws_max_connections,
+        ws_max_operations_per_connection = env.ws_max_operations_per_connection,
+        ws_max_operations = env.ws_max_operations,
+        ws_max_concurrent_polls = env.ws_max_concurrent_polls,
+        ws_poll_interval_ms = env.ws_poll_interval_ms,
+        ws_max_message_bytes = env.ws_max_message_bytes,
         healthz_timeout_ms = env.healthz_timeout_ms,
         startup_retry_budget_ms = env.startup_retry_budget_ms,
         query_timeout_ms = env.query_timeout_ms,
@@ -90,6 +105,15 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
             .map(|ms| std::time::Duration::from_millis(ms + 5_000)),
         healthz_timeout: std::time::Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: std::time::Duration::from_millis(env.ws_ping_interval_ms),
+        ws_connection_init_timeout: std::time::Duration::from_millis(
+            env.ws_connection_init_timeout_ms,
+        ),
+        ws_max_connections: env.ws_max_connections,
+        ws_max_operations_per_connection: env.ws_max_operations_per_connection,
+        ws_max_operations: env.ws_max_operations,
+        ws_max_concurrent_polls: env.ws_max_concurrent_polls,
+        ws_poll_interval: std::time::Duration::from_millis(env.ws_poll_interval_ms),
+        ws_max_message_bytes: env.ws_max_message_bytes,
     });
 
     http::serve(state, &args.host, args.port, shutdown_signal()).await

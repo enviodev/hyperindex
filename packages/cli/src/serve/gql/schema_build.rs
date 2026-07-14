@@ -7,7 +7,7 @@ use crate::serve::model::{Column, Scalar, ServerModel, Table};
 use crate::serve::pg_catalog::RelationKind;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Role {
     Admin,
     Public,

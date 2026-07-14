@@ -4,9 +4,10 @@
 //! - `graphql-ws` (the legacy subscriptions-transport-ws protocol)
 //!
 //! Live queries behave like Hasura's multiplexed live queries observably:
-//! an immediate first result, then a ~1s poll loop that pushes a new
-//! payload whenever the result changes. `<T>_stream` roots advance their
-//! cursor after every non-empty batch.
+//! an immediate first result, then a configurable poll loop that pushes a
+//! new payload whenever the result changes. Identical compiled SQL, params,
+//! and role share one poll loop across sockets. `<T>_stream` roots advance
+//! their cursor after every non-empty batch.
 //!
 //! Protocol differences pinned by the differential suite:
 //! - subscribe/start message types (`subscribe` vs `start`), data types
@@ -21,17 +22,22 @@ use super::gql::schema_build::Role;
 use super::http::AppState;
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
 use serde_json::json;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch, Notify, OwnedSemaphorePermit};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(1000);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+/// Per-connection application queue. A peer that keeps the connection alive
+/// while refusing to read must not turn server responses into unbounded RAM.
+const OUTBOUND_QUEUE_CAPACITY: usize = 64;
 /// How often the dead-connection check runs (independent of the
 /// server-configured ping interval, so detection latency doesn't depend on
 /// a large ENVIO_SERVE_WS_PING_INTERVAL_MS): a connection is only ever
@@ -49,6 +55,7 @@ const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// permanently kills every active subscription — most graphql-ws clients
 /// treat an error frame as terminal and never resubscribe.
 const SUBSCRIPTION_TRANSIENT_RETRIES: u32 = 5;
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Protocol {
@@ -84,6 +91,17 @@ pub fn handle_upgrade(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> axum::response::Response {
+    let connection_permit = match state.ws_connection_slots.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            tracing::warn!("websocket connection rejected: global connection limit reached");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "websocket connection limit reached",
+            )
+                .into_response();
+        }
+    };
     // Hasura also reads auth from the upgrade request's HTTP headers, not
     // only the connection_init payload; capture them here so init can fall
     // back to them.
@@ -98,8 +116,13 @@ pub fn handle_upgrade(
             .map(String::from),
     };
     upgrade
+        .max_message_size(state.serve.ws_max_message_bytes)
+        .max_frame_size(state.serve.ws_max_message_bytes)
         .protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| async move {
+            // The permit is held across the entire upgraded connection and
+            // released on every exit path, including panics/cancellation.
+            let _connection_permit = connection_permit;
             let protocol = match socket.protocol().and_then(|p| p.to_str().ok()) {
                 Some("graphql-transport-ws") => Protocol::Modern,
                 _ => Protocol::Legacy,
@@ -114,15 +137,199 @@ struct UpgradeAuth {
     role: Option<String>,
 }
 
+/// Bounded, non-blocking output shared by connection and operation tasks.
+/// Queue overflow wakes the connection loop, which tears down the socket and
+/// aborts all pollers instead of dropping arbitrary GraphQL frames.
+#[derive(Clone)]
+struct Outbound {
+    tx: mpsc::Sender<Message>,
+    overflow: Arc<Notify>,
+}
+
+impl Outbound {
+    fn channel(capacity: usize) -> (Outbound, mpsc::Receiver<Message>) {
+        let (tx, rx) = mpsc::channel(capacity);
+        (
+            Outbound {
+                tx,
+                overflow: Arc::new(Notify::new()),
+            },
+            rx,
+        )
+    }
+
+    fn send(&self, message: Message) -> Result<(), ()> {
+        match self.tx.try_send(message) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.overflow.notify_one();
+                Err(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.overflow.notify_one();
+                Err(())
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+enum LiveQueryEvent {
+    Pending,
+    Data(Arc<str>),
+    Error(Arc<GraphQLError>),
+}
+
+struct LiveQueryCohort {
+    events: watch::Sender<LiveQueryEvent>,
+}
+
+struct LiveQuerySubscription {
+    alias: String,
+    events: watch::Receiver<LiveQueryEvent>,
+    /// Keeps the cohort discoverable while this subscriber is alive. The
+    /// poll task itself holds only a Weak, so it stops when the last
+    /// receiver leaves.
+    _cohort: Arc<LiveQueryCohort>,
+}
+
+/// Server-wide exact-key live-query deduplication. Matching means compiled
+/// SQL + bound params + role, which is stronger and cheaper than comparing
+/// raw GraphQL text and naturally coalesces formatting and alias changes.
+#[derive(Clone, Default)]
+pub(crate) struct LiveQueryRegistry {
+    cohorts: Arc<Mutex<HashMap<exec::LiveQueryKey, Weak<LiveQueryCohort>>>>,
+}
+
+impl LiveQueryRegistry {
+    fn subscribe(&self, state: &AppState, live: exec::CompiledLiveQuery) -> LiveQuerySubscription {
+        let alias = live.alias.clone();
+        let key = live.key.clone();
+        let mut live = Some(live);
+        let mut new_cohort = None;
+
+        let subscription = {
+            let mut cohorts = self.cohorts.lock().expect("live-query registry poisoned");
+            if let Some(cohort) = cohorts.get(&key).and_then(Weak::upgrade) {
+                tracing::debug!(cohort = key.stable_hash(), "joining live-query cohort");
+                LiveQuerySubscription {
+                    alias,
+                    events: cohort.events.subscribe(),
+                    _cohort: cohort,
+                }
+            } else {
+                let (events, receiver) = watch::channel(LiveQueryEvent::Pending);
+                let cohort = Arc::new(LiveQueryCohort {
+                    events: events.clone(),
+                });
+                let weak = Arc::downgrade(&cohort);
+                cohorts.insert(key.clone(), weak.clone());
+                new_cohort = Some((events, weak, live.take().unwrap()));
+                tracing::debug!(cohort = key.stable_hash(), "starting live-query cohort");
+                LiveQuerySubscription {
+                    alias,
+                    events: receiver,
+                    _cohort: cohort,
+                }
+            }
+        };
+
+        if let Some((events, weak, live)) = new_cohort {
+            let registry = self.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                run_live_query_cohort(registry, key, weak, state, live, events).await;
+            });
+        }
+        subscription
+    }
+
+    fn remove_if_same(&self, key: &exec::LiveQueryKey, cohort: &Weak<LiveQueryCohort>) {
+        let mut cohorts = self.cohorts.lock().expect("live-query registry poisoned");
+        if cohorts
+            .get(key)
+            .is_some_and(|current| Weak::ptr_eq(current, cohort))
+        {
+            cohorts.remove(key);
+        }
+    }
+}
+
+async fn run_live_query_cohort(
+    registry: LiveQueryRegistry,
+    key: exec::LiveQueryKey,
+    cohort: Weak<LiveQueryCohort>,
+    state: AppState,
+    live: exec::CompiledLiveQuery,
+    events: watch::Sender<LiveQueryEvent>,
+) {
+    let poll_interval = state.serve.ws_poll_interval;
+    let jitter = cohort_jitter(&key, poll_interval);
+    let first_tick = tokio::time::Instant::now() + poll_interval + jitter;
+    let mut ticks = tokio::time::interval_at(first_tick, poll_interval);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_payload: Option<Arc<str>> = None;
+    let mut consecutive_failures = 0u32;
+
+    loop {
+        let poll_permit = tokio::select! {
+            _ = events.closed() => break,
+            permit = state.ws_poll_slots.acquire() => match permit {
+                Ok(permit) => permit,
+                Err(_) => break,
+            },
+        };
+        let result = exec::poll_live_query(&state.serve, &live).await;
+        drop(poll_permit);
+
+        match result {
+            Ok(body) => {
+                consecutive_failures = 0;
+                if last_payload.as_deref() != Some(body.as_str()) {
+                    let body: Arc<str> = body.into();
+                    last_payload = Some(body.clone());
+                    if events.send(LiveQueryEvent::Data(body)).is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(error) => {
+                if !error.is_transient_infra()
+                    || consecutive_failures >= SUBSCRIPTION_TRANSIENT_RETRIES
+                {
+                    let _ = events.send(LiveQueryEvent::Error(Arc::new(error)));
+                    break;
+                }
+                consecutive_failures += 1;
+            }
+        }
+
+        tokio::select! {
+            _ = events.closed() => break,
+            _ = ticks.tick() => {}
+        }
+    }
+
+    registry.remove_if_same(&key, &cohort);
+    tracing::debug!(cohort = key.stable_hash(), "stopped live-query cohort");
+}
+
+fn cohort_jitter(key: &exec::LiveQueryKey, interval: Duration) -> Duration {
+    let max_jitter_ms = (interval.as_millis() as u64 / 4).max(1);
+    Duration::from_millis(key.stable_hash() % max_jitter_ms)
+}
+
 struct Connection {
+    id: u64,
     state: AppState,
     protocol: Protocol,
-    sender: mpsc::UnboundedSender<Message>,
+    sender: Outbound,
     upgrade_auth: UpgradeAuth,
     role: Option<Role>,
     /// Live operations by client-assigned id; sending on the channel stops
     /// the poll task.
     operations: HashMap<String, tokio::task::JoinHandle<()>>,
+    operation_done: mpsc::UnboundedSender<String>,
 }
 
 async fn run_connection(
@@ -134,10 +341,13 @@ async fn run_connection(
     tracing::debug!("websocket connection opened");
     let ping_interval = state.serve.ws_ping_interval;
     let dead_after = ping_interval * 2;
+    let init_timeout = state.serve.ws_connection_init_timeout;
     let mut shutdown = state.shutdown.clone();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let (outbound, mut rx) = Outbound::channel(OUTBOUND_QUEUE_CAPACITY);
+    let overflow = outbound.overflow.clone();
+    let (operation_done, mut operation_done_rx) = mpsc::unbounded_channel::<String>();
 
     let mut writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -148,13 +358,18 @@ async fn run_connection(
     });
 
     let mut conn = Connection {
+        id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
         state,
         protocol,
-        sender: tx.clone(),
+        sender: outbound,
         upgrade_auth,
         role: None,
         operations: HashMap::new(),
+        operation_done,
     };
+
+    let init_deadline = tokio::time::sleep(init_timeout);
+    tokio::pin!(init_deadline);
 
     let mut keepalive = tokio::time::interval(KEEPALIVE_INTERVAL);
     keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -172,6 +387,21 @@ async fn run_connection(
 
     loop {
         tokio::select! {
+            _ = &mut init_deadline, if conn.role.is_none() => {
+                tracing::warn!("closing websocket: connection_init timeout");
+                let _ = conn.sender.send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 4408,
+                    reason: "Connection initialisation timeout".into(),
+                })));
+                break;
+            }
+            _ = overflow.notified() => {
+                tracing::warn!("closing websocket: outbound queue limit reached");
+                break;
+            }
+            Some(id) = operation_done_rx.recv() => {
+                conn.operations.remove(&id);
+            }
             _ = keepalive.tick() => {
                 if conn.protocol == Protocol::Legacy && conn.role.is_some() {
                     let _ = conn.sender.send(Message::Text("{\"type\":\"ka\"}".into()));
@@ -212,6 +442,9 @@ async fn run_connection(
             incoming = ws_rx.next() => {
                 let Some(Ok(msg)) = incoming else { break };
                 last_activity = Instant::now();
+                while let Ok(id) = operation_done_rx.try_recv() {
+                    conn.operations.remove(&id);
+                }
                 match msg {
                     Message::Text(text) => {
                         if handle_frame(&mut conn, &text).await.is_err() {
@@ -230,7 +463,7 @@ async fn run_connection(
     for (_, task) in conn.operations.drain() {
         task.abort();
     }
-    drop(tx);
+    drop(conn);
     if tokio::time::timeout(WRITER_DRAIN_TIMEOUT, &mut writer)
         .await
         .is_err()
@@ -255,6 +488,26 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
 
     match frame_type {
         "connection_init" => {
+            if conn.role.is_some() {
+                return match conn.protocol {
+                    Protocol::Modern => {
+                        let _ =
+                            conn.sender
+                                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                                    code: 4429,
+                                    reason: "Too many initialisation requests".into(),
+                                })));
+                        Err(())
+                    }
+                    Protocol::Legacy => {
+                        send_json(
+                            conn,
+                            json!({"type": "connection_error", "payload": {"message": "Too many initialisation requests"}}),
+                        );
+                        Err(())
+                    }
+                };
+            }
             let payload_headers = frame.get("payload").and_then(|p| p.get("headers"));
             // Client-sent payload "headers" keys are arbitrary strings, not
             // normalized HTTP headers -- match them case-insensitively like
@@ -347,6 +600,32 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
                 }
                 return Ok(());
             }
+            if conn.operations.len() >= conn.state.serve.ws_max_operations_per_connection {
+                tracing::warn!(
+                    limit = conn.state.serve.ws_max_operations_per_connection,
+                    "websocket operation rejected: per-connection limit reached"
+                );
+                let _ = conn
+                    .sender
+                    .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                        code: 1008,
+                        reason: "websocket operation limit reached".into(),
+                    })));
+                return Err(());
+            }
+            let operation_permit = match conn.state.ws_operation_slots.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    tracing::warn!("websocket operation rejected: global limit reached");
+                    let _ = conn
+                        .sender
+                        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                            code: 1013,
+                            reason: "global websocket operation limit reached".into(),
+                        })));
+                    return Err(());
+                }
+            };
             let payload = frame.get("payload").cloned().unwrap_or(json!({}));
             let request = GraphQLRequest {
                 query: payload
@@ -359,7 +638,7 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
                     .and_then(|o| o.as_str())
                     .map(String::from),
             };
-            start_operation(conn, role, id, request);
+            start_operation(conn, role, id, request, operation_permit);
             Ok(())
         }
         t if t == conn.protocol.stop_type() => {
@@ -413,25 +692,39 @@ fn send_json(conn: &Connection, value: serde_json::Value) {
     let _ = conn.sender.send(Message::Text(value.to_string().into()));
 }
 
-fn start_operation(conn: &mut Connection, role: Role, id: String, request: GraphQLRequest) {
+fn start_operation(
+    conn: &mut Connection,
+    role: Role,
+    id: String,
+    request: GraphQLRequest,
+    operation_permit: OwnedSemaphorePermit,
+) {
     let state = conn.state.clone();
     let protocol = conn.protocol;
     let sender = conn.sender.clone();
     let op_id = id.clone();
+    let operation_done = conn.operation_done.clone();
+    let connection_id = conn.id;
 
     tracing::debug!(op = %id, "websocket operation started");
     let task = tokio::spawn(async move {
-        run_operation(state, protocol, role, op_id, request, sender).await;
+        let _operation_permit = operation_permit;
+        run_operation(
+            state,
+            protocol,
+            role,
+            connection_id,
+            op_id.clone(),
+            request,
+            sender,
+        )
+        .await;
+        let _ = operation_done.send(op_id);
     });
     conn.operations.insert(id, task);
 }
 
-fn send_frame(
-    sender: &mpsc::UnboundedSender<Message>,
-    frame_type: &str,
-    id: &str,
-    payload_json: Option<&str>,
-) {
+fn send_frame(sender: &Outbound, frame_type: &str, id: &str, payload_json: Option<&str>) {
     let mut out = String::with_capacity(64 + payload_json.map_or(0, |p| p.len()));
     out.push_str("{\"type\":");
     out.push_str(&serde_json::to_string(frame_type).unwrap());
@@ -445,12 +738,7 @@ fn send_frame(
     let _ = sender.send(Message::Text(out.into()));
 }
 
-fn send_error(
-    sender: &mpsc::UnboundedSender<Message>,
-    protocol: Protocol,
-    id: &str,
-    error: &GraphQLError,
-) {
+fn send_error(sender: &Outbound, protocol: Protocol, id: &str, error: &GraphQLError) {
     let payload = match protocol {
         // Modern protocol: a bare array of GraphQL errors.
         Protocol::Modern => serde_json::Value::Array(vec![error.to_json()]).to_string(),
@@ -464,9 +752,10 @@ async fn run_operation(
     state: AppState,
     protocol: Protocol,
     role: Role,
+    connection_id: u64,
     id: String,
     request: GraphQLRequest,
-    sender: mpsc::UnboundedSender<Message>,
+    sender: Outbound,
 ) {
     let schema = state.schemas.for_role(role);
     let operation =
@@ -489,7 +778,16 @@ async fn run_operation(
             }
         }
         ir::OperationKind::Subscription => {
-            run_subscription(state.clone(), protocol, role, id, operation, sender).await
+            run_subscription(
+                state.clone(),
+                protocol,
+                role,
+                connection_id,
+                id,
+                operation,
+                sender,
+            )
+            .await
         }
     }
 }
@@ -501,9 +799,10 @@ async fn run_subscription(
     state: AppState,
     protocol: Protocol,
     role: Role,
+    connection_id: u64,
     id: String,
     mut operation: ir::Operation,
-    sender: mpsc::UnboundedSender<Message>,
+    sender: Outbound,
 ) {
     let schema = state.schemas.for_role(role);
     let is_stream = matches!(
@@ -514,11 +813,32 @@ async fn run_subscription(
         }))
     );
 
+    // Ordinary table subscriptions use one server-wide poll loop per exact
+    // compiled SQL/params/role key. Stream subscriptions retain an
+    // independent cursor and therefore cannot join an ordinary cohort.
+    if !is_stream {
+        if let Some(live) = exec::compile_live_query(&state.serve.model.pg_schema, role, &operation)
+        {
+            let subscription = state.live_queries.subscribe(&state, live);
+            run_live_query_subscription(protocol, id, sender, subscription).await;
+            return;
+        }
+    }
+
     let mut last_payload: Option<String> = None;
     let mut consecutive_failures: u32 = 0;
     // Compiles the stream SQL once, swapping cursor params per poll.
     let mut stream_poller = exec::StreamPoller::new();
+    let poll_interval = state.serve.ws_poll_interval;
+    let jitter = subscription_jitter(connection_id, &id, poll_interval);
+    let first_tick = tokio::time::Instant::now() + poll_interval + jitter;
+    let mut ticks = tokio::time::interval_at(first_tick, poll_interval);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        let poll_permit = match state.ws_poll_slots.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => return,
+        };
         let result = if is_stream {
             match stream_poller.poll(&state.serve, &mut operation).await {
                 // Non-empty batch: emit; the poller advanced the cursor.
@@ -541,6 +861,7 @@ async fn run_subscription(
                 Err(e) => Err(e),
             }
         };
+        drop(poll_permit);
         match result {
             Ok(()) => consecutive_failures = 0,
             Err(e) => {
@@ -556,8 +877,54 @@ async fn run_subscription(
                 consecutive_failures += 1;
             }
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        ticks.tick().await;
     }
+}
+
+async fn run_live_query_subscription(
+    protocol: Protocol,
+    id: String,
+    sender: Outbound,
+    subscription: LiveQuerySubscription,
+) {
+    let LiveQuerySubscription {
+        alias,
+        mut events,
+        _cohort,
+    } = subscription;
+
+    loop {
+        let event = events.borrow_and_update().clone();
+        match event {
+            LiveQueryEvent::Pending => {}
+            LiveQueryEvent::Data(root) => {
+                let alias_json = serde_json::to_string(&alias).unwrap();
+                let mut body = String::with_capacity(alias_json.len() + root.len() + 13);
+                body.push_str("{\"data\":{");
+                body.push_str(&alias_json);
+                body.push(':');
+                body.push_str(&root);
+                body.push_str("}}");
+                send_frame(&sender, protocol.data_type(), &id, Some(&body));
+            }
+            LiveQueryEvent::Error(error) => {
+                send_error(&sender, protocol, &id, &error);
+                return;
+            }
+        }
+
+        if events.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+fn subscription_jitter(connection_id: u64, operation_id: &str, interval: Duration) -> Duration {
+    let max_jitter_ms = (interval.as_millis() as u64 / 4).max(1);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    connection_id.hash(&mut hasher);
+    operation_id.hash(&mut hasher);
+    Duration::from_millis(hasher.finish() % max_jitter_ms)
 }
 
 #[cfg(test)]
@@ -594,5 +961,26 @@ mod tests {
             ],
             [Some(json!({"n": 42})), None, Some(json!(null))]
         );
+    }
+
+    #[tokio::test]
+    async fn outbound_queue_is_bounded_and_reports_overflow() {
+        let (sender, mut receiver) = Outbound::channel(1);
+        sender
+            .send(Message::Text("first".into()))
+            .expect("first message fits");
+        assert!(sender.send(Message::Text("second".into())).is_err());
+        tokio::time::timeout(Duration::from_millis(50), sender.overflow.notified())
+            .await
+            .expect("overflow notification is retained");
+        assert_eq!(receiver.recv().await, Some(Message::Text("first".into())));
+    }
+
+    #[test]
+    fn subscription_jitter_is_stable_and_bounded() {
+        let interval = Duration::from_secs(1);
+        let a = subscription_jitter(7, "operation-a", interval);
+        assert_eq!(a, subscription_jitter(7, "operation-a", interval));
+        assert!(a < Duration::from_millis(250));
     }
 }

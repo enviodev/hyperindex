@@ -10,6 +10,7 @@ use crate::serve::gql::{introspection, schema_build};
 use crate::serve::ServeState;
 use error::GraphQLError;
 use serde::Deserialize;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Deserialize, Clone)]
@@ -107,6 +108,66 @@ pub async fn execute_operation(
     operation: &ir::Operation,
 ) -> Result<String, GraphQLError> {
     with_query_timeout(state, execute_operation_inner(state, schema, operation)).await
+}
+
+/// Identity of one ordinary live-query cohort. The response alias is not
+/// part of the key: subscribers may spell the same root differently while
+/// sharing the exact same database result. Role remains explicit even when
+/// two role-specific plans happen to compile to the same SQL.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LiveQueryKey {
+    role: Role,
+    sql: String,
+    params: Vec<Option<String>>,
+}
+
+impl LiveQueryKey {
+    pub fn stable_hash(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+/// An ordinary (non-stream) table subscription compiled once before it
+/// joins the server-wide polling cohort.
+pub struct CompiledLiveQuery {
+    pub key: LiveQueryKey,
+    pub alias: String,
+    compiled: sql::CompiledRoot,
+}
+
+pub fn compile_live_query(
+    pg_schema: &str,
+    role: Role,
+    operation: &ir::Operation,
+) -> Option<CompiledLiveQuery> {
+    let [ir::RootField::Table(root)] = operation.root_fields.as_slice() else {
+        return None;
+    };
+    if matches!(root.kind, ir::TableRootKind::Stream { .. }) {
+        return None;
+    }
+    let compiled = sql::compile_root_full(pg_schema, root);
+    let key = LiveQueryKey {
+        role,
+        sql: compiled.sql.clone(),
+        params: compiled.params.clone(),
+    };
+    Some(CompiledLiveQuery {
+        key,
+        alias: root.alias.clone(),
+        compiled,
+    })
+}
+
+/// One poll for a precompiled ordinary live query. The timeout covers pool
+/// admission, prepare, execution and result decoding just like HTTP work.
+pub async fn poll_live_query(
+    state: &Arc<ServeState>,
+    live: &CompiledLiveQuery,
+) -> Result<String, GraphQLError> {
+    with_query_timeout(state, sql::execute_root_compiled(state, &live.compiled)).await
 }
 
 /// Executes `_stream` subscription polls for one subscription, compiling
@@ -281,5 +342,46 @@ async fn execute_root_field(
             sql::execute_root(state, table_root, &mut out).await?;
             Ok(out)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn live_operation(alias: &str, id: &str) -> ir::Operation {
+        ir::Operation {
+            kind: ir::OperationKind::Subscription,
+            root_fields: vec![ir::RootField::Table(ir::TableRoot {
+                alias: alias.to_string(),
+                table: "User".to_string(),
+                kind: ir::TableRootKind::ByPk {
+                    pk: vec![("id".to_string(), ir::SqlValue::new(id, "text"))],
+                    selection: ir::ObjectSelection {
+                        table: "User".to_string(),
+                        items: Vec::new(),
+                    },
+                },
+            })],
+        }
+    }
+
+    #[test]
+    fn live_query_cohort_key_uses_sql_params_and_role_but_not_alias() {
+        let public_a = compile_live_query("public", Role::Public, &live_operation("a", "1"))
+            .expect("ordinary table subscription");
+        let public_b = compile_live_query("public", Role::Public, &live_operation("b", "1"))
+            .expect("ordinary table subscription");
+        let different_params =
+            compile_live_query("public", Role::Public, &live_operation("a", "2"))
+                .expect("ordinary table subscription");
+        let different_role = compile_live_query("public", Role::Admin, &live_operation("a", "1"))
+            .expect("ordinary table subscription");
+
+        assert_eq!(public_a.key, public_b.key);
+        assert_eq!(public_a.alias, "a");
+        assert_eq!(public_b.alias, "b");
+        assert_ne!(public_a.key, different_params.key);
+        assert_ne!(public_a.key, different_role.key);
     }
 }

@@ -53,8 +53,33 @@ pub struct ServeEnv {
     pub healthz_timeout_ms: u64,
     /// ENVIO_SERVE_WS_PING_INTERVAL_MS. How often idle WebSocket connections
     /// are pinged; a connection that sends no pong/traffic within 2x this
-    /// interval is treated as dead and closed.
+    /// interval is treated as dead and closed. Hasura's seconds-based
+    /// HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE is accepted as a fallback.
     pub ws_ping_interval_ms: u64,
+    /// ENVIO_SERVE_WS_CONNECTION_INIT_TIMEOUT_MS. Maximum time between the
+    /// WebSocket upgrade and a valid connection_init message. Hasura's
+    /// seconds-based HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT is
+    /// accepted as a fallback.
+    pub ws_connection_init_timeout_ms: u64,
+    /// ENVIO_SERVE_WS_MAX_CONNECTIONS. Hard process-wide cap on upgraded
+    /// WebSocket connections, including connections still waiting for init.
+    pub ws_max_connections: usize,
+    /// ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION. Active GraphQL
+    /// operations allowed on one socket.
+    pub ws_max_operations_per_connection: usize,
+    /// ENVIO_SERVE_WS_MAX_OPERATIONS. Process-wide active WebSocket operation
+    /// cap. This bounds work even when an attacker spreads it across sockets.
+    pub ws_max_operations: usize,
+    /// ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS. Maximum subscription polls that
+    /// may use the shared Postgres pool at once.
+    pub ws_max_concurrent_polls: usize,
+    /// ENVIO_SERVE_WS_POLL_INTERVAL_MS. Refetch interval for live and
+    /// streaming subscriptions. Also accepts Hasura's live-query interval
+    /// setting as a compatibility fallback.
+    pub ws_poll_interval_ms: u64,
+    /// ENVIO_SERVE_WS_MAX_MESSAGE_BYTES. Applied explicitly as both the axum
+    /// WebSocket message and frame limit.
+    pub ws_max_message_bytes: usize,
 }
 
 /// deadpool_postgres::Config defaults to `cpu_core_count * 2` with no upper
@@ -173,6 +198,43 @@ fn parse_positive_ms(raw: Option<String>, name: &str, default: u64) -> anyhow::R
     }
 }
 
+fn parse_positive_usize(raw: Option<String>, name: &str, default: usize) -> anyhow::Result<usize> {
+    match raw {
+        None => Ok(default),
+        Some(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| anyhow!("Invalid {name}: must be a positive integer")),
+    }
+}
+
+fn parse_ms_with_seconds_fallback(
+    milliseconds: Option<String>,
+    seconds: Option<String>,
+    milliseconds_name: &str,
+    seconds_name: &str,
+    default_ms: u64,
+) -> anyhow::Result<u64> {
+    if milliseconds.is_some() {
+        return parse_positive_ms(milliseconds, milliseconds_name, default_ms);
+    }
+    let Some(value) = seconds else {
+        return Ok(default_ms);
+    };
+    let seconds = value
+        .parse::<u64>()
+        .map_err(|_| anyhow!("Invalid {seconds_name}: expected seconds as an integer"))?;
+    if seconds == 0 {
+        return Err(anyhow!(
+            "Invalid {seconds_name}: must be greater than 0 seconds"
+        ));
+    }
+    seconds
+        .checked_mul(1_000)
+        .ok_or_else(|| anyhow!("Invalid {seconds_name}: duration is too large"))
+}
+
 impl ServeEnv {
     pub fn load(project_paths: &ParsedProjectPaths) -> anyhow::Result<ServeEnv> {
         let dotenv = match dotenv::from_path(project_paths.project_root.join(".env")) {
@@ -203,6 +265,37 @@ impl ServeEnv {
             ),
             None => None,
         };
+
+        let pool_max_size = parse_positive_usize(
+            r.var("ENVIO_SERVE_POOL_MAX_SIZE"),
+            "ENVIO_SERVE_POOL_MAX_SIZE",
+            default_pool_max_size(),
+        )?;
+        let ws_max_operations_per_connection = parse_positive_usize(
+            r.var("ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION"),
+            "ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION",
+            50,
+        )?;
+        let ws_max_operations = parse_positive_usize(
+            r.var("ENVIO_SERVE_WS_MAX_OPERATIONS"),
+            "ENVIO_SERVE_WS_MAX_OPERATIONS",
+            1_000,
+        )?;
+        if ws_max_operations_per_connection > ws_max_operations {
+            return Err(anyhow!(
+                "ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION cannot exceed ENVIO_SERVE_WS_MAX_OPERATIONS"
+            ));
+        }
+        let ws_max_concurrent_polls = parse_positive_usize(
+            r.var("ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS"),
+            "ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS",
+            pool_max_size.saturating_sub(2).max(1),
+        )?;
+        if pool_max_size > 1 && ws_max_concurrent_polls >= pool_max_size {
+            return Err(anyhow!(
+                "ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS must be smaller than ENVIO_SERVE_POOL_MAX_SIZE so HTTP retains database capacity"
+            ));
+        }
 
         Ok(ServeEnv {
             pg_host: r.var_dev_fallback("ENVIO_PG_HOST", "localhost")?,
@@ -238,14 +331,7 @@ impl ServeEnv {
                 "ENVIO_SERVE_CONNECT_TIMEOUT_MS",
                 Some(10_000),
             )?,
-            pool_max_size: match r.var("ENVIO_SERVE_POOL_MAX_SIZE") {
-                None => default_pool_max_size(),
-                Some(v) => v
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|n| *n > 0)
-                    .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_POOL_MAX_SIZE"))?,
-            },
+            pool_max_size,
             startup_retry_budget_ms: parse_positive_ms(
                 r.var("ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS"),
                 "ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS",
@@ -256,10 +342,38 @@ impl ServeEnv {
                 "ENVIO_SERVE_HEALTHZ_TIMEOUT_MS",
                 2_000,
             )?,
-            ws_ping_interval_ms: parse_positive_ms(
+            ws_ping_interval_ms: parse_ms_with_seconds_fallback(
                 r.var("ENVIO_SERVE_WS_PING_INTERVAL_MS"),
+                r.var("HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE"),
                 "ENVIO_SERVE_WS_PING_INTERVAL_MS",
+                "HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE",
                 10_000,
+            )?,
+            ws_connection_init_timeout_ms: parse_ms_with_seconds_fallback(
+                r.var("ENVIO_SERVE_WS_CONNECTION_INIT_TIMEOUT_MS"),
+                r.var("HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT"),
+                "ENVIO_SERVE_WS_CONNECTION_INIT_TIMEOUT_MS",
+                "HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT",
+                3_000,
+            )?,
+            ws_max_connections: parse_positive_usize(
+                r.var("ENVIO_SERVE_WS_MAX_CONNECTIONS"),
+                "ENVIO_SERVE_WS_MAX_CONNECTIONS",
+                1_000,
+            )?,
+            ws_max_operations_per_connection,
+            ws_max_operations,
+            ws_max_concurrent_polls,
+            ws_poll_interval_ms: parse_positive_ms(
+                r.var("ENVIO_SERVE_WS_POLL_INTERVAL_MS")
+                    .or_else(|| r.var("HASURA_GRAPHQL_LIVE_QUERIES_MULTIPLEXED_REFETCH_INTERVAL")),
+                "ENVIO_SERVE_WS_POLL_INTERVAL_MS",
+                1_000,
+            )?,
+            ws_max_message_bytes: parse_positive_usize(
+                r.var("ENVIO_SERVE_WS_MAX_MESSAGE_BYTES"),
+                "ENVIO_SERVE_WS_MAX_MESSAGE_BYTES",
+                1024 * 1024,
             )?,
         })
     }
@@ -500,6 +614,55 @@ mod tests {
                 .to_string(),
             "Invalid ENVIO_SERVE_WS_PING_INTERVAL_MS: must be greater than 0 milliseconds"
         );
+    }
+
+    #[test]
+    fn parse_positive_usize_rejects_zero_and_invalid_values() {
+        assert_eq!(
+            [
+                parse_positive_usize(None, "X", 7).ok(),
+                parse_positive_usize(Some("42".to_string()), "X", 7).ok(),
+                parse_positive_usize(Some("0".to_string()), "X", 7).ok(),
+                parse_positive_usize(Some("-1".to_string()), "X", 7).ok(),
+                parse_positive_usize(Some("nope".to_string()), "X", 7).ok(),
+            ],
+            [Some(7), Some(42), None, None, None],
+        );
+    }
+
+    #[test]
+    fn hasura_websocket_seconds_fallback_converts_to_milliseconds() {
+        assert_eq!(
+            parse_ms_with_seconds_fallback(
+                None,
+                Some("3".to_string()),
+                "ENVIO_MS",
+                "HASURA_SECONDS",
+                7,
+            )
+            .unwrap(),
+            3_000
+        );
+        assert_eq!(
+            parse_ms_with_seconds_fallback(
+                Some("25".to_string()),
+                Some("3".to_string()),
+                "ENVIO_MS",
+                "HASURA_SECONDS",
+                7,
+            )
+            .unwrap(),
+            25,
+            "Envio's millisecond setting has precedence"
+        );
+        assert!(parse_ms_with_seconds_fallback(
+            None,
+            Some("0".to_string()),
+            "ENVIO_MS",
+            "HASURA_SECONDS",
+            7,
+        )
+        .is_err());
     }
 
     #[test]

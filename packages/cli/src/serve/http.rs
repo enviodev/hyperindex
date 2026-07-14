@@ -6,7 +6,7 @@ use super::gql::schema_build::Role;
 use super::ServeState;
 use anyhow::Context;
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -23,6 +23,14 @@ pub struct AppState {
     /// connections can close cleanly instead of being dropped at the drain
     /// timeout.
     pub shutdown: tokio::sync::watch::Receiver<bool>,
+    /// Admission controls shared by every WebSocket connection handled by
+    /// this server instance.
+    pub ws_connection_slots: Arc<tokio::sync::Semaphore>,
+    pub ws_operation_slots: Arc<tokio::sync::Semaphore>,
+    pub ws_poll_slots: Arc<tokio::sync::Semaphore>,
+    /// Exact live-query cohorts shared across all sockets. A cohort owns one
+    /// poll loop and fans changed results out to every matching subscriber.
+    pub(crate) live_queries: super::ws::LiveQueryRegistry,
 }
 
 /// How long in-flight requests get to finish after a shutdown signal
@@ -31,6 +39,9 @@ pub struct AppState {
 /// just under Kubernetes' default 30s termination grace period so slow
 /// but legitimate queries get most of the available window.
 const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+/// Keep the historical axum behavior, but make it an intentional API and
+/// security boundary rather than inheriting a dependency default.
+const GRAPHQL_HTTP_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 pub async fn serve(
     state: Arc<ServeState>,
@@ -41,13 +52,22 @@ pub async fn serve(
     let schemas = Arc::new(Schemas::build(&state.model));
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let app_state = AppState {
+        ws_connection_slots: Arc::new(tokio::sync::Semaphore::new(state.ws_max_connections)),
+        ws_operation_slots: Arc::new(tokio::sync::Semaphore::new(state.ws_max_operations)),
+        ws_poll_slots: Arc::new(tokio::sync::Semaphore::new(state.ws_max_concurrent_polls)),
+        live_queries: super::ws::LiveQueryRegistry::default(),
         serve: state,
         schemas,
         shutdown: shutdown_rx.clone(),
     };
 
     let app = Router::new()
-        .route("/v1/graphql", post(graphql_handler).get(ws_or_get_handler))
+        .route(
+            "/v1/graphql",
+            post(graphql_handler)
+                .get(ws_or_get_handler)
+                .layer(DefaultBodyLimit::max(GRAPHQL_HTTP_BODY_LIMIT)),
+        )
         .route("/healthz", get(healthz))
         .route("/hasura/healthz", get(healthz))
         .route("/livez", get(livez))

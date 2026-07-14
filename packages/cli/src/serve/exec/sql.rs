@@ -135,6 +135,21 @@ pub async fn execute_root(
     Ok(())
 }
 
+/// Executes an already-compiled ordinary live-query root and owns the
+/// result so one Postgres response can be fanned out to many subscribers.
+/// Compilation is deliberately outside the poll loop.
+pub async fn execute_root_compiled(
+    state: &Arc<ServeState>,
+    compiled: &CompiledRoot,
+) -> GResult<String> {
+    let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
+    let text: &str = row.try_get(0).map_err(|e| {
+        tracing::warn!(error = %e, "envio serve: live-query root value decode failed");
+        internal_db_error()
+    })?;
+    Ok(text.to_string())
+}
+
 /// Like `execute_root`, but for an already-compiled `_stream` root: also
 /// reads back each cursor column's value for the batch's last row from the
 /// same query result (see `emit_stream_select`), instead of a second,
@@ -239,6 +254,7 @@ fn pg_error(e: tokio_postgres::Error, sql: &str) -> GraphQLError {
     }
 }
 
+#[derive(Clone)]
 pub struct CompiledRoot {
     pub sql: String,
     pub params: Vec<Option<String>>,
