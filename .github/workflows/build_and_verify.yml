@@ -9,17 +9,12 @@ on:
   push:
     branches:
       - main
-  # Nightly: re-record the differential snapshots against live Hasura and
-  # fail on drift (differential-snapshot-drift job below).
-  schedule:
-    - cron: "0 3 * * *"
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -172,6 +167,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 9
+    env:
+      ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
     steps:
       - uses: actions/checkout@v6
@@ -317,46 +314,11 @@ jobs:
         working-directory: packages/e2e-tests
         run: pnpm exec tsx src/differential/diffServe.ts --phase limited
 
-  # Live-Hasura confidence check: the full HTTP + WebSocket-subscription
-  # suite against both engines running live side by side. Slower (~5 min)
-  # and only catches upstream Hasura behavior drift or gaps the snapshot-
-  # based job above can't see (e.g. live-query semantics) - not required,
-  # so a flaky/slow live run never blocks a merge.
+  # Live-Hasura PR validation. Reuse one Postgres + Hasura environment to
+  # verify the committed snapshots, run the full HTTP + WebSocket suite,
+  # and exercise envio serve under a short bounded load. Snapshot drift is
+  # required; the slower live-parity and soak checks remain informational.
   differential-test-live:
-    runs-on: ubuntu-latest
-    needs: build-envio-package
-    timeout-minutes: 15
-    continue-on-error: true
-
-    services:
-      postgres: *postgres-service
-      hasura: *hasura-service
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: ./.github/actions/prepare-envio-artifacts
-
-      - name: Wait for Hasura
-        run: |
-          for i in {1..60}; do
-            if curl -sSf http://localhost:8080/healthz >/dev/null; then
-              echo "Hasura is up"; exit 0; fi; sleep 1; done
-          echo "Hasura did not become ready"; exit 1
-
-      - name: Run live differential suite (HTTP + WebSocket)
-        working-directory: packages/e2e-tests
-        run: pnpm test:differential
-
-  # Nightly snapshot-drift check: re-records the full corpus against the
-  # same live Hasura v2.43 the differential-test-live job uses, then fails
-  # if the freshly recorded snapshots differ from the committed ones —
-  # catching silent drift between the committed oracle and live Hasura.
-  # Schedule-only, so a flaky/slow live run never blocks a PR. Also runs a
-  # short bounded soak smoke against envio serve while the fixture is up.
-  differential-snapshot-drift:
-    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 20
@@ -387,13 +349,20 @@ jobs:
           git add -N packages/e2e-tests/fixtures/differential/snapshots
           git diff --exit-code -- packages/e2e-tests/fixtures/differential/snapshots
 
+      - name: Run live differential suite (HTTP + WebSocket)
+        continue-on-error: true
+        working-directory: packages/e2e-tests
+        run: pnpm test:differential
+
       - name: Start envio serve
+        continue-on-error: true
         uses: ./.github/actions/start-envio-serve
 
       # 60s bounded soak smoke: server stays up, no 5xx, no fd/RSS blowup.
       # p99-drift comparison is meaningless over windows this short on
       # shared runners, so its threshold is effectively disabled.
       - name: Soak smoke (60s)
+        continue-on-error: true
         working-directory: packages/e2e-tests
         run: |
           pnpm exec tsx src/differential/soakLoad.ts \
@@ -453,6 +422,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 9
+    env:
+      ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
     services:
       postgres: *postgres-service
