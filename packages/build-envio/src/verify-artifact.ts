@@ -19,8 +19,16 @@ const REQUIRED_FILES = [
   "index.d.ts",
   "index.js",
   "README.md",
-  "LICENSE.md",
+  "licenses",
   "src",
+];
+
+// License files that must ship inside the licenses/ directory.
+const REQUIRED_LICENSES = [
+  "licenses/EULA.md",
+  "licenses/LICENSE.md",
+  "licenses/CLA.md",
+  "licenses/README.md",
 ];
 
 // Some .res.mjs files that must exist (proves ReScript compiled)
@@ -48,6 +56,13 @@ function verify(dir: string): void {
   for (const entry of fs.readdirSync(dir)) {
     if (!allowed.has(entry)) {
       errors.push(`Unexpected file in artifact: ${entry}`);
+    }
+  }
+
+  // Check license files shipped inside licenses/
+  for (const file of REQUIRED_LICENSES) {
+    if (!fs.existsSync(path.join(dir, file))) {
+      errors.push(`Missing license file: ${file}`);
     }
   }
 

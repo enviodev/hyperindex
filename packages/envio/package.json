@@ -16,7 +16,7 @@
     "watch": "rescript watch"
   },
   "author": "envio contributors <about@envio.dev>",
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "SEE LICENSE IN licenses/EULA.md",
   "bugs": {
     "url": "https://github.com/enviodev/hyperindex/issues"
   },
@@ -42,7 +42,8 @@
     "rescript.json",
     "index.d.ts",
     "index.js",
-    "src"
+    "src",
+    "licenses"
   ],
   "dependencies": {
     "@clickhouse/client": "1.17.0",
