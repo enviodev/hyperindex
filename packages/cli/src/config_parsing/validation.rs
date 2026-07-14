@@ -224,9 +224,10 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
 }
 
 pub fn is_valid_solana_pubkey(s: &str) -> bool {
+    let mut decoded = [0_u8; 32];
     bs58::decode(s)
-        .into_vec()
-        .is_ok_and(|decoded| decoded.len() == 32)
+        .onto(&mut decoded)
+        .is_ok_and(|decoded_len| decoded_len == decoded.len())
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
