@@ -372,7 +372,8 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsEst->Int.toFloat)
+    cs.pendingBudget +.
+    queries->Array.reduce(0., (acc, query) => acc +. query.itemsEst->Int.toFloat)
 }
 
 // Drop every in-flight query and release their reservations together, keeping
@@ -511,6 +512,7 @@ let getNextQuery = (
     ~chainTargetBlock,
     ~chainTargetItems,
     ~chunkItemsMultiplier,
+    ~chainDensity=?cs->effectiveDensity,
   )
 }
 

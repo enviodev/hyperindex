@@ -4373,6 +4373,36 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
       ]),
     )
   })
+
+  it("sizes an open-ended probe by chain density over its range to the target", t => {
+    let fetchState = makeFetchState([
+      makePartition(~id="0", ~address=mockAddress0, ~knownDensity=false, ~pendingItemsTarget=None),
+    ])
+
+    // Given a chain density, the probe is sized to the events its range holds:
+    // density 10 × (100 - 1 + 1) blocks / 1 partition = 1000 items — instead of
+    // the whole 5000 budget share.
+    t.expect(
+      fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=100,
+        ~chainTargetItems=5000.,
+        ~chainDensity=10.,
+      ),
+    ).toEqual(
+      FetchState.Ready([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: None,
+          isChunk: false,
+          itemsTarget: 1000,
+          itemsEst: 1000,
+          selection: normalSelection,
+          addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+        },
+      ]),
+    )
+  })
 })
 
 describe("FetchState.getNextQuery target containment", () => {

@@ -1526,6 +1526,10 @@ let getNextQuery = (
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
   ~chunkItemsMultiplier: float=1.,
+  // Chain-level event density (items/block), when known. Sizes an open-ended
+  // probe by the events its range to the target is expected to hold; falls back
+  // to an even budget share when the chain is cold or already at the target.
+  ~chainDensity: option<float>=?,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -1741,7 +1745,24 @@ let getNextQuery = (
           created := created.contents + 1
         }
       | _ =>
-        let itemsTarget = Pervasives.max(1, Math.round(probeShare)->Float.toInt)
+        // Size the probe by the events its range to the target is expected to
+        // hold — chainDensity × (chainTargetBlock − fromBlock + 1), split across
+        // all partitions. When the chain has no density, or the partition is
+        // already at the target (no range), fall back to an even share of the
+        // fresh budget so several unknown-density partitions still probe in
+        // parallel.
+        let itemsTarget = switch chainDensity {
+        | Some(density) if density > 0. && chainTargetBlock > fs.cursor =>
+          Pervasives.max(
+            1,
+            Math.round(
+              density *.
+              (chainTargetBlock - fs.cursor + 1)->Int.toFloat /.
+              partitionsCount->Int.toFloat,
+            )->Float.toInt,
+          )
+        | _ => Pervasives.max(1, Math.round(probeShare)->Float.toInt)
+        }
         candidates
         ->Array.push({
           partitionId: fs.partitionId,
