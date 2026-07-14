@@ -790,50 +790,39 @@ let updateInternal = (
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
 ): t => {
-  let mutItemsRef = ref(
-    switch mutItems {
-    | Some(items) if !mutItemsSorted => Some([]->mergeIntoBuffer(items))
-    | other => other
-    },
-  )
+  // The buffer to build on: the caller's items (normalized to sorted if needed),
+  // or the current buffer when only onBlock items change.
+  let base = switch mutItems {
+  | Some(items) => mutItemsSorted ? items : []->mergeIntoBuffer(items)
+  | None => fetchState.buffer
+  }
 
+  // onBlock items are generated as their own ascending (block, logIndex) run and
+  // folded into `base` by the single merge below.
+  let blockItems = []
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
   | [] => knownHeight
-  | onBlockRegistrations => {
-      let base = switch mutItemsRef.contents {
-      | Some(mutItems) => mutItems
-      | None => fetchState.buffer
+  | onBlockRegistrations =>
+    // Calculate the max block number we are going to create items for
+    // Use maxOnBlockBufferSize to get the last target item in the buffer
+    // (sorted, so this is the highest-block item within the buffer cap).
+    // All this needed to prevent OOM when adding too many block items to the queue
+    let maxBlockNumber = switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
+    | Some(item) => item->Internal.getItemBlockNumber
+    | None =>
+      switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+      | None => knownHeight
+      | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
       }
-      // Calculate the max block number we are going to create items for
-      // Use maxOnBlockBufferSize to get the last target item in the buffer
-      // (sorted, so this is the highest-block item within the buffer cap).
-      // All this needed to prevent OOM when adding too many block items to the queue
-      let maxBlockNumber = switch base->Array.get(fetchState.maxOnBlockBufferSize - 1) {
-      | Some(item) => item->Internal.getItemBlockNumber
-      | None =>
-        switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-        | None => knownHeight
-        | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
-        }
-      }
-
-      // Generate block items into their own array. appendOnBlockItems emits them
-      // in ascending (block, logIndex) order, so it's a sorted run we merge in.
-      let blockItems = []
-      let latest = appendOnBlockItems(
-        ~mutItems=blockItems,
-        ~onBlockRegistrations,
-        ~indexerStartBlock=fetchState.startBlock,
-        ~fromBlock=fetchState.latestOnBlockBlockNumber,
-        ~maxBlockNumber,
-        ~maxOnBlockBufferSize=fetchState.maxOnBlockBufferSize,
-      )
-      switch blockItems {
-      | [] => ()
-      | _ => mutItemsRef := Some(base->mergeIntoBuffer(blockItems))
-      }
-      latest
     }
+    appendOnBlockItems(
+      ~mutItems=blockItems,
+      ~onBlockRegistrations,
+      ~indexerStartBlock=fetchState.startBlock,
+      ~fromBlock=fetchState.latestOnBlockBlockNumber,
+      ~maxBlockNumber,
+      ~maxOnBlockBufferSize=fetchState.maxOnBlockBufferSize,
+    )
   }
 
   let updatedFetchState = {
@@ -848,9 +837,10 @@ let updateInternal = (
     latestOnBlockBlockNumber,
     blockLag,
     knownHeight,
-    buffer: switch mutItemsRef.contents {
-    | Some(mutItems) => mutItems
-    | None => fetchState.buffer
+    // Single merge point: fold any onBlock items into the sorted base buffer.
+    buffer: switch blockItems {
+    | [] => base
+    | blockItems => base->mergeIntoBuffer(blockItems)
     },
     firstEventBlock: fetchState.firstEventBlock,
   }

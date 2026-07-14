@@ -55,8 +55,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
     },
   ]
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-  let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-  let fetchState = FetchState.make(
+  FetchState.make(
     ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,
@@ -68,7 +67,6 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
     ~onBlockRegistrations?,
     ~knownHeight=0,
   )
-  (fetchState, indexingAddresses)
 }
 
 let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
@@ -86,7 +84,7 @@ describe("FetchState onBlock functionality", () => {
   it("should add block items to queue when processing first batch with onBlock config", t => {
     // Create a fetch state with onBlock config
     let onBlockRegistration = makeOnBlockRegistration(~interval=2, ~startBlock=Some(0))
-    let (fetchState, _) = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration]))
+    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration]))
 
     // Verify initial state - no items in queue
     t.expect(fetchState->FetchState.bufferSize, ~message="Initial queue should be empty").toBe(0)
@@ -139,7 +137,7 @@ describe("FetchState onBlock functionality", () => {
   it("should respect onBlock startBlock configuration", t => {
     // Create onBlock config with startBlock = 5
     let onBlockRegistration = makeOnBlockRegistration(~interval=1, ~startBlock=Some(5))
-    let (fetchState, _) = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration]))
+    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration]))
 
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
@@ -189,7 +187,7 @@ describe("FetchState onBlock functionality", () => {
   it("should respect onBlock endBlock configuration", t => {
     // Create onBlock config with endBlock = 8
     let onBlockRegistration = makeOnBlockRegistration(~interval=1, ~endBlock=Some(8))
-    let (fetchState, _) = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration]))
+    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration]))
 
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
@@ -243,7 +241,7 @@ describe("FetchState onBlock functionality", () => {
     // Create two onBlock configs with different intervals
     let onBlockRegistration1 = makeOnBlockRegistration(~name="config1", ~index=0, ~interval=2)
     let onBlockRegistration2 = makeOnBlockRegistration(~name="config2", ~index=1, ~interval=3)
-    let (fetchState, _) = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration1, onBlockRegistration2]))
+    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration1, onBlockRegistration2]))
 
     // Process a batch
     let query: FetchState.query = {
@@ -300,7 +298,7 @@ describe("FetchState onBlock functionality", () => {
 
   it("should not add block items when onBlock configs are not provided", t => {
     // Create fetch state without onBlock configs
-    let (fetchState, _) = makeInitialWithOnBlock(~onBlockRegistrations=None)
+    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=None)
 
     // Process a batch
     let query: FetchState.query = {
