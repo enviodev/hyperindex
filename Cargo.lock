@@ -1845,6 +1845,7 @@ dependencies = [
  "arrayvec",
  "async-recursion",
  "bollard",
+ "bs58",
  "clap",
  "clap-markdown",
  "colored",
