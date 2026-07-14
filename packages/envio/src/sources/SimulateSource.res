@@ -1,14 +1,6 @@
 let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
-  // Each item is delivered once, by the query that would first return it on a
-  // real source. Retried or overlapping queries skip already-delivered items.
-  let deliveredKeys = Utils.Set.make()
-  let itemKey = (item: Internal.item) =>
-    `${item->Internal.getItemBlockNumber->Int.toString}:${item
-      ->Internal.getItemLogIndex
-      ->Int.toString}`
-
   {
     name: "SimulateSource",
     simulateItems: items,
@@ -39,7 +31,8 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       // in the block range, part of the selection, and (for non-wildcard events)
       // emitted by an address the partition is querying. Wildcard events are
       // over-fetched regardless of srcAddress, leaving the client-side address
-      // filter to gate them exactly as it does for a HyperSync response.
+      // filter to gate them exactly as it does for a HyperSync response. Overlapping
+      // queries may return the same item more than once; the buffer dedups it.
       let toBlockQueried = switch toBlock {
       | Some(toBlock) => toBlock
       | None => reportedHeight
@@ -52,9 +45,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       let parsedQueueItems = items->Array.filter(item => {
         let eventItem = item->Internal.castUnsafeEventItem
         let {blockNumber, onEventRegistration} = eventItem
-        if deliveredKeys->Utils.Set.has(itemKey(item)) {
-          false
-        } else if blockNumber < fromBlock || blockNumber > toBlockQueried {
+        if blockNumber < fromBlock || blockNumber > toBlockQueried {
           false
         } else if !(selectionEventIds->Utils.Set.has(onEventRegistration.eventConfig.id)) {
           false
@@ -65,7 +56,6 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
           contractNameByAddress->Utils.Dict.dangerouslyGetNonOption(sa)->Option.isSome
         }
       })
-      parsedQueueItems->Array.forEach(item => deliveredKeys->Utils.Set.add(itemKey(item))->ignore)
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,

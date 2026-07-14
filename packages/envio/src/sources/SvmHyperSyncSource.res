@@ -285,8 +285,8 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
-  // Definitions drive query/decode building; the registrations drive routing
-  // (they carry `isWildcard` and become each decoded item's `onEventRegistration`).
+  // Definitions drive query/decode building; registrations drive routing and
+  // are attached directly to decoded runtime items.
   let eventConfigs =
     onEventRegistrations->Array.map(reg =>
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
@@ -521,7 +521,7 @@ let make = (
         parsedQueueItems
         ->Array.push(
           Internal.Event({
-            onEventRegistration,
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),

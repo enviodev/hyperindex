@@ -1297,8 +1297,8 @@ let filterByClientAddress = (
 ): array<Internal.item> =>
   items->Array.filter(item =>
     switch item {
-    | Internal.Event({onEventRegistration, payload, blockNumber}) =>
-      switch onEventRegistration.clientAddressFilter {
+    | Internal.Event({payload, blockNumber}) as item =>
+      switch (item->Internal.castUnsafeEventItem).onEventRegistration.clientAddressFilter {
       | Some(filter) =>
         filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
       | None => true
@@ -1313,12 +1313,44 @@ Returns Error if the partition with given query cannot be found (unexpected)
 
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
+// Identity of a fetched event for buffer dedup: (blockNumber, logIndex,
+// registration index). The registration index distinguishes two registrations
+// routing the same log (e.g. a wildcard and a contract-specific handler), which
+// are distinct items and must both survive.
+let eventBufferKey = (item: Internal.item) =>
+  `${item->Internal.getItemBlockNumber->Int.toString}:${item
+    ->Internal.getItemLogIndex
+    ->Int.toString}:${(item->Internal.castUnsafeEventItem).onEventRegistration.index->Int.toString}`
+
 let handleQueryResult = (
   fetchState: t,
   ~query: query,
   ~latestFetchedBlock: blockNumberAndTimestamp,
   ~newItems,
 ): t => {
+  // Overlapping queries (e.g. the same over-fetched log returned by two
+  // partitions) can deliver an event already in the buffer. Drop such
+  // duplicates so it's processed once. newItems are always event items.
+  let newItems = switch newItems {
+  | [] => newItems
+  | _ =>
+    let seen = Utils.Set.make()
+    fetchState.buffer->Array.forEach(item =>
+      switch item {
+      | Internal.Event(_) => seen->Utils.Set.add(item->eventBufferKey)->ignore
+      | _ => ()
+      }
+    )
+    newItems->Array.filter(item => {
+      let key = item->eventBufferKey
+      if seen->Utils.Set.has(key) {
+        false
+      } else {
+        seen->Utils.Set.add(key)->ignore
+        true
+      }
+    })
+  }
   fetchState->updateInternal(
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,

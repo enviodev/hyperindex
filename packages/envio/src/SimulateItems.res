@@ -240,9 +240,12 @@ let deriveSrcAddress = (
   }
 }
 
-let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
-  Internal.item,
-> => {
+let parse = (
+  ~simulateItems: array<JSON.t>,
+  ~config: Config.t,
+  ~chainConfig: Config.chain,
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+): array<Internal.item> => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
@@ -345,6 +348,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~chainId,
         ~eventConfig,
       )
+      // Append into the registration array that the chain state will own and
+      // put that same registration object directly on the simulated item.
+      let onEventRegistrationIndex = onEventRegistrations->Array.length
+      let onEventRegistration = {...onEventRegistration, index: onEventRegistrationIndex}
+      onEventRegistrations->Array.push(onEventRegistration)->ignore
 
       items
       ->Array.push(
@@ -382,7 +390,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
 
 // Apply simulate source config from processConfig JSON to a Config.t
 // This patches chainMap entries that have simulate items with CustomSources
-let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
+let patchConfig = (
+  ~config: Config.t,
+  ~processConfig: JSON.t,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+): Config.t => {
   let processChains: option<dict<JSON.t>> =
     (processConfig->(Utils.magic: JSON.t => {..}))["chains"]->Nullable.toOption
   switch processChains {
@@ -395,12 +407,29 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
         let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
+          let chainRegistrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
+            chainIdStr,
+          ) {
+          | Some(registrations) => registrations
+          | None =>
+            let registrations: HandlerRegister.chainRegistrations = {
+              onEventRegistrations: [],
+              onBlockRegistrations: [],
+            }
+            registrationsByChainId->Dict.set(chainIdStr, registrations)
+            registrations
+          }
           let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
           let chainConfig = {...chainConfig, startBlock, endBlock}
-          let items = parse(~simulateItems, ~config, ~chainConfig)
+          let items = parse(
+            ~simulateItems,
+            ~config,
+            ~chainConfig,
+            ~onEventRegistrations=chainRegistrations.onEventRegistrations,
+          )
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig

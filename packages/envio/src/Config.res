@@ -200,14 +200,18 @@ let svmEventDescriptorSchema = S.schema(s =>
     "transactionFields": s.matches(S.array(Internal.svmTransactionFieldSchema)),
     "blockFields": s.matches(S.option(S.array(Internal.svmBlockFieldSchema))),
     "includeLogs": s.matches(S.bool),
+    // An array of AND-groups OR-ed together: the CLI normalizes both the flat
+    // and `any_of` YAML shapes to `Vec<Vec<SvmAccountFilterJson>>`.
     "accountFilters": s.matches(
       S.option(
         S.array(
-          S.schema(s =>
-            {
-              "position": s.matches(S.int),
-              "values": s.matches(S.array(S.string)),
-            }
+          S.array(
+            S.schema(s =>
+              {
+                "position": s.matches(S.int),
+                "values": s.matches(S.array(S.string)),
+              }
+            ),
           ),
         ),
       ),

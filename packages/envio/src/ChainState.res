@@ -4,6 +4,8 @@
 
 type t = {
   logger: Pino.t,
+  // The registrations used to build this chain's sources and route native items.
+  onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
   // The chain-wide address index. Not `mutable`: the dict is mutated in place by
   // register/rollback, so the reference is stable across fetchState versions.
@@ -71,9 +73,22 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
   addresses
 }
 
+let validateOnEventRegistrations = (
+  ~chainId: int,
+  registrations: array<Internal.onEventRegistration>,
+) =>
+  registrations->Array.forEachWithIndex((registration, expectedIndex) => {
+    if registration.index !== expectedIndex {
+      JsError.throwWithMessage(
+        `Invalid onEvent registration index for chain ${chainId->Int.toString}: ${registration.eventConfig.contractName}.${registration.eventConfig.name} has index ${registration.index->Int.toString}, but its ChainState position is ${expectedIndex->Int.toString}.`,
+      )
+    }
+  })
+
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations=[],
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
@@ -87,22 +102,26 @@ let make = (
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
-  logger,
-  fetchState,
-  indexingAddresses,
-  sourceManager,
-  chainConfig,
-  isProgressAtHead,
-  timestampCaughtUpToHeadOrEndblock,
-  committedProgressBlockNumber,
-  processingBlockNumber: committedProgressBlockNumber,
-  numEventsProcessed,
-  pendingBudget: 0.,
-  chainDensity,
-  reorgDetection,
-  safeCheckpointTracking,
-  transactionStore,
-  blockStore,
+  validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
+  {
+    logger,
+    onEventRegistrations,
+    fetchState,
+    indexingAddresses,
+    sourceManager,
+    chainConfig,
+    isProgressAtHead,
+    timestampCaughtUpToHeadOrEndblock,
+    committedProgressBlockNumber,
+    processingBlockNumber: committedProgressBlockNumber,
+    numEventsProcessed,
+    pendingBudget: 0.,
+    chainDensity,
+    reorgDetection,
+    safeCheckpointTracking,
+    transactionStore,
+    blockStore,
+  }
 }
 
 let makeInternal = (
@@ -238,6 +257,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
+    ~onEventRegistrations,
     ~indexingAddresses=indexingAddressIndex,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
@@ -372,7 +392,8 @@ let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyT
 let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
   cs.fetchState->FetchState.startFetchingQueries(~queries)
   cs.pendingBudget =
-    cs.pendingBudget +. queries->Array.reduce(0., (acc, query) => acc +. query.itemsEst->Int.toFloat)
+    cs.pendingBudget +.
+    queries->Array.reduce(0., (acc, query) => acc +. query.itemsEst->Int.toFloat)
 }
 
 // Drop every in-flight query and release their reservations together, keeping

@@ -49,9 +49,9 @@ let runContractRegistersOrThrow = async (
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem {
-    | {onEventRegistration: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {onEventRegistration: {contractRegister: None, eventConfig: {name: eventName}}} =>
+    let contractRegister = switch eventItem.onEventRegistration {
+    | {contractRegister: Some(contractRegister)} => contractRegister
+    | {contractRegister: None, eventConfig: {name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
       JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
@@ -149,7 +149,9 @@ let rec onQueryResponse = async (
 
     let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
       let eventItem = item->Internal.castUnsafeEventItem
-      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
+      eventItem.onEventRegistration.contractRegister !== None
+        ? count + 1
+        : count
     })
     Logging.trace({
       "msg": "Finished querying",

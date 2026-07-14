@@ -74,14 +74,17 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
   }
 }
 
-let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Internal.Event({
-  chain: ChainMap.Chain.makeUnsafe(~chainId),
-  blockNumber,
-  onEventRegistration: Utils.magic("Mock onEventRegistration in fetchstate test"),
-  logIndex,
-  transactionIndex: 0,
-  payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
-})
+let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1, ~registrationIndex=0): Internal.item =>
+  Internal.Event({
+    chain: ChainMap.Chain.makeUnsafe(~chainId),
+    blockNumber,
+    // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
+    // resolves; the rest of the registration is unused by these tests.
+    onEventRegistration: Utils.magic({"index": registrationIndex}),
+    logIndex,
+    transactionIndex: 0,
+    payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
+  })
 
 let dcToItem = (dc: Internal.indexingAddress) => {
   let item = mockEvent(~blockNumber=dc.registrationBlock)
@@ -2760,7 +2763,10 @@ describe("FetchState unit tests for specific cases", () => {
         blockNumber: 10,
         blockTimestamp: 10,
       },
-      ~newItems=[mockEvent(~blockNumber=4, ~logIndex=1), mockEvent(~blockNumber=4, ~logIndex=1)],
+      ~newItems=[
+        mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=0),
+        mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=1),
+      ],
     )
 
     t.expect(updatedFetchState.buffer, ~message="Should merge events in correct order").toEqual([
@@ -2768,8 +2774,8 @@ describe("FetchState unit tests for specific cases", () => {
       mockEvent(~blockNumber=2),
       mockEvent(~blockNumber=3),
       mockEvent(~blockNumber=4),
-      mockEvent(~blockNumber=4, ~logIndex=1),
-      mockEvent(~blockNumber=4, ~logIndex=1),
+      mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=0),
+      mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=1),
       mockEvent(~blockNumber=4, ~logIndex=2),
     ])
   })
