@@ -1820,7 +1820,21 @@ let getNextQuery = (
     reservations->Array.forEach(((fromBlock, itemsEst)) =>
       acceptanceStream->Array.push((fromBlock, itemsEst, None))->ignore
     )
-    acceptanceStream->Array.sort(((a, _, _), (b, _, _)) => Int.compare(a, b))
+    // Sort by fromBlock; on a tie charge the in-flight reservation (None) before
+    // a fresh candidate (Some), so a same-block candidate can't overshoot the
+    // target buffer. Only a strictly-earlier candidate — a gap-fill, whose
+    // fromBlock precedes the query it unblocks — borrows ahead of a reservation.
+    acceptanceStream->Array.sort(((aFrom, _, aQuery), (bFrom, _, bQuery)) =>
+      if aFrom !== bFrom {
+        Int.compare(aFrom, bFrom)
+      } else {
+        switch (aQuery, bQuery) {
+        | (None, Some(_)) => Ordering.less
+        | (Some(_), None) => Ordering.greater
+        | (None, None) | (Some(_), Some(_)) => Ordering.equal
+        }
+      }
+    )
     let streamCount = acceptanceStream->Array.length
     let remainingBudget = ref(chainTargetItems)
     let acceptIdx = ref(0)
