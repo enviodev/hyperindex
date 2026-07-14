@@ -28,37 +28,37 @@ let decodeLogs = async (
       ]),
     )
   )
-  let mock = await MockRpcServer.make(~getResult=method =>
-    switch method {
-    | "eth_getLogs" => JSON.Array(logJsons)
-    | _ => JSON.Null
-    }
+  await MockRpcServer.withScenario(
+    ~name="native decoder logs",
+    ~calls=[
+      MockRpcServer.expectCall(
+        ~method="eth_getLogs",
+        ~reply=RpcResult(JSON.Array(logJsons)),
+      ),
+    ],
+    async mock => {
+      let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig=EvmChain.getSyncConfig({}),
+        ~eventRegistrations,
+      )
+      // Invert the routing index back into the address form the client expects.
+      let addressesByContractName = Dict.make()
+      contractNameByAddress->Dict.forEachWithKey((contractName, address) => {
+        addressesByContractName->Utils.Dict.push(
+          contractName,
+          address->Address.unsafeFromString,
+        )
+      })
+      let {items} = await client.getNextPage({
+        fromBlock: 0,
+        toBlockCeiling: 0,
+        partitionId: "0",
+        registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
+        addressesByContractName,
+      })
+      items
+    },
   )
-  let client = EvmRpcClient.make(
-    ~url=mock.url,
-    ~checksumAddresses=false,
-    ~syncConfig=EvmChain.getSyncConfig({}),
-    ~eventRegistrations,
-  )
-  // Invert the routing index back into the address form the client expects.
-  let addressesByContractName = Dict.make()
-  contractNameByAddress->Dict.forEachWithKey((contractName, address) => {
-    addressesByContractName->Utils.Dict.push(
-      contractName,
-      address->Address.unsafeFromString,
-    )
-  })
-  let {items} = try await client.getNextPage({
-    fromBlock: 0,
-    toBlockCeiling: 0,
-    partitionId: "0",
-    registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
-    addressesByContractName,
-  }) catch {
-  | exn =>
-    mock.close()
-    throw(exn)
-  }
-  mock.close()
-  items
 }

@@ -206,22 +206,6 @@ impl EvmRpcClient {
         })
     }
 
-    /// Exposes the query's log selections for a given registration selection
-    /// and address index — used by tests and for debugging what a partition
-    /// would fetch.
-    #[napi]
-    pub fn build_log_selections(
-        &self,
-        registration_indexes: Vec<i64>,
-        addresses_by_contract_name: HashMap<String, Vec<String>>,
-    ) -> napi::Result<Vec<BuiltLogSelection>> {
-        let built = self
-            .selection_builder
-            .build(&registration_indexes, &addresses_by_contract_name)
-            .map_err(map_err)?;
-        Ok(built.log_selections)
-    }
-
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
         let height = self.inner.get_height().await.map_err(rpc_error_to_napi)?;

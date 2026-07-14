@@ -214,14 +214,6 @@ module Registration = {
     transactionFields: array<string>,
   }
 
-  // One log selection of a built query, as `buildLogSelections` exposes it
-  // for tests/debugging: empty `addresses` = any address; `topics` has 4
-  // positions, an empty position = match any.
-  type builtLogSelection = {
-    addresses: array<Address.t>,
-    topics: array<array<string>>,
-  }
-
   let toTopicFilterInput = (filter: Internal.topicFilter): topicFilterInput =>
     switch filter {
     | Values(values) => Some(values->EvmTypes.Hex.toStrings)
@@ -321,12 +313,6 @@ type t = {
     ~query: EventItems.query,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
-  // Exposes the query's log selections for a given registration selection and
-  // address index — for tests and debugging what a partition would fetch.
-  buildLogSelections: (
-    array<int>,
-    dict<array<Address.t>>,
-  ) => array<Registration.builtLogSelection>,
 }
 
 @send
