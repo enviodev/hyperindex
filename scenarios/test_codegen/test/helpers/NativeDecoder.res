@@ -23,28 +23,29 @@ let decodeLogs = async (
       ]),
     )
   )
-  let mock = await MockRpcServer.make(~getResult=method =>
-    switch method {
-    | "eth_getLogs" => JSON.Array(logJsons)
-    | _ => JSON.Null
-    }
+  await MockRpcServer.withScenario(
+    ~name="native decoder logs",
+    ~calls=[
+      MockRpcServer.expectCall(
+        ~method="eth_getLogs",
+        ~params=JSON.parseOrThrow(`[{"fromBlock":"0x0","toBlock":"0x0","topics":[]}]`),
+        ~reply=RpcResult(JSON.Array(logJsons)),
+      ),
+    ],
+    async mock => {
+      let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig=EvmChain.getSyncConfig({}),
+        ~allEventParams=eventParams,
+      )
+      let {items} = await client.getNextPage({
+        fromBlock: 0,
+        toBlockCeiling: 0,
+        logSelections: [{topics: []}],
+        partitionId: "0",
+      })
+      items->Array.map(item => item.params)
+    },
   )
-  let client = EvmRpcClient.make(
-    ~url=mock.url,
-    ~checksumAddresses=false,
-    ~syncConfig=EvmChain.getSyncConfig({}),
-    ~allEventParams=eventParams,
-  )
-  let {items} = try await client.getNextPage({
-    fromBlock: 0,
-    toBlockCeiling: 0,
-    logSelections: [{topics: []}],
-    partitionId: "0",
-  }) catch {
-  | exn =>
-    mock.close()
-    throw(exn)
-  }
-  mock.close()
-  items->Array.map(item => item.params)
 }
