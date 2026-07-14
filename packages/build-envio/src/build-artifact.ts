@@ -121,7 +121,7 @@ export function copyReadme(readmePath: string, destDir: string): void {
 /**
  * Copies the licenses directory into the target so every license file (software
  * EULA, SaaS EULA, CLA, overview) ships together and the "SEE LICENSE IN
- * licenses/EULA.md" field resolves for consumers.
+ * licenses/README.md" field resolves for consumers.
  */
 export function copyLicenses(licensesDir: string, destDir: string): void {
   const dest = path.join(destDir, "licenses");
