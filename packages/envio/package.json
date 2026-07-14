@@ -16,7 +16,7 @@
     "watch": "rescript watch"
   },
   "author": "envio contributors <about@envio.dev>",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE.md",
   "bugs": {
     "url": "https://github.com/enviodev/hyperindex/issues"
   },

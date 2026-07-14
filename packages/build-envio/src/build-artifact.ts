@@ -29,6 +29,8 @@ export type BuildOptions = {
   outDir?: string;
   /** Absolute path to the README to copy. Defaults to packages/cli/README.md. */
   readmePath?: string;
+  /** Absolute path to the license to copy. Defaults to licenses/LICENSE.md. */
+  licensePath?: string;
   /** Skip ReScript compilation (useful for tests). */
   skipRescript?: boolean;
 };
@@ -43,6 +45,8 @@ const REPO_ROOT = path.resolve(
 export const ENVIO_DIR = path.join(REPO_ROOT, "packages/envio");
 
 const README_PATH = path.join(REPO_ROOT, "packages/cli/README.md");
+
+const LICENSE_PATH = path.join(REPO_ROOT, "licenses/LICENSE.md");
 
 /** Files/dirs to copy from envio package into dist. */
 const PUBLISH_FILES = [
@@ -115,6 +119,16 @@ export function copyReadme(readmePath: string, destDir: string): void {
 }
 
 /**
+ * Copies the license into the target directory as LICENSE.md so it ships with
+ * the package and the "SEE LICENSE IN LICENSE.md" field resolves for consumers.
+ */
+export function copyLicense(licensePath: string, destDir: string): void {
+  const dest = path.join(destDir, "LICENSE.md");
+  fs.copyFileSync(licensePath, dest);
+  console.log(`Copied license to ${dest}`);
+}
+
+/**
  * Copies a file or directory recursively from src to dest.
  */
 function copyRecursive(src: string, dest: string): void {
@@ -145,12 +159,13 @@ export function copyPublishFiles(envioDir: string, outDir: string): void {
 }
 
 /**
- * Runs the full build: compile ReScript, copy files to dist, write package.json, copy README.
+ * Runs the full build: compile ReScript, copy files to dist, write package.json, copy README and license.
  */
 export function build(opts: BuildOptions): void {
   const envioDir = opts.envioDir ?? ENVIO_DIR;
   const outDir = opts.outDir ?? path.join(envioDir, "dist");
   const readmePath = opts.readmePath ?? README_PATH;
+  const licensePath = opts.licensePath ?? LICENSE_PATH;
   const platformPkgVersion = opts.platformPkgVersion ?? opts.version;
 
   // 1. Compile ReScript (in-source, before copying)
@@ -175,6 +190,9 @@ export function build(opts: BuildOptions): void {
 
   // 5. Copy README
   copyReadme(readmePath, outDir);
+
+  // 6. Copy license
+  copyLicense(licensePath, outDir);
 
   console.log("Build complete.");
 }

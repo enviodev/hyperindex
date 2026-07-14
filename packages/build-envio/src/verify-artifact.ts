@@ -19,6 +19,7 @@ const REQUIRED_FILES = [
   "index.d.ts",
   "index.js",
   "README.md",
+  "LICENSE.md",
   "src",
 ];
 
