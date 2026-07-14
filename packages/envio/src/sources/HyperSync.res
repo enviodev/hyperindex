@@ -38,23 +38,6 @@ module GetLogs = {
 
   exception Error(error)
 
-  let makeRequestBody = (
-    ~fromBlock,
-    ~toBlockInclusive,
-    ~addressesWithTopics,
-    ~fieldSelection,
-    ~maxNumLogs,
-  ): HyperSyncClient.QueryTypes.query => {
-    fromBlock,
-    toBlockExclusive: ?switch toBlockInclusive {
-    | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
-    | None => None
-    },
-    logs: addressesWithTopics,
-    fieldSelection,
-    maxNumLogs,
-  }
-
   // Rust encodes structured failures as a JSON payload in the napi error's
   // message: `{"kind":"MissingFields","fields":["block.timestamp", ...]}`.
   // JSON.parse + shape check is the recovery protocol — no string-grepping
@@ -84,29 +67,17 @@ module GetLogs = {
     ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
-    ~logSelections: array<LogSelection.t>,
-    ~fieldSelection,
     ~maxNumLogs,
+    ~registrationIndexes,
+    ~addressesByContractName,
   ): logsQueryPage => {
-    let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
-      topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
-        let topics = HyperSyncClient.QueryTypes.makeTopicSelection(
-          ~topic0,
-          ~topic1,
-          ~topic2,
-          ~topic3,
-        )
-        HyperSyncClient.QueryTypes.makeLogSelection(~address=addresses, ~topics)
-      })
-    )
-
-    let query = makeRequestBody(
-      ~fromBlock,
-      ~toBlockInclusive=toBlock,
-      ~addressesWithTopics,
-      ~fieldSelection,
-      ~maxNumLogs,
-    )
+    let query: HyperSyncClient.EventItems.query = {
+      fromBlock,
+      toBlock,
+      maxNumLogs,
+      registrationIndexes,
+      addressesByContractName,
+    }
 
     let (res, transactionStore, blockStore) = switch await client.getEventItems(~query) {
     | res => res

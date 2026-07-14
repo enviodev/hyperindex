@@ -13,6 +13,7 @@ type blockStoreCtor
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("EvmHypersyncClient")
   evmHypersyncClient: evmHypersyncClientCtor,

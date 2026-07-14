@@ -236,58 +236,30 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
 
 // ============== Build topic filter getters ==============
 
-let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
-  // Handle array/tuple types - these get keccak256'd
-  if abiType->String.endsWith("]") || abiType->String.startsWith("(") {
-    TopicFilter.castToHexUnsafe->(Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-  } else {
-    switch abiType {
-    | "address" =>
-      // Lowercase before encoding so mixed-case (checksummed) user input
-      // still matches the lowercase hex topics returned by sources.
-
-      (
-        (value: string) =>
-          value->String.toLowerCase->Address.unsafeFromString->TopicFilter.fromAddress
-      )->(Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-
-    | "bool" =>
-      TopicFilter.fromBool->(Utils.magic: (bool => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | "string" =>
-      TopicFilter.fromDynamicString->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | "bytes" =>
-      TopicFilter.fromDynamicBytes->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("uint") =>
-      TopicFilter.fromBigInt->(Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | t if t->String.startsWith("int") =>
-      TopicFilter.fromSignedBigInt->(
-        Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("bytes") =>
-      TopicFilter.castToHexUnsafe->(
-        Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | other => JsError.throwWithMessage(`Unsupported topic filter ABI type: ${other}`)
-    }
-  }
-}
+let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => value =>
+  Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
 let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)
+  let isTuple = p.abiType->String.startsWith("(")
   (eventFilter: dict<JSON.t>) =>
     eventFilter
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
-    ->Option.mapOr([], topicFilters =>
-      topicFilters->(Utils.magic: JSON.t => unknown)->normalizeOrThrow->Array.map(encoder)
-    )
+    ->Option.mapOr([], topicFilters => {
+      let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+      // A tuple filter value is itself an array, so a directly-passed tuple is
+      // indistinguishable from an OR-list by shape alone. A single tuple is
+      // the common case, so try it first; when the value doesn't ABI-encode as
+      // one tuple it must be an OR-list of tuples.
+      if isTuple {
+        switch encoder(raw) {
+        | encoded => [encoded]
+        | exception _ => raw->normalizeOrThrow->Array.map(encoder)
+        }
+      } else {
+        raw->normalizeOrThrow->Array.map(encoder)
+      }
+    })
 }
 
 // ============== Field selection ==============
@@ -452,6 +424,7 @@ let buildEvmOnEventRegistration = (
   }
 
   {
+    index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     handler,
@@ -536,6 +509,7 @@ let buildSvmOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.svmOnEventRegistration => {
+  index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,
@@ -613,6 +587,7 @@ let buildFuelOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
+  index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,

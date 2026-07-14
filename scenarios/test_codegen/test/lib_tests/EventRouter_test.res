@@ -204,20 +204,4 @@ describe("EventRouter", () => {
     },
   )
 
-  it("fromEvmEventModsOrThrow works", t => {
-    let item = MockConfig.getEvmOnEventRegistration(~contractName="Gravatar", ~eventName="NewGravatar")
-    let router = EventRouter.fromEvmEventModsOrThrow([item], ~chain=mockChain)
-
-    t.expect(router).toEqual(
-      mockFromArray([
-        (
-          "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b_1",
-          {
-            wildcard: None,
-            byContractName: Dict.fromArray([("Gravatar", item)]),
-          },
-        ),
-      ]),
-    )
-  })
 })

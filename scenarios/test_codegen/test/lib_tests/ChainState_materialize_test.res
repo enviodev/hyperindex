@@ -5,6 +5,7 @@ open Vitest
 // omitted, the payload is store-backed for that dimension.
 // `transactionMask`/`blockMask` mirror the per-event `onEventRegistration.eventConfig`
 // masks that `ChainState.groupBatchItems` reads for each dimension.
+let materializeChainId = 987
 let makeItem = (
   ~blockNumber,
   ~transactionIndex=0,
@@ -27,9 +28,11 @@ let makeItem = (
     "kind": 0,
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
-    "onEventRegistration": {
-      "eventConfig": {"transactionFieldMask": transactionMask, "blockFieldMask": blockMask},
-    },
+    "chain": ChainMap.Chain.makeUnsafe(~chainId=materializeChainId),
+    "onEventRegistration":
+      {
+        "eventConfig": {"transactionFieldMask": transactionMask, "blockFieldMask": blockMask},
+      }->(Utils.magic: {..} => Internal.onEventRegistration),
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)
 }

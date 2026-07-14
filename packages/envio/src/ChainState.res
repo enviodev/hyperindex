@@ -4,6 +4,8 @@
 
 type t = {
   logger: Pino.t,
+  // The registrations used to build this chain's sources and route native items.
+  onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
   // The chain-wide address index. Not `mutable`: the dict is mutated in place by
   // register/rollback, so the reference is stable across fetchState versions.
@@ -65,9 +67,22 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
   addresses
 }
 
+let validateOnEventRegistrations = (
+  ~chainId: int,
+  registrations: array<Internal.onEventRegistration>,
+) =>
+  registrations->Array.forEachWithIndex((registration, expectedIndex) => {
+    if registration.index !== expectedIndex {
+      JsError.throwWithMessage(
+        `Invalid onEvent registration index for chain ${chainId->Int.toString}: ${registration.eventConfig.contractName}.${registration.eventConfig.name} has index ${registration.index->Int.toString}, but its ChainState position is ${expectedIndex->Int.toString}.`,
+      )
+    }
+  })
+
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations=[],
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -81,21 +96,25 @@ let make = (
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
-  logger,
-  fetchState,
-  indexingAddresses,
-  sourceManager,
-  chainConfig,
-  isProgressAtHead,
-  timestampCaughtUpToHeadOrEndblock,
-  committedProgressBlockNumber,
-  numEventsProcessed,
-  pendingBudget: 0.,
-  safeCheckpointTracking,
-  shouldRollbackOnReorg,
-  maxReorgDepth,
-  transactionStore,
-  blockStore,
+  validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
+  {
+    logger,
+    fetchState,
+    onEventRegistrations,
+    indexingAddresses,
+    sourceManager,
+    chainConfig,
+    isProgressAtHead,
+    timestampCaughtUpToHeadOrEndblock,
+    committedProgressBlockNumber,
+    numEventsProcessed,
+    pendingBudget: 0.,
+    safeCheckpointTracking,
+    shouldRollbackOnReorg,
+    maxReorgDepth,
+    transactionStore,
+    blockStore,
+  }
 }
 
 let makeInternal = (
@@ -224,6 +243,7 @@ let makeInternal = (
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,
   )
+
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
   // against the hashes scanned before the restart.
   if chainReorgCheckpoints->Utils.Array.notEmpty {
@@ -247,6 +267,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
+    ~onEventRegistrations,
     ~indexingAddresses=indexingAddressIndex,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,

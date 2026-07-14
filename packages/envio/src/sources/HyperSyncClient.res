@@ -181,29 +181,114 @@ module ResponseTypes = {
 
 type query = QueryTypes.query
 
-module Decoder = {
-  type eventParamsInput = {
+module Registration = {
+  // One topic position of the resolved `where`: static topic values, or
+  // `None` — the "currently registered addresses of this contract" marker,
+  // expanded to padded address topics when Rust builds a query.
+  type topicFilterInput = option<array<string>>
+
+  type topicSelectionInput = {
+    topic0: array<string>,
+    topic1: topicFilterInput,
+    topic2: topicFilterInput,
+    topic3: topicFilterInput,
+  }
+
+  // The full per-(event, chain) registration passed to the Rust clients at
+  // construction: decode metadata, routing identity, and the fetch state
+  // queries are built from.
+  type input = {
+    // Chain-scoped sequential registration index, echoed back on routed items.
+    index: int,
     sighash: string,
     topicCount: int,
     eventName: string,
     contractName: string,
+    isWildcard: bool,
+    dependsOnAddresses: bool,
     params: array<Internal.paramMeta>,
+    topicSelections: array<topicSelectionInput>,
+    // Capitalized field names matching the Rust BlockField/TransactionField
+    // string enums.
+    blockFields: array<string>,
+    transactionFields: array<string>,
+  }
+
+  // One log selection of a built query, as `buildLogSelections` exposes it
+  // for tests/debugging: empty `addresses` = any address; `topics` has 4
+  // positions, an empty position = match any.
+  type builtLogSelection = {
+    addresses: array<Address.t>,
+    topics: array<array<string>>,
+  }
+
+  let toTopicFilterInput = (filter: Internal.topicFilter): topicFilterInput =>
+    switch filter {
+    | Values(values) => Some(values->EvmTypes.Hex.toStrings)
+    | ContractAddresses(_) => None
+    }
+
+  let fromOnEventRegistrations = (
+      onEventRegistrations: array<Internal.evmOnEventRegistration>,
+    ): array<input> => {
+    onEventRegistrations->Array.map(reg => {
+      let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      {
+        index: reg.index,
+        sighash: event.sighash,
+        topicCount: event.topicCount,
+        eventName: event.name,
+        contractName: event.contractName,
+        isWildcard: reg.isWildcard,
+        dependsOnAddresses: reg.dependsOnAddresses,
+        params: event.paramsMetadata,
+        topicSelections: reg.resolvedWhere.topicSelections->Array.map((
+          ts
+        ): topicSelectionInput => {
+          topic0: ts.topic0->EvmTypes.Hex.toStrings,
+          topic1: ts.topic1->toTopicFilterInput,
+          topic2: ts.topic2->toTopicFilterInput,
+          topic3: ts.topic3->toTopicFilterInput,
+        }),
+        // Capitalized to match the Rust BlockField/TransactionField string
+        // enums.
+        blockFields: event.selectedBlockFields
+        ->Utils.Set.toArray
+        ->Array.map(name => (name :> string)->Utils.String.capitalize),
+        transactionFields: event.selectedTransactionFields
+        ->Utils.Set.toArray
+        ->Array.map(name => (name :> string)->Utils.String.capitalize),
+      }
+    })
   }
 }
 
 module EventItems = {
+  // The whole per-query input: block range, the partition's registration
+  // selection (by id), and its current addresses. Log selections, field
+  // selection, and the routing index are derived on the Rust side.
+  type query = {
+    fromBlock: int,
+    // Inclusive; None queries to the end of available data.
+    toBlock: option<int>,
+    maxNumLogs: int,
+    registrationIndexes: array<int>,
+    addressesByContractName: dict<array<Address.t>>,
+  }
+
   type item = {
     logIndex: int,
     srcAddress: Address.t,
-    topic0: EvmTypes.Hex.t,
-    topicCount: int,
     // Number of the block this log belongs to; the block itself is resolved from
     // `response.blocks`, deduplicated across items sharing a block.
     blockNumber: int,
     // Key (with the block number) into the transaction store; the transaction
     // is resolved from the store on demand.
     transactionIndex: int,
-    params: Nullable.t<dict<Internal.eventParams>>,
+    // The registration this log routed to, by chain-scoped index. Logs that
+    // route to no registration never cross the boundary.
+    onEventRegistrationIndex: int,
+    params: Internal.eventParams,
   }
 
   // The always-needed block fields, one per block number. The block's remaining
@@ -233,9 +318,15 @@ type t = {
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
   getEventItems: (
-    ~query: query,
+    ~query: EventItems.query,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
+  // Exposes the query's log selections for a given registration selection and
+  // address index — for tests and debugging what a partition would fetch.
+  buildLogSelections: (
+    array<int>,
+    dict<array<Address.t>>,
+  ) => array<Registration.builtLogSelection>,
 }
 
 @send
@@ -243,11 +334,11 @@ external classNew: (
   Core.evmHypersyncClientCtor,
   cfg,
   string,
-  array<Decoder.eventParamsInput>,
+  array<Registration.input>,
 ) => t = "new"
 
-let makeWithAgent = (cfg, ~userAgent, ~eventParams) =>
-  Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventParams)
+let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations) =>
+  Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventRegistrations)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -265,7 +356,7 @@ let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
-  ~eventParams,
+  ~eventRegistrations,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -291,6 +382,6 @@ let make = (
       logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
-    ~eventParams,
+    ~eventRegistrations,
   )
 }
