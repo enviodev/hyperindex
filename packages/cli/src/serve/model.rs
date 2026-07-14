@@ -103,6 +103,9 @@ pub struct Column {
     /// Actual database column name.
     pub db_name: String,
     pub pg_type: String,
+    /// Namespace owning `pg_type`; kept separate because GraphQL exposes
+    /// the bare type name while SQL casts must qualify custom types.
+    pub pg_type_schema: String,
     pub scalar: Scalar,
     pub is_array: bool,
     pub nullable: bool,
@@ -200,6 +203,7 @@ impl ServerModel {
                             api_name: c.name.clone(),
                             db_name: c.name.clone(),
                             pg_type: c.pg_type.clone(),
+                            pg_type_schema: c.pg_type_schema.clone(),
                             scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
                             is_array: c.is_array,
                             nullable: c.nullable,
@@ -266,6 +270,7 @@ impl ServerModel {
                         api_name,
                         db_name: c.name.clone(),
                         pg_type: c.pg_type.clone(),
+                        pg_type_schema: c.pg_type_schema.clone(),
                         scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
                         is_array: c.is_array,
                         nullable: c.nullable,
@@ -349,6 +354,7 @@ impl ServerModel {
                             api_name: c.name.clone(),
                             db_name: c.name.clone(),
                             pg_type: c.pg_type.clone(),
+                            pg_type_schema: c.pg_type_schema.clone(),
                             scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
                             is_array: c.is_array,
                             nullable: c.nullable,
@@ -450,6 +456,7 @@ mod tests {
                 .map(|c| pg_catalog::Column {
                     name: c.to_string(),
                     pg_type: "text".to_string(),
+                    pg_type_schema: "pg_catalog".to_string(),
                     is_array: false,
                     nullable: false,
                     is_enum: false,

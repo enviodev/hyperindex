@@ -29,6 +29,9 @@ pub struct Column {
     /// Base type name from pg_type (e.g. "text", "int4", "numeric",
     /// "timestamptz", or an enum type name like "accounttype").
     pub pg_type: String,
+    /// Namespace owning the base/element type (`pg_catalog` for builtins,
+    /// the project schema for enums and other custom types).
+    pub pg_type_schema: String,
     pub is_array: bool,
     pub nullable: bool,
     pub is_enum: bool,
@@ -48,6 +51,11 @@ pub async fn introspect(
               c.relkind::text AS relkind,
               a.attname::text AS column_name,
               CASE WHEN t.typtype = 'd' THEN bt_base.typname ELSE base_t.typname END::text AS pg_type,
+              CASE
+                WHEN t.typtype = 'd' THEN bt_ns.nspname
+                WHEN t.typcategory = 'A' THEN elem_ns.nspname
+                ELSE type_ns.nspname
+              END::text AS pg_type_schema,
               (t.typcategory = 'A')::bool AS is_array,
               NOT (a.attnotnull)::bool AS nullable,
               (CASE WHEN t.typcategory = 'A' THEN elem_t.typtype ELSE t.typtype END = 'e')::bool AS is_enum,
@@ -58,6 +66,9 @@ pub async fn introspect(
             JOIN pg_type t ON t.oid = a.atttypid
             LEFT JOIN pg_type elem_t ON elem_t.oid = t.typelem
             LEFT JOIN pg_type bt_base ON t.typtype = 'd' AND bt_base.oid = t.typbasetype
+            LEFT JOIN pg_namespace type_ns ON type_ns.oid = t.typnamespace
+            LEFT JOIN pg_namespace elem_ns ON elem_ns.oid = elem_t.typnamespace
+            LEFT JOIN pg_namespace bt_ns ON bt_ns.oid = bt_base.typnamespace
             JOIN LATERAL (
               SELECT CASE WHEN t.typcategory = 'A' THEN elem_t.typname ELSE t.typname END AS typname
             ) base_t ON true
@@ -105,6 +116,7 @@ pub async fn introspect(
         relation.columns.push(Column {
             name: row.get("column_name"),
             pg_type: row.get("pg_type"),
+            pg_type_schema: row.get("pg_type_schema"),
             is_array: row.get("is_array"),
             nullable: row.get("nullable"),
             is_enum: row.get("is_enum"),

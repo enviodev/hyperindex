@@ -1,7 +1,7 @@
 use super::bool_exp::coerce_bool_exp;
 use super::coerce::{
     coerce_column_value, coerce_enum, coerce_limit, coerce_offset, coerce_string_strict,
-    parse_json_path,
+    column_pg_cast, parse_json_path,
 };
 use super::selection::Flat;
 use super::{
@@ -130,7 +130,15 @@ pub(super) fn coerce_by_pk_args<'a>(
         let col = table
             .column_by_api_name(&arg.name)
             .expect("by_pk argument must be a table column");
-        let value = coerce_column_value(ctx, col.scalar, &col.pg_type, col.is_array, v, &path)?;
+        let value = coerce_column_value(
+            ctx,
+            col.scalar,
+            &col.pg_type,
+            &col.pg_type_schema,
+            col.is_array,
+            v,
+            &path,
+        )?;
         pk.push((col.db_name.clone(), value));
     }
     Ok(pk)
@@ -213,6 +221,7 @@ pub(super) fn coerce_stream_args<'a>(
                     ctx,
                     col.scalar,
                     &col.pg_type,
+                    &col.pg_type_schema,
                     col.is_array,
                     v,
                     &vpath,
@@ -220,9 +229,7 @@ pub(super) fn coerce_stream_args<'a>(
             };
             cursor.push(ir::StreamCursor {
                 column: col.db_name.clone(),
-                scalar: col.scalar,
-                pg_type: col.pg_type.clone(),
-                is_array: col.is_array,
+                cast: column_pg_cast(col.scalar, &col.pg_type, &col.pg_type_schema, col.is_array),
                 initial_value,
                 descending,
             });

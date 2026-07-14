@@ -109,6 +109,14 @@ fn comparison_type_name(scalar: Scalar, pg_type: &str, is_array: bool) -> String
     }
 }
 
+#[derive(Clone, Copy)]
+struct ComparisonColumn<'a> {
+    scalar: Scalar,
+    pg_type: &'a str,
+    pg_type_schema: &'a str,
+    is_array: bool,
+}
+
 fn coerce_comparison<'a>(
     ctx: &'a Ctx<'a>,
     col: &Column,
@@ -118,9 +126,12 @@ fn coerce_comparison<'a>(
     let type_name = comparison_type_name(col.scalar, &col.pg_type, col.is_array);
     coerce_comparison_ops(
         ctx,
-        col.scalar,
-        &col.pg_type,
-        col.is_array,
+        ComparisonColumn {
+            scalar: col.scalar,
+            pg_type: &col.pg_type,
+            pg_type_schema: &col.pg_type_schema,
+            is_array: col.is_array,
+        },
         &type_name,
         v,
         path,
@@ -129,9 +140,7 @@ fn coerce_comparison<'a>(
 
 fn coerce_comparison_ops<'a>(
     ctx: &'a Ctx<'a>,
-    scalar: Scalar,
-    pg_type: &str,
-    is_array: bool,
+    column: ComparisonColumn<'_>,
     type_name: &str,
     v: V<'a>,
     path: &str,
@@ -158,8 +167,17 @@ fn coerce_comparison_ops<'a>(
             Some(fd) => resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &opath)?,
             None => value,
         };
-        let scalar_value =
-            |v: V<'a>, p: &str| coerce_column_value(ctx, scalar, pg_type, is_array, v, p);
+        let scalar_value = |v: V<'a>, p: &str| {
+            coerce_column_value(
+                ctx,
+                column.scalar,
+                column.pg_type,
+                column.pg_type_schema,
+                column.is_array,
+                v,
+                p,
+            )
+        };
         let list_value = |v: V<'a>, p: &str| -> GResult<Vec<ir::SqlValue>> {
             let items = expect_list(v, p)?;
             let mut out = Vec::new();
@@ -220,9 +238,12 @@ fn coerce_comparison_ops<'a>(
                     }
                     let text_ops = coerce_comparison_ops(
                         ctx,
-                        Scalar::String,
-                        "text",
-                        false,
+                        ComparisonColumn {
+                            scalar: Scalar::String,
+                            pg_type: "text",
+                            pg_type_schema: "pg_catalog",
+                            is_array: false,
+                        },
                         "String_comparison_exp",
                         cv,
                         &cpath,
@@ -327,7 +348,16 @@ fn coerce_aggregate_bool_exp<'a>(
                         (Scalar::Boolean, "bool", "Boolean_comparison_exp")
                     };
                     predicate = Some(coerce_comparison_ops(
-                        ctx, scalar, pg, false, cmp, kv, &kpath,
+                        ctx,
+                        ComparisonColumn {
+                            scalar,
+                            pg_type: pg,
+                            pg_type_schema: "pg_catalog",
+                            is_array: false,
+                        },
+                        cmp,
+                        kv,
+                        &kpath,
                     )?);
                 }
                 _ => {}

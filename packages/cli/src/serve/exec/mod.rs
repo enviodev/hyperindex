@@ -256,12 +256,7 @@ impl StreamPoller {
             unreachable!("checked above");
         };
         if let ir::TableRootKind::Stream { cursor, .. } = &mut root.kind {
-            for (sc, v) in cursor.iter_mut().zip(&values) {
-                sc.initial_value = Some(ir::SqlValue {
-                    text: v.clone(),
-                    cast: sc.pg_type.clone(),
-                });
-            }
+            update_stream_cursor_positions(cursor, &values);
         }
         let new_shape = cursor_shape(root);
         let c = self.compiled.as_mut().unwrap();
@@ -273,6 +268,15 @@ impl StreamPoller {
             self.compiled = None;
         }
         Ok(Some(out))
+    }
+}
+
+fn update_stream_cursor_positions(cursors: &mut [ir::StreamCursor], values: &[Option<String>]) {
+    for (cursor, value) in cursors.iter_mut().zip(values) {
+        cursor.initial_value = Some(ir::SqlValue {
+            text: value.clone(),
+            cast: cursor.cast.clone(),
+        });
     }
 }
 
@@ -383,5 +387,21 @@ mod tests {
         assert_eq!(public_b.alias, "b");
         assert_ne!(public_a.key, different_params.key);
         assert_ne!(public_a.key, different_role.key);
+    }
+
+    #[test]
+    fn stream_cursor_advance_preserves_array_cast() {
+        let mut cursors = vec![ir::StreamCursor {
+            column: "tags".to_string(),
+            cast: "text[]".to_string(),
+            initial_value: None,
+            descending: false,
+        }];
+        update_stream_cursor_positions(&mut cursors, &[Some("{a,b}".to_string())]);
+        let advanced = cursors[0].initial_value.as_ref().unwrap();
+        assert_eq!(
+            (advanced.text.as_deref(), advanced.cast.as_str()),
+            (Some("{a,b}"), "text[]")
+        );
     }
 }

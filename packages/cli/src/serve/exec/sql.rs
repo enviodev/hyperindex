@@ -423,6 +423,13 @@ impl<'a> Sql<'a> {
     fn push_cast(&mut self, cast: &str) {
         self.text.push_str("::");
         let base = cast.trim_end_matches("[]");
+        // Custom casts are pre-quoted as `"schema"."type"` by the
+        // coercion layer using catalog-owned identifiers. Keep that safe,
+        // qualified form intact instead of quoting it as one identifier.
+        if base.starts_with('"') {
+            self.text.push_str(cast);
+            return;
+        }
         let plain = !base.is_empty()
             && base
                 .chars()
@@ -920,6 +927,10 @@ fn alloc_rel_aliases(b: &mut Sql, sel: &ir::ObjectSelection) -> Vec<Option<Alias
 
 /// `row_to_json((SELECT "_e" FROM (SELECT <items>) AS "_e"))`
 fn emit_row_json(b: &mut Sql, t: Alias, sel: &ir::ObjectSelection, rel_aliases: &[Option<Alias>]) {
+    if sel.items.is_empty() {
+        b.push("'{}'::json");
+        return;
+    }
     b.push("row_to_json((SELECT \"_e\" FROM (SELECT ");
     for (i, item) in sel.items.iter().enumerate() {
         if i > 0 {
@@ -1245,6 +1256,42 @@ fn emit_agg_middle(
     with_row_numbers: bool,
 ) {
     let order_in_base = ra.order_in_base();
+    // Relationship order targets are resolved at this middle level, so its
+    // OFFSET/LIMIT/DISTINCT clauses run after window functions. Number the
+    // already-paginated rows in one extra layer; otherwise `_rn <= n`
+    // applies the public nodes cap to pre-offset row numbers and can return
+    // fewer than n nodes (or none at all).
+    if with_row_numbers && !order_in_base {
+        b.push("SELECT \"_p\".*, row_number() OVER (");
+        emit_order_by_refs(b, &ra.order);
+        b.push(") AS \"_rn\" FROM (");
+        emit_agg_middle_rows(b, table, ra, cols, nodes, corr, false, order_in_base);
+        b.push(") AS \"_p\"");
+        return;
+    }
+    emit_agg_middle_rows(
+        b,
+        table,
+        ra,
+        cols,
+        nodes,
+        corr,
+        with_row_numbers,
+        order_in_base,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_agg_middle_rows(
+    b: &mut Sql,
+    table: &str,
+    ra: &RowsArgs,
+    cols: &[String],
+    nodes: &[&ir::ObjectSelection],
+    corr: Option<&Corr>,
+    with_row_numbers: bool,
+    order_in_base: bool,
+) {
     let t = b.alias();
     let node_rel_aliases: Vec<Vec<Option<Alias>>> =
         nodes.iter().map(|sel| alloc_rel_aliases(b, sel)).collect();
@@ -1465,12 +1512,13 @@ fn emit_bool(b: &mut Sql, t: Alias, e: &ir::BoolExp) {
             if pred.predicate.is_empty() {
                 b.push("('true')");
             } else {
+                let result_type = if pred.op == "count" { "int4" } else { "bool" };
                 b.push("(");
                 for (i, op) in pred.predicate.iter().enumerate() {
                     if i > 0 {
                         b.push(" AND ");
                     }
-                    emit_compare(b, "(\"_sub\".\"_agg\")", op, "int4");
+                    emit_compare(b, "(\"_sub\".\"_agg\")", op, result_type);
                 }
                 b.push(")");
             }
@@ -1714,6 +1762,27 @@ mod tests {
                 ]
             )
         );
+    }
+
+    #[test]
+    fn directive_skipped_empty_selection_emits_empty_objects() {
+        let root = ir::TableRoot {
+            alias: "User".to_string(),
+            table: "User".to_string(),
+            kind: ir::TableRootKind::Many {
+                args: ir::SelectArgs::default(),
+                selection: ir::ObjectSelection {
+                    table: "User".to_string(),
+                    items: vec![],
+                },
+            },
+        };
+        let (sql, params) = compile_root("public", &root);
+        assert!(
+            sql.contains("SELECT '{}'::json AS \"_v\""),
+            "empty selections must compile to valid empty JSON objects: {sql}"
+        );
+        assert!(params.is_empty());
     }
 
     #[test]
@@ -1975,6 +2044,79 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_nodes_limit_numbers_after_relationship_order_pagination() {
+        let root = ir::TableRoot {
+            alias: "Token_aggregate".to_string(),
+            table: "Token".to_string(),
+            kind: ir::TableRootKind::Aggregate {
+                args: ir::SelectArgs {
+                    order_by: vec![ir::OrderByItem {
+                        target: ir::OrderTarget::ObjectRelColumn {
+                            path: vec![("owner_id".to_string(), "User".to_string())],
+                            column: "id".to_string(),
+                        },
+                        direction: ir::OrderDirection::Asc,
+                    }],
+                    offset: Some(5),
+                    ..Default::default()
+                },
+                selection: ir::AggregateSelection {
+                    table: "Token".to_string(),
+                    items: vec![ir::AggSelItem::Nodes {
+                        alias: "nodes".to_string(),
+                        selection: ir::ObjectSelection {
+                            table: "Token".to_string(),
+                            items: vec![col("id", "id", Scalar::String, "text")],
+                        },
+                    }],
+                    nodes_limit: Some(5),
+                },
+            },
+        };
+        let (sql, params) = compile_root("public", &root);
+        assert!(
+            sql.contains("FROM (SELECT \"_p\".*, row_number() OVER"),
+            "row numbering must wrap the relationship-ordered OFFSET subquery: {sql}"
+        );
+        assert_eq!(params, vec![Some("5".to_string())]);
+    }
+
+    #[test]
+    fn bool_aggregate_predicate_empty_in_uses_bool_array_cast() {
+        let root = ir::TableRoot {
+            alias: "User".to_string(),
+            table: "User".to_string(),
+            kind: ir::TableRootKind::Many {
+                args: ir::SelectArgs {
+                    where_: Some(ir::BoolExp::ArrayRelAggregate {
+                        remote_column: "user_id".to_string(),
+                        remote_table: "Token".to_string(),
+                        pred: ir::AggregatePredicate {
+                            op: "bool_and".to_string(),
+                            columns: vec!["enabled".to_string()],
+                            distinct: false,
+                            filter: None,
+                            predicate: vec![ir::CompareOp::In(vec![])],
+                        },
+                    }),
+                    ..Default::default()
+                },
+                selection: ir::ObjectSelection {
+                    table: "User".to_string(),
+                    items: vec![col("id", "id", Scalar::String, "text")],
+                },
+            },
+        };
+        let (sql, params) = compile_root("public", &root);
+        assert!(
+            sql.contains("::bool[]"),
+            "bool aggregate predicates need a boolean empty-array cast: {sql}"
+        );
+        assert!(!sql.contains("::int4[]"), "unexpected integer cast: {sql}");
+        assert_eq!(params, vec![Some("{}".to_string())]);
+    }
+
+    #[test]
     fn relationships_and_rel_order() {
         let root = ir::TableRoot {
             alias: "Gravatar".to_string(),
@@ -2068,9 +2210,7 @@ mod tests {
     ) -> ir::StreamCursor {
         ir::StreamCursor {
             column: column.to_string(),
-            scalar: Scalar::Numeric,
-            pg_type: "numeric".to_string(),
-            is_array: false,
+            cast: "numeric".to_string(),
             initial_value,
             descending,
         }

@@ -1,3 +1,4 @@
+use super::coerce::parse_decimal;
 use super::{depth_error, invalid_query, GResult, MAX_DEPTH};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -17,6 +18,9 @@ use std::fmt::Write as _;
 pub(super) struct Prescan {
     pub(super) rewritten: String,
     pub(super) int_originals: HashMap<i64, String>,
+    /// All float literals that cannot round-trip through f64, keyed by the
+    /// unique finite sentinel substituted into the parser input.
+    pub(super) float_originals: HashMap<u64, String>,
     /// f64-overflowing float literals were rewritten to per-occurrence
     /// finite sentinel values before parsing; this maps each sentinel's bit
     /// pattern back to the original digits. Keyed per occurrence (like
@@ -239,11 +243,13 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
     // value we can map back to the original text for error display.
     enum Rewrite {
         Int,
-        Float,
+        Float { overflow: bool },
     }
     let mut int_originals: HashMap<i64, String> = HashMap::new();
+    let mut float_originals: HashMap<u64, String> = HashMap::new();
     let mut inf_float_originals: HashMap<u64, String> = HashMap::new();
     let mut taken_int_values: HashSet<i64> = HashSet::new();
+    let mut taken_float_values: HashSet<u64> = HashSet::new();
     let mut rewrites: Vec<(usize, Rewrite)> = Vec::new();
     for (idx, t) in toks.iter().enumerate() {
         match t.kind {
@@ -255,8 +261,13 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
             },
             TokKind::Float => {
                 if let Ok(f) = t.text.parse::<f64>() {
-                    if f.is_infinite() {
-                        rewrites.push((idx, Rewrite::Float));
+                    let overflow = !f.is_finite();
+                    let roundtrips =
+                        !overflow && parse_decimal(t.text) == parse_decimal(&format!("{f}"));
+                    if !roundtrips {
+                        rewrites.push((idx, Rewrite::Float { overflow }));
+                    } else {
+                        taken_float_values.insert(f.to_bits());
                     }
                 }
             }
@@ -288,16 +299,22 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
                     int_originals.insert(magic_int, t.text.to_string());
                     out.push_str(&magic_int.to_string());
                 }
-                Rewrite::Float => {
+                Rewrite::Float { overflow } => {
                     let magic = if t.text.starts_with('-') {
                         &mut magic_neg_float
                     } else {
                         &mut magic_pos_float
                     };
-                    while inf_float_originals.contains_key(&magic.to_bits()) {
+                    while taken_float_values.contains(&magic.to_bits())
+                        || float_originals.contains_key(&magic.to_bits())
+                    {
                         *magic = f64::from_bits(magic.to_bits() - 1);
                     }
-                    inf_float_originals.insert(magic.to_bits(), t.text.to_string());
+                    let bits = magic.to_bits();
+                    float_originals.insert(bits, t.text.to_string());
+                    if overflow {
+                        inf_float_originals.insert(bits, t.text.to_string());
+                    }
                     let _ = write!(out, "{magic:e}");
                 }
             }
@@ -310,6 +327,7 @@ pub(super) fn prescan(src: &str) -> GResult<Prescan> {
     Ok(Prescan {
         rewritten,
         int_originals,
+        float_originals,
         inf_float_originals,
     })
 }

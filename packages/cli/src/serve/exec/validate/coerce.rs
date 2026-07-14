@@ -127,7 +127,10 @@ fn numeric_of(ctx: &Ctx, v: V) -> Option<Num> {
                 None => Num::Small(n),
             })
         }
-        V::L(q::Value::Float(f)) => Some(Num::Float(*f)),
+        V::L(q::Value::Float(f)) => Some(match ctx.float_originals.get(&f.to_bits()) {
+            Some(orig) => Num::Big(orig.clone()),
+            None => Num::Float(*f),
+        }),
         V::J(Json::Number(n)) => {
             if let Some(i) = n.as_i64() {
                 Some(Num::Small(i))
@@ -275,8 +278,17 @@ pub(super) fn coerce_offset(ctx: &Ctx, v: V, path: &str) -> GResult<Option<i64>>
 // Column-typed value coercion (comparison values, by_pk, stream cursors)
 // ---------------------------------------------------------------------------
 
-fn pg_cast(scalar: Scalar, pg_type: &str) -> String {
-    match scalar {
+fn quoted_pg_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+pub(super) fn column_pg_cast(
+    scalar: Scalar,
+    pg_type: &str,
+    pg_type_schema: &str,
+    is_array: bool,
+) -> String {
+    let base = match scalar {
         Scalar::String => "text".to_string(),
         Scalar::Int => "int4".to_string(),
         Scalar::Smallint => "int2".to_string(),
@@ -290,7 +302,17 @@ fn pg_cast(scalar: Scalar, pg_type: &str) -> String {
         Scalar::Date => "date".to_string(),
         Scalar::Jsonb => "jsonb".to_string(),
         Scalar::Json => "json".to_string(),
+        Scalar::PgEnum | Scalar::Other if pg_type_schema != "pg_catalog" => format!(
+            "{}.{}",
+            quoted_pg_ident(pg_type_schema),
+            quoted_pg_ident(pg_type)
+        ),
         Scalar::PgEnum | Scalar::Other => pg_type.to_string(),
+    };
+    if is_array {
+        format!("{base}[]")
+    } else {
+        base
     }
 }
 
@@ -298,6 +320,7 @@ pub(super) fn coerce_column_value<'a>(
     ctx: &Ctx<'a>,
     scalar: Scalar,
     pg_type: &str,
+    pg_type_schema: &str,
     is_array: bool,
     v: V<'a>,
     path: &str,
@@ -311,17 +334,24 @@ pub(super) fn coerce_column_value<'a>(
         ));
     }
     if is_array {
-        let cast = format!("{}[]", pg_cast(scalar, pg_type));
+        let cast = column_pg_cast(scalar, pg_type, pg_type_schema, true);
         let mut elems: Vec<String> = Vec::new();
         for (i, item) in list_items(v).into_iter().enumerate() {
-            let elem =
-                coerce_column_value(ctx, scalar, pg_type, false, item, &format!("{path}[{i}]"))?;
+            let elem = coerce_column_value(
+                ctx,
+                scalar,
+                pg_type,
+                pg_type_schema,
+                false,
+                item,
+                &format!("{path}[{i}]"),
+            )?;
             elems.push(elem.text.unwrap_or_default());
         }
         return Ok(ir::SqlValue::new(pg_array_literal(&elems), cast));
     }
 
-    let cast = pg_cast(scalar, pg_type);
+    let cast = column_pg_cast(scalar, pg_type, pg_type_schema, false);
     // Strings (and enum literals) always pass through: Hasura's typed parse
     // falls back to an opaque value, so bad text errors in Postgres, not here.
     let passthrough = match v {
@@ -331,10 +361,7 @@ pub(super) fn coerce_column_value<'a>(
     };
 
     match scalar {
-        Scalar::Jsonb | Scalar::Json => {
-            let json = value_to_json(ctx, v)?;
-            Ok(ir::SqlValue::new(json.to_string(), cast))
-        }
+        Scalar::Jsonb | Scalar::Json => Ok(ir::SqlValue::new(value_to_json_text(ctx, v)?, cast)),
         Scalar::String => match passthrough {
             Some(s) => Ok(ir::SqlValue::new(s, cast)),
             None => Err(perr(
@@ -432,6 +459,10 @@ pub(super) fn coerce_column_value<'a>(
             } else {
                 "PGDouble"
             };
+            let overflowed_literal = match v {
+                V::L(q::Value::Float(f)) => ctx.inf_float_originals.contains_key(&f.to_bits()),
+                _ => false,
+            };
             let Some(num) = numeric_of(ctx, v) else {
                 return Err(perr(
                     path,
@@ -441,6 +472,9 @@ pub(super) fn coerce_column_value<'a>(
                     ),
                 ));
             };
+            if overflowed_literal {
+                return Err(float_bounds_error(path, &num.display(ctx)));
+            }
             if let Num::Float(f) = &num {
                 // A literal that overflowed f64 is rewritten to a finite
                 // sentinel before parsing (see prescan.rs), so it no longer
@@ -456,92 +490,118 @@ pub(super) fn coerce_column_value<'a>(
     }
 }
 
-/// GraphQL literal (with variables substituted) to a JSON value, for
-/// jsonb/json column positions.
-fn value_to_json<'a>(ctx: &Ctx<'a>, v: V<'a>) -> GResult<Json> {
+/// Serializes a json/jsonb input directly to SQL parameter text. Writing
+/// sentinel numbers as their original tokens avoids the lossy f64 hop that
+/// a serde_json::Value round-trip would otherwise introduce.
+fn value_to_json_text<'a>(ctx: &Ctx<'a>, v: V<'a>) -> GResult<String> {
+    let mut out = String::new();
     match v {
-        V::J(j) => Ok(desentinel(ctx, j)),
-        V::L(l) => literal_to_json(ctx, l),
+        V::J(j) => write_json_value(ctx, j, &mut out),
+        V::L(l) => write_json_literal(ctx, l, &mut out)?,
     }
+    Ok(out)
 }
 
-/// Sentinel numbers (see json_numbers.rs) must not leak into jsonb values;
-/// substitute the closest f64 to the original text, which is what
-/// serde_json would have parsed without the rewrite.
-fn desentinel(ctx: &Ctx, j: &Json) -> Json {
-    if ctx.var_number_originals.is_empty() {
-        return j.clone();
-    }
-    match j {
-        Json::Number(n) if n.as_i64().is_none() && n.as_u64().is_none() => {
-            let orig = n
+fn write_json_value(ctx: &Ctx, value: &Json, out: &mut String) {
+    match value {
+        Json::Null => out.push_str("null"),
+        Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Json::Number(n) => {
+            let original = n
                 .as_f64()
                 .and_then(|f| ctx.var_number_originals.get(&f.to_bits()));
-            match orig {
-                Some(orig) => orig
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map(Json::Number)
-                    .unwrap_or(Json::Null),
-                None => j.clone(),
-            }
+            out.push_str(
+                original
+                    .map_or_else(|| n.to_string(), Clone::clone)
+                    .as_str(),
+            );
         }
-        Json::Array(items) => Json::Array(items.iter().map(|i| desentinel(ctx, i)).collect()),
-        Json::Object(map) => Json::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), desentinel(ctx, v)))
-                .collect(),
-        ),
-        other => other.clone(),
+        Json::String(s) => out.push_str(&serde_json::to_string(s).unwrap()),
+        Json::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_json_value(ctx, item, out);
+            }
+            out.push(']');
+        }
+        Json::Object(map) => {
+            out.push('{');
+            for (i, (key, value)) in map.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).unwrap());
+                out.push(':');
+                write_json_value(ctx, value, out);
+            }
+            out.push('}');
+        }
     }
 }
 
-fn literal_to_json<'a>(ctx: &Ctx<'a>, l: &'a AValue) -> GResult<Json> {
-    Ok(match l {
-        q::Value::Null => Json::Null,
-        q::Value::Boolean(b) => Json::Bool(*b),
+fn write_json_literal<'a>(ctx: &Ctx<'a>, value: &'a AValue, out: &mut String) -> GResult<()> {
+    match value {
+        q::Value::Null => out.push_str("null"),
+        q::Value::Boolean(b) => out.push_str(if *b { "true" } else { "false" }),
         q::Value::Int(n) => {
             let n = n.as_i64().unwrap_or(0);
-            match ctx.int_originals.get(&n) {
-                Some(orig) => orig
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map(Json::Number)
-                    .unwrap_or(Json::Null),
-                None => Json::Number(n.into()),
-            }
+            out.push_str(
+                ctx.int_originals
+                    .get(&n)
+                    .map_or_else(|| n.to_string(), Clone::clone)
+                    .as_str(),
+            );
         }
-        q::Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(Json::Number)
-            .unwrap_or(Json::Null),
-        q::Value::String(s) => Json::String(s.clone()),
-        q::Value::Enum(e) => Json::String(e.clone()),
-        q::Value::List(items) => Json::Array(
-            items
-                .iter()
-                .map(|i| literal_to_json(ctx, i))
-                .collect::<GResult<Vec<_>>>()?,
+        q::Value::Float(f) => out.push_str(
+            ctx.float_originals
+                .get(&f.to_bits())
+                .map_or_else(
+                    || {
+                        serde_json::Number::from_f64(*f)
+                            .map_or_else(|| "null".to_string(), |n| n.to_string())
+                    },
+                    Clone::clone,
+                )
+                .as_str(),
         ),
-        q::Value::Object(map) => {
-            let mut out = serde_json::Map::new();
-            for (k, val) in map {
-                out.insert(k.clone(), literal_to_json(ctx, val)?);
+        q::Value::String(s) | q::Value::Enum(s) => out.push_str(&serde_json::to_string(s).unwrap()),
+        q::Value::List(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_json_literal(ctx, item, out)?;
             }
-            Json::Object(out)
+            out.push(']');
+        }
+        q::Value::Object(map) => {
+            out.push('{');
+            for (i, (key, value)) in map.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).unwrap());
+                out.push(':');
+                write_json_literal(ctx, value, out)?;
+            }
+            out.push('}');
         }
         q::Value::Variable(name) => {
             ctx.mark_used(name);
             match ctx.vars.get(name.as_str()) {
                 Some(var) => match &var.value {
-                    VarValue::Json(j) => (*j).clone(),
-                    VarValue::Lit(l) => literal_to_json(ctx, l)?,
+                    VarValue::Json(j) => write_json_value(ctx, j, out),
+                    VarValue::Lit(l) => write_json_literal(ctx, l, out)?,
                 },
                 None => return Err(verr("$", format!("unbound variable \"{name}\""))),
             }
         }
-    })
+    }
+    Ok(())
 }
 
 /// Postgres array literal text form, e.g. `{a,"b c"}`.
@@ -818,6 +878,26 @@ mod tests {
                 "NULL".to_string(),
             ]),
             r#"{one,"two words","a\"b\\c","","NULL"}"#
+        );
+    }
+
+    #[test]
+    fn column_casts_qualify_custom_types_and_preserve_arrays() {
+        assert_eq!(
+            column_pg_cast(Scalar::PgEnum, "accounttype", "tenant", false),
+            r#""tenant"."accounttype""#
+        );
+        assert_eq!(
+            column_pg_cast(Scalar::PgEnum, "accounttype", "tenant", true),
+            r#""tenant"."accounttype"[]"#
+        );
+        assert_eq!(
+            column_pg_cast(Scalar::Other, "uuid", "pg_catalog", false),
+            "uuid"
+        );
+        assert_eq!(
+            column_pg_cast(Scalar::PgEnum, "odd\"type", "odd\"schema", false),
+            r#""odd""schema"."odd""type""#
         );
     }
 }

@@ -115,6 +115,19 @@ pub fn plan_request(
     request: &GraphQLRequest,
     transport: Transport,
 ) -> GResult<ir::Operation> {
+    if let Some(other) = request
+        .variables
+        .as_ref()
+        .filter(|v| !matches!(v, Json::Object(_) | Json::Null))
+    {
+        return Err(perr(
+            "$.variables",
+            format!(
+                "parsing HashMap failed, expected Object, but encountered {}",
+                aeson_kind(V::J(other))
+            ),
+        ));
+    }
     let query_text = request.query.as_deref().unwrap_or("");
     let scan = prescan(query_text)?;
     let doc = match q::parse_query::<String>(&scan.rewritten) {
@@ -170,6 +183,7 @@ pub fn plan_request(
         vars: build_variables(op.var_defs, variables_json)?,
         used_vars: RefCell::new(HashSet::new()),
         int_originals: scan.int_originals,
+        float_originals: scan.float_originals,
         inf_float_originals: scan.inf_float_originals,
         var_number_originals: variables_json
             .map(json_numbers::extract_originals)
@@ -373,6 +387,10 @@ struct Ctx<'a> {
     /// i64-overflowing int literals were rewritten to magic sentinel values
     /// before parsing; this maps each sentinel back to the original digits.
     int_originals: HashMap<i64, String>,
+    /// Float literals whose exact decimal text cannot round-trip through
+    /// graphql-parser's f64 AST representation. Each is rewritten to a
+    /// unique sentinel and restored here for numeric SQL parameters.
+    float_originals: HashMap<u64, String>,
     /// f64-overflowing float literals were rewritten to per-occurrence
     /// finite sentinel values before parsing; this maps each sentinel's bit
     /// pattern back to the original digits, for reconstructing Hasura's
@@ -1203,6 +1221,7 @@ mod tests {
             api_name: name.to_string(),
             db_name: name.to_string(),
             pg_type: pg_type.to_string(),
+            pg_type_schema: "pg_catalog".to_string(),
             scalar,
             is_array: false,
             nullable: false,
@@ -1219,6 +1238,17 @@ mod tests {
                 columns: vec![
                     column("id", "text", Scalar::String),
                     column("big", "numeric", Scalar::Numeric),
+                    column("json", "jsonb", Scalar::Jsonb),
+                    Column {
+                        api_name: "status".to_string(),
+                        db_name: "status".to_string(),
+                        pg_type: "accounttype".to_string(),
+                        pg_type_schema: "tenant".to_string(),
+                        scalar: Scalar::PgEnum,
+                        is_array: false,
+                        nullable: false,
+                        description: None,
+                    },
                 ],
                 primary_key: vec!["id".to_string()],
                 object_relationships: vec![crate::serve::model::ObjectRelationship {
@@ -1230,7 +1260,7 @@ mod tests {
                 admin_only: false,
                 public_aggregations: false,
             }],
-            pg_schema: "public".to_string(),
+            pg_schema: "tenant".to_string(),
             response_limit: None,
         }
     }
@@ -1445,6 +1475,81 @@ mod tests {
         )
         .unwrap();
         assert_eq!(eq_sql_text(op), "1.00000000000000000000001");
+    }
+
+    #[test]
+    fn numeric_float_literals_reach_sql_losslessly() {
+        for literal in ["1.00000000000000000001", "1e400"] {
+            let op = plan(
+                &format!("{{ User(where: {{big: {{_eq: {literal}}}}}) {{ id }} }}"),
+                None,
+            )
+            .unwrap();
+            assert_eq!(eq_sql_text(op), literal);
+        }
+    }
+
+    #[test]
+    fn large_json_variable_numbers_reach_sql_losslessly() {
+        let op = plan(
+            "query($v: jsonb) { User(where: {json: {_contains: $v}}) { id } }",
+            Some(r#"{"v": {"n": 99999999999999999999999}}"#),
+        )
+        .unwrap();
+        let Some(ir::RootField::Table(root)) = op.root_fields.into_iter().next() else {
+            panic!("expected a table root");
+        };
+        let ir::TableRootKind::Many { args, .. } = root.kind else {
+            panic!("expected a many root");
+        };
+        let Some(ir::BoolExp::Compare {
+            op: ir::CompareOp::Contains(value),
+            ..
+        }) = args.where_
+        else {
+            panic!("expected a jsonb _contains comparison");
+        };
+        assert_eq!(
+            value.text.as_deref(),
+            Some(r#"{"n":99999999999999999999999}"#)
+        );
+    }
+
+    #[test]
+    fn websocket_rejects_non_object_variables() {
+        let model = test_model();
+        let schema = RoleSchema {
+            registry: schema_build::build(&model, Role::Admin),
+            role: Role::Admin,
+        };
+        let request = GraphQLRequest {
+            query: Some("{ User { id } }".to_string()),
+            variables: Some(serde_json::json!([])),
+            operation_name: None,
+        };
+        let err = plan_request(&model, &schema, &request, Transport::Ws).unwrap_err();
+        assert_eq!(
+            (err.message.as_str(), err.path.as_str(), err.code),
+            (
+                "parsing HashMap failed, expected Object, but encountered Array",
+                "$.variables",
+                CODE_PARSE_FAILED,
+            )
+        );
+    }
+
+    #[test]
+    fn custom_enum_sql_cast_is_schema_qualified() {
+        let op = plan(r#"{ User(where: {status: {_eq: "ACTIVE"}}) { id } }"#, None).unwrap();
+        let Some(ir::RootField::Table(root)) = op.root_fields.first() else {
+            panic!("expected a table root");
+        };
+        let compiled = crate::serve::exec::sql::compile_root_full("tenant", root);
+        assert!(
+            compiled.sql.contains("::\"tenant\".\"accounttype\""),
+            "custom enum casts must resolve outside the default search_path: {}",
+            compiled.sql
+        );
     }
 
     #[test]

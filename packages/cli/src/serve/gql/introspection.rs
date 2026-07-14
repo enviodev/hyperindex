@@ -426,6 +426,7 @@ mod tests {
                     api_name: "id".to_string(),
                     db_name: "id".to_string(),
                     pg_type: "text".to_string(),
+                    pg_type_schema: "pg_catalog".to_string(),
                     scalar: Scalar::String,
                     is_array: false,
                     nullable: false,

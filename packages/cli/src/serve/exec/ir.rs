@@ -99,9 +99,9 @@ pub enum TableRootKind {
 pub struct StreamCursor {
     /// db column name
     pub column: String,
-    pub scalar: Scalar,
-    pub pg_type: String,
-    pub is_array: bool,
+    /// Complete SQL cast for cursor parameters, including array suffix and
+    /// any required custom-type namespace qualification.
+    pub cast: String,
     pub initial_value: Option<SqlValue>,
     pub descending: bool,
 }
