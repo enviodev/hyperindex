@@ -58,6 +58,7 @@ convert_case = "0.6.0"
 bollard = "0.20"
 futures-util = "0.3"
 tar = "0.4"
+bs58 = "0.5.1"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 
