@@ -6,10 +6,11 @@ let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({
     chain: ChainMap.Chain.makeUnsafe(~chainId=1),
     blockNumber,
-    onEventRegistration:
-      "Mock onEventRegistration in CrossChainState test"->(
-        Utils.magic: string => Internal.onEventRegistration
-      ),
+    // Carries an `index` so the buffer's dedup key resolves; the rest of the
+    // registration is unused by these tests.
+    onEventRegistration: {"index": 0}->(
+      Utils.magic: {"index": int} => Internal.onEventRegistration
+    ),
     logIndex: 0,
     transactionIndex: 0,
     payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),

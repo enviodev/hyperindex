@@ -214,17 +214,18 @@ let rec onQueryResponse = async (
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
+      // Drop over-fetched events (a merged partition returning an address before
+      // its effectiveStartBlock, or a wildcard param referencing an address
+      // registered after the log's block) before contract registration, so they
+      // neither spawn dynamic contracts nor enter the buffer.
+      let newItems = chainState->ChainState.filterByClientAddress(parsedQueueItems)
       let itemsWithContractRegister = []
-      let newItems = []
-      for idx in 0 to parsedQueueItems->Array.length - 1 {
-        let item = parsedQueueItems->Array.getUnsafe(idx)
+      for idx in 0 to newItems->Array.length - 1 {
+        let item = newItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
         if eventItem.onEventRegistration.contractRegister !== None {
           itemsWithContractRegister->Array.push(item)
         }
-        // TODO: Don't really need to keep it in the queue
-        // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
-        newItems->Array.push(item)
       }
 
       // Re-check staleness: contract registration is async, so the chain state

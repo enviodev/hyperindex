@@ -34,9 +34,9 @@ Async.it(
     })
 
     let entities = await indexer.\"SimulateTestEvent".getAll()
-    // Event block defaults to config startBlock (1) in SimulateItems.parse,
-    // but the process range is startBlock=5, endBlock=5
-    t.expect(entities).toEqual([{id: "1_0", blockNumber: 1, logIndex: 0, timestamp: 0}])
+    // Event block defaults to the process startBlock (5), which is also the
+    // endBlock, so it lands in the queried range and routes to its handler.
+    t.expect(entities).toEqual([{id: "5_0", blockNumber: 5, logIndex: 0, timestamp: 0}])
   },
 )
 
