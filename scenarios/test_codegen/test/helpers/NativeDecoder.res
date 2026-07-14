@@ -1,17 +1,22 @@
+// The fixed address every crafted log is emitted from; map it in
+// `contractNameByAddress` to route logs to a non-wildcard registration.
+let mockAddress = "0x000000000000000000000000000000000000abcd"
+
 // Decodes logs through the production path: feed crafted logs to a mock
-// eth_getLogs endpoint and let EvmRpcClient decode them with the shared
-// DecoderCore. Returns params per log (keyed by contract name), mirroring the
-// shape the old standalone decoder's decodeLogs returned.
+// eth_getLogs endpoint and let EvmRpcClient route+decode them with the shared
+// DecoderCore. Returns only the routed items, each carrying its registration
+// id and flat decoded params.
 let decodeLogs = async (
-  ~eventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
+  ~eventRegistrations: array<HyperSyncClient.Registration.input>,
   ~logs: array<(array<string>, string)>,
-): array<Nullable.t<dict<Internal.eventParams>>> => {
+  ~contractNameByAddress=Dict.make(),
+): array<EvmRpcClient.rpcEventItem> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
   let logJsons = logs->Array.mapWithIndex(((topics, data), i) =>
     JSON.Object(
       Dict.fromArray([
-        ("address", JSON.String("0x000000000000000000000000000000000000abcd")),
+        ("address", JSON.String(mockAddress)),
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
@@ -28,7 +33,6 @@ let decodeLogs = async (
     ~calls=[
       MockRpcServer.expectCall(
         ~method="eth_getLogs",
-        ~params=JSON.parseOrThrow(`[{"fromBlock":"0x0","toBlock":"0x0","topics":[]}]`),
         ~reply=RpcResult(JSON.Array(logJsons)),
       ),
     ],
@@ -37,15 +41,24 @@ let decodeLogs = async (
         ~url=mock.url,
         ~checksumAddresses=false,
         ~syncConfig=EvmChain.getSyncConfig({}),
-        ~allEventParams=eventParams,
+        ~eventRegistrations,
       )
+      // Invert the routing index back into the address form the client expects.
+      let addressesByContractName = Dict.make()
+      contractNameByAddress->Dict.forEachWithKey((contractName, address) => {
+        addressesByContractName->Utils.Dict.push(
+          contractName,
+          address->Address.unsafeFromString,
+        )
+      })
       let {items} = await client.getNextPage({
         fromBlock: 0,
         toBlockCeiling: 0,
-        logSelections: [{topics: []}],
         partitionId: "0",
+        registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
+        addressesByContractName,
       })
-      items->Array.map(item => item.params)
+      items
     },
   )
 }

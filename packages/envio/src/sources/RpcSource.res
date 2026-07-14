@@ -97,10 +97,6 @@ let getErrorMessage = (exn: exn): option<string> =>
   | _ => None
   }
 
-type logSelection = {
-  addresses: option<array<Address.t>>,
-  topicQuery: Rpc.GetLogs.topicQuery,
-}
 
 // `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
 // payload describing the retry decision:
@@ -160,122 +156,6 @@ let parseGetNextPageRetryError = (exn: exn): option<(
     }
   | _ => None
   }
-
-type selectionConfig = {
-  getLogSelectionsOrThrow: (
-    ~addressesByContractName: dict<array<Address.t>>,
-  ) => array<logSelection>,
-}
-
-let getSelectionConfig = (selection: FetchState.selection) => {
-  let evmOnEventRegistrations =
-    selection.onEventRegistrations->(
-      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-    )
-
-  if evmOnEventRegistrations->Utils.Array.isEmpty {
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
-        }),
-      ),
-    )
-  }
-
-  // eth_getLogs takes one address list and one topic selection per request, so
-  // fan out to one request per selection. Each address-bound event is grouped by
-  // its contract and later scoped to that contract's own addresses — pooling all
-  // contracts' addresses would let one contract's query fetch a sibling's logs,
-  // which route back by address and bypass the sibling's filter (routing never
-  // re-applies it). Pure-wildcard events carry no address constraint, so they're
-  // pooled and resolved once.
-  let noAddressTopicSelections = []
-  let byContract = Dict.make()
-  let wildcardByContract = Dict.make()
-  let contractNames = Utils.Set.make()
-
-  evmOnEventRegistrations->Array.forEach(reg => {
-    let contractName = reg.eventConfig.contractName
-    let {isWildcard, dependsOnAddresses, resolvedWhere} = reg
-    if dependsOnAddresses {
-      contractNames->Utils.Set.add(contractName)->ignore
-      (isWildcard ? wildcardByContract : byContract)->Utils.Dict.pushMany(
-        contractName,
-        resolvedWhere.topicSelections,
-      )
-    } else {
-      noAddressTopicSelections
-      ->Array.pushMany(
-        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
-      )
-      ->ignore
-    }
-  })
-
-  // `compressTopicSelections` folds the filter-less events into a single topic0
-  // OR-set, keeping the common case at one request.
-  let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
-    topicSelections
-    ->LogSelection.compressTopicSelections
-    ->Array.map(topicSelection => {
-      addresses,
-      topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
-    })
-
-  // Address-independent, so resolve once (the wildcard partition reuses this).
-  let noAddressLogSelections = toLogSelections(~addresses=None, noAddressTopicSelections)
-
-  let getLogSelectionsOrThrow = if contractNames->Utils.Set.size === 0 {
-    (~addressesByContractName as _) => noAddressLogSelections
-  } else {
-    (~addressesByContractName): array<logSelection> => {
-      let logSelections = noAddressLogSelections->Array.copy
-      contractNames->Utils.Set.forEach(contractName => {
-        switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None
-        | Some([]) => ()
-        | Some(addresses) =>
-          // Non-wildcard filters, scoped to this contract's addresses.
-          switch byContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(topicSelections) =>
-            logSelections
-            ->Array.pushMany(
-              toLogSelections(
-                ~addresses=Some(addresses),
-                topicSelections->LogSelection.materializeTopicSelections(~addresses),
-              ),
-            )
-            ->ignore
-          | None => ()
-          }
-
-          // Wildcard-by-address filters fold the address into the topics,
-          // so they still match any address.
-          switch wildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(topicSelections) =>
-            logSelections
-            ->Array.pushMany(
-              toLogSelections(
-                ~addresses=None,
-                topicSelections->LogSelection.materializeTopicSelections(~addresses),
-              ),
-            )
-            ->ignore
-          | None => ()
-          }
-        }
-      })
-      logSelections
-    }
-  }
-
-  {
-    getLogSelectionsOrThrow: getLogSelectionsOrThrow,
-  }
-}
-
-let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
@@ -735,8 +615,8 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
-  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
+  // The chain's registrations, indexed by their sequential `index`.
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
   lowercaseAddresses: bool,
   ws?: string,
   headers?: dict<string>,
@@ -748,8 +628,7 @@ let make = (
     syncConfig,
     url,
     chain,
-    eventRouter,
-    allEventParams,
+    onEventRegistrations,
     lowercaseAddresses,
     ?ws,
     ?headers,
@@ -765,12 +644,12 @@ let make = (
   }
   let name = `RPC (${urlHost})`
 
-  let getSelectionConfig = memoGetSelectionConfig()
-
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~allEventParams,
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
+      onEventRegistrations,
+    ),
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -921,7 +800,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~contractNameByAddress,
+    ~contractNameByAddress as _,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -944,26 +823,22 @@ let make = (
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
-    let {getLogSelectionsOrThrow} = getSelectionConfig(selection)
-    let logSelections = getLogSelectionsOrThrow(~addressesByContractName)
+    if selection.onEventRegistrations->Utils.Array.isEmpty {
+      throw(
+        Source.GetItemsError(
+          UnsupportedSelection({
+            message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
+          }),
+        ),
+      )
+    }
 
     let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage({
       fromBlock,
       toBlockCeiling: toBlock,
-      logSelections: logSelections->Array.map(({
-        addresses,
-        topicQuery,
-      }): EvmRpcClient.logSelectionInput => {
-        ?addresses,
-        topics: topicQuery->Array.map(filter =>
-          switch filter {
-          | Rpc.GetLogs.Null => Nullable.null
-          | Single(topic) => Nullable.make([topic])
-          | Multiple(topics) => Nullable.make(topics)
-          }
-        ),
-      }),
       partitionId,
+      registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+      addressesByContractName,
     }) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {
@@ -997,32 +872,15 @@ let make = (
     ->Promise.thenResolve(parseBlockInfo)
 
     let parsedQueueItems = await items
-    ->Array.filterMap(({log, params: maybeDecodedEvent}: EvmRpcClient.rpcEventItem) => {
-      let topic0 = log.topics[0]->Option.getOr("0x0")
-      let routedAddress = if lowercaseAddresses {
-        log.address->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        log.address->Address.Evm.fromAddressOrThrow
-      }
-
-      switch eventRouter->EventRouter.get(
-        ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
-        ~contractNameByAddress,
-        ~contractAddress=routedAddress,
-      ) {
-      | None => None
-      | Some(onEventRegistration) =>
-        let eventConfig =
-          onEventRegistration.eventConfig->(
-            Utils.magic: Internal.eventConfig => Internal.evmEventConfig
-          )
-        switch maybeDecodedEvent
-        ->Nullable.toOption
-        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
-        | Some(decoded) =>
-          Some(
-            (
-              async () => {
+    ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
+      // `log.address` comes back already normalized to the client's casing.
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationIndex)
+      let eventConfig =
+        onEventRegistration.eventConfig->(
+          Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+        )
+      (
+        async () => {
                 let (block, transaction) = try await Promise.all2((
                   log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
                   log->getEventTransactionOrThrow(
@@ -1074,16 +932,12 @@ let make = (
                     params: decoded,
                     block,
                     transaction,
-                    srcAddress: routedAddress,
+                    srcAddress: log.address,
                     logIndex: log.logIndex,
                   }->Evm.fromPayload,
                 })
-              }
-            )(),
-          )
-        | None => None
         }
-      }
+      )()
     })
     ->Promise.all
 

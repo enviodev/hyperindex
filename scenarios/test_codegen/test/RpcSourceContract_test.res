@@ -20,35 +20,41 @@ let topicSelection: Internal.resolvedTopicSelection = {
   topic3: Values([]),
 }
 
-let makeRegistration = (~receiptOnly=false) =>
+let withPinIdentity = (registration: Internal.evmOnEventRegistration, ~index) => {
+  let eventConfig = registration.eventConfig->(
+    Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+  )
+  {
+    ...registration,
+    index,
+    eventConfig: ({...eventConfig, id: `${sighash}_1`, sighash} :> Internal.eventConfig),
+  }
+}
+
+let makeRegistration = (~index=0, ~receiptOnly=false) => {
   MockIndexer.evmOnEventRegistration(
-    ~id=`${sighash}_1`,
+    ~id=sighash,
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed, Miner],
     ~transactionFieldNames=receiptOnly
       ? [GasUsed]
       : [Hash, TransactionIndex, From, Gas, GasUsed, Status],
     ~eventFilters=[topicSelection],
-  )
+  )->withPinIdentity(~index)
+}
 
 let makeRoutingRegistration = (
+  ~index=0,
   ~contractName="ERC20",
   ~isWildcard=false,
   ~eventFilters=[topicSelection],
-) =>
+) => {
   MockIndexer.evmOnEventRegistration(
-    ~id=`${sighash}_1`,
+    ~id=sighash,
     ~contractName,
     ~blockFieldNames=[Number],
     ~isWildcard,
     ~eventFilters,
-  )
-
-let eventParams = (registration: Internal.evmOnEventRegistration): HyperSyncClient.Decoder.eventParamsInput => {
-  sighash,
-  topicCount: 1,
-  eventName: registration.eventConfig.name,
-  contractName: registration.eventConfig.contractName,
-  params: [],
+  )->withPinIdentity(~index)
 }
 
 let syncConfig = EvmChain.getSyncConfig({
@@ -63,10 +69,9 @@ let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration
   let options: RpcSource.options = {
     url,
     chain,
-    eventRouter: [registration]->EventRouter.fromEvmEventModsOrThrow(~chain),
+    onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig,
-    allEventParams: [registration->eventParams],
     lowercaseAddresses: true,
   }
   factory(options)
@@ -412,10 +417,9 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let options: RpcSource.options = {
             url: mock.url,
             chain,
-            eventRouter: [registration]->EventRouter.fromEvmEventModsOrThrow(~chain),
+            onEventRegistrations: [registration],
             sourceFor: Sync,
             syncConfig: defaultSyncConfig,
-            allEventParams: [registration->eventParams],
             lowercaseAddresses: true,
           }
           let source = factory(options)
@@ -608,6 +612,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         ~eventFilters=selectionFor(filterA),
       )
       let eventB = makeRoutingRegistration(
+        ~index=1,
         ~contractName="ContractB",
         ~eventFilters=selectionFor(filterB),
       )
@@ -650,10 +655,9 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let options: RpcSource.options = {
             url: mock.url,
             chain,
-            eventRouter: [eventA, eventB]->EventRouter.fromEvmEventModsOrThrow(~chain),
+            onEventRegistrations: [eventA, eventB],
             sourceFor: Sync,
             syncConfig,
-            allEventParams: [eventA->eventParams, eventB->eventParams],
             lowercaseAddresses: true,
           }
           let source = factory(options)

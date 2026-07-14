@@ -39,25 +39,6 @@ let getSyncConfig = (
   }
 }
 
-let collectEventParams = (onEventRegistrations: array<Internal.evmOnEventRegistration>): array<
-  HyperSyncClient.Decoder.eventParamsInput,
-> => {
-  let result = []
-  onEventRegistrations->Array.forEach(reg => {
-    let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    result
-    ->Array.push({
-      HyperSyncClient.Decoder.sighash: event.sighash,
-      topicCount: event.topicCount,
-      eventName: event.name,
-      contractName: event.contractName,
-      params: event.paramsMetadata,
-    })
-    ->ignore
-  })
-  result
-}
-
 let makeSources = (
   ~chain,
   ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
@@ -65,17 +46,12 @@ let makeSources = (
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
 ) => {
-  let eventRouter = onEventRegistrations->EventRouter.fromEvmEventModsOrThrow(~chain)
-
-  let allEventParams = collectEventParams(onEventRegistrations)
-
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
       HyperSyncSource.make({
         chain,
         endpointUrl,
-        allEventParams,
-        eventRouter,
+        onEventRegistrations,
         apiToken: Env.envioApiToken,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
@@ -92,8 +68,7 @@ let makeSources = (
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
-      eventRouter,
-      allEventParams,
+      onEventRegistrations,
       lowercaseAddresses,
       ?ws,
       ?headers,

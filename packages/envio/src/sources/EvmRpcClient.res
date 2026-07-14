@@ -10,26 +10,23 @@ type cfg = {
   queryTimeoutMillis: int,
 }
 
-// Decoded `params` keyed by contract name, matching the HyperSync decoder's
-// shape so the caller routes by address then picks its contract's params.
+// Only logs that resolved to a registration cross the boundary, each carrying
+// its registration's chain-scoped index.
 type rpcEventItem = {
   log: Rpc.GetLogs.log,
-  params: Nullable.t<dict<Internal.eventParams>>,
-}
-
-// `addresses` omitted matches any address (a wildcard selection). Each `topics`
-// position is `null` (match any) or a list of accepted topic hashes; the
-// single-match case is a one-element list.
-type logSelectionInput = {
-  addresses?: array<Address.t>,
-  topics: array<Nullable.t<array<string>>>,
+  onEventRegistrationIndex: int,
+  params: Internal.eventParams,
 }
 
 type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
-  logSelections: array<logSelectionInput>,
   partitionId: string,
+  // The partition's registration selection, by chain-scoped index. Log
+  // selections and the routing index are derived on the Rust side from the
+  // registrations passed at construction.
+  registrationIndexes: array<int>,
+  addressesByContractName: dict<array<Address.t>>,
 }
 
 type nextPageResponse = {
@@ -48,7 +45,7 @@ type t = {
 external classNew: (
   Core.evmRpcClientCtor,
   cfg,
-  array<HyperSyncClient.Decoder.eventParamsInput>,
+  array<HyperSyncClient.Registration.input>,
   ~checksumAddresses: bool,
 ) => t = "new"
 
@@ -87,7 +84,7 @@ let make = (
   ~syncConfig: Config.sourceSync,
   ~httpReqTimeoutMillis=?,
   ~headers=?,
-  ~allEventParams=[],
+  ~eventRegistrations=[],
 ) => {
   let client = Core.getAddon().evmRpcClient->classNew(
     {
@@ -101,7 +98,7 @@ let make = (
       backoffMillis: syncConfig.backoffMillis,
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
     },
-    allEventParams,
+    eventRegistrations,
     ~checksumAddresses,
   )
   {
