@@ -1580,10 +1580,18 @@ let getNextQuery = (
       }
     }
 
-    // Existing in-flight itemsEst across all partitions — already spent against
-    // this chain's budget, so the fresh budget for new queries is what's left
-    // of chainTargetItems after it. Summed in the Phase A sweep below.
+    // In-flight itemsEst summed over queries still being fetched
+    // (fetchedBlock === None). A query whose response already landed has had its
+    // reservation released by ChainState even while it lingers in
+    // mutPendingQueries behind an unfilled gap, so counting it here would
+    // understate the budget. Sizes fresh forward work below.
     let chainReserved = ref(0.)
+
+    // (fromBlock, itemsEst) of each still-in-flight query. The acceptance pass
+    // merges these into the candidate stream and draws them down in fromBlock
+    // order, so a gap-fill sitting before an in-flight query claims budget ahead
+    // of it and the buffer unblocks without waiting for that query to return.
+    let reservations = []
 
     // Position of each partition in idsInAscOrder, so an accepted query routes
     // back to its bucket and the output stays in idsInAscOrder. Filled in the
@@ -1592,10 +1600,11 @@ let getNextQuery = (
 
     // Every candidate query for this tick — gap-fill holes (Phase A) plus each
     // in-range partition's chunks/probe toward the target (Phase B) — generated
-    // with no budget check, then sorted by fromBlock and accepted while the
-    // budget lasts (acceptance pass). Selecting by fromBlock spends the budget
-    // on the earliest blocks across all partitions first, so no partition is
-    // starved by iteration order and the frontier advances evenly.
+    // with no budget check, then merged with the in-flight reservations, sorted
+    // by fromBlock, and accepted while the budget lasts (acceptance pass).
+    // Selecting by fromBlock spends the budget on the earliest blocks across all
+    // partitions first, so no partition is starved by iteration order and the
+    // frontier advances evenly.
     let candidates = []
 
     // Phase A: gap-fill. Walk each partition's pending queries once, generating
@@ -1609,9 +1618,11 @@ let getNextQuery = (
       partitionIndexById->Dict.set(partitionId, idx)
       let pendingCount = p.mutPendingQueries->Array.length
       for pqIdx in 0 to pendingCount - 1 {
-        chainReserved :=
-          chainReserved.contents +.
-          (p.mutPendingQueries->Array.getUnsafe(pqIdx)).itemsEst->Int.toFloat
+        let pq = p.mutPendingQueries->Array.getUnsafe(pqIdx)
+        if pq.fetchedBlock === None {
+          chainReserved := chainReserved.contents +. pq.itemsEst->Int.toFloat
+          reservations->Array.push((pq.fromBlock, pq.itemsEst))->ignore
+        }
       }
       let queryEndBlock = computeQueryEndBlock(p)
       let maybeChunkRange = getMinHistoryRange(p)
@@ -1667,7 +1678,9 @@ let getNextQuery = (
       }
     }
 
-    // The tick's fresh budget: chainTargetItems minus what's already in flight.
+    // Budget for fresh forward work: chainTargetItems minus what's still in
+    // flight. Sizes probes and bounds chunk generation below; the acceptance
+    // pass does the final budgeting against the full chainTargetItems.
     let freshBudget = Pervasives.max(0., chainTargetItems -. chainReserved.contents)
 
     let isInRange = (fs: partitionFillState) =>
@@ -1789,20 +1802,51 @@ let getNextQuery = (
       }
     })
 
-    // Acceptance: take candidates in fromBlock order while the budget stays
-    // positive. The query that tips the budget negative is still accepted (a
-    // single overshoot); everything after it waits for a tick with more budget.
-    // Accepted queries route back to their partition bucket, so the output stays
-    // in idsInAscOrder with each partition's queries in fromBlock order.
-    candidates->Array.sort((a, b) => Int.compare(a.fromBlock, b.fromBlock))
-    let candidatesCount = candidates->Array.length
-    let remainingBudget = ref(freshBudget)
+    // Acceptance: merge fresh candidates (Some) with the in-flight reservations
+    // (None) and walk them in fromBlock order, starting from the full
+    // chainTargetItems. A reservation just draws down the budget — its query is
+    // already sent — while a candidate draws down the budget and is emitted.
+    // Because a gap-fill's fromBlock precedes the in-flight query it unblocks,
+    // it claims budget ahead of that reservation, so the buffer never deadlocks
+    // waiting on a hole it can't fund. The candidate that tips the budget
+    // negative is still emitted (a single overshoot); everything after it waits
+    // for a tick with more budget. Accepted queries route back to their
+    // partition bucket, so the output stays in idsInAscOrder with each
+    // partition's queries in fromBlock order.
+    let acceptanceStream = []
+    candidates->Array.forEach(query =>
+      acceptanceStream->Array.push((query.fromBlock, query.itemsEst, Some(query)))->ignore
+    )
+    reservations->Array.forEach(((fromBlock, itemsEst)) =>
+      acceptanceStream->Array.push((fromBlock, itemsEst, None))->ignore
+    )
+    // Sort by fromBlock; on a tie charge the in-flight reservation (None) before
+    // a fresh candidate (Some), so a same-block candidate can't overshoot the
+    // target buffer. Only a strictly-earlier candidate — a gap-fill, whose
+    // fromBlock precedes the query it unblocks — borrows ahead of a reservation.
+    acceptanceStream->Array.sort(((aFrom, _, aQuery), (bFrom, _, bQuery)) =>
+      if aFrom !== bFrom {
+        Int.compare(aFrom, bFrom)
+      } else {
+        switch (aQuery, bQuery) {
+        | (None, Some(_)) => Ordering.less
+        | (Some(_), None) => Ordering.greater
+        | (None, None) | (Some(_), Some(_)) => Ordering.equal
+        }
+      }
+    )
+    let streamCount = acceptanceStream->Array.length
+    let remainingBudget = ref(chainTargetItems)
     let acceptIdx = ref(0)
-    while remainingBudget.contents > 0. && acceptIdx.contents < candidatesCount {
-      let query = candidates->Array.getUnsafe(acceptIdx.contents)
-      let partitionIdx = partitionIndexById->Dict.getUnsafe(query.partitionId)
-      queriesByPartitionIndex->Array.getUnsafe(partitionIdx)->Array.push(query)->ignore
-      remainingBudget := remainingBudget.contents -. query.itemsEst->Int.toFloat
+    while remainingBudget.contents > 0. && acceptIdx.contents < streamCount {
+      let (_, itemsEst, maybeQuery) = acceptanceStream->Array.getUnsafe(acceptIdx.contents)
+      switch maybeQuery {
+      | Some(query) =>
+        let partitionIdx = partitionIndexById->Dict.getUnsafe(query.partitionId)
+        queriesByPartitionIndex->Array.getUnsafe(partitionIdx)->Array.push(query)->ignore
+      | None => ()
+      }
+      remainingBudget := remainingBudget.contents -. itemsEst->Int.toFloat
       acceptIdx := acceptIdx.contents + 1
     }
 

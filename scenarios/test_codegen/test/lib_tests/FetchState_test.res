@@ -4523,6 +4523,40 @@ describe("FetchState.getNextQuery target containment", () => {
       ~message="Target below the gap defers it; target inside the gap fills it",
     ).toEqual((None, Some([(101, Some(199))])))
   })
+
+  it("fills a gap behind a returned-but-unconsumed query even when its reservation would exhaust the budget", t => {
+    // Chunk [101, 200] already returned (fetchedBlock set) but is stuck behind
+    // the [51, 100] hole, so it lingers in mutPendingQueries. Its reservation
+    // was released on return, so counting it against the budget would starve the
+    // very gap-fill that lets it be consumed — a deadlock. itemsEst 1500 exceeds
+    // chainTargetItems 1000, so the old up-front subtraction zeroed the budget
+    // and dropped the gap; the fromBlock-ordered acceptance funds it instead.
+    let fetchState = makeFetchState(
+      makePartition(
+        ~latestFetchedBlock=50,
+        ~knownDensity=false,
+        ~mutPendingQueries=[
+          {
+            fromBlock: 101,
+            toBlock: Some(200),
+            isChunk: true,
+            itemsTarget: 1500,
+            itemsEst: 1500,
+            fetchedBlock: Some({blockNumber: 200, blockTimestamp: 0}),
+          },
+        ],
+      ),
+    )
+    let emitted = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=1000.,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.toBlock))
+    | NothingToQuery => []
+    | WaitingForNewBlock => [(-1, None)]
+    }
+    t.expect(emitted).toEqual([(51, Some(100))])
+  })
 })
 
 describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => {
