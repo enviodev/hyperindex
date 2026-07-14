@@ -195,7 +195,7 @@ pub(super) fn coerce_stream_args<'a>(
         let value_def = ctx.registry.get(&value_type);
         let cols = expect_object(initial, &value_type, &init_path)?;
         for (key, value) in ordered_keys(table, cols) {
-            let Some(fd) = value_def.and_then(|d| d.input_field(&key)) else {
+            let Some(fd) = value_def.and_then(|d| d.input_field(key)) else {
                 return Err(verr(
                     format!("{init_path}.{key}"),
                     format!("field '{key}' not found in type: '{value_type}'"),
@@ -204,7 +204,7 @@ pub(super) fn coerce_stream_args<'a>(
             let vpath = format!("{init_path}.{key}");
             let v = resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &vpath)?;
             let col = table
-                .column_by_api_name(&key)
+                .column_by_api_name(key)
                 .expect("cursor value input field must be a table column");
             let initial_value = if v.is_null() {
                 None
@@ -418,7 +418,7 @@ fn expand_order_object<'a>(
     let type_def = ctx.registry.get(&type_name);
     for (key, value) in ordered_keys(table, entries) {
         let kpath = format!("{path}.{key}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&key)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(key)) else {
             return Err(verr(
                 kpath,
                 format!("field '{key}' not found in type: '{type_name}'"),
@@ -428,7 +428,7 @@ fn expand_order_object<'a>(
         if value.is_null() {
             continue;
         }
-        if let Some(col) = table.column_by_api_name(&key) {
+        if let Some(col) = table.column_by_api_name(key) {
             let dir = coerce_enum(ctx, value, "order_by", &kpath)?;
             let target = if chain.is_empty() {
                 ir::OrderTarget::Column {
@@ -476,7 +476,7 @@ fn expand_aggregate_order<'a>(
     let type_def = ctx.registry.get(&type_name);
     for (op, value) in expect_object(v, &type_name, path)? {
         let opath = format!("{path}.{op}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&op)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(op)) else {
             return Err(verr(
                 opath,
                 format!("field '{op}' not found in type: '{type_name}'"),
@@ -503,7 +503,7 @@ fn expand_aggregate_order<'a>(
             let col_def = ctx.registry.get(&col_type);
             for (col_key, col_value) in expect_object(value, &col_type, &opath)? {
                 let cpath = format!("{opath}.{col_key}");
-                let Some(cfd) = col_def.and_then(|d| d.input_field(&col_key)) else {
+                let Some(cfd) = col_def.and_then(|d| d.input_field(col_key)) else {
                     return Err(verr(
                         cpath,
                         format!("field '{col_key}' not found in type: '{col_type}'"),
@@ -516,7 +516,7 @@ fn expand_aggregate_order<'a>(
                 }
                 let dir = coerce_enum(ctx, col_value, "order_by", &cpath)?;
                 let col = remote
-                    .column_by_api_name(&col_key)
+                    .column_by_api_name(col_key)
                     .expect("aggregate order_by field must be a column");
                 out.push(ir::OrderByItem {
                     target: ir::OrderTarget::ArrayRelAggregate {

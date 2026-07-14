@@ -342,6 +342,9 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
+    #[subenum(HypersyncChain)]
+    Robinhood = 4663,
+
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Rsk = 30,
 
@@ -545,6 +548,7 @@ impl Network {
             | Network::Plasma
             | Network::Plume
             | Network::Rinkeby
+            | Network::Robinhood
             | Network::Rsk
             | Network::Scroll
             | Network::ScrollSepolia

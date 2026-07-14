@@ -20,7 +20,7 @@ pub(super) fn coerce_bool_exp<'a>(
     let mut parts: Vec<ir::BoolExp> = Vec::new();
     for (key, value) in entries {
         let kpath = format!("{path}.{key}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&key)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(key)) else {
             return Err(verr(
                 kpath,
                 format!("field '{key}' not found in type: '{type_name}'"),
@@ -48,7 +48,7 @@ pub(super) fn coerce_bool_exp<'a>(
                 parts.push(ir::BoolExp::Not(Box::new(inner)));
             }
             _ => {
-                if let Some(col) = table.column_by_api_name(&key) {
+                if let Some(col) = table.column_by_api_name(key) {
                     let ops = coerce_comparison(ctx, col, value, &kpath)?;
                     for op in ops {
                         parts.push(ir::BoolExp::Compare {
@@ -146,14 +146,14 @@ fn coerce_comparison_ops<'a>(
         // when the comparison type itself is absent (e.g. Int predicates
         // with no int column anywhere), fall back to accepting the op.
         if let Some(def) = type_def {
-            if def.input_field(&op).is_none() {
+            if def.input_field(op).is_none() {
                 return Err(verr(
                     opath,
                     format!("field '{op}' not found in type: '{type_name}'"),
                 ));
             }
         }
-        let loc = type_def.and_then(|d| d.input_field(&op));
+        let loc = type_def.and_then(|d| d.input_field(op));
         let value = match loc {
             Some(fd) => resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &opath)?,
             None => value,
@@ -261,7 +261,7 @@ fn coerce_aggregate_bool_exp<'a>(
     let mut out: Vec<ir::BoolExp> = Vec::new();
     for (op, value) in expect_object(v, &type_name, path)? {
         let opath = format!("{path}.{op}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&op)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(op)) else {
             return Err(verr(
                 opath,
                 format!("field '{op}' not found in type: '{type_name}'"),
@@ -279,7 +279,7 @@ fn coerce_aggregate_bool_exp<'a>(
         let mut has_arguments = false;
         for (key, kv) in entries {
             let kpath = format!("{opath}.{key}");
-            let Some(kfd) = inner_def.and_then(|d| d.input_field(&key)) else {
+            let Some(kfd) = inner_def.and_then(|d| d.input_field(key)) else {
                 return Err(verr(
                     kpath,
                     format!("field '{key}' not found in type: '{inner_type}'"),
