@@ -4573,3 +4573,33 @@ describe("Cap-hit truncation does not update chunk history", () => {
     })
   })
 })
+
+describe("mergeIntoBuffer", () => {
+  it("merges an unsorted response into the sorted buffer and drops duplicates", t => {
+    let buffer = [mockEvent(~blockNumber=1), mockEvent(~blockNumber=3), mockEvent(~blockNumber=5)]
+    let newItems = [
+      mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=2),
+      mockEvent(~blockNumber=3), // duplicate of the buffer's block 3
+      mockEvent(~blockNumber=4), // duplicate within the response
+    ]
+    t.expect(buffer->FetchState.mergeIntoBuffer(newItems)).toEqual([
+      mockEvent(~blockNumber=1),
+      mockEvent(~blockNumber=2),
+      mockEvent(~blockNumber=3),
+      mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=5),
+    ])
+  })
+
+  it("keeps two registrations for one log (equal block+logIndex, distinct index)", t => {
+    let newItems = [
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
+    ]
+    t.expect([]->FetchState.mergeIntoBuffer(newItems)).toEqual([
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
+    ])
+  })
+})
