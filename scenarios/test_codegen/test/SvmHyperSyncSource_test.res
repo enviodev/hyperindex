@@ -105,7 +105,7 @@ let mockClient: SvmHyperSyncClient.t = {
     capturedBlockHashRequests->Array.push(blockNumbers)->ignore
     Promise.resolve((
       BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
-      [{Source.method: "queryBlockHashes", seconds: 0.25}],
+      [{Source.method: "getBlockHashes", seconds: 0.25}],
     ))
   },
   get: (~query) => {
@@ -162,7 +162,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
 
     t.expect(capturedBlockHashRequests->Utils.Array.lastUnsafe).toEqual(blockNumbers)
-    t.expect(response.requestStats).toEqual([{Source.method: "queryBlockHashes", seconds: 0.25}])
+    t.expect(response.requestStats).toEqual([{Source.method: "getBlockHashes", seconds: 0.25}])
   })
 
   Async.it("omits block on the item and requests opted-in table columns", async t => {

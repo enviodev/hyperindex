@@ -1,6 +1,6 @@
 use napi_derive::napi;
 
-pub(crate) const QUERY_BLOCK_HASHES_METHOD: &str = "queryBlockHashes";
+pub(crate) const QUERY_BLOCK_HASHES_METHOD: &str = "getBlockHashes";
 
 /// Timing for one backend request. Multiple entries may be returned for a
 /// single source operation when that operation paginates internally.

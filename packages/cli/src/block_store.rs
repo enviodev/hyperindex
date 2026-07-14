@@ -970,6 +970,7 @@ impl BlockStore {
 
         let mut lowest = None;
         for range in &inner.svm_covered_ranges {
+            let mut previous_child_slot = None;
             for child_slot in
                 inner
                     .table
@@ -988,6 +989,7 @@ impl BlockStore {
                         received_hash: self.hash_display(child_hash),
                     };
                     lowest = lowest_conflict(lowest, Some(conflict));
+                    previous_child_slot = Some(child_slot);
                     continue;
                 };
                 let Some(parent_hash) = inner.table.field_bytes(&child_slot, parent_hash_field)
@@ -998,26 +1000,58 @@ impl BlockStore {
                         received_hash: self.hash_display(child_hash),
                     };
                     lowest = lowest_conflict(lowest, Some(conflict));
+                    previous_child_slot = Some(child_slot);
                     continue;
                 };
 
-                if !svm_slot_is_covered(&inner.svm_covered_ranges, parent_slot) {
+                if parent_slot >= child_slot {
+                    let conflict = HashMismatch {
+                        block_number: child_slot as i64,
+                        stored_hash: "<parent slot below child>".to_string(),
+                        received_hash: format!("<parent slot {parent_slot}>"),
+                    };
+                    lowest = lowest_conflict(lowest, Some(conflict));
+                    previous_child_slot = Some(child_slot);
                     continue;
                 }
-                let conflict = match inner.table.field_bytes(&parent_slot, hash_field) {
-                    Some(hash) if hash != parent_hash => Some(HashMismatch {
-                        block_number: parent_slot as i64,
-                        stored_hash: self.hash_display(hash),
-                        received_hash: self.hash_display(parent_hash),
-                    }),
-                    None => Some(HashMismatch {
-                        block_number: parent_slot as i64,
-                        stored_hash: "<missing block>".to_string(),
-                        received_hash: self.hash_display(parent_hash),
-                    }),
-                    _ => None,
+
+                let conflict = if let Some(previous_slot) = previous_child_slot {
+                    if parent_slot != previous_slot {
+                        Some(HashMismatch {
+                            block_number: child_slot as i64,
+                            stored_hash: format!("<expected parent slot {previous_slot}>"),
+                            received_hash: format!("<parent slot {parent_slot}>"),
+                        })
+                    } else {
+                        let previous_hash = inner
+                            .table
+                            .field_bytes(&previous_slot, hash_field)
+                            .expect("previous SVM child carries a block hash");
+                        (previous_hash != parent_hash).then(|| HashMismatch {
+                            block_number: previous_slot as i64,
+                            stored_hash: self.hash_display(previous_hash),
+                            received_hash: self.hash_display(parent_hash),
+                        })
+                    }
+                } else if svm_slot_is_covered(&inner.svm_covered_ranges, parent_slot) {
+                    match inner.table.field_bytes(&parent_slot, hash_field) {
+                        Some(hash) if hash != parent_hash => Some(HashMismatch {
+                            block_number: parent_slot as i64,
+                            stored_hash: self.hash_display(hash),
+                            received_hash: self.hash_display(parent_hash),
+                        }),
+                        None => Some(HashMismatch {
+                            block_number: parent_slot as i64,
+                            stored_hash: "<missing block>".to_string(),
+                            received_hash: self.hash_display(parent_hash),
+                        }),
+                        _ => None,
+                    }
+                } else {
+                    None
                 };
                 lowest = lowest_conflict(lowest, conflict);
+                previous_child_slot = Some(child_slot);
             }
         }
         lowest
@@ -1859,6 +1893,39 @@ mod tests {
         let mismatch = missing_link.response_conflict().expect("missing link");
         assert_eq!(mismatch.block_number, 13);
         assert_eq!(mismatch.stored_hash, "<missing parent_slot>");
+
+        // Only the first returned block may name a parent below coverage. A
+        // later block doing so belongs to a disconnected fork.
+        let disconnected_fork = BlockStore::new_svm();
+        disconnected_fork.insert_svm_blocks(vec![
+            linked_svm_block(10, "h10", 9, "h9"),
+            linked_svm_block(13, "h13", 9, "h9"),
+        ]);
+        disconnected_fork.mark_svm_coverage(10, 14).unwrap();
+        let mismatch = disconnected_fork
+            .response_conflict()
+            .expect("disconnected fork");
+        assert_eq!(mismatch.block_number, 13);
+        assert_eq!(mismatch.stored_hash, "<expected parent slot 10>");
+        assert_eq!(mismatch.received_hash, "<parent slot 9>");
+
+        for (name, invalid_parent_slot) in [("self parent", 10), ("forward parent", 11)] {
+            let invalid_order = BlockStore::new_svm();
+            invalid_order.insert_svm_blocks(vec![linked_svm_block(
+                10,
+                "h10",
+                invalid_parent_slot,
+                "parent-hash",
+            )]);
+            invalid_order.mark_svm_coverage(10, 12).unwrap();
+            let mismatch = invalid_order.response_conflict().expect(name);
+            assert_eq!(mismatch.block_number, 10);
+            assert_eq!(mismatch.stored_hash, "<parent slot below child>");
+            assert_eq!(
+                mismatch.received_hash,
+                format!("<parent slot {invalid_parent_slot}>")
+            );
+        }
     }
 
     #[test]
