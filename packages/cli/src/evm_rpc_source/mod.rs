@@ -12,8 +12,9 @@ mod interval;
 use crate::evm_hypersync_source::decode::DecoderCore;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, OnEventRegistration, Log as DecoderLog, ParamValue,
+    encode_address, Log as DecoderLog, OnEventRegistration, ParamValue,
 };
+use crate::request_stats::RequestStat;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use hypersync_client::format::Hex;
@@ -109,12 +110,6 @@ impl RawLog {
             ..Default::default()
         }
     }
-}
-
-#[napi(object)]
-pub struct RequestStat {
-    pub method: String,
-    pub seconds: f64,
 }
 
 #[napi(object)]
@@ -270,7 +265,10 @@ impl EvmRpcClient {
 
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, &params.addresses_by_contract_name)
+            .build(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
         let log_selections = built.log_selections;
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
@@ -462,7 +460,13 @@ impl EvmRpcClient {
         let mut topics: Vec<Option<&Vec<String>>> = selection
             .topics
             .iter()
-            .map(|values| if values.is_empty() { None } else { Some(values) })
+            .map(|values| {
+                if values.is_empty() {
+                    None
+                } else {
+                    Some(values)
+                }
+            })
             .collect();
         while matches!(topics.last(), Some(None)) {
             topics.pop();

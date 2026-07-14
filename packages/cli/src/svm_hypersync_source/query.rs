@@ -315,4 +315,29 @@ mod tests {
         assert!(field_selection(None).token_balance.is_empty());
         assert!(field_selection(Some(vec![])).token_balance.is_empty());
     }
+
+    #[test]
+    fn block_hash_query_parent_link_fields_parse() {
+        let selection: SolanaFieldSelection = FieldSelection {
+            block: Some(vec![
+                "slot".to_string(),
+                "blockhash".to_string(),
+                "parent_slot".to_string(),
+                "parent_blockhash".to_string(),
+            ]),
+            ..Default::default()
+        }
+        .try_into()
+        .expect("valid block fields");
+
+        assert_eq!(
+            selection.block,
+            vec![
+                BlockField::Slot,
+                BlockField::Blockhash,
+                BlockField::ParentSlot,
+                BlockField::ParentBlockhash,
+            ]
+        );
+    }
 }

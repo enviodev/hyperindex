@@ -1,20 +1,12 @@
-// Reorg-detection data shapes. The detection itself lives in the Rust
-// `BlockStore`: merging a fetch-response page compares block hashes and
-// reports a mismatch, and the store keeps in-threshold hashes on prune.
-
-type blockDataWithTimestamp = {
-  blockHash: string,
-  blockNumber: int,
-  blockTimestamp: int,
-}
+// Reorg detection lives in the Rust `BlockStore`. A validated response is
+// compared with the persistent store and only that cross-store mismatch is a
+// reorg signal; response-internal conflicts are retried by SourceManager.
 
 type blockData = {
   // Block hash is used for actual comparison to test for reorg
   blockHash: string,
   blockNumber: int,
 }
-
-external generalizeBlockDataWithTimestamp: blockDataWithTimestamp => blockData = "%identity"
 
 type reorgDetected = {
   scannedBlock: blockData,

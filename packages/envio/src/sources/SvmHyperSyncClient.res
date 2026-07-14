@@ -205,6 +205,11 @@ type queryResponse = ResponseTypes.queryResponse
 
 type t = {
   getHeight: unit => promise<int>,
+  // Block-hash query construction, pagination, and cursor-backed skipped-slot
+  // coverage live in Rust.
+  getBlockHashes: (
+    ~blockNumbers: array<int>,
+  ) => promise<(BlockStore.t, array<Source.requestStat>)>,
   // Returns the response plus pages of raw transactions and blocks (kept in
   // Rust), keyed by (slot, transactionIndex) / slot, materialised at batch prep.
   get: (~query: query) => promise<(queryResponse, TransactionStore.t, BlockStore.t)>,

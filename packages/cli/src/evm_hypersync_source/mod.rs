@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::sync::Once;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
 use crate::block_store::BlockStore;
+use crate::request_stats::{error_with_request_stats, RequestStat, QUERY_BLOCK_HASHES_METHOD};
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -21,8 +23,7 @@ use decode::DecoderCore;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
-    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue,
-    RollbackGuard,
+    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue, RollbackGuard,
 };
 
 static LOGGER_INIT: Once = Once::new();
@@ -50,6 +51,24 @@ pub struct EvmHypersyncClient {
     selection_builder: SelectionBuilder,
 }
 
+impl EvmHypersyncClient {
+    /// Execute one raw HyperSync page. Public methods decide how much of the
+    /// response to convert for their specific caller.
+    async fn get_raw(&self, query: Query) -> napi::Result<hypersync_client::QueryResponse> {
+        let query = query.try_into().context("parse query").map_err(map_err)?;
+        let res = self
+            .inner
+            .get_with_rate_limit(&query)
+            .await
+            .context("run inner query")
+            .map_err(map_err)?;
+        match res {
+            RateLimitResponse::Success { response, .. } => Ok(response),
+            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
+        }
+    }
+}
+
 #[napi]
 impl EvmHypersyncClient {
     #[napi(factory)]
@@ -62,9 +81,10 @@ impl EvmHypersyncClient {
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
-        let decoder = DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
-            .context("build decoder")
-            .map_err(map_err)?;
+        let decoder =
+            DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
+                .context("build decoder")
+                .map_err(map_err)?;
 
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
@@ -113,20 +133,72 @@ impl EvmHypersyncClient {
 
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
+        convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
+            .context("convert response")
+            .map_err(map_err)
+    }
+
+    /// Fetch the complete inclusive range spanning `block_numbers` into one
+    /// response store. Query construction, pagination, and the no-progress
+    /// retry stay on the Rust side so block-only response data never needs to
+    /// cross into ReScript.
+    #[napi]
+    pub async fn get_block_hashes(
+        &self,
+        block_numbers: Vec<i64>,
+    ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
+        let Some(from_block) = block_numbers.iter().copied().min() else {
+            return Ok((
+                BlockStore::new_evm(self.enable_checksum_addresses),
+                Vec::new(),
+            ));
+        };
+        let to_block = block_numbers.iter().copied().max().unwrap_or(from_block);
+        if from_block < 0 {
+            return Err(map_err(anyhow::anyhow!(
+                "block numbers must be non-negative"
+            )));
+        }
+        let to_block_exclusive = to_block
+            .checked_add(1)
+            .context("block range upper bound overflow")
             .map_err(map_err)?;
-        match res {
-            RateLimitResponse::Success { response, .. } => {
-                convert_response(response, self.enable_checksum_addresses)
-                    .context("convert response")
+
+        let aggregate = BlockStore::new_evm(self.enable_checksum_addresses);
+        let mut request_stats = Vec::new();
+        let mut cursor = from_block;
+        loop {
+            let query = Query {
+                from_block: cursor,
+                to_block: Some(to_block_exclusive),
+                include_all_blocks: Some(true),
+                field_selection: query::FieldSelection {
+                    block: Some(vec![BlockField::Number, BlockField::Hash]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let started = Instant::now();
+            let response = self.get_raw(query).await;
+            request_stats.push(RequestStat {
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
+                seconds: started.elapsed().as_secs_f64(),
+            });
+            let response =
+                response.map_err(|error| error_with_request_stats(error, &request_stats))?;
+            let (next_block, page_store) =
+                block_hash_page(response, self.enable_checksum_addresses)
                     .map_err(map_err)
+                    .map_err(|error| error_with_request_stats(error, &request_stats))?;
+            if next_block <= cursor {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
             }
-            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
+            aggregate.append_page(&page_store);
+            if next_block > to_block {
+                return Ok((aggregate, request_stats));
+            }
+            cursor = next_block;
         }
     }
 
@@ -137,7 +209,10 @@ impl EvmHypersyncClient {
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, &params.addresses_by_contract_name)
+            .build(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
@@ -158,7 +233,10 @@ impl EvmHypersyncClient {
         // (blockNumber, transactionIndex), so those keys must come back on each
         // transaction row whenever any transaction field is requested.
         if !transaction_fields.is_empty() {
-            for field in [TransactionField::BlockNumber, TransactionField::TransactionIndex] {
+            for field in [
+                TransactionField::BlockNumber,
+                TransactionField::TransactionIndex,
+            ] {
                 if !transaction_fields.contains(&field) {
                     transaction_fields.push(field);
                 }
@@ -289,9 +367,8 @@ fn log_selection_from_built(
     })
 }
 
-// The only caller of `get` is the block-hash query, which selects block fields
-// only — so the response carries just blocks. Event items (with their
-// transactions in the store) flow through `get_event_items` instead.
+// Generic query DTO retained for direct native-addon callers. HyperIndex's
+// event and block-hash paths use their dedicated lean methods instead.
 #[napi(object)]
 pub struct QueryResponseData {
     pub blocks: Vec<Block>,
@@ -377,6 +454,25 @@ fn convert_response(
             .transpose()
             .context("convert rollback guard")?,
     })
+}
+
+/// Convert only the two values needed by the block-hash paginator. Raw blocks
+/// move directly into the response store without constructing napi block DTOs.
+fn block_hash_page(
+    mut response: hypersync_client::QueryResponse,
+    should_checksum: bool,
+) -> Result<(i64, BlockStore)> {
+    let next_block = response
+        .next_block
+        .try_into()
+        .context("convert next_block")?;
+    let blocks = std::mem::take(&mut response.data.blocks)
+        .into_iter()
+        .flatten()
+        .collect();
+    let block_store = BlockStore::new_evm(should_checksum);
+    block_store.insert_evm_blocks(blocks);
+    Ok((next_block, block_store))
 }
 
 fn push_unique(missing: &mut Vec<String>, name: String) {

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use napi_derive::napi;
 
 mod borsh_decoder;
@@ -33,6 +34,7 @@ use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
 use hypersync_client_solana::simple_types as simple;
 
 use crate::block_store::BlockStore;
+use crate::request_stats::{error_with_request_stats, RequestStat, QUERY_BLOCK_HASHES_METHOD};
 use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
@@ -61,6 +63,22 @@ pub struct SvmHypersyncClient {
     /// the config at client creation. `get` decodes matching instructions
     /// against these.
     schemas: HashMap<String, UpstreamSchema>,
+}
+
+impl SvmHypersyncClient {
+    /// Execute one raw Solana HyperSync page. Event queries and block-hash
+    /// queries convert only the tables they actually consume.
+    async fn get_raw(&self, query: SvmQuery) -> napi::Result<simple::SolanaResponse> {
+        let query: hypersync_solana_net_types::query::SolanaQuery = query
+            .try_into()
+            .context("parse solana query")
+            .map_err(map_err)?;
+        self.inner
+            .get(&query)
+            .await
+            .context("solana get")
+            .map_err(map_err)
+    }
 }
 
 #[napi]
@@ -109,16 +127,7 @@ impl SvmHypersyncClient {
         &self,
         query: SvmQuery,
     ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
-        let q: hypersync_solana_net_types::query::SolanaQuery = query
-            .try_into()
-            .context("parse solana query")
-            .map_err(map_err)?;
-        let mut resp = self
-            .inner
-            .get(&q)
-            .await
-            .context("solana get")
-            .map_err(map_err)?;
+        let mut resp = self.get_raw(query).await?;
 
         // Decode each matching instruction inline against the client's
         // configured schemas — Borsh decoding happens here, in Rust, rather
@@ -176,6 +185,85 @@ impl SvmHypersyncClient {
         }
         Ok((out, store, block_store))
     }
+
+    /// Fetch the inclusive range spanning `block_numbers` into one response
+    /// store. Each advancing cursor proves its half-open range was processed;
+    /// missing block rows inside that coverage are skipped slots.
+    #[napi]
+    pub async fn get_block_hashes(
+        &self,
+        block_numbers: Vec<i64>,
+    ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
+        let Some(from_slot) = block_numbers.iter().copied().min() else {
+            return Ok((BlockStore::new_svm(), Vec::new()));
+        };
+        let to_slot = block_numbers.iter().copied().max().unwrap_or(from_slot);
+        if from_slot < 0 {
+            return Err(map_err(anyhow::anyhow!(
+                "slot numbers must be non-negative"
+            )));
+        }
+        let to_slot_exclusive = to_slot
+            .checked_add(1)
+            .context("slot range upper bound overflow")
+            .map_err(map_err)?;
+
+        let fields = query::FieldSelection {
+            block: Some(vec![
+                "slot".to_string(),
+                "blockhash".to_string(),
+                "parent_slot".to_string(),
+                "parent_blockhash".to_string(),
+            ]),
+            ..Default::default()
+        };
+        let aggregate = BlockStore::new_svm();
+        let mut request_stats = Vec::new();
+        let mut cursor = from_slot;
+        loop {
+            let query = SvmQuery {
+                from_slot: cursor,
+                to_slot: Some(to_slot_exclusive),
+                include_all_blocks: Some(true),
+                fields: Some(fields.clone()),
+                ..Default::default()
+            };
+            let started = Instant::now();
+            let response = self.get_raw(query).await;
+            request_stats.push(RequestStat {
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
+                seconds: started.elapsed().as_secs_f64(),
+            });
+            let response =
+                response.map_err(|error| error_with_request_stats(error, &request_stats))?;
+            let (next_slot, page_store) = block_hash_page(response)
+                .map_err(map_err)
+                .map_err(|error| error_with_request_stats(error, &request_stats))?;
+            if next_slot <= cursor {
+                let error = map_err(anyhow::anyhow!(
+                    "SVM block hash query made no progress: cursor={cursor}, next_slot={next_slot}"
+                ));
+                return Err(error_with_request_stats(error, &request_stats));
+            }
+            aggregate.append_page(&page_store);
+            aggregate
+                .mark_svm_coverage(cursor, next_slot.min(to_slot_exclusive))
+                .map_err(map_err)
+                .map_err(|error| error_with_request_stats(error, &request_stats))?;
+            if next_slot >= to_slot_exclusive {
+                return Ok((aggregate, request_stats));
+            }
+            cursor = next_slot;
+        }
+    }
+}
+
+/// Convert only the cursor and raw blocks needed for rollback-depth checks.
+fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, BlockStore)> {
+    let next_slot = i64::try_from(response.next_slot).context("convert next_slot")?;
+    let block_store = BlockStore::new_svm();
+    block_store.insert_svm_blocks(std::mem::take(&mut response.blocks));
+    Ok((next_slot, block_store))
 }
 
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
