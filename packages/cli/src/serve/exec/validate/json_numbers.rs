@@ -1,14 +1,16 @@
 //! serde_json (without `arbitrary_precision`) rounds every non-64-bit-int
 //! JSON number through f64, so variable values like
 //! `99999999999999999999999` lose digits that Hasura's aeson `Scientific`
-//! keeps. Before the request body is parsed, number tokens whose text
-//! cannot round-trip through serde_json's representation are rewritten to
-//! unique finite f64 sentinels. The decoder carries the resulting
+//! keeps. After validating the raw JSON grammar without materializing its
+//! numbers, tokens whose text cannot round-trip through serde_json's
+//! representation are rewritten to unique finite f64 sentinels. The decoder carries the resulting
 //! sentinel-bits -> original-text map alongside (never inside) the
 //! client-owned variables object, and the coercion layer substitutes the
 //! original text back when producing SQL parameters.
 
 use super::coerce::parse_decimal;
+use serde_json::value::RawValue;
+use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 
 struct NumTok {
@@ -17,7 +19,7 @@ struct NumTok {
 }
 
 /// Finds JSON number tokens in `src`, skipping string contents. Assumes
-/// `src` is valid JSON (it has already been parsed once).
+/// `src` has already been validated as JSON by `RawValue`.
 fn number_tokens(src: &str) -> Vec<NumTok> {
     let bytes = src.as_bytes();
     let mut out = Vec::new();
@@ -124,10 +126,24 @@ pub fn rewrite_lossy_numbers(src: &str) -> Option<(String, HashMap<u64, String>)
     Some((out, originals))
 }
 
+/// Validates JSON without first forcing its numbers through f64, then
+/// materializes a `Value` after substituting finite sentinels for numbers
+/// serde_json cannot otherwise represent. RawValue validation is important:
+/// the lightweight number scanner deliberately assumes valid JSON and must
+/// never turn a malformed token such as `1e` into an accepted request.
+pub fn parse_value_preserving_numbers(
+    src: &str,
+) -> Result<(Json, HashMap<u64, String>), serde_json::Error> {
+    let _: &RawValue = serde_json::from_str(src)?;
+    match rewrite_lossy_numbers(src) {
+        Some((rewritten, originals)) => Ok((serde_json::from_str::<Json>(&rewritten)?, originals)),
+        None => Ok((serde_json::from_str::<Json>(src)?, HashMap::new())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value as Json;
 
     #[test]
     fn ordinary_numbers_are_untouched() {
@@ -170,5 +186,21 @@ mod tests {
                 None,
             )
         );
+    }
+
+    #[test]
+    fn raw_validation_accepts_overflow_but_rejects_malformed_numbers() {
+        let (parsed, originals) =
+            parse_value_preserving_numbers(r#"{"v":1e400,"nested":{"n":-9e999}}"#).unwrap();
+        for (path, expected) in [(["v", ""], "1e400"), (["nested", "n"], "-9e999")] {
+            let value = if path[1].is_empty() {
+                &parsed[path[0]]
+            } else {
+                &parsed[path[0]][path[1]]
+            };
+            let bits = value.as_f64().unwrap().to_bits();
+            assert_eq!(originals.get(&bits).map(String::as_str), Some(expected));
+        }
+        assert!(parse_value_preserving_numbers(r#"{"v":1e}"#).is_err());
     }
 }

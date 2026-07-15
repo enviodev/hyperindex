@@ -214,8 +214,9 @@ pub(super) fn coerce_stream_args<'a>(
             let col = table
                 .column_by_api_name(key)
                 .expect("cursor value input field must be a table column");
+            let cast = column_pg_cast(col.scalar, &col.pg_type, &col.pg_type_schema, col.is_array);
             let initial_value = if v.is_null() {
-                None
+                Some(ir::SqlValue::null(cast.clone()))
             } else {
                 Some(coerce_column_value(
                     ctx,
@@ -229,7 +230,7 @@ pub(super) fn coerce_stream_args<'a>(
             };
             cursor.push(ir::StreamCursor {
                 column: col.db_name.clone(),
-                cast: column_pg_cast(col.scalar, &col.pg_type, &col.pg_type_schema, col.is_array),
+                cast,
                 initial_value,
                 descending,
             });

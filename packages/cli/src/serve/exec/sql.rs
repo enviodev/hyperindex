@@ -843,12 +843,11 @@ fn emit_base(
 /// Lexicographic bound over the stream cursor columns; a missing initial
 /// value means that column is unbounded.
 ///
-/// A present-but-NULL cursor value is a real position in the ordering
-/// (nullable cursor columns; bare ASC sorts NULLS LAST, DESC NULLS FIRST):
-/// under ASC nothing sorts strictly after NULL, so the strict bound matches
-/// nothing (the stream has drained but keeps polling); under DESC the
-/// remainder is exactly the non-null rows. Ties on a NULL position continue
-/// the lexicographic chain via `IS NULL`.
+/// A present-but-NULL cursor value is a real bound, not an omitted one.
+/// Hasura applies the same strict SQL comparison as for non-NULL values;
+/// comparison with NULL cannot be true, so that cursor branch matches no
+/// rows. Earlier non-NULL columns in a multi-column cursor may still advance
+/// through their strict branch.
 fn emit_cursor_bounds(b: &mut Sql, t: Alias, cursors: &[ir::StreamCursor]) {
     let bounded: Vec<(usize, &ir::StreamCursor)> = cursors
         .iter()
@@ -858,18 +857,13 @@ fn emit_cursor_bounds(b: &mut Sql, t: Alias, cursors: &[ir::StreamCursor]) {
 
     fn strict(b: &mut Sql, t: Alias, ci: usize, c: &ir::StreamCursor) {
         let v = c.initial_value.as_ref().unwrap();
-        match (&v.text, c.descending) {
-            (None, false) => b.push("('false')"),
-            (None, true) => {
-                b.push("((");
-                b.qual(t, &c.column);
-                b.push(") IS NOT NULL)");
-            }
-            (Some(_), descending) => {
+        match &v.text {
+            None => b.push("('false')"),
+            Some(_) => {
                 b.push("((");
                 b.qual(t, &c.column);
                 b.push(")");
-                b.push(if descending { " < " } else { " > " });
+                b.push(if c.descending { " < " } else { " > " });
                 let slot = b.param(v);
                 b.cursor_slots.push((ci, slot));
                 b.push(")");
@@ -880,11 +874,7 @@ fn emit_cursor_bounds(b: &mut Sql, t: Alias, cursors: &[ir::StreamCursor]) {
     fn tie(b: &mut Sql, t: Alias, ci: usize, c: &ir::StreamCursor) {
         let v = c.initial_value.as_ref().unwrap();
         match &v.text {
-            None => {
-                b.push("((");
-                b.qual(t, &c.column);
-                b.push(") IS NULL)");
-            }
+            None => b.push("('false')"),
             Some(_) => {
                 b.push("((");
                 b.qual(t, &c.column);
@@ -898,6 +888,13 @@ fn emit_cursor_bounds(b: &mut Sql, t: Alias, cursors: &[ir::StreamCursor]) {
 
     fn emit_from(b: &mut Sql, t: Alias, bounded: &[(usize, &ir::StreamCursor)]) {
         let (ci, c) = bounded[0];
+        if c.initial_value
+            .as_ref()
+            .is_some_and(|value| value.text.is_none())
+        {
+            b.push("('false')");
+            return;
+        }
         if bounded.len() == 1 {
             strict(b, t, ci, c);
             return;
@@ -2261,10 +2258,10 @@ mod tests {
     }
 
     #[test]
-    fn stream_cursor_null_position_desc_with_tiebreak() {
-        // DESC = NULLS FIRST: after a NULL position the remainder is the
-        // non-null rows; ties on the NULL continue via IS NULL into the
-        // second cursor column's strict bound.
+    fn stream_cursor_null_position_desc_matches_nothing_even_with_tiebreak() {
+        // Hasura does not reinterpret NULL according to NULLS FIRST/LAST.
+        // Its strict comparison remains unknown, so later cursor columns
+        // cannot make this branch match rows.
         let root = stream_root(vec![
             cursor("blockNumber", Some(ir::SqlValue::null("numeric")), true),
             cursor("logIndex", Some(ir::SqlValue::new("7", "numeric")), false),
@@ -2277,9 +2274,9 @@ mod tests {
                  (array_agg((\"_o0\")::text ORDER BY \"_o0\" DESC, \"_o1\" ASC))[count(*)] AS \"cursor_0\", \
                  (array_agg((\"_o1\")::text ORDER BY \"_o0\" DESC, \"_o1\" ASC))[count(*)] AS \"cursor_1\" \
                  FROM (SELECT row_to_json((SELECT \"_e\" FROM (SELECT \"t0\".\"id\" AS \"id\") AS \"_e\")) AS \"_v\", \"t0\".\"blockNumber\" AS \"_o0\", \"t0\".\"logIndex\" AS \"_o1\" \
-                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE (((\"t0\".\"blockNumber\") IS NOT NULL) OR (((\"t0\".\"blockNumber\") IS NULL) AND ((\"t0\".\"logIndex\") > (($1)::numeric)))) ORDER BY \"blockNumber\" DESC, \"logIndex\" ASC LIMIT (($2)::int8)) AS \"t0\") AS \"_r\"",
-                vec![Some("7".to_string()), Some("10".to_string())],
-                vec![(1usize, 0usize)]
+                 FROM (SELECT * FROM \"public\".\"Token\" AS \"t0\" WHERE ('false') ORDER BY \"blockNumber\" DESC, \"logIndex\" ASC LIMIT (($1)::int8)) AS \"t0\") AS \"_r\"",
+                vec![Some("10".to_string())],
+                vec![]
             )
         );
     }

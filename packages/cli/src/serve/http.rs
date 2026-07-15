@@ -292,7 +292,8 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
             )),
         };
 
-    let value: serde_json::Value = match serde_json::from_str(text) {
+    let (value, number_originals) =
+        match exec::validate::json_numbers::parse_value_preserving_numbers(text) {
         Ok(v) => v,
         // Lone-surrogate escapes decode to invalid UTF-8 in Hasura's
         // text pipeline; it reports them as a UTF-8 decoding failure.
@@ -375,23 +376,10 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
     // (e.g. >19-digit integers) are re-read from the raw body text with
     // sentinel substitution so their exact text reaches SQL parameters,
     // as Hasura's arbitrary-precision Scientific does.
-    let (variables, variable_number_originals) = match variables {
-        Some(original @ serde_json::Value::Object(_)) => {
-            match exec::validate::json_numbers::rewrite_lossy_numbers(text) {
-                Some((rewritten, originals)) => {
-                    let preserved = serde_json::from_str::<serde_json::Value>(&rewritten)
-                        .ok()
-                        .and_then(|reparsed| reparsed.get("variables").cloned())
-                        .filter(|v| matches!(v, serde_json::Value::Object(_)));
-                    match preserved {
-                        Some(value) => (Some(value), originals),
-                        None => (Some(original), Default::default()),
-                    }
-                }
-                None => (Some(original), Default::default()),
-            }
-        }
-        other => (other, Default::default()),
+    let variable_number_originals = if matches!(variables, Some(serde_json::Value::Object(_))) {
+        number_originals
+    } else {
+        Default::default()
     };
 
     Ok(GraphQLRequest {
@@ -515,6 +503,36 @@ mod tests {
             .unwrap()
             .get("\u{1}variable number originals")
             .is_some());
+    }
+
+    #[test]
+    fn out_of_f64_range_variable_numbers_are_preserved() {
+        let request = decode_request_body(
+            br#"{"query":"query($n: numeric!, $j: jsonb!) { x }","variables":{"n":1e400,"j":{"nested":-9e999}}}"#,
+        )
+        .expect("arbitrary-precision JSON numbers are valid Hasura inputs");
+        let variables = request.variables.as_ref().unwrap();
+        let n_bits = variables["n"].as_f64().unwrap().to_bits();
+        let nested_bits = variables["j"]["nested"].as_f64().unwrap().to_bits();
+        assert_eq!(
+            (
+                request
+                    .variable_number_originals
+                    .get(&n_bits)
+                    .map(String::as_str),
+                request
+                    .variable_number_originals
+                    .get(&nested_bits)
+                    .map(String::as_str),
+            ),
+            (Some("1e400"), Some("-9e999"))
+        );
+
+        let malformed =
+            decode_request_body(br#"{"query":"query($n: numeric!) { x }","variables":{"n":1e}}"#)
+                .err()
+                .expect("malformed JSON must still be rejected");
+        assert_eq!(malformed.code, "invalid-json");
     }
 
     #[test]

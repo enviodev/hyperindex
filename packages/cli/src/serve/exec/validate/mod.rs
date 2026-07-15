@@ -1237,6 +1237,16 @@ mod tests {
                     column("big", "numeric", Scalar::Numeric),
                     column("json", "jsonb", Scalar::Jsonb),
                     Column {
+                        api_name: "maybe".to_string(),
+                        db_name: "maybe".to_string(),
+                        pg_type: "text".to_string(),
+                        pg_type_schema: "pg_catalog".to_string(),
+                        scalar: Scalar::String,
+                        is_array: false,
+                        nullable: true,
+                        description: None,
+                    },
+                    Column {
                         api_name: "status".to_string(),
                         db_name: "status".to_string(),
                         pg_type: "accounttype".to_string(),
@@ -1264,7 +1274,11 @@ mod tests {
 
     /// Plans a request the way the HTTP path does, including the lossy
     /// variable-number rewrite of the raw variables text.
-    fn plan(query: &str, variables: Option<&str>) -> GResult<ir::Operation> {
+    fn plan_with_transport(
+        query: &str,
+        variables: Option<&str>,
+        transport: Transport,
+    ) -> GResult<ir::Operation> {
         let model = test_model();
         let schema = RoleSchema {
             registry: schema_build::build(&model, Role::Admin),
@@ -1286,7 +1300,11 @@ mod tests {
             operation_name: None,
             variable_number_originals,
         };
-        plan_request(&model, &schema, &request, Transport::Http)
+        plan_request(&model, &schema, &request, transport)
+    }
+
+    fn plan(query: &str, variables: Option<&str>) -> GResult<ir::Operation> {
+        plan_with_transport(query, variables, Transport::Http)
     }
 
     /// The SQL text of a single `big: {_eq: ...}` comparison.
@@ -1552,6 +1570,31 @@ mod tests {
                 "$.variables",
                 CODE_PARSE_FAILED,
             )
+        );
+    }
+
+    #[test]
+    fn explicit_null_stream_cursor_is_a_bounded_position() {
+        let op = plan_with_transport(
+            "subscription { User_stream(batch_size: 2, cursor: {initial_value: {maybe: null}, ordering: DESC}) { id } }",
+            None,
+            Transport::Ws,
+        )
+        .unwrap();
+        let Some(ir::RootField::Table(root)) = op.root_fields.first() else {
+            panic!("expected a table root");
+        };
+        let ir::TableRootKind::Stream { cursor, .. } = &root.kind else {
+            panic!("expected a stream root");
+        };
+        assert_eq!(cursor.len(), 1);
+        let initial = cursor[0]
+            .initial_value
+            .as_ref()
+            .expect("explicit null must not become an unbounded cursor");
+        assert_eq!(
+            (initial.text.as_deref(), initial.cast.as_str()),
+            (None, "text")
         );
     }
 

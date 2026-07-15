@@ -50,6 +50,16 @@ export default defineCases([
     variables: { n: 1.25 },
   },
   {
+    name: "vr-var-numeric-overflow-number",
+    query: `query ($n: numeric!) { Token(where: {tokenId: {_eq: $n}}, order_by: {id: asc}) { id tokenId } }`,
+    rawVariables: `{"n":1e400}`,
+  },
+  {
+    name: "vr-var-jsonb-nested-overflow-number",
+    query: `query ($j: jsonb!) { EntityWithAllTypes(where: {json: {_contains: $j}}, order_by: {id: asc}) { id } }`,
+    rawVariables: `{"j":{"nested":-9e999}}`,
+  },
+  {
     name: "vr-var-timestamptz-string",
     query: `query ($ts: timestamptz!) { EntityWithTimestamp(where: {timestamp: {_eq: $ts}}, order_by: {id: asc}) { id timestamp } }`,
     variables: { ts: "2024-01-15T12:34:56.123456+00:00" },

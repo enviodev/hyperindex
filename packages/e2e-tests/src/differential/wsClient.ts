@@ -21,6 +21,9 @@ export interface WsFrame {
 
 export interface WsSession {
   send(frame: WsFrame): void;
+  /** Sends an already-serialized frame, for JSON numbers JavaScript cannot
+   * represent without coercing them to Infinity/null. */
+  sendRaw(frame: string): void;
   /** Waits for the next frame matching the filter (keepalives skipped unless asked for). */
   next(
     filter?: (f: WsFrame) => boolean,
@@ -84,6 +87,9 @@ export async function connect(
     frames,
     send(frame) {
       socket.send(JSON.stringify(frame));
+    },
+    sendRaw(frame) {
+      socket.send(frame);
     },
     next(filter = (f) => f.type !== "ka" && f.type !== "ping", timeoutMs = 10_000) {
       const existing = frames.find((f) => !consumed.has(f) && filter(f));

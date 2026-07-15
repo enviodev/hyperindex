@@ -182,6 +182,66 @@ describe.sequential("differential subscriptions", () => {
         expect(envio.payloads).toEqual(hasura.payloads);
       }, 90_000);
 
+      it("streaming subscription preserves an explicit NULL cursor boundary", async () => {
+        const query = `subscription { User_stream(batch_size: 2, cursor: {initial_value: {gravatar_id: null}, ordering: DESC}) { id gravatar_id } }`;
+
+        const run = async (url: string): Promise<ScenarioResult> => {
+          const session = await connect(url, protocol, { adminSecret });
+          try {
+            const sub = subscribe(session, protocol, { query });
+            // Hasura keeps explicit NULL as the cursor value. The resulting
+            // strict SQL comparison matches no rows, so no batch is emitted.
+            // Waiting across two poll intervals distinguishes this from the
+            // old behavior, which dropped NULL and streamed unbounded rows.
+            await new Promise((resolve) => setTimeout(resolve, 2_500));
+            session.assertNoUnconsumedData();
+            sub.stop();
+          } finally {
+            await session.close();
+          }
+          return { payloads: [] };
+        };
+
+        const hasura = await run(endpoints.hasura);
+        const envio = await run(endpoints.envio);
+        expect(envio.payloads).toEqual(hasura.payloads);
+      }, 90_000);
+
+      it("query variables preserve numbers outside f64 range", async () => {
+        const query = `query ($n: numeric!, $j: jsonb!) { numeric: Token(where: {tokenId: {_eq: $n}}, order_by: {id: asc}) { id } json: EntityWithAllTypes(where: {json: {_contains: $j}}, order_by: {id: asc}) { id } }`;
+        const rawVariables = `{"n":1e400,"j":{"nested":-9e999}}`;
+
+        const run = async (url: string): Promise<ScenarioResult> => {
+          const session = await connect(url, protocol, { adminSecret });
+          const id = "overflow-vars";
+          const startType = protocol === "graphql-transport-ws" ? "subscribe" : "start";
+          const dataType = protocol === "graphql-transport-ws" ? "next" : "data";
+          try {
+            session.sendRaw(
+              `{"type":${JSON.stringify(startType)},"id":${JSON.stringify(id)},"payload":{"query":${JSON.stringify(query)},"variables":${rawVariables}}}`
+            );
+            const frame = await session.next(
+              (candidate) =>
+                candidate.id === id &&
+                (candidate.type === dataType || candidate.type === "error")
+            );
+            if (frame.type === "error") {
+              return { payloads: [], errorPayload: frame.payload };
+            }
+            await session.next(
+              (candidate) => candidate.id === id && candidate.type === "complete"
+            );
+            return { payloads: [frame.payload] };
+          } finally {
+            await session.close();
+          }
+        };
+
+        const hasura = await run(endpoints.hasura);
+        const envio = await run(endpoints.envio);
+        expect(envio).toEqual(hasura);
+      }, 60_000);
+
       it("streaming subscription loses rows tied with the cursor boundary", async () => {
         // Hasura's single-column stream cursor has no tie-breaking: with
         // batch_size 1, sim-1 and sim-2 both have blockNumber 100. Batch 1
@@ -259,10 +319,11 @@ describe.sequential("differential subscriptions", () => {
         expect(envio.errorPayload).toEqual(hasura.errorPayload);
       }, 60_000);
 
-      // The graphql-transport-ws spec pins connection-level misuse to
-      // specific close codes (4409/4401/4429); the legacy protocol has no
-      // equivalent mandated behavior, so these three run only for the
-      // modern protocol. Hasura is the runtime oracle either way.
+      // Functional GraphQL behavior is diffed against Hasura above. For
+      // connection-level misuse, graphql-transport-ws itself is the oracle:
+      // it mandates 4409/4401/4429, while Hasura v2.43 closes normally or
+      // accepts a repeated init. The legacy protocol has no equivalent
+      // mandated behavior, so these run only for the modern protocol.
       if (protocol === "graphql-transport-ws") {
         it("duplicate subscription id on one socket closes with 4409", async () => {
           const query = `subscription { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }`;
@@ -279,9 +340,8 @@ describe.sequential("differential subscriptions", () => {
             }
           };
 
-          const hasura = await run(endpoints.hasura);
           const envio = await run(endpoints.envio);
-          expect(envio).toEqual(hasura);
+          expect(envio).toBe(4409);
         }, 60_000);
 
         it("subscribe before connection_init closes with 4401", async () => {
@@ -297,9 +357,8 @@ describe.sequential("differential subscriptions", () => {
             }
           };
 
-          const hasura = await run(endpoints.hasura);
           const envio = await run(endpoints.envio);
-          expect(envio).toEqual(hasura);
+          expect(envio).toBe(4401);
         }, 60_000);
 
         it("second connection_init closes with 4429", async () => {
@@ -313,9 +372,8 @@ describe.sequential("differential subscriptions", () => {
             }
           };
 
-          const hasura = await run(endpoints.hasura);
           const envio = await run(endpoints.envio);
-          expect(envio).toEqual(hasura);
+          expect(envio).toBe(4429);
         }, 60_000);
       }
 

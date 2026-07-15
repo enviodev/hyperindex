@@ -25,10 +25,19 @@ export async function runCase(
   if (corpusCase.operationName !== undefined)
     payload.operationName = corpusCase.operationName;
 
+  const requestBody =
+    corpusCase.rawVariables === undefined
+      ? JSON.stringify(payload)
+      : `{"query":${JSON.stringify(corpusCase.query)},"variables":${corpusCase.rawVariables}${
+          corpusCase.operationName === undefined
+            ? ""
+            : `,"operationName":${JSON.stringify(corpusCase.operationName)}`
+        }}`;
+
   const res = await fetch(`${endpoint}/v1/graphql`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: requestBody,
   });
   const text = await res.text();
   let body: unknown;

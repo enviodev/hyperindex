@@ -474,16 +474,17 @@ async fn run_connection(
 
 /// Returns Err to close the connection.
 async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
-    let frame: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => {
-            return if conn.protocol == Protocol::Modern {
-                Err(())
-            } else {
-                Ok(())
+    let (frame, number_originals) =
+        match exec::validate::json_numbers::parse_value_preserving_numbers(text) {
+            Ok(v) => v,
+            Err(_) => {
+                return if conn.protocol == Protocol::Modern {
+                    Err(())
+                } else {
+                    Ok(())
+                }
             }
-        }
-    };
+        };
     let frame_type = frame.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
     match frame_type {
@@ -627,8 +628,13 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
                 }
             };
             let payload = frame.get("payload").cloned().unwrap_or(json!({}));
-            let (variables, variable_number_originals) =
-                preserve_variable_numbers(text, payload.get("variables").cloned());
+            let variables = payload.get("variables").cloned();
+            let variable_number_originals =
+                if matches!(variables, Some(serde_json::Value::Object(_))) {
+                    number_originals
+                } else {
+                    Default::default()
+                };
             let request = GraphQLRequest {
                 query: payload
                     .get("query")
@@ -659,43 +665,6 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
             Ok(())
         }
         _ => Ok(()),
-    }
-}
-
-/// Same raw-text number preservation as decode_request_body's HTTP path:
-/// variable numbers that don't round-trip through serde_json's f64 are
-/// re-read from the raw frame text with sentinel substitution (see
-/// exec/validate/json_numbers.rs) so their exact text reaches SQL
-/// parameters.
-fn preserve_variable_numbers(
-    frame_text: &str,
-    variables: Option<serde_json::Value>,
-) -> (
-    Option<serde_json::Value>,
-    std::collections::HashMap<u64, String>,
-) {
-    match variables {
-        Some(original @ serde_json::Value::Object(_)) => {
-            match exec::validate::json_numbers::rewrite_lossy_numbers(frame_text) {
-                Some((rewritten, originals)) => {
-                    let preserved = serde_json::from_str::<serde_json::Value>(&rewritten)
-                        .ok()
-                        .and_then(|reparsed| {
-                            reparsed
-                                .get("payload")
-                                .and_then(|p| p.get("variables"))
-                                .cloned()
-                        })
-                        .filter(|v| matches!(v, serde_json::Value::Object(_)));
-                    match preserved {
-                        Some(value) => (Some(value), originals),
-                        None => (Some(original), Default::default()),
-                    }
-                }
-                None => (Some(original), Default::default()),
-            }
-        }
-        other => (other, Default::default()),
     }
 }
 
@@ -945,11 +914,9 @@ mod tests {
     #[test]
     fn subscribe_payload_variables_preserve_lossy_numbers() {
         let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"big":99999999999999999999999,"small":1.5}}}"#;
-        let frame: serde_json::Value = serde_json::from_str(text).unwrap();
-        let raw_vars = frame["payload"].get("variables").cloned();
-
-        let (vars, originals) = preserve_variable_numbers(text, raw_vars);
-        let vars = vars.unwrap();
+        let (frame, originals) =
+            exec::validate::json_numbers::parse_value_preserving_numbers(text).unwrap();
+        let vars = &frame["payload"]["variables"];
         let sentinel_bits = vars["big"].as_f64().unwrap().to_bits().to_string();
         assert_eq!(
             (
@@ -966,31 +933,42 @@ mod tests {
     #[test]
     fn payload_without_lossy_numbers_is_untouched() {
         let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"n":42}}}"#;
-        assert_eq!(
-            [
-                preserve_variable_numbers(text, Some(json!({"n": 42}))),
-                preserve_variable_numbers(text, None),
-                preserve_variable_numbers(text, Some(json!(null))),
-            ],
-            [
-                (Some(json!({"n": 42})), Default::default()),
-                (None, Default::default()),
-                (Some(json!(null)), Default::default()),
-            ]
-        );
+        let (frame, originals) =
+            exec::validate::json_numbers::parse_value_preserving_numbers(text).unwrap();
+        assert_eq!(frame["payload"]["variables"], json!({"n": 42}));
+        assert!(originals.is_empty());
     }
 
     #[test]
     fn client_number_metadata_key_is_not_trusted() {
         let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"v":1.5,"\u0001variable number originals":{"4609434218613702656":"999999999999999999"}}}}"#;
-        let frame: serde_json::Value = serde_json::from_str(text).unwrap();
-        let (variables, originals) =
-            preserve_variable_numbers(text, frame["payload"].get("variables").cloned());
+        let (frame, originals) =
+            exec::validate::json_numbers::parse_value_preserving_numbers(text).unwrap();
         assert!(originals.is_empty());
-        assert!(variables
-            .unwrap()
+        assert!(frame["payload"]["variables"]
             .get("\u{1}variable number originals")
             .is_some());
+    }
+
+    #[test]
+    fn websocket_frame_preserves_out_of_f64_range_numbers() {
+        let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"n":1e400,"j":{"nested":-9e999}}}}"#;
+        let (frame, originals) =
+            exec::validate::json_numbers::parse_value_preserving_numbers(text).unwrap();
+        let variables = &frame["payload"]["variables"];
+        for (value, expected) in [
+            (&variables["n"], "1e400"),
+            (&variables["j"]["nested"], "-9e999"),
+        ] {
+            let bits = value.as_f64().unwrap().to_bits();
+            assert_eq!(originals.get(&bits).map(String::as_str), Some(expected));
+        }
+        assert!(
+            exec::validate::json_numbers::parse_value_preserving_numbers(
+                r#"{"id":"1","type":"subscribe","payload":{"variables":{"n":1e}}}"#
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
