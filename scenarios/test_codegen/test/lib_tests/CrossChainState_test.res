@@ -317,6 +317,29 @@ describe("CrossChainState fetch control", () => {
     ).toEqual(([], [(2, 10)]))
   })
 
+  Async.it("keeps block waiters active below the query admission floor", async t => {
+    let atHead = makeChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+      ~bufferBlocks=Array.make(~length=91, 1000),
+    )
+    let behind = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let cm = makeCrossChainState(~chainStatesList=[atHead, behind], ~targetBufferSize=100)
+    let dispatched = []
+
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      dispatched->Array.push((chain->ChainMap.Chain.toChainId, action))->ignore
+      Promise.resolve()
+    })
+
+    t.expect(
+      dispatched->Array.map(((chainId, action)) => (chainId, action === WaitingForNewBlock)),
+      ~message="At 9% free, the caught-up chain still polls while the behind chain starts no query",
+    ).toEqual([(1, true)])
+  })
+
   Async.it("waits below the admission unit and retries after a response releases budget", async t => {
     let first = makeFetchingChainState(~chainId=1, ~knownHeight=1000, ~latestFetchedBlock=0)
     let second = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=500)
