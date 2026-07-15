@@ -8,10 +8,14 @@ let getInMemTable = (
 ): InMemoryTable.Entity.t =>
   state->IndexerState.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
 
-let getEffectInMemTable = (state: IndexerState.t, ~effect: Internal.effect) => {
-  let key = effect.name
+let getEffectInMemTable = (
+  state: IndexerState.t,
+  ~effect: Internal.effect,
+  ~scope: Internal.effectScope,
+) => {
+  let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
   let effects = state->IndexerState.effects
-  switch effects->Utils.Dict.dangerouslyGetNonOption(key) {
+  switch effects->Utils.Dict.dangerouslyGetNonOption(tableName) {
   | Some(table) => table
   | None =>
     let table: IndexerState.effectCacheInMemTable = {
@@ -20,8 +24,24 @@ let getEffectInMemTable = (state: IndexerState.t, ~effect: Internal.effect) => {
       changesCount: 0.,
       invalidationsCount: 0,
       effect,
+      scope,
+      tableName,
+      rateLimitState: switch effect.rateLimit {
+      | None => None
+      | Some({callsPerDuration, durationMs}) =>
+        Some({
+          callsPerDuration,
+          durationMs,
+          availableCalls: callsPerDuration,
+          windowStartTime: Date.now(),
+          queueCount: 0,
+          nextWindowPromise: None,
+        })
+      },
+      activeCallsCount: 0,
+      prevCallStartTimerRef: %raw(`null`),
     }
-    effects->Dict.set(key, table)
+    effects->Dict.set(tableName, table)
     table
   }
 }

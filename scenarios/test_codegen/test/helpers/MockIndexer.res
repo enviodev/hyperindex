@@ -363,6 +363,7 @@ module Indexer = {
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: string => promise<array<{"id": string, "output": JSON.t}>>,
+    queryEffectCacheTable: string => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
@@ -614,6 +615,11 @@ module Indexer = {
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
         )
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
+      },
+      queryEffectCacheTable: (tableName: string) => {
+        sql
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {

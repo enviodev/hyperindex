@@ -28,8 +28,20 @@ Utils.Object.defineProperty(
   },
 )
 %%raw(`
-var EffectContext = function(params, defaultShouldCache, callEffect) {
+Object.defineProperty(effectContextPrototype, "chain", {
+  get: function() {
+    if (this._chainId === undefined) {
+      throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
+    }
+    return { id: this._chainId };
+  }
+});
+var EffectContext = function(params, chainId, effectName, defaultShouldCache, callEffect) {
   paramsByThis.set(this, params);
+  // Non-enumerable so they stay off Object.keys and never leak to users; the
+  // "chain" prototype getter reads them.
+  Object.defineProperty(this, "_chainId", { value: chainId });
+  Object.defineProperty(this, "_effectName", { value: effectName });
   this.effect = callEffect;
   this.cache = defaultShouldCache;
 };
@@ -39,35 +51,61 @@ EffectContext.prototype = effectContextPrototype;
 @new
 external makeEffectContext: (
   contextParams,
+  ~chainId: option<int>,
+  ~effectName: string,
   ~defaultShouldCache: bool,
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
 let initEffect = (params: contextParams) => {
-  let rec callEffect = (effect: Internal.effect, input: Internal.effectInput) => {
-    let effectContext = makeEffectContext(
-      params,
-      ~defaultShouldCache=effect.defaultShouldCache,
-      ~callEffect,
-    )
-    let effectArgs: Internal.effectArgs = {
-      input,
-      context: effectContext,
-      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
-      checkpointId: params.checkpointId,
+  let handlerChainId = params.item->Internal.getItemChainId
+  // A chain-scoped effect always resolves against the chain of the handler that
+  // triggered the call, even several effects deep, so the chain id is captured
+  // once from the item and reused for the whole nested-call tree.
+  let rec makeCaller = (~caller: option<Internal.effect>) => {
+    (effect: Internal.effect, input: Internal.effectInput) => {
+      let scope = effect.crossChain ? Internal.CrossChain : Internal.Chain(handlerChainId)
+
+      switch caller {
+      | Some(callerEffect) if callerEffect.crossChain && !effect.crossChain =>
+        // A cross-chain effect isn't tied to a single chain, so it has no chain
+        // to resolve a chain-scoped child against. Reject before any cache work.
+        JsError.throwWithMessage(
+          `The cross-chain effect "${callerEffect.name}" cannot call the chain-scoped effect "${effect.name}", because a cross-chain effect isn't tied to a single chain. Make "${effect.name}" cross-chain (\`crossChain: true\`), or make "${callerEffect.name}" chain-scoped (\`crossChain: false\`).`,
+        )
+      | _ => ()
+      }
+
+      let effectContext = makeEffectContext(
+        params,
+        ~chainId=switch scope {
+        | Internal.Chain(chainId) => Some(chainId)
+        | Internal.CrossChain => None
+        },
+        ~effectName=effect.name,
+        ~defaultShouldCache=effect.defaultShouldCache,
+        ~callEffect=makeCaller(~caller=Some(effect)),
+      )
+      let effectArgs: Internal.effectArgs = {
+        input,
+        context: effectContext,
+        cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+        checkpointId: params.checkpointId,
+      }
+      LoadLayer.loadEffect(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~effect,
+        ~effectArgs,
+        ~scope,
+        ~indexerState=params.indexerState,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~ecosystem=params.config.ecosystem,
+      )
     }
-    LoadLayer.loadEffect(
-      ~loadManager=params.loadManager,
-      ~persistence=params.persistence,
-      ~effect,
-      ~effectArgs,
-      ~indexerState=params.indexerState,
-      ~shouldGroup=params.isPreload,
-      ~item=params.item,
-      ~ecosystem=params.config.ecosystem,
-    )
   }
-  callEffect
+  makeCaller(~caller=None)
 }
 
 type entityContextParams = {

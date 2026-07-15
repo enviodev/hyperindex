@@ -16,12 +16,26 @@ module EntityTables: {
   let get: (t, ~entityName: string) => InMemoryTable.Entity.t
 }
 
+type effectRateLimitState = {
+  callsPerDuration: int,
+  durationMs: int,
+  mutable availableCalls: int,
+  mutable windowStartTime: float,
+  mutable queueCount: int,
+  mutable nextWindowPromise: option<promise<unit>>,
+}
+
 type effectCacheInMemTable = {
   mutable idsToStore: array<string>,
   mutable invalidationsCount: int,
   mutable dict: dict<Change.t<Internal.effectOutput>>,
   mutable changesCount: float,
   effect: Internal.effect,
+  scope: Internal.effectScope,
+  tableName: string,
+  rateLimitState: option<effectRateLimitState>,
+  mutable activeCallsCount: int,
+  mutable prevCallStartTimerRef: Performance.timeRef,
 }
 
 type t

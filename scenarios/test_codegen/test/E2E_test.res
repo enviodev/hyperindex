@@ -549,6 +549,120 @@ describe("E2E tests", () => {
   })
 
   Async.it(
+    "Chain-scoped effects expose context.chain.id, persist per chain, and reject cross-chain nesting",
+    async t => {
+      let sourceMock = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      let chainScopedEffect = Envio.createEffect(
+        {
+          name: "chainScopedE2E",
+          input: S.string,
+          output: S.int,
+          rateLimit: Disable,
+          cache: true,
+          crossChain: false,
+        },
+        async ({context}) => context.chain.id,
+      )
+      let crossChainEffect = Envio.createEffect(
+        {
+          name: "crossChainE2E",
+          input: S.string,
+          output: S.string,
+          rateLimit: Disable,
+        },
+        // Reading context.chain on a cross-chain effect must throw before this
+        // ever returns.
+        async ({context}) => "chain-" ++ context.chain.id->Int.toString,
+      )
+      let crossChainParent = Envio.createEffect(
+        {
+          name: "crossChainParentE2E",
+          input: S.string,
+          output: S.int,
+          rateLimit: Disable,
+        },
+        async ({context}) => await context.effect(chainScopedEffect, "nested"),
+      )
+
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      let msgOf = exn =>
+        switch exn {
+        | JsExn(e) => e->JsExn.message->Option.getOr("")
+        | _ => ""
+        }
+
+      let chainId = ref(None)
+      let crossChainAccessError = ref("")
+      let nestedError = ref("")
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 100,
+            logIndex: 0,
+            handler: async ({context}) => {
+              chainId := Some(await context.effect(chainScopedEffect, "a"))
+              crossChainAccessError :=
+                (
+                  switch await context.effect(crossChainEffect, "b") {
+                  | _ => ""
+                  | exception exn => msgOf(exn)
+                  }
+                )
+              nestedError :=
+                (
+                  switch await context.effect(crossChainParent, "c") {
+                  | _ => ""
+                  | exception exn => msgOf(exn)
+                  }
+                )
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect((
+        chainId.contents,
+        crossChainAccessError.contents->String.includes("crossChain: false"),
+        nestedError.contents->String.includes("crossChainParentE2E") &&
+          nestedError.contents->String.includes("chainScopedE2E"),
+      )).toEqual((Some(1337), true, true))
+
+      // The chain-scoped output landed in the per-chain cache table, not the
+      // flat cross-chain one.
+      t.expect((
+        await indexerMock.queryEffectCacheTable("envio_1337_effect_chainScopedE2E"),
+        await indexerMock.metric("envio_effect_cache"),
+      )).toEqual((
+        [{"id": `"a"`, "output": %raw(`1337`)}],
+        [
+          {
+            value: "1",
+            labels: Dict.fromArray([("effect", "chainScopedE2E")]),
+          },
+        ],
+      ))
+    },
+  )
+
+  Async.it(
     "Should attempt fallback source when primary source fails with missing params",
     async t => {
       let sourceMockPrimary = MockIndexer.Source.make(

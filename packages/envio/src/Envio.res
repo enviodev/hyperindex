@@ -186,11 +186,19 @@ and effectOptions<'input, 'output> = {
   rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
+  /** Whether the effect's cache is shared across all chains. Defaults to `true`.
+   Set to `false` to isolate the cache (and rate limiting) per chain and enable
+   `context.chain.id` inside the handler. */
+  crossChain?: bool,
 }
+and effectChain = {id: int}
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
+  /** The chain the effect was called on. Only available on effects created with
+   `crossChain: false`; accessing it on a cross-chain effect throws. */
+  chain: effectChain,
 }
 and effectArgs<'input> = {
   input: 'input,
@@ -222,8 +230,6 @@ let createEffect = (
         Internal.effectOutput,
       >
     ),
-    activeCallsCount: 0,
-    prevCallStartTimerRef: %raw(`null`),
     // This is the way to make the createEffect API
     // work without the need for users to call S.schema themselves,
     // but simply pass the desired object/tuple/etc.
@@ -233,7 +239,6 @@ let createEffect = (
     ),
     output: outputSchema,
     storageMeta: {
-      table: Internal.makeCacheTable(~effectName=options.name),
       outputSchema,
       itemSchema,
     },
@@ -241,16 +246,16 @@ let createEffect = (
     | Some(true) => true
     | _ => false
     },
+    crossChain: switch options.crossChain {
+    | Some(false) => false
+    | _ => true
+    },
     rateLimit: switch options.rateLimit {
     | Disable => None
     | Enable({calls, per}) =>
       Some({
         callsPerDuration: calls,
         durationMs: per->durationToMs,
-        availableCalls: calls,
-        windowStartTime: Date.now(),
-        queueCount: 0,
-        nextWindowPromise: None,
       })
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)

@@ -5,6 +5,7 @@ import {
   S,
   type Logger,
   type EffectCaller,
+  type EffectChain,
   TestHelpers,
 } from "envio";
 import {
@@ -569,6 +570,7 @@ const testEffectWithCache = createEffect(
           readonly log: Logger;
           readonly effect: EffectCaller;
           cache: boolean;
+          readonly chain: EffectChain;
         }
       >
     >(true);

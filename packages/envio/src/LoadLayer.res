@@ -77,15 +77,15 @@ let callEffect = (
   ~onError,
 ) => {
   let effectName = effect.name
-  let hadActiveCalls = effect.activeCallsCount > 0
-  effect.activeCallsCount = effect.activeCallsCount + 1
+  let hadActiveCalls = inMemTable.activeCallsCount > 0
+  inMemTable.activeCallsCount = inMemTable.activeCallsCount + 1
   Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
     ~labels=effectName,
-    ~value=effect.activeCallsCount,
+    ~value=inMemTable.activeCallsCount,
   )
 
   if hadActiveCalls {
-    let elapsed = Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
+    let elapsed = Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
         ~labels=effectName,
@@ -93,7 +93,7 @@ let callEffect = (
       )
     }
   }
-  effect.prevCallStartTimerRef = timerRef
+  inMemTable.prevCallStartTimerRef = timerRef
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
@@ -108,17 +108,17 @@ let callEffect = (
     onError(~inputKey=arg.cacheKey, ~exn)
   })
   ->Promise.finally(() => {
-    effect.activeCallsCount = effect.activeCallsCount - 1
+    inMemTable.activeCallsCount = inMemTable.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
       ~labels=effectName,
-      ~value=effect.activeCallsCount,
+      ~value=inMemTable.activeCallsCount,
     )
     let newTimer = Performance.now()
     Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
       ~labels=effectName,
-      ~value=Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
+      ~value=Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=newTimer),
     )
-    effect.prevCallStartTimerRef = newTimer
+    inMemTable.prevCallStartTimerRef = newTimer
 
     Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
     Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
@@ -131,7 +131,7 @@ let callEffect = (
 let rec executeWithRateLimit = (
   ~effect: Internal.effect,
   ~effectArgs: array<Internal.effectArgs>,
-  ~inMemTable,
+  ~inMemTable: IndexerState.effectCacheInMemTable,
   ~onError,
   ~isFromQueue: bool,
 ) => {
@@ -140,7 +140,7 @@ let rec executeWithRateLimit = (
   let timerRef = Performance.now()
   let promises = []
 
-  switch effect.rateLimit {
+  switch inMemTable.rateLimitState {
   | None =>
     // No rate limiting - execute all immediately
     for idx in 0 to effectArgs->Array.length - 1 {
@@ -249,14 +249,22 @@ let loadEffect = (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
+  ~scope: Internal.effectScope,
   ~indexerState,
   ~shouldGroup,
   ~item,
   ~ecosystem,
 ) => {
   let effectName = effect.name
-  let key = `${effectName}.effect`
-  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect)
+  let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
+  // The operation key must differ per scope so chain-scoped calls with the same
+  // input never dedup across chains. Cross-chain keeps the bare effect name so
+  // the storage-load metric stays stable.
+  let key = switch scope {
+  | CrossChain => `${effectName}.effect`
+  | Chain(chainId) => `${effectName}.effect.${chainId->Int.toString}`
+  }
+  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
 
   let load = async (args, ~onError) => {
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
@@ -264,13 +272,14 @@ let loadEffect = (
 
     if (
       switch persistence.storageStatus {
-      | Ready({cache}) => cache->Dict.has(effectName)
+      | Ready({cache}) => cache->Dict.has(tableName)
       | _ => false
       }
     ) {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
       let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
-      let {table, outputSchema} = effect.storageMeta
+      let table = Internal.makeCacheTable(~effectName, ~scope)
+      let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {
         (

@@ -40,7 +40,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
   state
   ->IndexerState.effects
   ->Utils.Dict.forEach(inMemTable => {
-    let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+    let {idsToStore, dict, effect, invalidationsCount, scope, tableName} = inMemTable
     switch idsToStore {
     | [] => ()
     | ids =>
@@ -51,17 +51,19 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
         }
       )
       let effectName = effect.name
-      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(tableName) {
       | Some(c) => c
       | None =>
-        let c: Persistence.effectCacheRecord = {effectName, count: 0}
-        cache->Dict.set(effectName, c)
+        let c: Persistence.effectCacheRecord = {effectName, scope, tableName, count: 0}
+        cache->Dict.set(tableName, c)
         c
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
       Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-      acc->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))->ignore
+      acc
+      ->Array.push(({effect, scope, items, shouldInitialize}: Persistence.updatedEffectCache))
+      ->ignore
     }
     inMemTable.idsToStore = []
     inMemTable.invalidationsCount = 0

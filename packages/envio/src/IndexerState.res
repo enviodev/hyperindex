@@ -45,6 +45,17 @@ module EntityTables = {
   }
 }
 
+// Per-scope rate-limit window and queue. A chain-scoped effect gets one of
+// these per chain, so each chain's throughput is independent.
+type effectRateLimitState = {
+  callsPerDuration: int,
+  durationMs: int,
+  mutable availableCalls: int,
+  mutable windowStartTime: float,
+  mutable queueCount: int,
+  mutable nextWindowPromise: option<promise<unit>>,
+}
+
 type effectCacheInMemTable = {
   // Cache keys whose handler output is persisted on the next write. Drained
   // each write; eviction is driven by the per-entry checkpointId instead.
@@ -56,6 +67,16 @@ type effectCacheInMemTable = {
   mutable dict: dict<Change.t<Internal.effectOutput>>,
   mutable changesCount: float,
   effect: Internal.effect,
+  // The scope this table caches for, and its resolved cache-table name (the
+  // address). The table is keyed in `effects` by this name, so a cross-chain
+  // and a chain-scoped table for the same effect stay isolated.
+  scope: Internal.effectScope,
+  tableName: string,
+  // None when the effect has no rate limit.
+  rateLimitState: option<effectRateLimitState>,
+  // Per-scope active-call bookkeeping, surfaced through the Effect metrics.
+  mutable activeCallsCount: int,
+  mutable prevCallStartTimerRef: Performance.timeRef,
 }
 
 type t = {
