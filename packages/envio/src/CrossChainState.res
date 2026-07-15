@@ -198,29 +198,37 @@ let totalReservedSize = (crossChainState: t) => {
 // chain-density-derived target block, then subtract what it actually used
 // before moving to the next chain. So a chain that can only use a little
 // (density too low, or already caught up) leaves the rest for the others
-// automatically. A chain visited after the budget ran out simply doesn't
-// query this round — the leader's reservations release as its responses land,
-// so the next tick redistributes. Chains that do get budget are additionally
-// capped at the first querying chain's target progress mapped onto their own
-// range, so no chain runs further ahead than the chain currently using the
-// pool. Waiting and idle chains do not establish this alignment line.
+// automatically. Starting a new query requires at least 10% of the target pool
+// to be free. A chain visited after the budget falls below that admission unit
+// doesn't query this round — reservations release as responses land, so the
+// next tick redistributes. Chains that do get budget are additionally capped
+// at the first querying chain's target progress mapped onto their own range, so
+// no chain runs further ahead than the chain currently using the pool. Waiting
+// and idle chains do not establish this alignment line.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
+  let targetBudget = crossChainState.targetBufferSize->Int.toFloat
   let remaining = ref(
     Pervasives.max(
       0.,
-      crossChainState.targetBufferSize->Int.toFloat -.
+      targetBudget -.
       crossChainState->totalReadyCount->Int.toFloat -.
       crossChainState->totalReservedSize,
     ),
   )
 
+  // New fetch work is admitted in units of 10% of the target pool. Waiting
+  // below this floor avoids spending the last few free items on undersized
+  // queries; response and batch completion schedule another tick after they
+  // release enough budget.
+  let minimumAdmissionBudget = targetBudget *. 0.1
+
   // A chain with no density signal probes blind, so it only gets a bounded
   // slice of the pool — one unknown chain shouldn't hold the whole budget
-  // while it takes its first measurements.
-  let coldChainBudget = Pervasives.min(5_000., crossChainState.targetBufferSize->Int.toFloat)
+  // while it takes its first measurements. Its probe is one admission unit.
+  let coldChainBudget = minimumAdmissionBudget
 
   // Chunk reservations get headroom over the density estimate so a
   // denser-than-expected range doesn't truncate at the server cap; realtime
@@ -233,11 +241,17 @@ let checkAndFetch = async (
   ->priorityOrder
   ->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    if cs->ChainState.knownHeight == 0 {
-      // No height yet — nothing to size a budget or an alignment line
-      // against. Skip without consuming budget or claiming leadership, so a
-      // chain whose source hasn't reported doesn't unconstrain everyone else.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
+    if remaining.contents < minimumAdmissionBudget {
+      // More than 90% of the target pool is ready or reserved. Do not attempt
+      // any chain action until a full admission unit becomes free.
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+    } else if cs->ChainState.knownHeight == 0 {
+      // Let getNextQuery own the waiting decision without trying to size work
+      // against an unknown height.
+      actionByChain->Utils.Dict.setByInt(
+        chainId,
+        cs->ChainState.getNextQuery(~chainTargetItems=0., ~chunkItemsMultiplier),
+      )
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =
@@ -271,8 +285,7 @@ let checkAndFetch = async (
         // range to nothing — and has nothing else to wake it must keep polling
         // for new blocks instead of going silent. NothingToQuery isn't
         // dispatched, so such a chain would never be re-scheduled and its head
-        // tracking would freeze (the knownHeight == 0 branch above forces a poll
-        // for the same reason). A chain is genuinely idle — and correctly left
+        // tracking would freeze. A chain is genuinely idle — and correctly left
         // undispatched — when it is caught up to its head/endblock, still
         // draining in-flight queries, or holding ready items that batch
         // processing will drain and re-schedule from.

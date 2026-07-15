@@ -1599,12 +1599,14 @@ type partitionFillState = {
 // query with no other ceiling: the true hard bounds stay
 // endBlock/mergeBlock/the lagged head.
 //
-// The tick's budget is chainTargetItems minus what's already in flight. Every
-// candidate query — gap-fill holes, plus each in-range partition's chunks or
-// open-ended probe toward the target — is generated with no budget check, then
-// the candidates are sorted by fromBlock and accepted in that order while the
-// budget stays positive. The query that tips it negative is still accepted (a
-// single overshoot); everything after it waits for a tick with more budget.
+// The tick's budget is chainTargetItems minus what's already in flight. A
+// non-positive budget only resolves the wait action and generates no query
+// candidates. With a positive budget, every candidate query — gap-fill holes,
+// plus each in-range partition's chunks or open-ended probe toward the target —
+// is generated with no budget check, then the candidates are sorted by
+// fromBlock and accepted in that order while the budget stays positive. The
+// query that tips it negative is still accepted (a single overshoot);
+// everything after it waits for a tick with more budget.
 // Sorting by fromBlock spends the budget on the earliest blocks across all
 // partitions first, so no partition is starved by generation order and the
 // frontier advances evenly. In-flight reservations release as responses land,
@@ -1654,6 +1656,12 @@ let getNextQuery = (
         shouldWaitForNewBlock := false
       }
     }
+
+    // A zero budget is an admission check: preserve the wait-state scan above,
+    // but make every query-generation pass below empty. Caught-up chains also
+    // skip those passes because their action is already known.
+    let partitionsCount =
+      chainTargetItems <= 0. || shouldWaitForNewBlock.contents ? 0 : partitionsCount
 
     // One bucket per partition, in idsInAscOrder order — gap-fill and the
     // budget pass both push into a partition's own bucket, so flattening at

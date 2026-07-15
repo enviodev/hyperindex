@@ -1866,6 +1866,10 @@ describe("FetchState.getNextQuery & integration", () => {
     let (fetchState, _) = makeInitial()
 
     t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
+    t.expect(
+      fetchState->getNextQuery(~chainTargetItems=0.),
+      ~message="A zero admission budget must not generate a query while the chain is behind",
+    ).toEqual(NothingToQuery)
 
     let nextQuery = fetchState->getNextQuery
 
@@ -1927,6 +1931,10 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(updatedFetchState->getNextQuery, ~message="Should wait for new block").toEqual(
       WaitingForNewBlock,
     )
+    t.expect(
+      updatedFetchState->getNextQuery(~chainTargetItems=0.),
+      ~message="A zero admission budget must preserve WaitingForNewBlock",
+    ).toEqual(WaitingForNewBlock)
     t.expect(
       updatedFetchState->getNextQuery(~endBlock=Some(11)),
       ~message=`Should wait for new block
