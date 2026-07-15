@@ -27,6 +27,8 @@
 //!   poll loop forever;
 //! - `envio serve` started before Postgres is reachable retries within its
 //!   startup budget and becomes healthy once Postgres comes up.
+//! - startup failures name the unreachable endpoint, rejected credentials,
+//!   or missing database and point to the exact environment variables to fix.
 
 use super::env_config::{PgSslMode, ServeEnv};
 use super::model::ServerModel;
@@ -1299,4 +1301,70 @@ async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
         (true, true),
         "serve should recover once Postgres starts within the retry budget and become healthy"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_startup_errors_are_actionable() {
+    // Connection refusal needs no container and must identify the endpoint
+    // and the configuration knobs instead of exposing only a driver chain.
+    let mut unreachable = test_env(free_port());
+    unreachable.startup_retry_budget_ms = 0;
+    let pool = unreachable.make_pg_pool().unwrap();
+    let error = super::wait_for_pg(&pool, &unreachable.pg_schema, 0)
+        .await
+        .err()
+        .expect("unreachable PostgreSQL should fail");
+    let message = super::postgres_startup_error(&unreachable, error).to_string();
+    assert!(message.contains(&format!(
+        "Cannot connect to PostgreSQL at localhost:{}/envio-dev",
+        unreachable.pg_port
+    )));
+    assert!(message.contains("ENVIO_PG_HOST"));
+    assert!(message.contains("ENVIO_PG_PORT"));
+    assert!(message.contains("ENVIO_PG_DATABASE"));
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+
+    let mut bad_password = test_env(pg.port);
+    bad_password.pg_password = "incorrect".to_string();
+    bad_password.startup_retry_budget_ms = 20_000;
+    let pool = bad_password.make_pg_pool().unwrap();
+    let error = super::wait_for_pg(
+        &pool,
+        &bad_password.pg_schema,
+        bad_password.startup_retry_budget_ms,
+    )
+    .await
+    .err()
+    .expect("wrong PostgreSQL password should fail");
+    let message = super::postgres_startup_error(&bad_password, error).to_string();
+    assert!(
+        message.contains("rejected the credentials for user \"postgres\""),
+        "unexpected error: {message}"
+    );
+    assert!(message.contains("ENVIO_PG_USER"));
+    assert!(message.contains("ENVIO_PG_PASSWORD"));
+    assert!(!message.contains("incorrect"));
+
+    let mut missing_database = test_env(pg.port);
+    missing_database.pg_database = "missing_envio_database".to_string();
+    missing_database.startup_retry_budget_ms = 20_000;
+    let pool = missing_database.make_pg_pool().unwrap();
+    let error = super::wait_for_pg(
+        &pool,
+        &missing_database.pg_schema,
+        missing_database.startup_retry_budget_ms,
+    )
+    .await
+    .err()
+    .expect("missing PostgreSQL database should fail");
+    let message = super::postgres_startup_error(&missing_database, error).to_string();
+    assert!(
+        message.contains("database \"missing_envio_database\" does not exist"),
+        "unexpected error: {message}"
+    );
+    assert!(message.contains("ENVIO_PG_DATABASE"));
 }

@@ -11,7 +11,13 @@ import { applyFixture, trackDatabase, runSql } from "./hasuraSetup.js";
 import { phaseConfigs } from "./corpus.js";
 import { adminSecret, hasuraPort, servePort } from "./env.js";
 import { connect, subscribe, type WsProtocol } from "./wsClient.js";
-import { startServe, stopServe, type ServeProcess } from "./serveProcess.js";
+import {
+  spawnServe,
+  startServe,
+  stopServe,
+  waitForServeExit,
+  type ServeProcess,
+} from "./serveProcess.js";
 
 const fixtureDir = new URL("../../fixtures/differential/", import.meta.url);
 
@@ -442,4 +448,56 @@ describe.sequential("differential subscriptions", () => {
       }, 90_000);
     });
   }
+
+  it("reports actionable PostgreSQL startup errors", async () => {
+    const failed = spawnServe(phaseConfigs.default, servePort + 1, {
+      ENVIO_PG_PORT: "1",
+      ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS: "0",
+    });
+    try {
+      const exit = await waitForServeExit(failed, 15_000);
+      const output = failed.logs.join("");
+      expect(exit).toEqual({ code: 1, signal: null });
+      expect(output).toContain("Cannot connect to PostgreSQL");
+      expect(output).toContain("localhost:1/envio-dev");
+      expect(output).toContain("Make sure PostgreSQL is running");
+      expect(output).toContain("ENVIO_PG_HOST");
+      expect(output).toContain("ENVIO_PG_PORT");
+      expect(output).toContain("ENVIO_PG_DATABASE");
+    } finally {
+      if (failed.child.exitCode === null) failed.child.kill("SIGKILL");
+    }
+  }, 30_000);
+
+  it("reports an actionable error when the serve port is already in use", async () => {
+    const conflict = spawnServe(phaseConfigs.default);
+    try {
+      const exit = await waitForServeExit(conflict, 15_000);
+      const output = conflict.logs.join("");
+      expect(exit).toEqual({ code: 1, signal: null });
+      expect(output).toContain(`Port ${servePort} is already in use`);
+      expect(output).toContain(`lsof -ti :${servePort} | xargs kill`);
+      expect(output).toContain(`envio serve --port ${servePort + 1}`);
+      expect(output).toContain(`ENVIO_SERVE_PORT=${servePort + 1}`);
+    } finally {
+      if (conflict.child.exitCode === null) conflict.child.kill("SIGKILL");
+    }
+  }, 30_000);
+
+  it.runIf(process.platform !== "win32")(
+    "returns control to the console after Ctrl-C",
+    async () => {
+      expect(serve.child.exitCode).toBeNull();
+      try {
+        expect(serve.child.kill("SIGINT")).toBe(true);
+        await expect(waitForServeExit(serve, 5_000)).resolves.toEqual({
+          code: 0,
+          signal: null,
+        });
+      } finally {
+        if (serve.child.exitCode === null) serve.child.kill("SIGKILL");
+      }
+    },
+    15_000
+  );
 });

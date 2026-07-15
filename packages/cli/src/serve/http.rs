@@ -4,7 +4,7 @@
 use super::exec::{self, GraphQLRequest, Schemas};
 use super::gql::schema_build::Role;
 use super::ServeState;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -74,10 +74,7 @@ pub async fn serve(
         .with_state(app_state)
         .into_make_service();
 
-    let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .context("Invalid host/port")?;
-    let listener = bind_with_keepalive(addr).context("Failed binding the serve listener")?;
+    let (addr, listener) = bind_listener(host, port)?;
     tracing::info!("envio serve: GraphQL API at http://{addr}/v1/graphql");
 
     tokio::spawn(async move {
@@ -98,6 +95,35 @@ pub async fn serve(
         }
     }
     Ok(())
+}
+
+fn bind_listener(host: &str, port: u16) -> anyhow::Result<(SocketAddr, tokio::net::TcpListener)> {
+    let addr: SocketAddr = format!("{host}:{port}").parse().map_err(|_| {
+        anyhow!(
+            "Invalid serve host \"{host}\". Use an IP address such as 127.0.0.1 \
+             (local only) or 0.0.0.0 (all interfaces)."
+        )
+    })?;
+    match bind_with_keepalive(addr) {
+        Ok(listener) => Ok((addr, listener)),
+        Err(error) if error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::AddrInUse)
+        }) => {
+            let alternative = if port == u16::MAX { 8081 } else { port + 1 };
+            Err(anyhow!(
+                "Port {port} is already in use on {host}, so envio serve could not start.\n\
+                 To fix this either:\n  \
+                 1. Stop the process using the port: lsof -ti :{port} | xargs kill\n  \
+                 2. Use a different port: envio serve --port {alternative}\n     \
+                    or: ENVIO_SERVE_PORT={alternative} envio serve"
+            ))
+        }
+        Err(error) => Err(error).context(format!(
+            "Failed binding envio serve to {addr}. Check that the host is available and the process has permission to listen on port {port}"
+        )),
+    }
 }
 
 /// How long a connection can sit idle before the kernel starts probing it,
@@ -402,6 +428,27 @@ async fn ws_or_get_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn occupied_port_error_has_recovery_commands() {
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let error = bind_listener("127.0.0.1", port).unwrap_err().to_string();
+        assert!(error.contains(&format!("Port {port} is already in use")));
+        assert!(error.contains(&format!("lsof -ti :{port} | xargs kill")));
+        assert!(error.contains(&format!("envio serve --port {}", port + 1)));
+        assert!(error.contains(&format!("ENVIO_SERVE_PORT={}", port + 1)));
+    }
+
+    #[test]
+    fn invalid_host_error_names_valid_alternatives() {
+        let error = bind_listener("not a socket address", 8080)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Invalid serve host \"not a socket address\""));
+        assert!(error.contains("127.0.0.1"));
+        assert!(error.contains("0.0.0.0"));
+    }
 
     // Error shapes mirror Hasura's, matching the em-* error-matrix corpus
     // (e.g. em-body-lone-surrogate-in-query pins the invalid-json path).

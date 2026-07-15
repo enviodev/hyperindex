@@ -601,6 +601,19 @@ type Token {
     }
 
     #[test]
+    fn empty_database_explains_how_to_create_tables() {
+        let err = build_err("type User { id: ID! }", catalog(vec![]));
+        assert!(
+            err.contains("No tables to serve"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("envio local db-migrate setup"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn entity_colliding_with_generated_type_fails() {
         let err = build_err(
             "type User { id: ID! }\ntype User_aggregate { id: ID! }",
