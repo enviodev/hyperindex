@@ -96,10 +96,10 @@ and executeRollback = async (
 ) => {
   let startTime = Performance.now()
 
-  let chainState = state->IndexerState.getChainState(~chain=reorgChain)
-
-  let logger = Logging.createChildFrom(
-    ~logger=chainState->ChainState.logger,
+  // Not derived from the reorg chain's logger: that would bind its chainId onto
+  // every line, colliding with the per-chain chainId on the "Rollbacked" logs.
+  // The reorg chain is identified by the reorgChain param instead.
+  let logger = Logging.createChild(
     ~params={
       "action": "Rollback",
       "reorgChain": reorgChain,
