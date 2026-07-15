@@ -102,10 +102,10 @@ let makeFetchingChainState = (
     mergeBlock: None,
     dynamicContract: None,
     mutPendingQueries: [],
-    prevQueryRange: 0,
-    prevPrevQueryRange: 0,
-    prevRangeSize: 0,
-    latestBlockRangeUpdateBlock: 0,
+    sourceRangeCapacity: 0,
+    prevSourceRangeCapacity: 0,
+    eventDensity: 0.,
+    latestSourceRangeCapacityUpdateBlock: 0,
   }
   let indexingAddresses =
     Dict.fromArray([
@@ -298,10 +298,10 @@ describe("CrossChainState fetch control", () => {
         mergeBlock: None,
         dynamicContract: None,
         mutPendingQueries: [],
-        prevQueryRange: 10,
-        prevPrevQueryRange: 10,
-        prevRangeSize: 100, // density = 100 / 10 = 10 items/block
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 10,
+        prevSourceRangeCapacity: 10,
+        eventDensity: 10., // density = 100 / 10 = 10 items/block
+        latestSourceRangeCapacityUpdateBlock: 0,
       }
       let indexingAddresses1 =
         Dict.fromArray([

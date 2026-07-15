@@ -426,10 +426,10 @@ describe("SourceManager fetchNext", () => {
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
-      prevQueryRange: 0,
-      prevRangeSize: 0,
-      prevPrevQueryRange: 0,
-      latestBlockRangeUpdateBlock: 0,
+      sourceRangeCapacity: 0,
+      eventDensity: 0.,
+      prevSourceRangeCapacity: 0,
+      latestSourceRangeCapacityUpdateBlock: 0,
     }
   }
 
@@ -492,14 +492,14 @@ describe("SourceManager fetchNext", () => {
       itemsEst: 5000,
       fetchedBlock: None,
     }
-    // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
+    // Chunking on (sourceRangeCapacity set) so the tail wants two chunks per round.
     let withPending = count => {
       let p = {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
-        prevQueryRange: 10,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 10,
+        sourceRangeCapacity: 10,
+        eventDensity: 0.,
+        prevSourceRangeCapacity: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
     }
