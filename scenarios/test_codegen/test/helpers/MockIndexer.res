@@ -387,6 +387,8 @@ module Indexer = {
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
+    // Lets regression tests surface fatal errors without terminating the Vitest worker.
+    ~onError=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
@@ -445,9 +447,12 @@ module Indexer = {
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
-    let onError = (errHandler: ErrorHandling.t) => {
-      errHandler->ErrorHandling.log
-      NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+    let onError = switch onError {
+    | Some(onError) => onError
+    | None => (errHandler: ErrorHandling.t) => {
+        errHandler->ErrorHandling.log
+        NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+      }
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
