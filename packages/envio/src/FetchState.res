@@ -121,14 +121,9 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
-// Density is trusted only after two source-capacity observations — a single
-// response is too noisy to size the next query by.
-let getTrustedDensity = (p: partition) => {
-  switch (p.sourceRangeCapacity, p.prevSourceRangeCapacity) {
-  | (0, _) | (_, 0) => None
-  | _ => p.eventDensity
-  }
-}
+// Density has its own initialization signal and is useful independently from
+// source-capacity history, including when an itemsTarget cap truncates a response.
+let getTrustedDensity = (p: partition) => p.eventDensity
 
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
@@ -1615,13 +1610,12 @@ type partitionFillState = {
 // frontier advances evenly. In-flight reservations release as responses land,
 // so acceptance redistributes across ticks.
 //
-// A partition with a trusted positive density (two or more responses — see
-// getMinHistoryRange) generates real, density-sized chunks toward the target.
-// Any other partition (no signal, one noisy sample, or a density-0 estimate)
-// generates one open-ended probe sized to the events its range to the target is
-// expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1) /
-// inRangeCount — so several unknown-density partitions probe in parallel within
-// one budget, each scaled by how much of the range it still has to cover.
+// A partition with source-capacity history and a positive density generates
+// density-sized chunks toward the target. Any other partition (no signal, no
+// capacity history, or a density-0 estimate) generates one open-ended probe
+// sized to the events its range to the target is expected to hold —
+// rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
+// unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
@@ -1810,10 +1804,9 @@ let getNextQuery = (
       inRangeCount > 0 && rangeToTarget > 0 ? freshBudget /. rangeToTarget->Int.toFloat : 0.
 
     // Phase B: generate each in-range partition's candidates — strict chunks
-    // toward the target sized by real density (up to the pending-chunk cap), or,
-    // for a partition without a trusted positive density, a single open-ended
-    // probe at its even share of the budget. No budget check here; the
-    // acceptance pass below decides which candidates make the cut.
+    // when both source-capacity history and density are known, or an open-ended
+    // budget probe otherwise. No budget check here; the acceptance pass below
+    // decides which candidates make the cut.
     //
     // Chunks require a POSITIVE trusted density: density 0 prices every chunk at
     // ~nothing, so an open-ended probe (full server scan range in one response)

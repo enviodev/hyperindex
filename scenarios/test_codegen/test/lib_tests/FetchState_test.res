@@ -4608,7 +4608,7 @@ describe("Response density and source range capacity update independently", () =
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addressesByContractName = Dict.fromArray([("MockContract", [mockAddress0])])
 
-  let makeFetchState = (~eventDensity=Some(1.)): FetchState.t => {
+  let makeFetchState = (~eventDensity=Some(1.), ~sourceRangeCapacity=300): FetchState.t => {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
       ~partitions=[
         {
@@ -4619,8 +4619,8 @@ describe("Response density and source range capacity update independently", () =
           mergeBlock: None,
           dynamicContract: None,
           mutPendingQueries: [],
-          sourceRangeCapacity: 300,
-          prevSourceRangeCapacity: 300,
+          sourceRangeCapacity,
+          prevSourceRangeCapacity: sourceRangeCapacity,
           eventDensity,
           latestSourceRangeCapacityUpdateBlock: 0,
         },
@@ -4677,6 +4677,25 @@ describe("Response density and source range capacity update independently", () =
       "capHit": (Some(300), Some((1. +. 3. /. 90.) /. 2.)),
       "subCap": (Some(90), Some((1. +. 2. /. 90.) /. 2.)),
     })
+  })
+
+  it("trusts cap-hit density before source capacity is known", t => {
+    let fetchState = makeFetchState(~eventDensity=None, ~sourceRangeCapacity=0)
+    fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query=chunkQuery,
+        ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
+        ~newItems=Array.fromInitializer(~length=3, i =>
+          mockEvent(~blockNumber=10, ~logIndex=i)
+        ),
+      )
+    let p = updated.optimizedPartitions.entities->Dict.getUnsafe("0")
+
+    t.expect((p->FetchState.getMinHistoryRange, p->FetchState.getTrustedDensity)).toEqual((
+      None,
+      Some(3. /. 90.),
+    ))
   })
 
   it("seeds the first observation and keeps zero as a real sample", t => {
