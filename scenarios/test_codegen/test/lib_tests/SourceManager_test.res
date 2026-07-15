@@ -426,7 +426,7 @@ describe("SourceManager fetchNext", () => {
       dynamicContract: None,
       mutPendingQueries: [],
       sourceRangeCapacity: 0,
-      eventDensity: 0.,
+      eventDensity: None,
       prevSourceRangeCapacity: 0,
       latestSourceRangeCapacityUpdateBlock: 0,
     }
@@ -497,7 +497,7 @@ describe("SourceManager fetchNext", () => {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
         sourceRangeCapacity: 10,
-        eventDensity: 0.,
+        eventDensity: None,
         prevSourceRangeCapacity: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
