@@ -170,7 +170,7 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 // --- Fetch control. ---
 
 // Chains ordered furthest-behind first, so the shared buffer pool goes to the
-// chains with the most backfill work before the rest.
+// chains with the most fetchable backfill work before the rest.
 let priorityOrder = (crossChainState: t) =>
   crossChainState.chainStates
   ->Dict.valuesToArray
@@ -201,9 +201,9 @@ let totalReservedSize = (crossChainState: t) => {
 // automatically. A chain visited after the budget ran out simply doesn't
 // query this round — the leader's reservations release as its responses land,
 // so the next tick redistributes. Chains that do get budget are additionally
-// capped at the most-behind chain's target progress mapped onto their own
-// range, so no chain runs further ahead than the chain the pool is
-// prioritizing.
+// capped at the first querying chain's target progress mapped onto their own
+// range, so no chain runs further ahead than the chain currently using the
+// pool. Waiting and idle chains do not establish this alignment line.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -243,20 +243,17 @@ let checkAndFetch = async (
       let chainTargetItems =
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
+      let candidateProgress = switch maxProgress.contents {
+      | None if !isCold =>
+        Some(
+          cs->ChainState.progressAtBlock(
+            ~blockNumber=cs->ChainState.targetBlock(~chainTargetItems),
+          ),
+        )
+      | _ => None
+      }
       let maxTargetBlock = switch maxProgress.contents {
-      | None if isCold =>
-        // A cold chain's target is a guess — it doesn't set the alignment
-        // line; the first density-bearing chain after it does.
-        None
-      | None =>
-        // The most-behind chain sets the alignment line for everyone after it.
-        maxProgress :=
-          Some(
-            cs->ChainState.progressAtBlock(
-              ~blockNumber=cs->ChainState.targetBlock(~chainTargetItems),
-            ),
-          )
-        None
+      | None => None
       // 5% margin past the leader's line: chains whose progress tracks the
       // leader closely would otherwise flap in and out of the clamp as
       // leadership alternates, stalling their pipeline every other tick.
@@ -287,6 +284,14 @@ let checkAndFetch = async (
             : FetchState.WaitingForNewBlock
         actionByChain->Utils.Dict.setByInt(chainId, action)
       | Ready(queries) => {
+          // A density-bearing chain establishes the alignment line only after
+          // proving that it can use the pool. Waiting and idle chains leave it
+          // open for the next chain; cold-chain targets remain guesses and do
+          // not lead, as before.
+          switch candidateProgress {
+          | Some(progress) => maxProgress := Some(progress)
+          | None => ()
+          }
           let consumed =
             queries->Array.reduce(0., (acc, query: FetchState.query) =>
               acc +. query.itemsEst->Int.toFloat
