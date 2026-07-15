@@ -72,7 +72,7 @@ let rec rollback = async (
     // found yet. Wait for the ReorgDetected branch above to find it and re-kick.
     | FindingReorgDepth => ()
     | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
-      Logging.info("Waiting for batch to finish processing before executing rollback")
+      Logging.trace("Waiting for batch to finish processing before executing rollback")
     | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(
         state,
@@ -161,12 +161,12 @@ and executeRollback = async (
     }
   }
 
-  let rollbackRangeByChainId = Dict.make()
+  let rolledBackChains = []
   state
   ->IndexerState.chainStates
   ->Utils.Dict.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    let fromBlockNumber = cs->ChainState.committedProgressBlockNumber
+    let fromBlock = cs->ChainState.committedProgressBlockNumber
     cs->ChainState.rollback(
       ~newProgressBlockNumber=newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
         chainId,
@@ -177,34 +177,37 @@ and executeRollback = async (
       ~rollbackTargetBlockNumber,
       ~isReorgChain=chainId === reorgChainId,
     )
-    let toBlockNumber = cs->ChainState.committedProgressBlockNumber
-    if fromBlockNumber !== toBlockNumber {
-      rollbackRangeByChainId->Dict.set(
-        chainId->Int.toString,
-        {"fromBlock": fromBlockNumber, "toBlock": toBlockNumber},
-      )
+    let toBlock = cs->ChainState.committedProgressBlockNumber
+    if fromBlock !== toBlock {
+      rolledBackChains
+      ->Array.push({
+        "chainId": chainId,
+        "fromBlock": fromBlock,
+        "toBlock": toBlock,
+        "isReorgChain": chainId === reorgChainId,
+        "rollbackedEvents": eventsProcessedDiffByChain
+        ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+        ->Option.getOr(0.),
+      })
+      ->ignore
     }
   })
-  logger->Logging.childInfo({
-    "msg": "Rolled back chains on reorg",
-    "rollbackRangeByChainId": rollbackRangeByChainId,
-  })
 
-  let diff = await state->InMemoryStore.prepareRollbackDiff(
+  let _ = await state->InMemoryStore.prepareRollbackDiff(
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
   )
 
-  logger->Logging.childTrace({
-    "msg": "Finished rollback on reorg",
-    "entityChanges": {
-      "deleted": diff["deletedEntities"],
-      "upserted": diff["setEntities"],
-    },
-    "rollbackedEvents": rollbackedProcessedEvents.contents,
-    "beforeCheckpointId": state->IndexerState.committedCheckpointId,
-    "targetCheckpointId": rollbackTargetCheckpointId,
+  rolledBackChains->Array.forEach(chain => {
+    logger->Logging.childInfo({
+      "msg": "Rollbacked",
+      "chainId": chain["chainId"],
+      "fromBlock": chain["fromBlock"],
+      "toBlock": chain["toBlock"],
+      "rollbackedEvents": chain["rollbackedEvents"],
+      "isReorgChain": chain["isReorgChain"],
+    })
   })
   Prometheus.RollbackSuccess.increment(
     ~timeSeconds=Performance.secondsSince(startTime),
