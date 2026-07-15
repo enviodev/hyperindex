@@ -1871,7 +1871,6 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(nextQuery).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 10000,
           itemsEst: 10000,
@@ -1952,7 +1951,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 10000,
           itemsEst: 10000,
@@ -1988,7 +1986,6 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(nextQuery, ~message="No block lag when we are close to the end block").toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 10000,
           itemsEst: 10000,
@@ -2008,7 +2005,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 10000,
           itemsEst: 10000,
@@ -2107,7 +2103,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "1",
           itemsTarget: 5000,
           itemsEst: 5000,
@@ -2118,7 +2113,6 @@ describe("FetchState.getNextQuery & integration", () => {
           fromBlock: 1,
         },
         {
-          ...defaultQuery,
           partitionId: "2",
           // Sits one block ahead of partition "1", so 9/10 of the range to the
           // target -> 4500 vs 5000.
@@ -2170,7 +2164,6 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let makePartition2Query = (~itemsTarget): FetchState.query => {
-      ...defaultQuery,
       partitionId: "2",
       itemsTarget,
       itemsEst: itemsTarget,
@@ -2181,7 +2174,6 @@ describe("FetchState.getNextQuery & integration", () => {
       isChunk: false,
     }
     let makePartition0Query = (~itemsTarget): FetchState.query => {
-      ...defaultQuery,
       partitionId: "0",
       itemsTarget,
       itemsEst: itemsTarget,
@@ -2240,7 +2232,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "2",
           itemsTarget: 5000,
           itemsEst: 5000,
@@ -2251,7 +2242,6 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
         },
         {
-          ...defaultQuery,
           FetchState.partitionId: "0",
           // At block 11 (the head), it covers only the last block of the range
           // to the target, so a small probe next to partition "2"'s 5000.
@@ -2277,7 +2267,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "2",
           itemsTarget: 5000,
           itemsEst: 5000,
@@ -2288,7 +2277,6 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
         },
         {
-          ...defaultQuery,
           FetchState.partitionId: "0",
           itemsTarget: 556,
           itemsEst: 556,
@@ -2437,7 +2425,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 3333,
           itemsEst: 3333,
@@ -2451,7 +2438,6 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Dict.make(),
         },
         {
-          ...defaultQuery,
           partitionId: "1",
           itemsTarget: 3333,
           itemsEst: 3333,
@@ -2462,7 +2448,6 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
         },
         {
-          ...defaultQuery,
           partitionId: "2",
           // Starts at block 2, so 9 of the 11-block range to the target -> 2727.
           itemsTarget: 2727,
@@ -2636,7 +2621,6 @@ describe("FetchState.getNextQuery & integration", () => {
     fetchState->FetchState.startFetchingQueries(
       ~queries=[
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 5000,
           itemsEst: 5000,
@@ -2752,7 +2736,6 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "1",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -2799,7 +2782,6 @@ describe("FetchState unit tests for specific cases", () => {
     ]
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -2853,7 +2835,6 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let query0: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -2867,7 +2848,6 @@ describe("FetchState unit tests for specific cases", () => {
       addressesByContractName: Dict.make(),
     }
     let query1: FetchState.query = {
-      ...defaultQuery,
       partitionId: "1",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -2902,7 +2882,6 @@ describe("FetchState unit tests for specific cases", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 10000,
           itemsEst: 10000,
@@ -2934,7 +2913,6 @@ describe("FetchState unit tests for specific cases", () => {
     let registeringBlockNumber = 3
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -3002,7 +2980,6 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -3119,7 +3096,6 @@ describe("FetchState unit tests for specific cases", () => {
       endBlock: Some(0),
     }
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -3145,7 +3121,6 @@ describe("FetchState unit tests for specific cases", () => {
   it("isFetchingAtHead", t => {
     let fetchToHead = (fetchState: FetchState.t, ~latestFetchedBlockNumber) => {
       let query: FetchState.query = {
-        ...defaultQuery,
         partitionId: "0",
         itemsTarget: 5000,
         itemsEst: 5000,
@@ -3202,7 +3177,6 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
       let query: FetchState.query = {
-        ...defaultQuery,
         partitionId: "0",
         itemsTarget: 5000,
         itemsEst: 5000,
@@ -3331,7 +3305,6 @@ describe("FetchState unit tests for specific cases", () => {
 describe("FetchState.sortForBatch", () => {
   let mkQuery = (fetchState: FetchState.t) => {
     {
-      ...defaultQuery,
       FetchState.partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -3646,7 +3619,6 @@ describe("FetchState progress tracking", () => {
   let makeFetchStateWith = (~latestBlock: int, ~queueBlocks: array<(int, int)>): FetchState.t => {
     let (fs0, _) = makeInitial(~knownHeight=1000)
     let query = {
-      ...defaultQuery,
       FetchState.partitionId: "0",
       itemsTarget: 5000,
       itemsEst: 5000,
@@ -3722,7 +3694,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=20 - i))
 
       let query0 = {
-        ...defaultQuery,
         FetchState.partitionId: "0",
         itemsTarget: 5000,
         itemsEst: 5000,
@@ -3776,7 +3747,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
 
       // Test case 3: Small queue -> Should also use the open-ended head target
       let query3 = {
-        ...defaultQuery,
         FetchState.partitionId: "0",
         itemsTarget: 5000,
         itemsEst: 5000,

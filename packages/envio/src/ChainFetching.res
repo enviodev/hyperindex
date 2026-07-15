@@ -149,19 +149,28 @@ let rec onQueryResponse = async (
 
     let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
       let eventItem = item->Internal.castUnsafeEventItem
-      eventItem.onEventRegistration.contractRegister !== None
-        ? count + 1
-        : count
+      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
     })
-    Logging.trace({
-      "msg": "Finished querying",
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "partitionId": query.partitionId,
-      "fromBlock": fromBlockQueried,
-      "toBlock": latestFetchedBlockNumber,
-      "numEvents": parsedQueueItems->Array.length,
-      "numContractRegisterEvents": numContractRegisterEvents,
-    })
+    if numContractRegisterEvents === 0 {
+      Logging.trace({
+        "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "partitionId": query.partitionId,
+        "fromBlock": fromBlockQueried,
+        "toBlock": latestFetchedBlockNumber,
+        "numEvents": parsedQueueItems->Array.length,
+      })
+    } else {
+      Logging.trace({
+        "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "partitionId": query.partitionId,
+        "fromBlock": fromBlockQueried,
+        "toBlock": latestFetchedBlockNumber,
+        "numEvents": parsedQueueItems->Array.length,
+        "numContractRegisterEvents": numContractRegisterEvents,
+      })
+    }
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 

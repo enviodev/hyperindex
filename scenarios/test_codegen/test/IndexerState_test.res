@@ -89,7 +89,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 0,
           itemsEst: 0,
@@ -278,7 +277,6 @@ describe("IndexerState", () => {
           eventBlocks->Array.forEach(
             blockNumber => {
               let query: FetchState.query = {
-                ...defaultQuery,
                 partitionId: "0",
                 itemsTarget: 0,
                 itemsEst: 0,
@@ -362,7 +360,6 @@ describe("IndexerState", () => {
         // (its batch-time snapshot held only block 5).
         let cs = state->IndexerState.getChainState(~chain)
         let concurrentQuery: FetchState.query = {
-          ...defaultQuery,
           partitionId: "0",
           itemsTarget: 0,
           itemsEst: 0,
