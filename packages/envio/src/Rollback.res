@@ -184,7 +184,6 @@ and executeRollback = async (
         "chainId": chainId,
         "fromBlock": fromBlock,
         "toBlock": toBlock,
-        "isReorgChain": chainId === reorgChainId,
         "rollbackedEvents": eventsProcessedDiffByChain
         ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
         ->Option.getOr(0.),
@@ -193,7 +192,7 @@ and executeRollback = async (
     }
   })
 
-  let _ = await state->InMemoryStore.prepareRollbackDiff(
+  let diff = await state->InMemoryStore.prepareRollbackDiff(
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
@@ -206,8 +205,12 @@ and executeRollback = async (
       "fromBlock": chain["fromBlock"],
       "toBlock": chain["toBlock"],
       "rollbackedEvents": chain["rollbackedEvents"],
-      "isReorgChain": chain["isReorgChain"],
     })
+  })
+  logger->Logging.childTrace({
+    "msg": "Rollback entity changes",
+    "deleted": diff["deletedEntities"],
+    "upserted": diff["setEntities"],
   })
   Prometheus.RollbackSuccess.increment(
     ~timeSeconds=Performance.secondsSince(startTime),
