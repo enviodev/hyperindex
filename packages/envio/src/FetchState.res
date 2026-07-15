@@ -2368,13 +2368,15 @@ let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as
   buffer->Utils.Array.isEmpty
 }
 
-// Lower progress percentage = further behind = higher priority. Shared by the
-// batch ordering and the cross-chain fetch priority.
+// Lower progress percentage = further behind = higher priority. Progress is
+// relative to the head this chain can actually fetch, so a chain at its lagged
+// head does not look behind relative to unavailable blocks. Shared by the batch
+// ordering and the cross-chain fetch priority.
 let getProgressPercentage = (fetchState: t) => {
   switch fetchState.firstEventBlock {
   | None => 0.
   | Some(firstEventBlock) =>
-    let totalRange = fetchState.knownHeight - firstEventBlock
+    let totalRange = fetchState.knownHeight - fetchState.blockLag - firstEventBlock
     if totalRange <= 0 {
       0.
     } else {

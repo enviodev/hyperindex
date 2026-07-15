@@ -372,6 +372,7 @@ module Indexer = {
     chain: chainId,
     sourceConfig: Config.sourceConfig,
     startBlock?: int,
+    maxReorgDepth?: int,
     blockLag?: int,
   }
 
@@ -419,6 +420,9 @@ module Indexer = {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+              maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
+                originalChainConfig.maxReorgDepth,
+              ),
               blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
             },
           )
