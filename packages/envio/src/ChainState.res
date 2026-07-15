@@ -492,8 +492,6 @@ let blockAtProgress = (cs: t, ~progress) => {
   lower + Math.ceil(progress *. (upper - lower)->Int.toFloat)->Float.toInt
 }
 
-let shouldWaitForNewBlock = (cs: t) => cs.fetchState->FetchState.shouldWaitForNewBlock
-
 // Propose queries sized against this chain's target block. Called by
 // CrossChainState's waterfall, furthest-behind chain first, with
 // chainTargetItems set to whatever budget remains at that point and

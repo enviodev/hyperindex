@@ -1862,20 +1862,14 @@ describe("FetchState.getNextQuery & integration", () => {
     updated->FetchState.getNextQuery(~chainTargetBlock=updated.knownHeight, ~chainTargetItems)
   }
 
-  let shouldWaitForNewBlock = (fs, ~endBlock=None, ~knownHeight=10) => {
-    let updated =
-      switch endBlock {
-      | Some(_) => {...fs, endBlock}
-      | None => fs
-      }->FetchState.updateKnownHeight(~knownHeight)
-    updated->FetchState.shouldWaitForNewBlock
-  }
-
   it("Emulate first indexer queries with a static event", t => {
     let (fetchState, _) = makeInitial()
 
-    t.expect(fetchState->shouldWaitForNewBlock(~knownHeight=0)).toBe(true)
-    t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(NothingToQuery)
+    t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
+    t.expect(
+      fetchState->getNextQuery(~chainTargetItems=0.),
+      ~message="A zero admission budget must not generate a query while the chain is behind",
+    ).toEqual(NothingToQuery)
 
     let nextQuery = fetchState->getNextQuery
 
@@ -1934,26 +1928,32 @@ describe("FetchState.getNextQuery & integration", () => {
       makeAfterFirstStaticAddressesQuery(),
     )
 
+    t.expect(updatedFetchState->getNextQuery, ~message="Should wait for new block").toEqual(
+      WaitingForNewBlock,
+    )
     t.expect(
-      updatedFetchState->shouldWaitForNewBlock,
-      ~message="Should wait for new block",
-    ).toBe(true)
-    t.expect(updatedFetchState->getNextQuery).toEqual(NothingToQuery)
+      updatedFetchState->getNextQuery(~chainTargetItems=0.),
+      ~message="A zero admission budget must preserve WaitingForNewBlock",
+    ).toEqual(WaitingForNewBlock)
     t.expect(
-      updatedFetchState->shouldWaitForNewBlock(~endBlock=Some(11)),
+      updatedFetchState->getNextQuery(~endBlock=Some(11)),
       ~message=`Should wait for new block
       when block height didn't reach the end block`,
-    ).toBe(true)
+    ).toEqual(WaitingForNewBlock)
     t.expect(
-      updatedFetchState->shouldWaitForNewBlock(~endBlock=Some(10)),
+      updatedFetchState->getNextQuery(~endBlock=Some(10)),
       ~message=`Shouldn't wait for new block
       when block height reached the end block`,
-    ).toBe(false)
+    ).toEqual(NothingToQuery)
     t.expect(
-      updatedFetchState->shouldWaitForNewBlock(~endBlock=Some(9)),
+      updatedFetchState->getNextQuery(~endBlock=Some(9)),
       ~message=`Shouldn't wait for new block
       when block height exceeded the end block`,
-    ).toBe(false)
+    ).toEqual(NothingToQuery)
+    t.expect(
+      updatedFetchState->getNextQuery,
+      ~message=`Should wait for new block even if partitions have nothing to query`,
+    ).toEqual(WaitingForNewBlock)
     t.expect(
       updatedFetchState->getNextQuery(~knownHeight=11),
       ~message=`Should fetch the head block once the partition is behind the head`,
@@ -1973,7 +1973,6 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     updatedFetchState->FetchState.startFetchingQueries(~queries=[query])
-    t.expect(updatedFetchState->shouldWaitForNewBlock).toBe(false)
     t.expect(
       updatedFetchState->getNextQuery,
       ~message=`Test that even if all partitions reached the current block height,
@@ -1985,13 +1984,12 @@ describe("FetchState.getNextQuery & integration", () => {
   it("Emulate first indexer queries with block lag configured", t => {
     let (fetchState, _) = makeInitial(~blockLag=2)
 
-    t.expect(fetchState->shouldWaitForNewBlock(~knownHeight=0)).toBe(true)
-    t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(NothingToQuery)
+    t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
 
     t.expect(
-      fetchState->shouldWaitForNewBlock(~knownHeight=1),
+      fetchState->getNextQuery(~knownHeight=1),
       ~message="Should wait for new block when current block height - block lag is less than 0",
-    ).toBe(true)
+    ).toEqual(WaitingForNewBlock)
 
     let nextQuery = fetchState->getNextQuery(~endBlock=Some(8), ~knownHeight=10)
     t.expect(nextQuery, ~message="No block lag when we are close to the end block").toEqual(
@@ -2049,8 +2047,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
     )
 
-    t.expect(updatedFetchState->shouldWaitForNewBlock).toBe(true)
-    t.expect(updatedFetchState->getNextQuery).toEqual(NothingToQuery)
+    t.expect(updatedFetchState->getNextQuery).toEqual(WaitingForNewBlock)
   })
 
   it("Emulate dynamic contract registration", t => {
@@ -3837,14 +3834,13 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
         ~message="onBlockRegistrations should be set",
       ).toEqual([onBlockRegistration])
 
-      // Block polling and query generation are independent when no height is known.
-      t.expect(fetchState->FetchState.shouldWaitForNewBlock).toBe(true)
+      // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
       let nextQuery =
         fetchState->FetchState.getNextQuery(~chainTargetBlock=0, ~chainTargetItems=10_000.)
       t.expect(
         nextQuery,
-        ~message="Should not generate a query when knownHeight is 0",
-      ).toEqual(NothingToQuery)
+        ~message="Should return WaitingForNewBlock when knownHeight is 0",
+      ).toEqual(WaitingForNewBlock)
 
       // Update known height to 20
       let updatedFetchState = fetchState->FetchState.updateKnownHeight(~knownHeight=20)

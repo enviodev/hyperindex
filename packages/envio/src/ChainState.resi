@@ -69,7 +69,6 @@ let isReadyToEnterReorgThreshold: t => bool
 let targetBlock: (t, ~chainTargetItems: float) => int
 let progressAtBlock: (t, ~blockNumber: int) => float
 let blockAtProgress: (t, ~progress: float) => int
-let shouldWaitForNewBlock: t => bool
 let getNextQuery: (
   t,
   ~chainTargetItems: float,

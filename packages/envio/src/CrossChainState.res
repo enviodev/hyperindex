@@ -240,17 +240,15 @@ let checkAndFetch = async (
   ->priorityOrder
   ->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    if cs->ChainState.shouldWaitForNewBlock {
-      // Head polling consumes no buffer budget, so keep it active even when
-      // the pool is below the admission floor. This check stays separate from
-      // query generation: waiting must not depend on whether a query budget is
-      // available.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
-    } else if remaining.contents < minimumAdmissionBudget {
-      // More than 90% of the target pool is ready or reserved. Existing
-      // queries keep running, but don't ask any chain to generate new work
-      // until responses or batch processing release a full admission unit.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+    if cs->ChainState.knownHeight == 0 || remaining.contents < minimumAdmissionBudget {
+      // Without a known height, or when more than 90% of the target pool is
+      // ready or reserved, a zero budget stops candidate generation while
+      // getNextQuery can still return the budget-free block-wait action.
+      let action = switch cs->ChainState.getNextQuery(~chainTargetItems=0., ~chunkItemsMultiplier) {
+      | WaitingForNewBlock as action => action
+      | NothingToQuery | Ready(_) => FetchState.NothingToQuery
+      }
+      actionByChain->Utils.Dict.setByInt(chainId, action)
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =

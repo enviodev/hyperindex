@@ -1591,38 +1591,6 @@ type partitionFillState = {
   maybeChunkRange: option<int>,
 }
 
-let shouldWaitForNewBlock = (
-  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
-) => {
-  let headBlockNumber = knownHeight - blockLag
-  if headBlockNumber <= 0 {
-    true
-  } else {
-    let shouldWait = ref(
-      switch endBlock {
-      | Some(endBlock) => headBlockNumber < endBlock
-      | None => true
-      } && latestOnBlockBlockNumber >= headBlockNumber,
-    )
-
-    let partitionsCount = optimizedPartitions.idsInAscOrder->Array.length
-    for idx in 0 to partitionsCount - 1 {
-      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
-      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
-      if (
-        p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock.blockNumber < headBlockNumber
-      ) {
-        // Wait only after every partition reaches the head. A pending response
-        // can carry a newer known height, and polling while larger partitions
-        // are still catching up adds redundant head requests.
-        shouldWait := false
-      }
-    }
-
-    shouldWait.contents
-  }
-}
-
 // Candidate queries are sized against chainTargetBlock, the soft querying
 // horizon the owning chain wants to reach this tick — derived by ChainState
 // from its share of the indexer-wide buffer budget and its chain-level event
@@ -1631,12 +1599,14 @@ let shouldWaitForNewBlock = (
 // query with no other ceiling: the true hard bounds stay
 // endBlock/mergeBlock/the lagged head.
 //
-// The tick's budget is chainTargetItems minus what's already in flight. Every
-// candidate query — gap-fill holes, plus each in-range partition's chunks or
-// open-ended probe toward the target — is generated with no budget check, then
-// the candidates are sorted by fromBlock and accepted in that order while the
-// budget stays positive. The query that tips it negative is still accepted (a
-// single overshoot); everything after it waits for a tick with more budget.
+// The tick's budget is chainTargetItems minus what's already in flight. A
+// non-positive budget only resolves the wait action and generates no query
+// candidates. With a positive budget, every candidate query — gap-fill holes,
+// plus each in-range partition's chunks or open-ended probe toward the target —
+// is generated with no budget check, then the candidates are sorted by
+// fromBlock and accepted in that order while the budget stays positive. The
+// query that tips it negative is still accepted (a single overshoot);
+// everything after it waits for a tick with more budget.
 // Sorting by fromBlock spends the budget on the earliest blocks across all
 // partitions first, so no partition is starved by generation order and the
 // frontier advances evenly. In-flight reservations release as responses land,
@@ -1649,16 +1619,49 @@ let shouldWaitForNewBlock = (
 // rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
 // unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
-  {optimizedPartitions, blockLag, knownHeight, endBlock}: t,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
   ~chunkItemsMultiplier: float=1.,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
-    NothingToQuery
+    WaitingForNewBlock
   } else {
+    let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
+    let shouldWaitForNewBlock = ref(
+      switch endBlock {
+      | Some(endBlock) => headBlockNumber < endBlock
+      | None => true
+      } &&
+      !isOnBlockBehindTheHead,
+    )
+
     let partitionsCount = optimizedPartitions.idsInAscOrder->Array.length
+
+    // Every partition is visited once here regardless of whether it gets a
+    // query pushed below — waiting-for-new-block bookkeeping shouldn't depend
+    // on this tick's budget.
+    for idx in 0 to partitionsCount - 1 {
+      let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
+      let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+      if (
+        p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock.blockNumber < headBlockNumber
+      ) {
+        // Even if there are some partitions waiting for the new block
+        // We still want to wait for all partitions reaching the head
+        // because they might update knownHeight in their response
+        // Also, there are cases when some partitions fetching at 50% of the chain
+        // and we don't want to poll the head for a few small partitions
+        shouldWaitForNewBlock := false
+      }
+    }
+
+    // A zero budget is an admission check: preserve the wait-state scan above,
+    // but make every query-generation pass below empty. Caught-up chains also
+    // skip those passes because their action is already known.
+    let partitionsCount =
+      chainTargetItems <= 0. || shouldWaitForNewBlock.contents ? 0 : partitionsCount
 
     // One bucket per partition, in idsInAscOrder order — gap-fill and the
     // budget pass both push into a partition's own bucket, so flattening at
@@ -1951,7 +1954,11 @@ let getNextQuery = (
     let queries = queriesByPartitionIndex->Array.flat
 
     if queries->Utils.Array.isEmpty {
-      NothingToQuery
+      if shouldWaitForNewBlock.contents {
+        WaitingForNewBlock
+      } else {
+        NothingToQuery
+      }
     } else {
       Ready(queries)
     }
