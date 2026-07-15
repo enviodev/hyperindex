@@ -380,7 +380,27 @@ let contractAddresses = (cs: t, ~contractName) =>
   cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
-let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
+// Cross-chain priority is relative to the head this chain can actually fetch.
+// This prevents a chain at its configured lagged head from looking behind
+// relative to blocks that are unavailable to it.
+let getProgressPercentage = (cs: t) => {
+  let fetchState = cs.fetchState
+  switch fetchState.firstEventBlock {
+  | None => 0.
+  | Some(firstEventBlock) => {
+      let totalRange = fetchState.knownHeight - fetchState.blockLag - firstEventBlock
+      if totalRange <= 0 {
+        0.
+      } else {
+        let progress = switch fetchState.buffer->Array.get(0) {
+        | Some(item) => item->Internal.getItemBlockNumber - firstEventBlock
+        | None => fetchState->FetchState.bufferBlockNumber - firstEventBlock
+        }
+        progress->Int.toFloat /. totalRange->Int.toFloat
+      }
+    }
+  }
+}
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem

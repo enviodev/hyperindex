@@ -1,100 +1,155 @@
 open Vitest
 
-// PIN test — reproduces the exact production stall fixed by the kebggn commit
-// "Keep below-head chains polling instead of dropping them (NothingToQuery)".
-//
-// When one chain falls far behind and its query reservation drains the shared
-// fetch-buffer budget, another chain that is below its OWN head but starved of
-// budget emits no query this tick. Being below head it also won't wait for a new
-// block, so FetchState.getNextQuery returns NothingToQuery. CrossChainState's
-// checkAndFetch never DISPATCHES NothingToQuery, so that chain stops querying AND
-// stops polling getHeightOrThrow — its head tracking freezes and it goes fully
-// silent. In production this looked like buffer=0, one chain still polling, and
-// every other chain dead.
-//
-// This test asserts the FIXED behavior: the starved below-head chain must keep
-// polling getHeightOrThrow. It is red on the unfixed scheduler (the follower
-// never re-polls) and green once the below-head chain is dispatched as
-// WaitingForNewBlock instead of being dropped.
-describe("PIN: below-head chain keeps polling when starved of budget", () => {
+describe("PIN: chains keep indexing after entering the reorg threshold", () => {
   Async.it(
-    "starved near-head follower keeps polling while a leader backfills a large range",
+    "a chain at its lagged head does not prevent another chain from reaching readiness",
     async t => {
-      let leader = MockIndexer.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
-      )
-      let follower = MockIndexer.Source.make(
+      // This chain's configured lag is the same as its pre-threshold reorg
+      // depth. Once it reaches block 300 it has no newly exposed work when the
+      // indexer enters the threshold, so it parks in WaitingForNewBlock.
+      let chainAtLaggedHead = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chain=#100,
       )
+
+      // This chain initially stops at 1000 - 200 = 800. Entering the threshold
+      // removes its lag, exposing blocks 801..1000 that must still be queried
+      // before the multichain indexer can become ready.
+      let chainWithThresholdWork = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
-          {chain: #1337, sourceConfig: Config.CustomSources([leader.source])},
-          {chain: #100, sourceConfig: Config.CustomSources([follower.source])},
+          {
+            chain: #100,
+            sourceConfig: Config.CustomSources([chainAtLaggedHead.source]),
+            maxReorgDepth: 700,
+            blockLag: 700,
+          },
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([chainWithThresholdWork.source]),
+            maxReorgDepth: 200,
+            blockLag: 0,
+          },
         ],
-        ~shouldRollbackOnReorg=false,
-        // Small shared pool so the leader's backlog reservation drains it and
-        // leaves the follower with no budget this tick.
-        ~targetBufferSize=1000,
+        ~reducedPollingInterval=1,
+        ~targetBufferSize=100,
       )
       await Utils.delay(0)
 
-      // Phase 1: both chains catch up to head (block 100) and become realtime.
-      // A couple of events each seed a density signal so the leader's later
-      // backlog is sized (and reserved) against real density.
-      leader.resolveGetHeightOrThrow(100)
-      follower.resolveGetHeightOrThrow(100)
+      chainAtLaggedHead.resolveGetHeightOrThrow(1000)
+      chainWithThresholdWork.resolveGetHeightOrThrow(1000)
       await Utils.delay(0)
       await Utils.delay(0)
 
-      leader.resolveGetItemsOrThrow(
-        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
+      // Chain 100 wins the initial priority tie. Its events seed a density
+      // signal, which is required for it to establish the bad alignment line
+      // after the threshold despite having no query of its own to run.
+      await MockIndexer.Helper.waitItemsQuery(chainAtLaggedHead)
+      t.expect(
+        chainAtLaggedHead.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ~message="the high-lag chain first fetches to its pre-threshold head",
+      ).toEqual([1])
+      let densitySeed: array<MockIndexer.Source.itemMock> = Array.fromInitializer(
+        ~length=100,
+        i => {
+          MockIndexer.Source.blockNumber: 1 + i * 3,
+          logIndex: 0,
+        },
+      )
+      chainAtLaggedHead.resolveGetItemsOrThrow(
+        densitySeed,
+        ~latestFetchedBlockNumber=300,
+        ~knownHeight=1000,
       )
       await indexerMock.getBatchWritePromise()
-      follower.resolveGetItemsOrThrow(
-        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
+
+      await MockIndexer.Helper.waitItemsQuery(chainWithThresholdWork)
+      t.expect(
+        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ~message="the zero-lag chain first fetches to its pre-threshold head",
+      ).toEqual([1])
+      chainWithThresholdWork.resolveGetItemsOrThrow(
+        [{MockIndexer.Source.blockNumber: 100, logIndex: 0}],
+        ~latestFetchedBlockNumber=400,
+        ~knownHeight=1000,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      // Commit firstEventBlock before the response that reaches the lagged
+      // head. Otherwise the threshold tick sees this chain at synthetic 0%
+      // progress and lets it lead, which sidesteps the production ordering.
+      await MockIndexer.Helper.waitItemsQuery(chainWithThresholdWork)
+      t.expect(
+        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ~message="the second response reaches the zero-lag chain's pre-threshold head",
+      ).toEqual([401])
+      chainWithThresholdWork.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=800,
+        ~knownHeight=1000,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("envio_reorg_threshold"),
+        ~message="both chains reached their pre-threshold lagged heads",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="the indexer must not be ready before chain 1337 fetches 801..1000",
+      ).toEqual([{value: "0", labels: Dict.make()}])
+
+      // Prove that ordinary polling does not heal the stall. Same-height
+      // responses keep waitForNewBlock's internal polling loop alive, but do
+      // not re-enter the cross-chain scheduler. Skip this loop once the bug is
+      // fixed and chain 1337 already has its expected query.
+      for _ in 1 to 3 {
+        if chainWithThresholdWork.getItemsOrThrowCalls->Utils.Array.isEmpty {
+          let heightCallCount = chainAtLaggedHead.getHeightOrThrowCalls->Array.length
+          chainAtLaggedHead.resolveGetHeightOrThrow(1000)
+
+          let attempts = ref(0)
+          while (
+            chainAtLaggedHead.getHeightOrThrowCalls->Array.length <= heightCallCount &&
+              attempts.contents < 1000
+          ) {
+            attempts := attempts.contents + 1
+            await Utils.delay(0)
+          }
+          t.expect(
+            chainAtLaggedHead.getHeightOrThrowCalls->Array.length > heightCallCount,
+            ~message="the stuck source continues polling at the unchanged height",
+          ).toBe(true)
+        }
+      }
+
+      // The shared buffer is empty here: no buffered items and no in-flight
+      // queries. Chain 100 consumes none of the available 100-item budget because it
+      // is already at knownHeight - blockLag. Chain 1337 must therefore receive
+      // that pool and query its newly exposed range. The buggy scheduler instead
+      // lets chain 100 claim the progress-alignment line before discovering that
+      // it is WaitingForNewBlock, which clamps chain 1337 behind block 800.
+      t.expect(
+        chainWithThresholdWork.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ~message="the below-head chain is not blocked by an unchanged source",
+      ).toEqual([801])
+
+      chainWithThresholdWork.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=1000,
+        ~knownHeight=1000,
       )
       await indexerMock.getBatchWritePromise()
 
       t.expect(
         await indexerMock.metric("hyperindex_synced_to_head"),
-        ~message="both chains reach realtime",
+        ~message="all chains become ready after the threshold catch-up finishes",
       ).toEqual([{value: "1", labels: Dict.make()}])
-
-      // Both chains are now at head, parked on a realtime getHeightOrThrow poll.
-      let followerPollsBefore = follower.getHeightOrThrowCalls->Array.length
-
-      // Phase 2: divergent new heights. The leader jumps far ahead (a large
-      // backlog whose reservation drains the shared budget); the follower advances
-      // only slightly past its own head, so it is below head but gets no budget.
-      leader.resolveGetHeightOrThrow(1_000_000)
-      follower.resolveGetHeightOrThrow(105)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // Drive the leader's backfill for several ticks, keeping it far behind so it
-      // stays the budget-draining leader. Each response re-runs the cross-chain
-      // dispatch, re-evaluating the starved follower every tick.
-      for _ in 0 to 4 {
-        await MockIndexer.Helper.waitItemsQuery(leader)
-        let call = leader.getItemsOrThrowCalls->Array.getUnsafe(0)
-        let fromBlock = call.payload["fromBlock"]
-        call.resolve(
-          [{blockNumber: fromBlock + 20, logIndex: 0}, {blockNumber: fromBlock + 60, logIndex: 0}],
-          ~latestFetchedBlockNumber=fromBlock + 99,
-        )
-        await indexerMock.getBatchWritePromise()
-      }
-
-      // The follower is below its own head (frontier 100 < head 105) but starved
-      // of budget. It must keep polling for new blocks rather than going silent.
-      t.expect(
-        follower.getHeightOrThrowCalls->Array.length > followerPollsBefore,
-        ~message="starved below-head follower keeps polling getHeightOrThrow",
-      ).toBe(true)
     },
   )
 })
