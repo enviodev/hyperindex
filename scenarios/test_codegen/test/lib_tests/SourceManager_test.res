@@ -179,7 +179,6 @@ describe("SourceManager source priority with Live sources", () => {
   let addressesByContractName = Dict.make()
 
   let mockQuery = (): FetchState.query => {
-    ...defaultQuery,
     partitionId: "0",
     itemsTarget: 5000,
     itemsEst: 5000,
@@ -426,10 +425,10 @@ describe("SourceManager fetchNext", () => {
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
-      prevQueryRange: 0,
-      prevRangeSize: 0,
-      prevPrevQueryRange: 0,
-      latestBlockRangeUpdateBlock: 0,
+      sourceRangeCapacity: 0,
+      eventDensity: None,
+      prevSourceRangeCapacity: 0,
+      latestSourceRangeCapacityUpdateBlock: 0,
     }
   }
 
@@ -492,14 +491,14 @@ describe("SourceManager fetchNext", () => {
       itemsEst: 5000,
       fetchedBlock: None,
     }
-    // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
+    // Chunking on (sourceRangeCapacity set) so the tail wants two chunks per round.
     let withPending = count => {
       let p = {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
-        prevQueryRange: 10,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 10,
+        sourceRangeCapacity: 10,
+        eventDensity: None,
+        prevSourceRangeCapacity: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
     }
@@ -548,7 +547,6 @@ describe("SourceManager fetchNext", () => {
         ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
       ).toEqual([
         {
-          ...defaultQuery,
           partitionId: "2",
           itemsTarget: 16_667,
           itemsEst: 16_667,
@@ -559,10 +557,11 @@ describe("SourceManager fetchNext", () => {
           addressesByContractName: partition2.addressesByContractName,
         },
         {
-          ...defaultQuery,
           partitionId: "0",
-          itemsTarget: 16_667,
-          itemsEst: 16_667,
+          // Starts at block 5 vs partition "2"'s block 2, so it covers less of
+          // the range to the target and gets a smaller probe.
+          itemsTarget: 11_111,
+          itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
@@ -570,12 +569,10 @@ describe("SourceManager fetchNext", () => {
           addressesByContractName: partition0.addressesByContractName,
         },
         {
-          ...defaultQuery,
           partitionId: "1",
-          // Every unknown-density probe gets the same even split of the fresh
-          // budget (round(50_000 / 3)), regardless of processing order.
-          itemsTarget: 16_667,
-          itemsEst: 16_667,
+          // Starts furthest ahead (block 6), so it gets the smallest probe.
+          itemsTarget: 9_259,
+          itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
@@ -1440,7 +1437,6 @@ describe("SourceManager.executeQuery", () => {
   let addressesByContractName = Dict.make()
 
   let mockQuery = (): FetchState.query => {
-    ...defaultQuery,
     partitionId: "0",
     itemsTarget: 5000,
     itemsEst: 5000,

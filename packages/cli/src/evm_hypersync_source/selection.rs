@@ -22,7 +22,6 @@ pub struct TopicSelectionInput {
 /// One log selection of a built query: `addresses` scopes the selection to
 /// specific emitters (empty = any address), `topics` is the 4-position topic
 /// filter (empty position = match any).
-#[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuiltLogSelection {
     pub addresses: Vec<String>,

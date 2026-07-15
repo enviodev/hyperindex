@@ -264,7 +264,24 @@ let checkAndFetch = async (
         ~chunkItemsMultiplier,
         ~maxTargetBlock?,
       ) {
-      | (WaitingForNewBlock | NothingToQuery) as action =>
+      | WaitingForNewBlock as action => actionByChain->Utils.Dict.setByInt(chainId, action)
+      | NothingToQuery =>
+        // A chain below its head that emitted no query this tick — its budget
+        // went to more-behind chains, or the cross-chain alignment clamped its
+        // range to nothing — and has nothing else to wake it must keep polling
+        // for new blocks instead of going silent. NothingToQuery isn't
+        // dispatched, so such a chain would never be re-scheduled and its head
+        // tracking would freeze (the knownHeight == 0 branch above forces a poll
+        // for the same reason). A chain is genuinely idle — and correctly left
+        // undispatched — when it is caught up to its head/endblock, still
+        // draining in-flight queries, or holding ready items that batch
+        // processing will drain and re-schedule from.
+        let action =
+          cs->ChainState.isFetchingAtHead ||
+          cs->ChainState.pendingBudget > 0. ||
+          cs->ChainState.bufferReadyCount > 0
+            ? FetchState.NothingToQuery
+            : FetchState.WaitingForNewBlock
         actionByChain->Utils.Dict.setByInt(chainId, action)
       | Ready(queries) => {
           // A density-bearing chain establishes the alignment line only after

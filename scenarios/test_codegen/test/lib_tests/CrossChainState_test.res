@@ -6,10 +6,11 @@ let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({
     chain: ChainMap.Chain.makeUnsafe(~chainId=1),
     blockNumber,
-    onEventRegistration:
-      "Mock onEventRegistration in CrossChainState test"->(
-        Utils.magic: string => Internal.onEventRegistration
-      ),
+    // Carries an `index` so the buffer's dedup key resolves; the rest of the
+    // registration is unused by these tests.
+    onEventRegistration: {"index": 0}->(
+      Utils.magic: {"index": int} => Internal.onEventRegistration
+    ),
     logIndex: 0,
     transactionIndex: 0,
     payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
@@ -101,10 +102,10 @@ let makeFetchingChainState = (
     mergeBlock: None,
     dynamicContract: None,
     mutPendingQueries: [],
-    prevQueryRange: 0,
-    prevPrevQueryRange: 0,
-    prevRangeSize: 0,
-    latestBlockRangeUpdateBlock: 0,
+    sourceRangeCapacity: 0,
+    prevSourceRangeCapacity: 0,
+    eventDensity: None,
+    latestSourceRangeCapacityUpdateBlock: 0,
   }
   let indexingAddresses =
     Dict.fromArray([
@@ -297,10 +298,10 @@ describe("CrossChainState fetch control", () => {
         mergeBlock: None,
         dynamicContract: None,
         mutPendingQueries: [],
-        prevQueryRange: 10,
-        prevPrevQueryRange: 10,
-        prevRangeSize: 100, // density = 100 / 10 = 10 items/block
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 10,
+        prevSourceRangeCapacity: 10,
+        eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
+        latestSourceRangeCapacityUpdateBlock: 0,
       }
       let indexingAddresses1 =
         Dict.fromArray([

@@ -1365,6 +1365,146 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
   )
 })
 
+describe("RpcSource - builds partition log selections end to end", () => {
+  let hexId = suffix => "0x" ++ "00"->String.repeat(31) ++ suffix
+  let sighash1 = hexId("01")
+  let sighash2 = hexId("02")
+  let sighash3 = hexId("03")
+  let sighash4 = hexId("04")
+  let excludedSighash = hexId("05")
+  let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
+
+  let summarizeGetLogsRequest = requestBody => {
+    let request = requestBody->JSON.parseOrThrow->JSON.Decode.object
+    let method =
+      request
+      ->Option.flatMap(Dict.get(_, "method"))
+      ->Option.flatMap(JSON.Decode.string)
+
+    switch (method, request->Option.flatMap(Dict.get(_, "params"))) {
+    | (Some("eth_getLogs"), Some(JSON.Array([JSON.Object(filter)]))) =>
+      let address = filter->Dict.get("address")->Option.getOr(JSON.Null)->JSON.stringify
+      let topics = filter->Dict.get("topics")->Option.getOr(JSON.Array([]))->JSON.stringify
+      Some(`address=${address};topics=${topics}`)
+    | _ => None
+    }
+  }
+
+  Async.it(
+    "builds the partition's real RPC filters without a test-only query API",
+    async t => {
+      let addressBound = {
+        ...MockIndexer.evmOnEventRegistration(~id=sighash1),
+        index: 0,
+      }
+      let wildcardA = {
+        ...MockIndexer.evmOnEventRegistration(
+          ~id=sighash2,
+          ~contractName="WildcardA",
+          ~isWildcard=true,
+        ),
+        index: 1,
+      }
+      let wildcardB = {
+        ...MockIndexer.evmOnEventRegistration(
+          ~id=sighash3,
+          ~contractName="WildcardB",
+          ~isWildcard=true,
+        ),
+        index: 2,
+      }
+      let wildcardByAddress = {
+        ...MockIndexer.evmOnEventRegistration(
+          ~id=sighash4,
+          ~isWildcard=true,
+          ~dependsOnAddresses=true,
+        ),
+        index: 3,
+      }
+      let excluded = {
+        ...MockIndexer.evmOnEventRegistration(
+          ~id=excludedSighash,
+          ~contractName="Excluded",
+          ~isWildcard=true,
+        ),
+        index: 4,
+      }
+      let allRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress, excluded]
+      let selectedRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress]
+      let addressesByContractName = Dict.fromArray([
+        (addressBound.eventConfig.contractName, [mockAddress]),
+      ])
+
+      let blockJson = JSON.Object(
+        Dict.fromArray([
+          ("number", JSON.String("0x64")),
+          ("timestamp", JSON.String("0x64")),
+          ("hash", JSON.String("0xb64")),
+          ("parentHash", JSON.String("0xb63")),
+        ]),
+      )
+      let mock = await MockRpcServer.make(~getResult=method =>
+        switch method {
+        | "eth_getLogs" => JSON.Array([])
+        | "eth_getBlockByNumber" => blockJson
+        | _ => JSON.Null
+        }
+      )
+      let source = RpcSource.make({
+        url: mock.url,
+        chain,
+        onEventRegistrations: allRegistrations,
+        sourceFor: Sync,
+        syncConfig: EvmChain.getSyncConfig({}),
+        lowercaseAddresses: false,
+      })
+
+      let (page, filters) = try {
+        let page = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(100),
+          ~addressesByContractName,
+          ~contractNameByAddress=FetchState.deriveContractNameByAddress(addressesByContractName),
+          ~knownHeight=100,
+          ~partitionId="selection-e2e",
+          ~selection={
+            dependsOnAddresses: true,
+            onEventRegistrations: selectedRegistrations->Array.map(reg =>
+              (reg :> Internal.onEventRegistration)
+            ),
+          },
+          ~itemsTarget=5000,
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource selection e2e"}),
+        )
+        let filters =
+          mock.requests
+          ->Array.filterMap(summarizeGetLogsRequest)
+          ->Array.toSorted(String.compare)
+        mock.close()
+        (page, filters)
+      } catch {
+      | exn =>
+        mock.close()
+        throw(exn)
+      }
+
+      let address = mockAddress->Address.toString
+      let addressTopic =
+        "0x000000000000000000000000" ++ address->String.toLowerCase->String.slice(~start=2)
+      let expectedFilters = [
+        `address=["${address}"];topics=[["${sighash1}"]]`,
+        `address=null;topics=[["${sighash2}","${sighash3}"]]`,
+        `address=null;topics=[["${sighash4}"],["${addressTopic}"]]`,
+      ]->Array.toSorted(String.compare)
+
+      t.expect((filters, page.parsedQueueItems->Array.length, page.latestFetchedBlockNumber)).toEqual(
+        (expectedFilters, 0, 100),
+      )
+    },
+  )
+})
+
 describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
   let sighash = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
 

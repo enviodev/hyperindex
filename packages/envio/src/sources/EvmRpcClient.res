@@ -39,12 +39,6 @@ type nextPageResponse = {
 type t = {
   getHeight: unit => promise<int>,
   getNextPage: nextPageParams => promise<nextPageResponse>,
-  // Exposes the query's log selections for a given registration selection and
-  // address index — for tests and debugging what a partition would fetch.
-  buildLogSelections: (
-    array<int>,
-    dict<array<Address.t>>,
-  ) => array<HyperSyncClient.Registration.builtLogSelection>,
 }
 
 @send
@@ -110,6 +104,5 @@ let make = (
   {
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
     getNextPage: params => client.getNextPage(params)->Promise.catch(coerceErrorOrThrow),
-    buildLogSelections: (ids, addresses) => client.buildLogSelections(ids, addresses),
   }
 }

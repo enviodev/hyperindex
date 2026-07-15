@@ -2399,14 +2399,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     // 3. Process 2 queries to build chunk history (3+ block ranges each)
-    // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+    // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
     | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
     }
     await indexerMock.getBatchWritePromise()
 
-    // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+    // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
     // After this, chunking will be enabled with chunkRange=min(3,3)=3
     // A new query batch should be created with chunks
     switch sourceMock.getItemsOrThrowCalls {
@@ -2503,14 +2503,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
-      // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+      // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
       switch sourceMock.getItemsOrThrowCalls {
       | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
       | _ => JsError.throwWithMessage("Should have a single pending call for query 1")
       }
       await indexerMock.getBatchWritePromise()
 
-      // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+      // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
       switch sourceMock.getItemsOrThrowCalls {
       | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
