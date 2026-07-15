@@ -756,19 +756,20 @@ describe("E2E rollback tests", () => {
       ["101-0"],
       [
         {
-          // New partition for DCs
-          "fromBlock": 102,
-          "toBlock": None,
-          "retry": 0,
-          "p": "2",
-        },
-        {
-          // Continue fetching original partition
-          // without blocking
+          // The original partition continues fetching right away, without
+          // waiting for the deferred contract registration.
           "fromBlock": 105,
           "toBlock": None,
           "retry": 0,
           "p": "0",
+        },
+        {
+          // New partition for the DCs, dispatched once the registration loop
+          // has drained the queued registration events.
+          "fromBlock": 102,
+          "toBlock": None,
+          "retry": 0,
+          "p": "2",
         },
       ],
     ))
@@ -785,7 +786,9 @@ describe("E2E rollback tests", () => {
           handler,
         },
       ],
-      ~resolveAt=#first,
+      // The DC partition query is now dispatched last (after the original
+      // partition's continuation), so target it with #last.
+      ~resolveAt=#last,
       ~latestFetchedBlockNumber=102,
     )
     await indexerMock.getBatchWritePromise()

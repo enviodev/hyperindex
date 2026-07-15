@@ -458,6 +458,7 @@ describe("SourceManager fetchNext", () => {
       startBlock: 0,
       endBlock,
       buffer,
+      contractRegisterQueue: [],
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       maxOnBlockBufferSize: targetBufferSize,

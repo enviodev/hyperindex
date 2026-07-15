@@ -252,6 +252,7 @@ describe("FetchState.make", () => {
       latestOnBlockBlockNumber: -1,
       maxOnBlockBufferSize: 5000,
       buffer: [],
+      contractRegisterQueue: [],
       normalSelection: fetchState.normalSelection,
       chainId: 0,
       contractConfigs: fetchState.contractConfigs,
@@ -365,6 +366,7 @@ describe("FetchState.make", () => {
       maxOnBlockBufferSize: targetBufferSize,
       latestOnBlockBlockNumber: -1,
       buffer: [],
+      contractRegisterQueue: [],
       startBlock: 0,
       endBlock: None,
       normalSelection: fetchState.normalSelection,
@@ -438,6 +440,7 @@ describe("FetchState.make", () => {
         maxOnBlockBufferSize: targetBufferSize,
         latestOnBlockBlockNumber: -1,
         buffer: [],
+        contractRegisterQueue: [],
         startBlock: 0,
         endBlock: None,
         normalSelection: fetchState.normalSelection,
@@ -556,6 +559,7 @@ describe("FetchState.make", () => {
         maxOnBlockBufferSize: targetBufferSize,
         latestOnBlockBlockNumber: -1,
         buffer: [],
+        contractRegisterQueue: [],
         startBlock: 0,
         endBlock: None,
         normalSelection: fetchState.normalSelection,
@@ -1713,6 +1717,7 @@ describe("FetchState.registerDynamicContracts", () => {
         latestOnBlockBlockNumber: -1,
         maxOnBlockBufferSize: targetBufferSize,
         buffer: [],
+        contractRegisterQueue: [],
         normalSelection: fetchState.normalSelection,
         chainId,
         contractConfigs: fetchState.contractConfigs,
@@ -1790,6 +1795,7 @@ describe("FetchState.getNextQuery & integration", () => {
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
       buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+      contractRegisterQueue: [],
       startBlock: 0,
       endBlock: None,
       blockLag: 0,
@@ -1849,6 +1855,7 @@ describe("FetchState.getNextQuery & integration", () => {
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
       buffer: [mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+      contractRegisterQueue: [],
       startBlock: 0,
       endBlock: None,
       normalSelection,
@@ -2543,6 +2550,7 @@ describe("FetchState.getNextQuery & integration", () => {
       // Removed an item here
 
       buffer: [mockEvent(~blockNumber=1)],
+      contractRegisterQueue: [],
     })
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
@@ -2576,6 +2584,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
       ),
       buffer: [],
+      contractRegisterQueue: [],
     })
   })
 
@@ -2667,6 +2676,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
       ),
       buffer: [],
+      contractRegisterQueue: [],
     })
   })
 })
@@ -3968,5 +3978,74 @@ describe("mergeIntoBuffer", () => {
       mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
       mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
     ])
+  })
+})
+
+describe("FetchState.contractRegisterQueue: registration barrier", () => {
+  // A fetch state with blocks 1..5 fetched into the buffer and no pending
+  // registrations, mirroring a response landing before its contractRegister
+  // handlers have run.
+  let makeBuffered = () => {
+    let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100)
+    let query = switch fetchState
+    ->FetchState.updateKnownHeight(~knownHeight=100)
+    ->FetchState.getNextQuery {
+    | Ready([q]) => q
+    | _ => JsError.throwWithMessage("Expected a single query")
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let fetchState = fetchState->FetchState.handleQueryResult(
+      ~query,
+      ~latestFetchedBlock={blockNumber: 5, blockTimestamp: 75},
+      ~newItems=[
+        mockEvent(~blockNumber=1),
+        mockEvent(~blockNumber=2),
+        mockEvent(~blockNumber=3),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=5),
+      ],
+    )
+    (fetchState, indexingAddresses)
+  }
+
+  let readyCount = fetchState =>
+    fetchState->FetchState.getReadyItemsCount(~targetSize=100, ~fromItem=0)
+
+  it("holds the processing frontier one block below the earliest queued registration", t => {
+    let (fetchState, _) = makeBuffered()
+    let withQueue =
+      fetchState->FetchState.enqueueContractRegisters([fetchState.buffer->Array.getUnsafe(2)])
+    t.expect(
+      (fetchState->readyCount, withQueue->readyCount),
+      ~message="all 5 items ready with an empty queue; capped at 2 (blocks 1,2) once block 3 is queued",
+    ).toEqual((5, 2))
+  })
+
+  it("drains a bounded batch and lifts the barrier once applied", t => {
+    let (fetchState, indexingAddresses) = makeBuffered()
+    let crItem = fetchState.buffer->Array.getUnsafe(2)
+    let withQueue = fetchState->FetchState.enqueueContractRegisters([crItem])
+    let taken = withQueue->FetchState.takeContractRegisterBatch(~maxSize=5000)
+    let applied =
+      withQueue->FetchState.applyContractRegisters(
+        ~indexingAddresses,
+        ~registeredItems=taken,
+        ~itemsWithDcs=[],
+      )
+    t.expect(
+      (taken, applied->readyCount),
+      ~message="drains the queued item, and the barrier lifts back to all 5 once applied",
+    ).toEqual(([crItem], 5))
+  })
+
+  it("drops queued registrations above the rollback target", t => {
+    let (fetchState, indexingAddresses) = makeBuffered()
+    let withQueue =
+      fetchState->FetchState.enqueueContractRegisters([fetchState.buffer->Array.getUnsafe(2)])
+    let rolledBack = withQueue->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=2)
+    t.expect(
+      rolledBack.contractRegisterQueue,
+      ~message="a queued block-3 registration is trimmed when rolling back to block 2",
+    ).toEqual([])
   })
 })

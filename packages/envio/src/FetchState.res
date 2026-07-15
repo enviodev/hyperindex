@@ -565,6 +565,13 @@ type t = {
   blockLag: int,
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
+  // Items whose contractRegister handler hasn't run yet, kept in the same sorted
+  // order as the buffer (a subset of it by reference). Filled at fetch time and
+  // drained by the separate contract-registration loop. While an item sits here,
+  // it acts as a processing barrier: the ready frontier can't advance to its
+  // block, so its dynamic contracts get registered before anything at/after that
+  // block is processed. Empty for indexers without contractRegister handlers.
+  contractRegisterQueue: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
   // size). Event fetch depth is bounded separately, by CrossChainState's
   // cross-chain admission against the indexer-wide buffer pool.
@@ -602,6 +609,22 @@ let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
           blockTimestamp: 0,
         }
       : latestFullyFetchedBlock
+  }
+}
+
+// Highest block that may be processed now. Same as the fetch-derived ready
+// frontier (bufferBlockNumber), but held one block below the earliest item still
+// awaiting contract registration so its dynamic contracts get registered before
+// anything at/after that block is processed. Equals bufferBlockNumber when the
+// registration queue is empty (the common, no-factory case).
+@inline
+let processingBlockNumber = (fetchState: t) => {
+  let base = fetchState->bufferBlockNumber
+  switch fetchState.contractRegisterQueue->Array.get(0) {
+  | Some(item) =>
+    let barrier = item->Internal.getItemBlockNumber - 1
+    barrier < base ? barrier : base
+  | None => base
   }
 }
 
@@ -840,6 +863,7 @@ let updateInternal = (
     | [] => base
     | blockItems => base->mergeIntoBuffer(blockItems)
     },
+    contractRegisterQueue: fetchState.contractRegisterQueue,
     firstEventBlock: fetchState.firstEventBlock,
   }
 
@@ -1355,6 +1379,49 @@ let registerDynamicContracts = (
   }
 }
 
+let hasContractRegisterItems = (fetchState: t) =>
+  fetchState.contractRegisterQueue->Utils.Array.notEmpty
+
+// Append items whose contractRegister handler still needs to run. Merged in
+// sorted order (deduping re-delivered logs) so the queue head is always the
+// earliest pending registration, which processingBlockNumber reads as the
+// barrier.
+let enqueueContractRegisters = (fetchState: t, items: array<Internal.item>) =>
+  switch items {
+  | [] => fetchState
+  | _ => {
+      ...fetchState,
+      contractRegisterQueue: fetchState.contractRegisterQueue->mergeIntoBuffer(items),
+    }
+  }
+
+// The earliest `maxSize` items awaiting contract registration. Does not mutate;
+// the caller runs their handlers, then removes them via applyContractRegisters.
+let takeContractRegisterBatch = (fetchState: t, ~maxSize: int): array<Internal.item> => {
+  let queue = fetchState.contractRegisterQueue
+  queue->Array.slice(~start=0, ~end=Pervasives.min(maxSize, queue->Array.length))
+}
+
+// Commit a drained registration batch: drop the handled items from the queue
+// (by reference, since concurrent fetches may have merged new items in) and
+// register whatever dynamic contracts they produced. The items themselves stay
+// in the buffer to be processed as normal events.
+let applyContractRegisters = (
+  fetchState: t,
+  ~indexingAddresses: IndexingAddresses.t,
+  ~registeredItems: array<Internal.item>,
+  ~itemsWithDcs: array<Internal.item>,
+) => {
+  let registered = Utils.Set.fromArray(registeredItems)
+  let remaining =
+    fetchState.contractRegisterQueue->Array.filter(item => !(registered->Utils.Set.has(item)))
+  let next = {...fetchState, contractRegisterQueue: remaining}
+  switch itemsWithDcs {
+  | [] => next
+  | _ => next->registerDynamicContracts(~indexingAddresses, itemsWithDcs)
+  }
+}
+
 // Drop events an address-param filter rejects. A merged partition may
 // over-fetch a wildcard event whose indexed address param references an
 // address registered after the log's block; `clientAddressFilter` is the
@@ -1670,13 +1737,13 @@ let getNextQuery = (
 
 let hasReadyItem = ({buffer} as fetchState: t) => {
   switch buffer->Array.get(0) {
-  | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
+  | Some(item) => item->Internal.getItemBlockNumber <= fetchState->processingBlockNumber
   | None => false
   }
 }
 
 let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) => {
-  let readyBlockNumber = ref(fetchState->bufferBlockNumber)
+  let readyBlockNumber = ref(fetchState->processingBlockNumber)
   let acc = ref(0)
   let isFinished = ref(false)
   while !isFinished.contents {
@@ -1842,6 +1909,7 @@ let make = (
     maxOnBlockBufferSize,
     knownHeight,
     buffer,
+    contractRegisterQueue: [],
     firstEventBlock,
   }
 
@@ -1992,6 +2060,9 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
       fetchState.latestOnBlockBlockNumber,
       targetBlockNumber,
     ),
+    contractRegisterQueue: fetchState.contractRegisterQueue->Array.filter(item =>
+      item->Internal.getItemBlockNumber <= targetBlockNumber
+    ),
   }->updateInternal(
     ~optimizedPartitions,
     // Filtering the sorted buffer keeps it sorted and deduped.
@@ -2104,7 +2175,7 @@ let getProgressPercentageAt = (fetchState: t, ~blockNumber) => {
 let sortForBatch = {
   let hasFullBatch = ({buffer} as fetchState: t, ~batchSizeTarget) => {
     switch buffer->Array.get(batchSizeTarget - 1) {
-    | Some(item) => item->Internal.getItemBlockNumber <= fetchState->bufferBlockNumber
+    | Some(item) => item->Internal.getItemBlockNumber <= fetchState->processingBlockNumber
     | None => false
     }
   }
@@ -2134,11 +2205,11 @@ let sortForBatch = {
 }
 
 let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
-  let bufferBlockNumber = fetchState->bufferBlockNumber
+  let processingBlockNumber = fetchState->processingBlockNumber
   switch buffer->Array.get(index) {
-  | Some(item) if bufferBlockNumber >= item->Internal.getItemBlockNumber =>
+  | Some(item) if processingBlockNumber >= item->Internal.getItemBlockNumber =>
     item->Internal.getItemBlockNumber - 1
-  | _ => bufferBlockNumber
+  | _ => processingBlockNumber
   }
 }
 

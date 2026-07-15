@@ -27,15 +27,26 @@ let start = (state: IndexerState.t) => {
           ~stateId=state->IndexerState.epoch,
           ~scheduleFetch,
           ~scheduleProcessing,
+          ~scheduleRegistration,
           ~scheduleRollback,
         )
       )
     )
   and scheduleProcessing = () =>
     launch(state, () => BatchProcessing.startProcessing(state, ~scheduleFetch, ~scheduleRollback))
+  and scheduleRegistration = () =>
+    launch(state, () =>
+      ContractRegistration.startRegistering(state, ~scheduleFetch, ~scheduleProcessing)
+    )
   and scheduleRollback = () =>
     launch(state, () =>
-      Rollback.rollback(state, ~scheduleFetch, ~scheduleProcessing, ~scheduleRollback)
+      Rollback.rollback(
+        state,
+        ~scheduleFetch,
+        ~scheduleProcessing,
+        ~scheduleRegistration,
+        ~scheduleRollback,
+      )
     )
 
   scheduleFetch()

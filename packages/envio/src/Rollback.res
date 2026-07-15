@@ -42,6 +42,7 @@ let rec rollback = async (
   state: IndexerState.t,
   ~scheduleFetch,
   ~scheduleProcessing,
+  ~scheduleRegistration,
   ~scheduleRollback,
 ) =>
   // Owns its error boundary: launch doesn't catch, so a failure mid-rollback
@@ -80,6 +81,7 @@ let rec rollback = async (
         ~rollbackTargetBlockNumber,
         ~scheduleFetch,
         ~scheduleProcessing,
+        ~scheduleRegistration,
       )
     }
   } catch {
@@ -93,6 +95,7 @@ and executeRollback = async (
   ~rollbackTargetBlockNumber,
   ~scheduleFetch,
   ~scheduleProcessing,
+  ~scheduleRegistration,
 ) => {
   let startTime = Performance.now()
 
@@ -220,4 +223,7 @@ and executeRollback = async (
   state->IndexerState.completeRollback(~eventsProcessedDiffByChain)
   scheduleFetch()
   scheduleProcessing()
+  // Registration queues kept their surviving (block <= target) items through the
+  // rollback; re-kick the loop so they drain even without a fresh fetch response.
+  scheduleRegistration()
 }

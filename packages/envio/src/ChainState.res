@@ -626,7 +626,7 @@ let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
   ~newItems,
-  ~newItemsWithDcs,
+  ~itemsWithContractRegister,
   ~latestFetchedBlock,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
@@ -643,22 +643,39 @@ let handleQueryResult = (
   | None => ()
   }
 
-  let fs = switch newItemsWithDcs {
-  | [] => cs.fetchState
-  | _ =>
-    cs.fetchState->FetchState.registerDynamicContracts(
-      ~indexingAddresses=cs.indexingAddresses,
-      newItemsWithDcs,
-    )
-  }
-
+  // Store the fetched items right away and queue the ones with a contractRegister
+  // handler; the separate registration loop drains that queue and registers their
+  // dynamic contracts. Processing is held behind the queue head until then.
   cs.fetchState =
-    fs
+    cs.fetchState
+    ->FetchState.enqueueContractRegisters(itemsWithContractRegister)
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.estResponseSize)
+}
+
+// --- Contract registration (driven by the separate registration loop). ---
+
+let hasContractRegisterItems = (cs: t) => cs.fetchState->FetchState.hasContractRegisterItems
+
+let takeContractRegisterBatch = (cs: t, ~maxSize) =>
+  cs.fetchState->FetchState.takeContractRegisterBatch(~maxSize)
+
+// Materialise the selected transaction/block fields onto a drained registration
+// batch (from the chain stores) so its contractRegister handlers can read
+// event.transaction / event.block, exactly as batch processing does for handlers.
+let materializeContractRegisterItems = (cs: t, ~items, ~ecosystem) =>
+  cs->materializeBatchItems(~items, ~ecosystem)
+
+let applyContractRegisters = (cs: t, ~registeredItems, ~itemsWithDcs) => {
+  cs.fetchState =
+    cs.fetchState->FetchState.applyContractRegisters(
+      ~indexingAddresses=cs.indexingAddresses,
+      ~registeredItems,
+      ~itemsWithDcs,
+    )
 }
 
 // Run reorg detection against a fetch response and commit the updated guard.

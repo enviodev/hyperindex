@@ -8,108 +8,13 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-let runContractRegistersOrThrow = async (
-  ~itemsWithContractRegister: array<Internal.item>,
-  ~config: Config.t,
-  ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
-) => {
-  // contractRegister handlers can read event.transaction and event.block, so
-  // materialise the selected fields onto the payloads before running them. All
-  // items belong to the chain being fetched, hence its single page stores.
-  await ChainState.materializePageItems(
-    ~items=itemsWithContractRegister,
-    ~transactionStore,
-    ~blockStore,
-    ~ecosystem=config.ecosystem.name,
-  )
-
-  let itemsWithDcs = []
-
-  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
-    let eventItem = item->Internal.castUnsafeEventItem
-    let {blockNumber} = eventItem
-
-    let dc: Internal.indexingAddress = {
-      address: contractAddress,
-      contractName,
-      registrationBlock: blockNumber,
-    }
-
-    switch item->Internal.getItemDcs {
-    | None => {
-        item->Internal.setItemDcs([dc])
-        itemsWithDcs->Array.push(item)
-      }
-    | Some(dcs) => dcs->Array.push(dc)
-    }
-  }
-
-  let promises = []
-  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
-    let item = itemsWithContractRegister->Array.getUnsafe(idx)
-    let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem.onEventRegistration {
-    | {contractRegister: Some(contractRegister)} => contractRegister
-    | {contractRegister: None, eventConfig: {name: eventName}} =>
-      // Unexpected case, since we should pass only events with contract register to this function
-      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
-    }
-
-    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
-
-    // Catch sync and async errors
-    try {
-      let params: ContractRegisterContext.contractRegisterParams = {
-        item,
-        onRegister,
-        config,
-        isResolved: false,
-      }
-      let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
-
-      // Even though `contractRegister` always returns a promise,
-      // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Utils.Promise.isCatchable {
-        promises->Array.push(
-          result
-          ->Promise.thenResolve(r => {
-            params.isResolved = true
-            r
-          })
-          ->Promise.catch(exn => {
-            params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg=errorMessage,
-              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
-            )
-          }),
-        )
-      } else {
-        params.isResolved = true
-      }
-    } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg=errorMessage,
-        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
-      )
-    }
-  }
-
-  if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
-  }
-
-  itemsWithDcs
-}
-
 let rec onQueryResponse = async (
   state: IndexerState.t,
   {chain, response, query}: partitionQueryResponse,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
+  ~scheduleRegistration,
   ~scheduleRollback,
 ) =>
   if state->IndexerState.isStale(~stateId) {
@@ -225,8 +130,8 @@ let rec onQueryResponse = async (
     | None =>
       // Drop over-fetched events (a merged partition returning an address before
       // its effectiveStartBlock, or a wildcard param referencing an address
-      // registered after the log's block) before contract registration, so they
-      // neither spawn dynamic contracts nor enter the buffer.
+      // registered after the log's block) before storing them, so they neither
+      // spawn dynamic contracts nor enter the buffer.
       let newItems = chainState->ChainState.filterByClientAddress(parsedQueueItems)
       let itemsWithContractRegister = []
       for idx in 0 to newItems->Array.length - 1 {
@@ -237,41 +142,28 @@ let rec onQueryResponse = async (
         }
       }
 
-      // Re-check staleness: contract registration is async, so the chain state
-      // may have rolled back by the time we apply the fetched items.
-      let proceed = (~newItemsWithDcs) =>
-        if !(state->IndexerState.isStale(~stateId)) {
-          applyQueryResponse(
-            state,
-            ~chain,
-            ~newItems,
-            ~newItemsWithDcs,
-            ~knownHeight,
-            ~latestFetchedBlock={
-              FetchState.blockNumber: latestFetchedBlockNumber,
-              blockTimestamp: latestFetchedBlockTimestamp,
-            },
-            ~query,
-            ~transactionStore,
-            ~blockStore,
-          )
-          ChainMetadata.stage(state)
-          scheduleFetch()
-          scheduleProcessing()
-        }
-
-      switch itemsWithContractRegister {
-      | [] => proceed(~newItemsWithDcs=[])
-      | _ =>
-        switch await runContractRegistersOrThrow(
-          ~itemsWithContractRegister,
-          ~config=state->IndexerState.config,
-          ~transactionStore,
-          ~blockStore,
-        ) {
-        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-        | newItemsWithDcs => proceed(~newItemsWithDcs)
-        }
+      // Store the response synchronously: append the items to the buffer and
+      // queue the registration ones. No await here, so the fetch loop keeps
+      // moving; the registration loop drains the queue separately.
+      applyQueryResponse(
+        state,
+        ~chain,
+        ~newItems,
+        ~itemsWithContractRegister,
+        ~knownHeight,
+        ~latestFetchedBlock={
+          FetchState.blockNumber: latestFetchedBlockNumber,
+          blockTimestamp: latestFetchedBlockTimestamp,
+        },
+        ~query,
+        ~transactionStore,
+        ~blockStore,
+      )
+      ChainMetadata.stage(state)
+      scheduleFetch()
+      scheduleProcessing()
+      if itemsWithContractRegister->Utils.Array.notEmpty {
+        scheduleRegistration()
       }
     }
   }
@@ -280,7 +172,7 @@ and applyQueryResponse = (
   state: IndexerState.t,
   ~chain,
   ~newItems,
-  ~newItemsWithDcs,
+  ~itemsWithContractRegister,
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
@@ -294,7 +186,7 @@ and applyQueryResponse = (
     ~query,
     ~latestFetchedBlock,
     ~newItems,
-    ~newItemsWithDcs,
+    ~itemsWithContractRegister,
     ~knownHeight,
     ~transactionStore,
     ~blockStore,
@@ -360,6 +252,7 @@ let fetchChain = async (
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
+  ~scheduleRegistration,
   ~scheduleRollback,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
@@ -402,6 +295,7 @@ let fetchChain = async (
               ~stateId,
               ~scheduleFetch,
               ~scheduleProcessing,
+              ~scheduleRegistration,
               ~scheduleRollback,
             )
           } catch {

@@ -112,11 +112,25 @@ let handleQueryResult: (
   t,
   ~query: FetchState.query,
   ~newItems: array<Internal.item>,
-  ~newItemsWithDcs: array<Internal.item>,
+  ~itemsWithContractRegister: array<Internal.item>,
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
   ~blockStore: option<BlockStore.t>,
+) => unit
+
+// Contract registration, driven by the separate registration loop.
+let hasContractRegisterItems: t => bool
+let takeContractRegisterBatch: (t, ~maxSize: int) => array<Internal.item>
+let materializeContractRegisterItems: (
+  t,
+  ~items: array<Internal.item>,
+  ~ecosystem: Ecosystem.name,
+) => promise<unit>
+let applyContractRegisters: (
+  t,
+  ~registeredItems: array<Internal.item>,
+  ~itemsWithDcs: array<Internal.item>,
 ) => unit
 let materializeBatchItems: (
   t,

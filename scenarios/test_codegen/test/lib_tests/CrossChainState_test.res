@@ -116,6 +116,7 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     startBlock: 0,
     endBlock: None,
     buffer: [],
+    contractRegisterQueue: [],
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,

@@ -89,6 +89,8 @@ type t = {
   chainMetaThrottler: Throttler.t,
   // True while a batch is being processed; guards ProcessEventBatch re-entry.
   mutable isProcessing: bool,
+  // True while the contract-registration loop is draining; guards its re-entry.
+  mutable isRegistering: bool,
   // Whole-indexer view over every chain's runtime state plus the run-wide flags
   // derived from it. Mutated in place through CrossChainState.
   crossChainState: CrossChainState.t,
@@ -156,6 +158,7 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
+    isRegistering: false,
     crossChainState: CrossChainState.make(
       ~chainStates,
       ~isInReorgThreshold,
@@ -372,6 +375,12 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) =>
 let isProcessing = (state: t) => state.isProcessing
 let beginProcessing = (state: t) => state.isProcessing = true
 let endProcessing = (state: t) => state.isProcessing = false
+
+// Contract-registration-loop mutex. Guards the registration loop's re-entry so
+// only one instance drains the queues at a time.
+let isRegistering = (state: t) => state.isRegistering
+let beginRegistering = (state: t) => state.isRegistering = true
+let endRegistering = (state: t) => state.isRegistering = false
 
 let recordProcessedBatch = (state: t) =>
   state.processedBatchesCount = state.processedBatchesCount + 1

@@ -72,6 +72,10 @@ let applyBatchProgress: (t, ~batch: Batch.t) => unit
 let isProcessing: t => bool
 let beginProcessing: t => unit
 let endProcessing: t => unit
+
+let isRegistering: t => bool
+let beginRegistering: t => unit
+let endRegistering: t => unit
 let recordProcessedBatch: t => unit
 let createBatch: (
   t,
