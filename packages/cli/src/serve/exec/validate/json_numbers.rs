@@ -3,18 +3,13 @@
 //! `99999999999999999999999` lose digits that Hasura's aeson `Scientific`
 //! keeps. Before the request body is parsed, number tokens whose text
 //! cannot round-trip through serde_json's representation are rewritten to
-//! unique finite f64 sentinels; the sentinel-bits -> original-text map
-//! rides inside the variables object under a key no GraphQL variable name
-//! can collide with, and the coercion layer substitutes the original text
-//! back when producing SQL parameters.
+//! unique finite f64 sentinels. The decoder carries the resulting
+//! sentinel-bits -> original-text map alongside (never inside) the
+//! client-owned variables object, and the coercion layer substitutes the
+//! original text back when producing SQL parameters.
 
 use super::coerce::parse_decimal;
-use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
-
-/// Starts with a control character, which is invalid in a GraphQL name, so
-/// it can never shadow or be confused with a real variable.
-pub const NUMBER_ORIGINALS_KEY: &str = "\u{1}variable number originals";
 
 struct NumTok {
     start: usize,
@@ -129,32 +124,10 @@ pub fn rewrite_lossy_numbers(src: &str) -> Option<(String, HashMap<u64, String>)
     Some((out, originals))
 }
 
-pub fn attach_originals(
-    vars: &mut serde_json::Map<String, Json>,
-    originals: &HashMap<u64, String>,
-) {
-    let mut map = serde_json::Map::new();
-    for (bits, text) in originals {
-        map.insert(bits.to_string(), Json::String(text.clone()));
-    }
-    vars.insert(NUMBER_ORIGINALS_KEY.to_string(), Json::Object(map));
-}
-
-pub(super) fn extract_originals(vars: &serde_json::Map<String, Json>) -> HashMap<u64, String> {
-    let mut out = HashMap::new();
-    if let Some(Json::Object(map)) = vars.get(NUMBER_ORIGINALS_KEY) {
-        for (bits, text) in map {
-            if let (Ok(bits), Json::String(text)) = (bits.parse::<u64>(), text) {
-                out.insert(bits, text.clone());
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value as Json;
 
     #[test]
     fn ordinary_numbers_are_untouched() {

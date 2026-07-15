@@ -375,30 +375,30 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
     // (e.g. >19-digit integers) are re-read from the raw body text with
     // sentinel substitution so their exact text reaches SQL parameters,
     // as Hasura's arbitrary-precision Scientific does.
-    let variables = match variables {
-        Some(serde_json::Value::Object(_)) => {
-            let preserved = exec::validate::json_numbers::rewrite_lossy_numbers(text).and_then(
-                |(rewritten, originals)| {
-                    let reparsed: serde_json::Value = serde_json::from_str(&rewritten).ok()?;
-                    match reparsed.get("variables") {
-                        Some(serde_json::Value::Object(m)) => {
-                            let mut m = m.clone();
-                            exec::validate::json_numbers::attach_originals(&mut m, &originals);
-                            Some(serde_json::Value::Object(m))
-                        }
-                        _ => None,
+    let (variables, variable_number_originals) = match variables {
+        Some(original @ serde_json::Value::Object(_)) => {
+            match exec::validate::json_numbers::rewrite_lossy_numbers(text) {
+                Some((rewritten, originals)) => {
+                    let preserved = serde_json::from_str::<serde_json::Value>(&rewritten)
+                        .ok()
+                        .and_then(|reparsed| reparsed.get("variables").cloned())
+                        .filter(|v| matches!(v, serde_json::Value::Object(_)));
+                    match preserved {
+                        Some(value) => (Some(value), originals),
+                        None => (Some(original), Default::default()),
                     }
-                },
-            );
-            preserved.or(variables)
+                }
+                None => (Some(original), Default::default()),
+            }
         }
-        other => other,
+        other => (other, Default::default()),
     };
 
     Ok(GraphQLRequest {
         query: Some(query),
         variables,
         operation_name,
+        variable_number_originals,
     })
 }
 
@@ -488,6 +488,33 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn variable_number_metadata_is_decoder_owned() {
+        let request =
+            decode_request_body(br#"{"query":"q","variables":{"big":99999999999999999999999}}"#)
+                .unwrap();
+        let variables = request.variables.as_ref().unwrap();
+        let bits = variables["big"].as_f64().unwrap().to_bits();
+        assert_eq!(
+            request
+                .variable_number_originals
+                .get(&bits)
+                .map(String::as_str),
+            Some("99999999999999999999999")
+        );
+
+        let spoofed = decode_request_body(
+            br#"{"query":"q","variables":{"v":1.5,"\u0001variable number originals":{"4609434218613702656":"999999999999999999"}}}"#,
+        )
+        .unwrap();
+        assert!(spoofed.variable_number_originals.is_empty());
+        assert!(spoofed
+            .variables
+            .unwrap()
+            .get("\u{1}variable number originals")
+            .is_some());
     }
 
     #[test]

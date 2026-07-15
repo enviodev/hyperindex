@@ -54,7 +54,17 @@ pub(super) fn coerce_bool_exp<'a>(
                         parts.push(ir::BoolExp::Compare {
                             column: col.db_name.clone(),
                             scalar: col.scalar,
-                            pg_type: col.pg_type.clone(),
+                            // `_in: []` has no value-level cast to infer from,
+                            // so carry the complete scalar element cast as
+                            // the SQL compiler's fallback. Array columns still
+                            // use their element type here; `param_array` adds
+                            // the outer list suffix.
+                            pg_type: super::coerce::column_pg_cast(
+                                col.scalar,
+                                &col.pg_type,
+                                &col.pg_type_schema,
+                                false,
+                            ),
                             is_array: col.is_array,
                             op,
                         });

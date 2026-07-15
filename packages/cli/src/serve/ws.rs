@@ -627,16 +627,19 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
                 }
             };
             let payload = frame.get("payload").cloned().unwrap_or(json!({}));
+            let (variables, variable_number_originals) =
+                preserve_variable_numbers(text, payload.get("variables").cloned());
             let request = GraphQLRequest {
                 query: payload
                     .get("query")
                     .and_then(|q| q.as_str())
                     .map(String::from),
-                variables: preserve_variable_numbers(text, payload.get("variables").cloned()),
+                variables,
                 operation_name: payload
                     .get("operationName")
                     .and_then(|o| o.as_str())
                     .map(String::from),
+                variable_number_originals,
             };
             start_operation(conn, role, id, request, operation_permit);
             Ok(())
@@ -667,24 +670,32 @@ async fn handle_frame(conn: &mut Connection, text: &str) -> Result<(), ()> {
 fn preserve_variable_numbers(
     frame_text: &str,
     variables: Option<serde_json::Value>,
-) -> Option<serde_json::Value> {
+) -> (
+    Option<serde_json::Value>,
+    std::collections::HashMap<u64, String>,
+) {
     match variables {
-        Some(serde_json::Value::Object(_)) => {
-            let preserved = exec::validate::json_numbers::rewrite_lossy_numbers(frame_text)
-                .and_then(|(rewritten, originals)| {
-                    let reparsed: serde_json::Value = serde_json::from_str(&rewritten).ok()?;
-                    match reparsed.get("payload").and_then(|p| p.get("variables")) {
-                        Some(serde_json::Value::Object(m)) => {
-                            let mut m = m.clone();
-                            exec::validate::json_numbers::attach_originals(&mut m, &originals);
-                            Some(serde_json::Value::Object(m))
-                        }
-                        _ => None,
+        Some(original @ serde_json::Value::Object(_)) => {
+            match exec::validate::json_numbers::rewrite_lossy_numbers(frame_text) {
+                Some((rewritten, originals)) => {
+                    let preserved = serde_json::from_str::<serde_json::Value>(&rewritten)
+                        .ok()
+                        .and_then(|reparsed| {
+                            reparsed
+                                .get("payload")
+                                .and_then(|p| p.get("variables"))
+                                .cloned()
+                        })
+                        .filter(|v| matches!(v, serde_json::Value::Object(_)));
+                    match preserved {
+                        Some(value) => (Some(value), originals),
+                        None => (Some(original), Default::default()),
                     }
-                });
-            preserved.or(variables)
+                }
+                None => (Some(original), Default::default()),
+            }
         }
-        other => other,
+        other => (other, Default::default()),
     }
 }
 
@@ -929,7 +940,6 @@ fn subscription_jitter(connection_id: u64, operation_id: &str, interval: Duratio
 
 #[cfg(test)]
 mod tests {
-    use super::exec::validate::json_numbers::NUMBER_ORIGINALS_KEY;
     use super::*;
 
     #[test]
@@ -938,11 +948,14 @@ mod tests {
         let frame: serde_json::Value = serde_json::from_str(text).unwrap();
         let raw_vars = frame["payload"].get("variables").cloned();
 
-        let vars = preserve_variable_numbers(text, raw_vars).unwrap();
+        let (vars, originals) = preserve_variable_numbers(text, raw_vars);
+        let vars = vars.unwrap();
         let sentinel_bits = vars["big"].as_f64().unwrap().to_bits().to_string();
         assert_eq!(
             (
-                vars[NUMBER_ORIGINALS_KEY][&sentinel_bits].as_str(),
+                originals
+                    .get(&sentinel_bits.parse::<u64>().unwrap())
+                    .map(String::as_str),
                 vars["small"].as_f64(),
                 vars["big"].as_i64(),
             ),
@@ -959,8 +972,25 @@ mod tests {
                 preserve_variable_numbers(text, None),
                 preserve_variable_numbers(text, Some(json!(null))),
             ],
-            [Some(json!({"n": 42})), None, Some(json!(null))]
+            [
+                (Some(json!({"n": 42})), Default::default()),
+                (None, Default::default()),
+                (Some(json!(null)), Default::default()),
+            ]
         );
+    }
+
+    #[test]
+    fn client_number_metadata_key_is_not_trusted() {
+        let text = r#"{"id":"1","type":"subscribe","payload":{"query":"q","variables":{"v":1.5,"\u0001variable number originals":{"4609434218613702656":"999999999999999999"}}}}"#;
+        let frame: serde_json::Value = serde_json::from_str(text).unwrap();
+        let (variables, originals) =
+            preserve_variable_numbers(text, frame["payload"].get("variables").cloned());
+        assert!(originals.is_empty());
+        assert!(variables
+            .unwrap()
+            .get("\u{1}variable number originals")
+            .is_some());
     }
 
     #[tokio::test]

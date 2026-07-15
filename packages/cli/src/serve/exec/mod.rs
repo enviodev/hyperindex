@@ -20,6 +20,11 @@ pub struct GraphQLRequest {
     pub variables: Option<serde_json::Value>,
     #[serde(default, rename = "operationName")]
     pub operation_name: Option<String>,
+    /// Trusted decoder metadata for JSON variable numbers that cannot be
+    /// represented losslessly by serde_json's default number model. This is
+    /// deliberately kept outside `variables` so a client cannot forge it.
+    #[serde(skip)]
+    pub(crate) variable_number_originals: std::collections::HashMap<u64, String>,
 }
 
 /// Where the request came from — determines which operation types are

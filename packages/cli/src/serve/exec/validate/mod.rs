@@ -185,9 +185,7 @@ pub fn plan_request(
         int_originals: scan.int_originals,
         float_originals: scan.float_originals,
         inf_float_originals: scan.inf_float_originals,
-        var_number_originals: variables_json
-            .map(json_numbers::extract_originals)
-            .unwrap_or_default(),
+        var_number_originals: request.variable_number_originals.clone(),
     };
 
     // Fragment reachability (undefined spreads, cycles) is checked before
@@ -209,7 +207,6 @@ pub fn plan_request(
         let used = ctx.used_vars.borrow();
         let unexpected: Vec<&str> = vars
             .keys()
-            .filter(|k| k.as_str() != json_numbers::NUMBER_ORIGINALS_KEY)
             .filter(|k| !used.contains(k.as_str()))
             .map(|k| k.as_str())
             .collect();
@@ -1273,20 +1270,21 @@ mod tests {
             registry: schema_build::build(&model, Role::Admin),
             role: Role::Admin,
         };
-        let variables = variables.map(|text| match json_numbers::rewrite_lossy_numbers(text) {
-            Some((rewritten, originals)) => {
-                let Json::Object(mut m) = serde_json::from_str::<Json>(&rewritten).unwrap() else {
-                    panic!("variables must be an object");
-                };
-                json_numbers::attach_originals(&mut m, &originals);
-                Json::Object(m)
-            }
-            None => serde_json::from_str(text).unwrap(),
-        });
+        let (variables, variable_number_originals) = match variables {
+            Some(text) => match json_numbers::rewrite_lossy_numbers(text) {
+                Some((rewritten, originals)) => (
+                    Some(serde_json::from_str::<Json>(&rewritten).unwrap()),
+                    originals,
+                ),
+                None => (Some(serde_json::from_str(text).unwrap()), HashMap::new()),
+            },
+            None => (None, HashMap::new()),
+        };
         let request = GraphQLRequest {
             query: Some(query.to_string()),
             variables,
             operation_name: None,
+            variable_number_originals,
         };
         plan_request(&model, &schema, &request, Transport::Http)
     }
@@ -1516,6 +1514,24 @@ mod tests {
     }
 
     #[test]
+    fn client_cannot_spoof_variable_number_originals() {
+        let err = plan(
+            "query($v: numeric) { User(where: {big: {_eq: $v}}) { id } }",
+            Some(
+                r#"{"v": 1.5, "\u0001variable number originals": {"4609434218613702656": "999999999999999999"}}"#,
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, CODE_VALIDATION_FAILED);
+        assert!(
+            err.message
+                .contains("unexpected variables in variableValues"),
+            "client-owned variables must not be trusted as decoder metadata: {}",
+            err.message
+        );
+    }
+
+    #[test]
     fn websocket_rejects_non_object_variables() {
         let model = test_model();
         let schema = RoleSchema {
@@ -1526,6 +1542,7 @@ mod tests {
             query: Some("{ User { id } }".to_string()),
             variables: Some(serde_json::json!([])),
             operation_name: None,
+            variable_number_originals: HashMap::new(),
         };
         let err = plan_request(&model, &schema, &request, Transport::Ws).unwrap_err();
         assert_eq!(
@@ -1550,6 +1567,26 @@ mod tests {
             "custom enum casts must resolve outside the default search_path: {}",
             compiled.sql
         );
+    }
+
+    #[test]
+    fn empty_custom_enum_in_casts_are_schema_qualified() {
+        for predicate in ["_in", "_nin"] {
+            let op = plan(
+                &format!(r#"{{ User(where: {{status: {{{predicate}: []}}}}) {{ id }} }}"#),
+                None,
+            )
+            .unwrap();
+            let Some(ir::RootField::Table(root)) = op.root_fields.first() else {
+                panic!("expected a table root");
+            };
+            let compiled = crate::serve::exec::sql::compile_root_full("tenant", root);
+            assert!(
+                compiled.sql.contains("::\"tenant\".\"accounttype\"[]"),
+                "empty {predicate} must retain the custom enum namespace: {}",
+                compiled.sql
+            );
+        }
     }
 
     #[test]

@@ -47,7 +47,7 @@ pub struct ServeEnv {
     pub pool_max_size: usize,
     /// ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS. Total wall-clock budget for
     /// retrying pool creation/introspection with exponential backoff when
-    /// Postgres isn't reachable yet at boot. Must be > 0.
+    /// Postgres isn't reachable yet at boot. 0 disables retries.
     pub startup_retry_budget_ms: u64,
     /// ENVIO_SERVE_HEALTHZ_TIMEOUT_MS. Bounds the /healthz DB probe.
     pub healthz_timeout_ms: u64,
@@ -198,6 +198,10 @@ fn parse_positive_ms(raw: Option<String>, name: &str, default: u64) -> anyhow::R
     }
 }
 
+fn parse_startup_retry_budget_ms(raw: Option<String>) -> anyhow::Result<u64> {
+    Ok(parse_timeout_ms(raw, "ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS", Some(60_000))?.unwrap_or(0))
+}
+
 fn parse_positive_usize(raw: Option<String>, name: &str, default: usize) -> anyhow::Result<usize> {
     match raw {
         None => Ok(default),
@@ -332,10 +336,8 @@ impl ServeEnv {
                 Some(10_000),
             )?,
             pool_max_size,
-            startup_retry_budget_ms: parse_positive_ms(
+            startup_retry_budget_ms: parse_startup_retry_budget_ms(
                 r.var("ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS"),
-                "ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS",
-                60_000,
             )?,
             healthz_timeout_ms: parse_positive_ms(
                 r.var("ENVIO_SERVE_HEALTHZ_TIMEOUT_MS"),
@@ -613,6 +615,19 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "Invalid ENVIO_SERVE_WS_PING_INTERVAL_MS: must be greater than 0 milliseconds"
+        );
+    }
+
+    #[test]
+    fn startup_retry_budget_accepts_zero_as_fail_fast() {
+        assert_eq!(
+            [
+                parse_startup_retry_budget_ms(None).ok(),
+                parse_startup_retry_budget_ms(Some("42".to_string())).ok(),
+                parse_startup_retry_budget_ms(Some("0".to_string())).ok(),
+                parse_startup_retry_budget_ms(Some("nope".to_string())).ok(),
+            ],
+            [Some(60_000), Some(42), Some(0), None],
         );
     }
 
