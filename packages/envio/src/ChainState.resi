@@ -8,6 +8,7 @@ let configAddresses: Config.chain => array<Internal.indexingAddress>
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=?,
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
@@ -101,6 +102,10 @@ let isActivelyIndexing: t => bool
 let isReady: t => bool
 let isFetchingAtHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool
+
+// Drop over-fetched events an address-param filter rejects, before contract
+// registration runs on them. Uses the chain's current indexing addresses.
+let filterByClientAddress: (t, array<Internal.item>) => array<Internal.item>
 
 // State transitions. The chain state is mutated only through these.
 let handleQueryResult: (

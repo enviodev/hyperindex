@@ -92,27 +92,6 @@ let get = (router: t<'a>, ~tag, ~contractAddress, ~contractNameByAddress) => {
   }
 }
 
-let getEvmEventId = (~sighash, ~topicCount) => {
-  sighash ++ "_" ++ topicCount->Int.toString
-}
-
-let fromEvmEventModsOrThrow = (events: array<Internal.evmOnEventRegistration>, ~chain): t<
-  Internal.evmOnEventRegistration,
-> => {
-  let router = empty()
-  events->Array.forEach(config => {
-    router->addOrThrow(
-      config.eventConfig.id,
-      config,
-      ~contractName=config.eventConfig.contractName,
-      ~eventName=config.eventConfig.name,
-      ~chain,
-      ~isWildcard=config.isWildcard,
-    )
-  })
-  router
-}
-
 /** Dispatch key for SVM instructions. `None` matches any instruction in the
  program (lowest priority). */
 let getSvmEventId = (~programId: SvmTypes.Pubkey.t, ~discriminator: option<string>) =>

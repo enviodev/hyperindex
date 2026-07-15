@@ -10,9 +10,13 @@ mod client;
 mod interval;
 
 use crate::evm_hypersync_source::decode::DecoderCore;
-use crate::evm_hypersync_source::types::{EventParamsInput, Log as DecoderLog, ParamValue};
+use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
+use crate::evm_hypersync_source::types::{
+    encode_address, OnEventRegistration, Log as DecoderLog, ParamValue,
+};
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
+use hypersync_client::format::Hex;
 use interval::{IntervalState, SyncConfig};
 
 #[napi(object)]
@@ -51,9 +55,10 @@ pub struct RpcLog {
 #[napi(object)]
 pub struct RpcEventItem {
     pub log: RpcLog,
-    /// Decoded params keyed by contract name, or `None` when no registered event
-    /// signature matches the log's topic0/topic-count (or decoding failed).
-    pub params: Option<ParamValue>,
+    /// The registration this log routed to, as passed to the client
+    /// constructor. Logs that route nowhere are dropped before the boundary.
+    pub on_event_registration_index: i64,
+    pub params: ParamValue,
 }
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
@@ -72,7 +77,9 @@ struct RawLog {
 }
 
 impl RawLog {
-    fn into_rpc_log(self) -> anyhow::Result<RpcLog> {
+    /// `address` is normalized (lowercase or checksummed per the client config)
+    /// so it matches both the routing index keys and the JS-side address type.
+    fn into_rpc_log(self, address: String) -> anyhow::Result<RpcLog> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
                 .try_into()
@@ -82,11 +89,17 @@ impl RawLog {
             block_number: to_i64(&self.block_number).context("log.blockNumber")?,
             transaction_index: to_i64(&self.transaction_index).context("log.transactionIndex")?,
             log_index: to_i64(&self.log_index).context("log.logIndex")?,
-            address: self.address,
+            address,
             topics: self.topics,
             transaction_hash: self.transaction_hash,
             block_hash: self.block_hash,
         })
+    }
+
+    fn normalized_address(&self, should_checksum: bool) -> anyhow::Result<String> {
+        let address = hypersync_client::format::Address::decode_hex(&self.address)
+            .context("decode log.address hex")?;
+        Ok(encode_address(&address, should_checksum))
     }
 
     fn to_decoder_log(&self) -> DecoderLog {
@@ -96,15 +109,6 @@ impl RawLog {
             ..Default::default()
         }
     }
-}
-
-#[napi(object)]
-pub struct LogSelectionInput {
-    pub addresses: Option<Vec<String>>,
-    /// One entry per topic position. `None` matches any value; `Some(values)`
-    /// matches any of the listed topic hashes (a one-element list is an exact
-    /// match). The JS side flattens its `Single | Multiple | Null` filter here.
-    pub topics: Vec<Option<Vec<String>>>,
 }
 
 #[napi(object)]
@@ -120,8 +124,12 @@ pub struct NextPageParams {
     /// internally from the partition's AIMD-suggested interval and returned
     /// on `NextPageResponse`.
     pub to_block_ceiling: i64,
-    pub log_selections: Vec<LogSelectionInput>,
     pub partition_id: String,
+    /// The partition's registration selection, by chain-scoped id. Log
+    /// selections and the routing index are derived internally from the
+    /// registrations passed at construction.
+    pub registration_indexes: Vec<i64>,
+    pub addresses_by_contract_name: HashMap<String, Vec<String>>,
 }
 
 #[napi(object)]
@@ -135,6 +143,7 @@ pub struct NextPageResponse {
 pub struct EvmRpcClient {
     inner: JsonRpcClient,
     decoder: DecoderCore,
+    selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     intervals: IntervalState,
 }
@@ -144,7 +153,7 @@ impl EvmRpcClient {
     #[napi(factory)]
     pub fn new(
         cfg: EvmRpcClientConfig,
-        event_params: Vec<EventParamsInput>,
+        event_registrations: Vec<OnEventRegistration>,
         checksum_addresses: bool,
     ) -> napi::Result<EvmRpcClient> {
         let http_req_timeout_millis = cfg
@@ -155,8 +164,11 @@ impl EvmRpcClient {
             });
         let inner =
             JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
-        let decoder = DecoderCore::from_params(event_params, checksum_addresses)
+        let decoder = DecoderCore::from_registrations(&event_registrations, checksum_addresses)
             .context("build decoder")
+            .map_err(map_err)?;
+        let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
+            .context("build selection builder")
             .map_err(map_err)?;
         // 0.0 would collapse every shrink to the floor of 1 block and 1.0 would
         // never shrink at all, so both ends are excluded (this also rejects NaN).
@@ -193,6 +205,7 @@ impl EvmRpcClient {
         Ok(EvmRpcClient {
             inner,
             decoder,
+            selection_builder,
             sync_config,
             intervals: IntervalState::new(),
         })
@@ -239,10 +252,21 @@ impl EvmRpcClient {
             .min(to_block_ceiling)
             .max(from_block);
 
+        let built = self
+            .selection_builder
+            .build(&params.registration_indexes, &params.addresses_by_contract_name)
+            .map_err(map_err)?;
+        let log_selections = built.log_selections;
+        let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
         let page_result = tokio::time::timeout(
             timeout,
-            self.fetch_page(from_block, to_block, &params.log_selections),
+            self.fetch_page(
+                from_block,
+                to_block,
+                &log_selections,
+                &contract_name_by_address,
+            ),
         )
         .await;
 
@@ -359,7 +383,8 @@ impl EvmRpcClient {
         &self,
         from_block: u64,
         to_block: u64,
-        selections: &[LogSelectionInput],
+        selections: &[BuiltLogSelection],
+        contract_name_by_address: &std::sync::Arc<HashMap<String, String>>,
     ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
         if selections.is_empty() {
             return Ok((Vec::new(), Vec::new()));
@@ -371,8 +396,8 @@ impl EvmRpcClient {
                 .fetch_logs_raw(
                     from_block as i64,
                     to_block as i64,
-                    selection.addresses.clone(),
-                    selection.topics.clone(),
+                    selection,
+                    contract_name_by_address.clone(),
                 )
                 .await;
             (result, started.elapsed().as_secs_f64())
@@ -413,16 +438,26 @@ impl EvmRpcClient {
         &self,
         from_block: i64,
         to_block: i64,
-        addresses: Option<Vec<String>>,
-        topics: Vec<Option<Vec<String>>>,
+        selection: &BuiltLogSelection,
+        contract_name_by_address: std::sync::Arc<HashMap<String, String>>,
     ) -> Result<Vec<RpcEventItem>, RpcError> {
+        // eth_getLogs topic filters: `null` matches any value at a position;
+        // trailing match-any positions are trimmed entirely.
+        let mut topics: Vec<Option<&Vec<String>>> = selection
+            .topics
+            .iter()
+            .map(|values| if values.is_empty() { None } else { Some(values) })
+            .collect();
+        while matches!(topics.last(), Some(None)) {
+            topics.pop();
+        }
         let mut filter = json!({
             "fromBlock": format!("0x{:x}", from_block),
             "toBlock": format!("0x{:x}", to_block),
             "topics": topics,
         });
-        if let Some(addresses) = addresses {
-            filter["address"] = json!(addresses);
+        if !selection.addresses.is_empty() {
+            filter["address"] = json!(selection.addresses);
         }
 
         let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;
@@ -430,14 +465,29 @@ impl EvmRpcClient {
         let decoder = self.decoder.clone();
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
+            let should_checksum = decoder.checksummed_addresses();
             raw_logs
                 .into_iter()
-                .map(|raw| {
-                    let params = decoder.decode_napi(&raw.to_decoder_log()).ok().flatten();
-                    Ok(RpcEventItem {
-                        log: raw.into_rpc_log()?,
-                        params,
-                    })
+                .filter_map(|raw| {
+                    let address = match raw.normalized_address(should_checksum) {
+                        Ok(address) => address,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    // Decode failures are skipped like unrouted logs (matching
+                    // the pre-routing behavior where undecodable params made
+                    // the JS side drop the item).
+                    let routed = decoder
+                        .route_and_decode_napi(
+                            &raw.to_decoder_log(),
+                            contract_name_by_address.get(&address).map(String::as_str),
+                        )
+                        .ok()
+                        .flatten()?;
+                    Some(raw.into_rpc_log(address).map(|log| RpcEventItem {
+                        log,
+                        on_event_registration_index: routed.index,
+                        params: routed.params,
+                    }))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
         })
