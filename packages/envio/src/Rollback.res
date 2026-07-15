@@ -161,10 +161,12 @@ and executeRollback = async (
     }
   }
 
+  let rollbackRangeByChainId = Dict.make()
   state
   ->IndexerState.chainStates
   ->Utils.Dict.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
+    let fromBlockNumber = cs->ChainState.committedProgressBlockNumber
     cs->ChainState.rollback(
       ~newProgressBlockNumber=newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
         chainId,
@@ -175,6 +177,17 @@ and executeRollback = async (
       ~rollbackTargetBlockNumber,
       ~isReorgChain=chainId === reorgChainId,
     )
+    let toBlockNumber = cs->ChainState.committedProgressBlockNumber
+    if fromBlockNumber !== toBlockNumber {
+      rollbackRangeByChainId->Dict.set(
+        chainId->Int.toString,
+        {"fromBlock": fromBlockNumber, "toBlock": toBlockNumber},
+      )
+    }
+  })
+  logger->Logging.childInfo({
+    "msg": "Rolled back chains on reorg",
+    "rollbackRangeByChainId": rollbackRangeByChainId,
   })
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(
