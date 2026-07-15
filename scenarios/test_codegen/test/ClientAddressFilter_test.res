@@ -156,7 +156,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
   })
 })
 
-describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
+describe("filterByClientAddress applies clientAddressFilter", () => {
   let transferParams: array<EventConfigBuilder.paramMeta> = [
     {name: "from", abiType: "address", indexed: true},
     {name: "to", abiType: "address", indexed: true},
@@ -200,35 +200,17 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-    let fetchState = FetchState.make(
-      ~onEventRegistrations,
-      ~contractConfigs,
-      ~addresses,
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=10,
-      ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
-      ~knownHeight=1000,
-    )
-    let query = switch fetchState->FetchState.getNextQuery {
-    | Ready([q]) => q
-    | _ => JsError.throwWithMessage("expected a single ready query")
-    }
-    fetchState->FetchState.startFetchingQueries(~queries=[query])
-    let updated =
-      fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
-        ~query,
-        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
-        // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
-        ~newItems=[makeItem(~to=registeredAddr, ~blockNumber=10), makeItem(~to=registeredAddr, ~blockNumber=3)],
-      )
-    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+    // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
+    let filtered =
+      [
+        makeItem(~to=registeredAddr, ~blockNumber=10),
+        makeItem(~to=registeredAddr, ~blockNumber=3),
+      ]->FetchState.filterByClientAddress(~indexingAddresses)
+    t.expect(filtered->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })
 })
 
-describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddress events", () => {
+describe("filterByClientAddress drops over-fetched non-wildcard srcAddress events", () => {
   // Non-wildcard Transfer for ERC20, effective from block 5 (contract startBlock).
   // A merged partition can over-fetch an address before its effectiveStartBlock;
   // the codegen'd srcAddress check in clientAddressFilter drops those.
@@ -271,33 +253,12 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-    let fetchState = FetchState.make(
-      ~onEventRegistrations,
-      ~contractConfigs,
-      ~addresses,
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=10,
-      ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
-      ~knownHeight=1000,
-    )
-    let query = switch fetchState->FetchState.getNextQuery {
-    | Ready([q]) => q
-    | _ => JsError.throwWithMessage("expected a single ready query")
-    }
-    fetchState->FetchState.startFetchingQueries(~queries=[query])
-    let updated =
-      fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
-        ~query,
-        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
-        ~newItems=[
-          makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
-          makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
-        ],
-      )
-    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+    let filtered =
+      [
+        makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
+        makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
+      ]->FetchState.filterByClientAddress(~indexingAddresses)
+    t.expect(filtered->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })
 })
 

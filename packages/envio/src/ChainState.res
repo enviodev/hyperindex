@@ -94,8 +94,8 @@ let make = (
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
   {
     logger,
-    fetchState,
     onEventRegistrations,
+    fetchState,
     indexingAddresses,
     sourceManager,
     chainConfig,
@@ -619,6 +619,9 @@ let materializePageItems = async (
   ))
 }
 
+let filterByClientAddress = (cs: t, items: array<Internal.item>): array<Internal.item> =>
+  items->FetchState.filterByClientAddress(~indexingAddresses=cs.indexingAddresses)
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -651,12 +654,7 @@ let handleQueryResult = (
 
   cs.fetchState =
     fs
-    ->FetchState.handleQueryResult(
-      ~indexingAddresses=cs.indexingAddresses,
-      ~query,
-      ~latestFetchedBlock,
-      ~newItems,
-    )
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
