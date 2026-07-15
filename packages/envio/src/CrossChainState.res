@@ -240,15 +240,17 @@ let checkAndFetch = async (
   ->priorityOrder
   ->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    if cs->ChainState.knownHeight == 0 || remaining.contents < minimumAdmissionBudget {
-      // Without a known height, or when more than 90% of the target pool is
-      // ready or reserved, a zero budget stops candidate generation while
-      // getNextQuery can still return the budget-free block-wait action.
-      let action = switch cs->ChainState.getNextQuery(~chainTargetItems=0., ~chunkItemsMultiplier) {
-      | WaitingForNewBlock as action => action
-      | NothingToQuery | Ready(_) => FetchState.NothingToQuery
-      }
-      actionByChain->Utils.Dict.setByInt(chainId, action)
+    if remaining.contents < minimumAdmissionBudget {
+      // More than 90% of the target pool is ready or reserved. Do not attempt
+      // any chain action until a full admission unit becomes free.
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+    } else if cs->ChainState.knownHeight == 0 {
+      // Let getNextQuery own the waiting decision without trying to size work
+      // against an unknown height.
+      actionByChain->Utils.Dict.setByInt(
+        chainId,
+        cs->ChainState.getNextQuery(~chainTargetItems=0., ~chunkItemsMultiplier),
+      )
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =
