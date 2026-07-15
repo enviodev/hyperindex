@@ -98,3 +98,113 @@ describe("PIN: below-head chain keeps polling when starved of budget", () => {
     },
   )
 })
+
+// Permanent-stall variant. The starvation above self-heals as long as the
+// budget-holding leader keeps responding: each response releases its
+// reservation and re-runs checkAndFetch, giving the follower another chance.
+// The production stall was NON-recovering — it happened right after entering
+// the reorg threshold and before the indexer reached isReady, with the buffer
+// empty and one chain sitting on an infinite WaitingForNewBlock at its head.
+//
+// This reproduces the non-recovering shape: the leader's in-flight query never
+// returns (a hung/stale-dropped source response — e.g. an RPC that never
+// replies, or a response invalidated by an epoch bump and dropped by
+// onQueryResponse). Its reservation is never released, so the shared budget
+// stays drained and nothing re-triggers checkAndFetch. The below-head follower
+// has no in-flight query (pendingBudget = 0) and an empty buffer, so it is the
+// last domino: dropped as NothingToQuery it goes fully silent, and since no
+// query response, batch, or poll can wake the indexer again, it never recovers.
+//
+// Dispatching the follower as WaitingForNewBlock (the fix) gives it its own
+// live head-poll, the one wake source that survives a hung leader — so the
+// follower keeps polling and the indexer can resume the instant a new block
+// lands.
+describe("PIN: below-head chain never recovers when the budget-holder hangs", () => {
+  Async.it(
+    "silenced below-head follower keeps polling even while the leader's query is hung",
+    async t => {
+      let leader = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let follower = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {chain: #1337, sourceConfig: Config.CustomSources([leader.source])},
+          {chain: #100, sourceConfig: Config.CustomSources([follower.source])},
+        ],
+        ~shouldRollbackOnReorg=false,
+        ~targetBufferSize=1000,
+      )
+      await Utils.delay(0)
+
+      // Both chains catch up to head (block 100) and seed a density signal.
+      leader.resolveGetHeightOrThrow(100)
+      follower.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      leader.resolveGetItemsOrThrow(
+        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+      follower.resolveGetItemsOrThrow(
+        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="both chains reach realtime",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+
+      // Both chains are now parked on a realtime head-poll. Baseline the
+      // follower's polls before the divergence, so the assertion below measures
+      // only the wake-ups it manages after being starved.
+      let followerPollsBefore = follower.getHeightOrThrowCalls->Array.length
+
+      // Divergent heights: the leader jumps far ahead (its backlog reservation
+      // drains the small shared pool), the follower advances one block past its
+      // own head so it is below head but gets no budget this tick.
+      leader.resolveGetHeightOrThrow(1_000_000)
+      follower.resolveGetHeightOrThrow(105)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // The leader issues its backlog query and reserves the whole pool — but
+      // its source hangs: we wait for the query, then never resolve it. From
+      // here nothing can release the reservation or re-run checkAndFetch, so the
+      // follower's own head-poll is the only surviving wake source.
+      await MockIndexer.Helper.waitItemsQuery(leader)
+      let leaderItemsAfterHang = leader.getItemsOrThrowCalls->Array.length
+
+      // Let the indexer sit. Nothing external drives it here.
+      for _ in 0 to 9 {
+        await Utils.delay(1)
+      }
+
+      // The hung leader must not have progressed (single reservation, no
+      // response) and no batch or response has run — this is the frozen state
+      // the production indexer was found in: buffer empty, budget drained, no
+      // self-heal path through the leader.
+      t.expect(
+        leader.getItemsOrThrowCalls->Array.length,
+        ~message="leader query stays hung — no self-heal path via the leader",
+      ).toBe(leaderItemsAfterHang)
+
+      // The below-head follower must have kept polling for new blocks despite
+      // the hung leader. On the unfixed scheduler it is dropped as NothingToQuery
+      // and goes silent — the non-recovering stall, since no query response,
+      // batch, or poll is left to ever wake the indexer again.
+      t.expect(
+        follower.getHeightOrThrowCalls->Array.length > followerPollsBefore,
+        ~message="follower keeps polling even though the budget-holder is hung",
+      ).toBe(true)
+    },
+  )
+})
