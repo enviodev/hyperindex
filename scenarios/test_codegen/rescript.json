@@ -22,5 +22,8 @@
     "rescript-schema",
     "envio"
   ],
-  "compiler-flags": ["-open RescriptSchema"]
+  "compiler-flags": ["-open RescriptSchema"],
+  "warnings": {
+    "error": "+23"
+  }
 }

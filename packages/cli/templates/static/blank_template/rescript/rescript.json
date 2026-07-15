@@ -14,5 +14,8 @@
     "version": 4
   },
   "suffix": ".res.mjs",
-  "dependencies": ["envio"]
+  "dependencies": ["envio"],
+  "warnings": {
+    "error": "+23"
+  }
 }
