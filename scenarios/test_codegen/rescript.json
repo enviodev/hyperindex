@@ -24,6 +24,6 @@
   ],
   "compiler-flags": ["-open RescriptSchema"],
   "warnings": {
-    "error": "+23"
+    "error": "+a"
   }
 }
