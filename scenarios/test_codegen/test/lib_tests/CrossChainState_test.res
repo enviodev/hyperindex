@@ -280,6 +280,94 @@ describe("CrossChainState fetch control", () => {
     t.expect(dispatched).toEqual([(1, 1)])
   })
 
+  let queryWithFreeBudget = async (~freeBudget) => {
+    let targetBufferSize = 100
+    let buffered = makeChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~frontier=900,
+      ~firstEventBlock=0,
+      ~bufferBlocks=Array.make(~length=targetBufferSize - freeBudget, 900),
+    )
+    let fetching = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let cm = makeCrossChainState(~chainStatesList=[buffered, fetching], ~targetBufferSize)
+    let admitted = []
+
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      switch action {
+      | Ready(queries) =>
+        admitted
+        ->Array.push((
+          chain->ChainMap.Chain.toChainId,
+          queries->Array.reduce(0, (sum, query: FetchState.query) => sum + query.itemsEst),
+        ))
+        ->ignore
+      | _ => ()
+      }
+      Promise.resolve()
+    })
+
+    admitted
+  }
+
+  Async.it("admits new queries at 10% free budget, but not below it", async t => {
+    t.expect(
+      (await queryWithFreeBudget(~freeBudget=9), await queryWithFreeBudget(~freeBudget=10)),
+      ~message="A 100-item target waits with 9 free items and admits a 10-item cold probe with 10 free",
+    ).toEqual(([], [(2, 10)]))
+  })
+
+  Async.it("waits below the admission unit and retries after a response releases budget", async t => {
+    let first = makeFetchingChainState(~chainId=1, ~knownHeight=1000, ~latestFetchedBlock=0)
+    let second = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=500)
+    let buffered = makeChainState(
+      ~chainId=3,
+      ~knownHeight=1000,
+      ~frontier=900,
+      ~firstEventBlock=0,
+      ~bufferBlocks=Array.make(~length=85, 900),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[first, second, buffered], ~targetBufferSize=100)
+    let firstTickQueries = []
+
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      switch action {
+      | Ready(queries) =>
+        firstTickQueries->Array.push((chain->ChainMap.Chain.toChainId, queries))->ignore
+      | _ => ()
+      }
+      Promise.resolve()
+    })
+
+    t.expect(firstTickQueries->Array.map(((chainId, _)) => chainId)).toEqual([1])
+
+    let (_, releasedQueries) = firstTickQueries->Utils.Array.firstUnsafe
+    let releasedQuery = releasedQueries->Utils.Array.firstUnsafe
+    first->ChainState.handleQueryResult(
+      ~query=releasedQuery,
+      ~newItems=[],
+      ~newItemsWithDcs=[],
+      ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 0},
+      ~knownHeight=1000,
+      ~transactionStore=None,
+      ~blockStore=None,
+    )
+
+    let secondTickChains = []
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      switch action {
+      | Ready(_) => secondTickChains->Array.push(chain->ChainMap.Chain.toChainId)->ignore
+      | _ => ()
+      }
+      Promise.resolve()
+    })
+
+    t.expect(
+      secondTickChains,
+      ~message="The second chain waits at 5% free, then starts after the first query releases its 10% reservation",
+    ).toEqual([2])
+  })
+
   // Chain 1 (furthest behind, so priorityOrder visits it first): a single
   // known-density partition with a short remaining range (endBlock=20 at
   // density 10 items/block -> 200 items across 2 chunks, reserved at the
@@ -350,10 +438,15 @@ describe("CrossChainState fetch control", () => {
         ~logger=Logging.getLogger(),
       )
 
-      // Chain 2 (less behind, visited second): a fresh unknown-density
-      // partition — sizes exactly to whatever budget it's given, so it
-      // directly reflects what chain 1 left behind.
-      let b = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=500)
+      // Chain 2 (less behind, visited second): its density-bearing partition
+      // sizes exactly to whatever budget it's given, so it directly reflects
+      // what chain 1 left behind.
+      let b = makeFetchingChainState(
+        ~chainId=2,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=500,
+        ~chainDensity=Some(10.),
+      )
 
       let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime, ~targetBufferSize=3000)
 
@@ -425,8 +518,8 @@ describe("CrossChainState fetch control", () => {
 
       t.expect(
         actionsByChain,
-        ~message="Chain 1 waits for its first block; chain 2 becomes the leader and gets the full pool",
-      ).toEqual(Dict.fromArray([("1", "waitingForNewBlock"), ("2", "ready:3000")]))
+        ~message="Chain 1 waits for its first block; cold chain 2 gets one admission unit without being constrained by chain 1",
+      ).toEqual(Dict.fromArray([("1", "waitingForNewBlock"), ("2", "ready:300")]))
     },
   )
 
@@ -599,10 +692,10 @@ describe("ChainState cold start", () => {
     t.expect(
       dispatchedItemsByChain,
       ~message="Cold chain 1 gets its bounded probe; chain 2 is unconstrained by chain 1's guess",
-    ).toEqual(Dict.fromArray([("1", 5000.), ("2", 5000.)]))
+    ).toEqual(Dict.fromArray([("1", 1000.), ("2", 5000.)]))
   })
 
-  Async.it("clamps a cold chain to min(5k, targetBufferSize)", async t => {
+  Async.it("gives a cold chain one 10% admission unit", async t => {
     let probeSize = async (~targetBufferSize) => {
       let cs = makeFetchingChainState(~chainId=1, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
       let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize)
@@ -622,8 +715,8 @@ describe("ChainState cold start", () => {
     }
     t.expect(
       (await probeSize(~targetBufferSize=10_000), await probeSize(~targetBufferSize=2_000)),
-      ~message="The cold probe never exceeds 5k, nor the whole pool when it's smaller",
-    ).toEqual((5000., 2000.))
+      ~message="The cold probe scales with the configured target buffer",
+    ).toEqual((1000., 200.))
   })
 })
 

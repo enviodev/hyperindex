@@ -198,29 +198,36 @@ let totalReservedSize = (crossChainState: t) => {
 // chain-density-derived target block, then subtract what it actually used
 // before moving to the next chain. So a chain that can only use a little
 // (density too low, or already caught up) leaves the rest for the others
-// automatically. A chain visited after the budget ran out simply doesn't
-// query this round — the leader's reservations release as its responses land,
-// so the next tick redistributes. Chains that do get budget are additionally
-// capped at the most-behind chain's target progress mapped onto their own
-// range, so no chain runs further ahead than the chain the pool is
-// prioritizing.
+// automatically. Starting a new query requires at least 10% of the target pool
+// to be free. A chain visited after the budget falls below that admission unit
+// doesn't query this round — reservations release as responses land, so the
+// next tick redistributes. Chains that do get budget are additionally capped
+// at the most-behind chain's target progress mapped onto their own range, so no
+// chain runs further ahead than the chain the pool is prioritizing.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
+  let targetBudget = crossChainState.targetBufferSize->Int.toFloat
   let remaining = ref(
     Pervasives.max(
       0.,
-      crossChainState.targetBufferSize->Int.toFloat -.
+      targetBudget -.
       crossChainState->totalReadyCount->Int.toFloat -.
       crossChainState->totalReservedSize,
     ),
   )
 
+  // New fetch work is admitted in units of 10% of the target pool. Waiting
+  // below this floor avoids spending the last few free items on undersized
+  // queries; response and batch completion schedule another tick after they
+  // release enough budget.
+  let minimumAdmissionBudget = targetBudget *. 0.1
+
   // A chain with no density signal probes blind, so it only gets a bounded
   // slice of the pool — one unknown chain shouldn't hold the whole budget
-  // while it takes its first measurements.
-  let coldChainBudget = Pervasives.min(5_000., crossChainState.targetBufferSize->Int.toFloat)
+  // while it takes its first measurements. Its probe is one admission unit.
+  let coldChainBudget = minimumAdmissionBudget
 
   // Chunk reservations get headroom over the density estimate so a
   // denser-than-expected range doesn't truncate at the server cap; realtime
@@ -238,6 +245,10 @@ let checkAndFetch = async (
       // against. Skip without consuming budget or claiming leadership, so a
       // chain whose source hasn't reported doesn't unconstrain everyone else.
       actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
+    } else if remaining.contents < minimumAdmissionBudget {
+      // Existing queries keep running, but don't start new work until their
+      // responses (or batch processing) release a full admission unit.
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =
