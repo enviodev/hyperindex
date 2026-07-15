@@ -47,17 +47,18 @@ type partition = {
   dynamicContract: option<string>,
   // Mutable array for SourceManager sync - queries exist only while being fetched
   mutPendingQueries: array<pendingQuery>,
-  // Track last 3 successful query ranges for chunking heuristic (0 means no data)
-  prevQueryRange: int,
-  prevPrevQueryRange: int,
-  // Item count of the response that set prevQueryRange. Paired with it to derive
-  // the partition's event density (prevRangeSize / prevQueryRange) for sizing
-  // queries against the buffer budget.
-  prevRangeSize: int,
+  // The last two ranges that measured how many blocks the source could return.
+  // Both must be non-zero before the minimum is trusted for chunk sizing.
+  sourceRangeCapacity: int,
+  prevSourceRangeCapacity: int,
+  // Items/block observed in the latest response. This is independent from the
+  // source's range capacity: even a response truncated by our own itemsTarget
+  // cap is useful density evidence while saying nothing about source capacity.
+  eventDensity: float,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
-  // that updated prevQueryRange. Prevents degradation of the chunking heuristic
-  // when parallel query responses arrive out of order.
-  latestBlockRangeUpdateBlock: int,
+  // that updated sourceRangeCapacity. Prevents degradation of the chunking
+  // heuristic when parallel query responses arrive out of order.
+  latestSourceRangeCapacityUpdateBlock: int,
 }
 
 type query = {
@@ -111,20 +112,20 @@ let densityItemsTarget = (~density, ~fromBlock, ~toBlock, ~chainTargetBlock) => 
   )
 }
 
-// Calculate the chunk range from history using min-of-last-3-ranges heuristic
+// Calculate the chunk range from the last two source-capacity observations.
 let getMinHistoryRange = (p: partition) => {
-  switch (p.prevQueryRange, p.prevPrevQueryRange) {
+  switch (p.sourceRangeCapacity, p.prevSourceRangeCapacity) {
   | (0, _) | (_, 0) => None
   | (a, b) => Some(a < b ? a : b)
   }
 }
 
-// Density (items/block) from the last response, trusted only after two
-// responses — a single sample is too noisy to size the next query by.
+// Density is trusted only after two source-capacity observations — a single
+// response is too noisy to size the next query by.
 let getTrustedDensity = (p: partition) => {
-  switch (p.prevQueryRange, p.prevPrevQueryRange) {
+  switch (p.sourceRangeCapacity, p.prevSourceRangeCapacity) {
   | (0, _) | (_, 0) => None
-  | (prevQueryRange, _) => Some(p.prevRangeSize->Int.toFloat /. prevQueryRange->Int.toFloat)
+  | _ => Some(p.eventDensity)
   }
 }
 
@@ -134,8 +135,8 @@ let getMinQueryRange = (partitions: array<partition>) => {
     let p = partitions->Array.getUnsafe(i)
 
     // Even if it's fetching, set dynamicContract field
-    let a = p.prevQueryRange
-    let b = p.prevPrevQueryRange
+    let a = p.sourceRangeCapacity
+    let b = p.prevSourceRangeCapacity
     if a > 0 && (min.contents == 0 || a < min.contents) {
       min := a
     }
@@ -209,7 +210,7 @@ module OptimizedPartitions = {
       let minRange = getMinQueryRange([p1, p2])
       // The merged partition indexes both parents' addresses, so its expected
       // event rate is the sum of their densities. Parents without a trusted
-      // density contribute 0; if none has one, prevRangeSize stays 0 and the
+      // density contribute 0; if none has one, eventDensity stays 0 and the
       // partition probes for a fresh signal instead of chunking.
       let inheritedDensity =
         p1->getTrustedDensity->Option.getOr(0.) +. p2->getTrustedDensity->Option.getOr(0.)
@@ -221,10 +222,10 @@ module OptimizedPartitions = {
         mergeBlock: None,
         addressesByContractName: Dict.make(), // set below
         mutPendingQueries: [],
-        prevQueryRange: minRange,
-        prevPrevQueryRange: minRange,
-        prevRangeSize: (inheritedDensity *. minRange->Int.toFloat)->Math.ceil->Float.toInt,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: minRange,
+        prevSourceRangeCapacity: minRange,
+        eventDensity: inheritedDensity,
+        latestSourceRangeCapacityUpdateBlock: 0,
       }
     }
 
@@ -472,14 +473,21 @@ module OptimizedPartitions = {
     pendingQuery.fetchedBlock = Some(latestFetchedBlock)
 
     let blockRange = latestFetchedBlock.blockNumber - query.fromBlock + 1
-    // Skip updating block range if a later response already updated it.
+    // Update density for every response, independently from whether this range
+    // is valid evidence of source capacity. A cap hit is still useful density
+    // evidence because it reports items returned across the scanned range.
+    let updatedEventDensity = itemsCount->Int.toFloat /. blockRange->Int.toFloat
+
+    // Skip updating source capacity if a later response already updated it.
     // Prevents degradation of the chunking heuristic when parallel query
     // responses arrive out of order (e.g. earlier query with smaller range
     // arriving after a later query with bigger range).
-    let shouldUpdateBlockRange =
-      latestFetchedBlock.blockNumber > p.latestBlockRangeUpdateBlock &&
+    let shouldUpdateSourceRangeCapacity =
+      latestFetchedBlock.blockNumber > p.latestSourceRangeCapacityUpdateBlock &&
         switch query.toBlock {
-        | None => latestFetchedBlock.blockNumber < knownHeight - 10 // Don't update block range when very close to the head
+        | None =>
+          // Don't update source capacity when very close to the head.
+          latestFetchedBlock.blockNumber < knownHeight - 10
         | Some(queryToBlock) =>
           if latestFetchedBlock.blockNumber < queryToBlock {
             // Partial response is direct capacity evidence — unless it was
@@ -497,9 +505,12 @@ module OptimizedPartitions = {
             }
           }
         }
-    let updatedPrevQueryRange = shouldUpdateBlockRange ? blockRange : p.prevQueryRange
-    let updatedPrevPrevQueryRange = shouldUpdateBlockRange ? p.prevQueryRange : p.prevPrevQueryRange
-    let updatedPrevRangeSize = shouldUpdateBlockRange ? itemsCount : p.prevRangeSize
+    let updatedSourceRangeCapacity = shouldUpdateSourceRangeCapacity
+      ? blockRange
+      : p.sourceRangeCapacity
+    let updatedPrevSourceRangeCapacity = shouldUpdateSourceRangeCapacity
+      ? p.sourceRangeCapacity
+      : p.prevSourceRangeCapacity
 
     // Process fetched queries from front of queue for main partition
     let updatedLatestFetchedBlock = consumeFetchedQueries(
@@ -519,12 +530,12 @@ module OptimizedPartitions = {
       let updatedMainPartition = {
         ...p,
         latestFetchedBlock: updatedLatestFetchedBlock,
-        prevQueryRange: updatedPrevQueryRange,
-        prevPrevQueryRange: updatedPrevPrevQueryRange,
-        prevRangeSize: updatedPrevRangeSize,
-        latestBlockRangeUpdateBlock: shouldUpdateBlockRange
+        sourceRangeCapacity: updatedSourceRangeCapacity,
+        prevSourceRangeCapacity: updatedPrevSourceRangeCapacity,
+        eventDensity: updatedEventDensity,
+        latestSourceRangeCapacityUpdateBlock: shouldUpdateSourceRangeCapacity
           ? latestFetchedBlock.blockNumber
-          : p.latestBlockRangeUpdateBlock,
+          : p.latestSourceRangeCapacityUpdateBlock,
       }
 
       mutEntities->Dict.set(p.id, updatedMainPartition)
@@ -986,10 +997,10 @@ OptimizedPartitions.t => {
             addressesByContractName,
             mergeBlock: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevPrevQueryRange: 0,
-            prevRangeSize: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            prevSourceRangeCapacity: 0,
+            eventDensity: 0.,
+            latestSourceRangeCapacityUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
         }
@@ -1322,10 +1333,10 @@ let registerDynamicContracts = (
                         addressesByContractName,
                         mergeBlock: None,
                         mutPendingQueries: p.mutPendingQueries,
-                        prevQueryRange: p.prevQueryRange,
-                        prevPrevQueryRange: p.prevPrevQueryRange,
-                        prevRangeSize: p.prevRangeSize,
-                        latestBlockRangeUpdateBlock: p.latestBlockRangeUpdateBlock,
+                        sourceRangeCapacity: p.sourceRangeCapacity,
+                        prevSourceRangeCapacity: p.prevSourceRangeCapacity,
+                        eventDensity: p.eventDensity,
+                        latestSourceRangeCapacityUpdateBlock: p.latestSourceRangeCapacityUpdateBlock,
                       })
                     }
                   }
@@ -2022,10 +2033,10 @@ let make = (
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
-      prevQueryRange: 0,
-      prevPrevQueryRange: 0,
-      prevRangeSize: 0,
-      latestBlockRangeUpdateBlock: 0,
+      sourceRangeCapacity: 0,
+      prevSourceRangeCapacity: 0,
+      eventDensity: 0.,
+      latestSourceRangeCapacityUpdateBlock: 0,
     })
   }
 

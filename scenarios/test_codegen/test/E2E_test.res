@@ -1187,7 +1187,7 @@ describe("E2E tests", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    // After the partial response prevQueryRange=100, so chunkRange drops to
+    // After the partial response sourceRangeCapacity=100, so chunkRange drops to
     // min(100, 540)=100 and the regenerated chunks shrink to ceil(100*1.8)=180,
     // well below the grown 972-size tail.
     let shrunkChunks =
