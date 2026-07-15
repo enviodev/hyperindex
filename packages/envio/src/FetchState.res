@@ -1114,11 +1114,13 @@ let registerDynamicContracts = (
     switch item->Internal.getItemDcs {
     | None => ()
     | Some(dcs) =>
-      let idx = ref(0)
-      while idx.contents < dcs->Array.length {
-        let dc = dcs->Array.getUnsafe(idx.contents)
+      let registrationLogIndex = item->Internal.getItemLogIndex
+      for dcIdx in 0 to dcs->Array.length - 1 {
+        let dc = dcs->Array.getUnsafe(dcIdx)
 
-        let shouldRemove = ref(false)
+        // Set when the dc is a duplicate/conflict that must not be registered or
+        // persisted (already indexing, or superseded within this batch).
+        let shouldSkip = ref(false)
 
         switch fetchState.contractConfigs->Utils.Dict.dangerouslyGetNonOption(dc.contractName) {
         | Some({startBlock: contractStartBlock}) =>
@@ -1151,7 +1153,7 @@ let registerDynamicContracts = (
               )
               logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`)
             }
-            shouldRemove := true
+            shouldSkip := true
           | None =>
             let shouldUpdate = switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
@@ -1179,7 +1181,7 @@ let registerDynamicContracts = (
               ->Dict.set(dc.address->Address.toString, dcWithStartBlock)
               registeringAddresses->Dict.set(dc.address->Address.toString, dcWithStartBlock)
             } else {
-              shouldRemove := true
+              shouldSkip := true
             }
           }
         | None =>
@@ -1200,7 +1202,7 @@ let registerDynamicContracts = (
             if existingContract.contractName != dc.contractName {
               fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
             }
-            shouldRemove := true
+            shouldSkip := true
           | None =>
             switch registeringAddresses->Utils.Dict.dangerouslyGetNonOption(
               dc.address->Address.toString,
@@ -1210,7 +1212,7 @@ let registerDynamicContracts = (
                 fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
               }
               // Otherwise already queued for persistence by an earlier item in this batch.
-              shouldRemove := true
+              shouldSkip := true
             | None =>
               let logger = Logging.createChild(
                 ~params={
@@ -1229,12 +1231,13 @@ let registerDynamicContracts = (
           }
         }
 
-        if shouldRemove.contents {
-          // Remove the DC from item to prevent it from saving to the db
-          let _ = dcs->Array.splice(~start=idx.contents, ~remove=1, ~insert=[])
-          // Don't increment idx - next element shifted into current position
-        } else {
-          idx := idx.contents + 1
+        if !shouldSkip.contents {
+          indexingAddresses->IndexingAddresses.addDcToStore({
+            address: dc.address,
+            contractName: dc.contractName,
+            registrationBlock: dc.registrationBlock,
+            registrationLogIndex,
+          })
         }
       }
     }

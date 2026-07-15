@@ -2,7 +2,22 @@ type indexingAddress = Internal.indexingContract
 
 type contractConfig = {startBlock: option<int>}
 
-type t = dict<indexingAddress>
+// A dynamic contract registration awaiting persistence to envio_addresses.
+// registrationLogIndex is the log index of the event that registered it.
+type dcToStore = {
+  address: Address.t,
+  contractName: string,
+  registrationBlock: int,
+  registrationLogIndex: int,
+}
+
+type t = {
+  addresses: dict<indexingAddress>,
+  // Registrations queued at fetch time, drained into the write batch once the
+  // registering event's checkpoint is committed. Pruned on rollback alongside
+  // `addresses`.
+  mutable dcsToStore: array<dcToStore>,
+}
 
 let deriveEffectiveStartBlock = (~registrationBlock: int, ~contractStartBlock: option<int>) => {
   Pervasives.max(Pervasives.max(registrationBlock, 0), contractStartBlock->Option.getOr(0))
@@ -63,24 +78,24 @@ let make = (
   ~contractConfigs: dict<contractConfig>,
   ~addresses: array<Internal.indexingAddress>,
 ): t => {
-  let indexingAddresses = Dict.make()
+  let dict = Dict.make()
   addresses->Array.forEach(contract => {
-    indexingAddresses->Dict.set(
+    dict->Dict.set(
       contract.address->Address.toString,
       makeIndexingAddress(~contract, ~contractConfigs),
     )
   })
-  indexingAddresses
+  {addresses: dict, dcsToStore: []}
 }
 
 let get = (indexingAddresses: t, address) =>
-  indexingAddresses->Utils.Dict.dangerouslyGetNonOption(address)
+  indexingAddresses.addresses->Utils.Dict.dangerouslyGetNonOption(address)
 
-let size = (indexingAddresses: t) => indexingAddresses->Utils.Dict.size
+let size = (indexingAddresses: t) => indexingAddresses.addresses->Utils.Dict.size
 
 let getContractAddresses = (indexingAddresses: t, ~contractName): array<Address.t> => {
   let addresses = []
-  indexingAddresses->Utils.Dict.forEach(ia => {
+  indexingAddresses.addresses->Utils.Dict.forEach(ia => {
     if ia.contractName === contractName {
       addresses->Array.push(ia.address)
     }
@@ -91,18 +106,45 @@ let getContractAddresses = (indexingAddresses: t, ~contractName): array<Address.
 // Underlying dict for the precompiled `clientAddressFilter` only — it does raw
 // `indexingAddresses[srcAddress]` access in generated JS and can't take the opaque
 // type. Don't reach for this elsewhere; use the domain accessors above.
-let rawForFilter = (indexingAddresses: t): dict<indexingAddress> => indexingAddresses
+let rawForFilter = (indexingAddresses: t): dict<indexingAddress> => indexingAddresses.addresses
 
 let register = (indexingAddresses: t, additions: dict<indexingAddress>) => {
-  let _ = Utils.Dict.mergeInPlace(indexingAddresses, additions)
+  let _ = Utils.Dict.mergeInPlace(indexingAddresses.addresses, additions)
+}
+
+let addDcToStore = (indexingAddresses: t, dcToStore: dcToStore) => {
+  indexingAddresses.dcsToStore->Array.push(dcToStore)->ignore
+}
+
+let dcsToStore = (indexingAddresses: t): array<dcToStore> => indexingAddresses.dcsToStore
+
+// Removes and returns the queued registrations whose block resolves to a
+// checkpoint via `getCheckpointId` (i.e. their registering event is in the batch
+// being written); the rest stay queued for a later batch.
+let drainDcsToStore = (
+  indexingAddresses: t,
+  ~getCheckpointId: int => option<Internal.checkpointId>,
+): array<(dcToStore, Internal.checkpointId)> => {
+  let drained = []
+  let remaining = []
+  indexingAddresses.dcsToStore->Array.forEach(dc => {
+    switch getCheckpointId(dc.registrationBlock) {
+    | Some(checkpointId) => drained->Array.push((dc, checkpointId))->ignore
+    | None => remaining->Array.push(dc)->ignore
+    }
+  })
+  indexingAddresses.dcsToStore = remaining
+  drained
 }
 
 let rollbackInPlace = (indexingAddresses: t, ~targetBlockNumber: int): unit => {
   // forEachWithKey is a `for..in`, so deleting the key currently being visited is
   // safe — it doesn't affect enumeration of the remaining keys.
-  indexingAddresses->Utils.Dict.forEachWithKey((indexingContract, address) => {
+  indexingAddresses.addresses->Utils.Dict.forEachWithKey((indexingContract, address) => {
     if indexingContract.registrationBlock > targetBlockNumber {
-      indexingAddresses->Utils.Dict.deleteInPlace(address)
+      indexingAddresses.addresses->Utils.Dict.deleteInPlace(address)
     }
   })
+  indexingAddresses.dcsToStore =
+    indexingAddresses.dcsToStore->Array.filter(dc => dc.registrationBlock <= targetBlockNumber)
 }

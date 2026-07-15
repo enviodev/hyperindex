@@ -44,6 +44,7 @@ let makeFromDbState: (
 let logger: t => Pino.t
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
+let indexingAddresses: t => IndexingAddresses.t
 let reorgDetection: t => ReorgDetection.t
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool

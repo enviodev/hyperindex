@@ -162,42 +162,48 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
   let inMemTable = state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
   let committedCheckpointId = state->IndexerState.committedCheckpointId
 
-  let itemIdx = ref(0)
-
+  // Map each (chainId, blockNumber) covered by the batch to its checkpoint, so a
+  // queued registration is persisted at the checkpoint of the event that
+  // registered it.
+  let checkpointIdByChainBlock = Dict.make()
   for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpoint)
     let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpoint)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpoint)
-
-    for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
-      switch item->Internal.getItemDcs {
-      | None => ()
-      | Some(dcs) =>
-        // Currently only events support contract registration, so we can cast to event item
-        let eventItem = item->Internal.castUnsafeEventItem
-        for dcIdx in 0 to dcs->Array.length - 1 {
-          let dc = dcs->Array.getUnsafe(dcIdx)
-          let entity: InternalTable.EnvioAddresses.t = {
-            id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
-            chainId,
-            contractName: dc.contractName,
-            registrationBlock: eventItem.blockNumber,
-            registrationLogIndex: eventItem.logIndex,
-          }
-
-          inMemTable->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
-            Set({
-              entityId: entity.id,
-              checkpointId,
-              entity: entity->InternalTable.EnvioAddresses.castToInternal,
-            }),
-          )
-        }
-      }
-    }
-
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
+    let blockNumber = batch.checkpointBlockNumbers->Array.getUnsafe(checkpoint)
+    checkpointIdByChainBlock->Dict.set(
+      chainId->Int.toString ++ "-" ++ blockNumber->Int.toString,
+      batch.checkpointIds->Array.getUnsafe(checkpoint),
+    )
   }
+
+  state
+  ->IndexerState.chainStates
+  ->Utils.Dict.forEach(cs => {
+    let chainId = (cs->ChainState.chainConfig).id
+    let drained =
+      cs
+      ->ChainState.indexingAddresses
+      ->IndexingAddresses.drainDcsToStore(~getCheckpointId=registrationBlock =>
+        checkpointIdByChainBlock->Utils.Dict.dangerouslyGetNonOption(
+          chainId->Int.toString ++ "-" ++ registrationBlock->Int.toString,
+        )
+      )
+    drained->Array.forEach(((dc, checkpointId)) => {
+      let entity: InternalTable.EnvioAddresses.t = {
+        id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
+        chainId,
+        contractName: dc.contractName,
+        registrationBlock: dc.registrationBlock,
+        registrationLogIndex: dc.registrationLogIndex,
+      }
+
+      inMemTable->InMemoryTable.Entity.set(
+        ~committedCheckpointId,
+        Set({
+          entityId: entity.id,
+          checkpointId,
+          entity: entity->InternalTable.EnvioAddresses.castToInternal,
+        }),
+      )
+    })
+  })
 }

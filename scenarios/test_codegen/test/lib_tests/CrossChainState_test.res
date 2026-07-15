@@ -100,12 +100,10 @@ let makeFetchingChainState = (~chainId, ~knownHeight, ~latestFetchedBlock) => {
     latestBlockRangeUpdateBlock: 0,
   }
   let indexingAddresses =
-    Dict.fromArray([
-      (
-        address->Address.toString,
-        ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
-      ),
-    ])->(Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t)
+    IndexingAddresses.make(
+      ~contractConfigs=Dict.make(),
+      ~addresses=[{Internal.contractName: "MockContract", address, registrationBlock: -1}],
+    )
   let fetchState: FetchState.t = {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
       ~partitions=[partition],

@@ -343,6 +343,7 @@ let makeFromDbState = (
 let logger = (cs: t) => cs.logger
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
+let indexingAddresses = (cs: t) => cs.indexingAddresses
 let reorgDetection = (cs: t) => cs.reorgDetection
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead

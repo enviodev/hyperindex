@@ -94,6 +94,15 @@ let dcToItem = (dc: Internal.indexingAddress) => {
   item
 }
 
+// Expected pending-persistence entry for a dc registered by an item with the
+// given log index (mockEvent defaults logIndex to 0).
+let dcToStore = (dc: Internal.indexingAddress, ~logIndex=0): IndexingAddresses.dcToStore => {
+  address: dc.address,
+  contractName: dc.contractName,
+  registrationBlock: dc.registrationBlock,
+  registrationLogIndex: logIndex,
+}
+
 let baseEventConfig = (MockIndexer.evmOnEventRegistration(
   ~id="0",
   ~contractName="Gravatar",
@@ -874,7 +883,7 @@ describe("FetchState.registerDynamicContracts", () => {
   })
 
   it(
-    "Keeps dc for a contract with no events on the item (persisted to db) and tracks it on indexingAddresses without affecting partitions",
+    "Queues dc for a contract with no events for persistence and tracks it on indexingAddresses without affecting partitions",
     t => {
       let (fetchState, indexingAddresses) = makeInitial()
 
@@ -890,8 +899,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          // dc not spliced out of the item - will be saved to db by setBatchDcs
-          item->Internal.getItemDcs,
+          // queued for persistence by setBatchDcs
+          indexingAddresses->IndexingAddresses.dcsToStore,
           // tracked on indexingAddresses so later conflicting registrations
           // are detected, and so numAddresses reflects it
           indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
@@ -900,11 +909,11 @@ describe("FetchState.registerDynamicContracts", () => {
           updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
           updatedFetchState.optimizedPartitions.entities,
         ),
-        ~message=`dc stays on the item (persisted to db),
+        ~message=`dc is queued for persistence,
           is added to indexingAddresses under its contract name,
           and partitions are left untouched`,
       ).toEqual((
-        Some([dc]),
+        [dc->dcToStore],
         Some("UnknownContract"),
         true,
         fetchState.optimizedPartitions.entities,
@@ -928,8 +937,8 @@ describe("FetchState.registerDynamicContracts", () => {
       let afterFirst = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [item1])
 
       // Register the SAME address for a DIFFERENT contract name that also has
-      // no events. This should be spliced out of the item (already tracked)
-      // and warn about the contract-name conflict.
+      // no events. This should be skipped (already tracked) and warn about the
+      // contract-name conflict.
       let dc2 = makeDynContractRegistration(
         ~blockNumber=11,
         ~contractAddress=mockAddress1,
@@ -950,21 +959,18 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          item1->Internal.getItemDcs,
-          // Second dc spliced out - already tracked.
-          item2->Internal.getItemDcs,
-          // Third dc also spliced out - same contract name, already tracked.
-          item3->Internal.getItemDcs,
+          // Only the first dc is queued; the later same-address dcs are skipped.
+          indexingAddresses->IndexingAddresses.dcsToStore,
           // First registration is the tracked one (first wins).
           indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
           // No new partition created across any of the registrations.
           afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
         ),
-        ~message=`first dc kept, subsequent same-address dcs spliced out,
+        ~message=`first dc queued, subsequent same-address dcs skipped,
           fetchState still tracks the first contract name,
           and partitions are never affected`,
-      ).toEqual((Some([dc1]), Some([]), Some([]), Some("UnknownContract"), true))
+      ).toEqual(([dc1->dcToStore], Some("UnknownContract"), true))
     },
   )
 
@@ -1043,18 +1049,18 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          // dc spliced out - won't overwrite the existing Gravatar entry in db
-          item->Internal.getItemDcs,
+          // dc not queued - won't overwrite the existing Gravatar entry in db
+          indexingAddresses->IndexingAddresses.dcsToStore,
           // indexingAddresses still has the original contract name
           indexingAddresses->IndexingAddresses.get(mockAddress0->Address.toString)
           ->Option.map(ia => ia.contractName),
           // fetchState unchanged - nothing new registered
           updatedFetchState === fetchState,
         ),
-        ~message=`conflicting no-events dc is spliced out,
+        ~message=`conflicting no-events dc is not queued,
           original Gravatar registration preserved,
           and fetchState is unchanged`,
-      ).toEqual((Some([]), Some("Gravatar"), true))
+      ).toEqual(([], Some("Gravatar"), true))
     },
   )
 
@@ -1080,8 +1086,8 @@ describe("FetchState.registerDynamicContracts", () => {
       (
         indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
         ->Option.map(ia => ia.contractName),
-        // dc spliced out - won't be persisted to envio_addresses
-        item2->Internal.getItemDcs,
+        // only the first dc is queued - the conflicting one won't be persisted
+        indexingAddresses->IndexingAddresses.dcsToStore,
         updatedFetchState.optimizedPartitions.entities
         ->Dict.valuesToArray
         ->Array.every(
@@ -1093,9 +1099,9 @@ describe("FetchState.registerDynamicContracts", () => {
         ),
       ),
       ~message=`first registration wins,
-          the conflicting dc is spliced out,
+          the conflicting dc is not queued,
           and the address never enters the second contract's partitions`,
-    ).toEqual((Some("Gravatar"), Some([]), true))
+    ).toEqual((Some("Gravatar"), [dc1->dcToStore], true))
   })
 
   it(
@@ -1125,11 +1131,11 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
-          noEventsItem->Internal.getItemDcs,
+          indexingAddresses->IndexingAddresses.dcsToStore,
         ),
         ~message=`the events registration is preserved on indexingAddresses
-          and the conflicting no-events dc is spliced out`,
-      ).toEqual((Some("Gravatar"), Some([])))
+          and the conflicting no-events dc is not queued`,
+      ).toEqual((Some("Gravatar"), [eventsDc->dcToStore]))
     },
   )
 
@@ -1160,7 +1166,7 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           indexingAddresses->IndexingAddresses.get(mockAddress1->Address.toString)
           ->Option.map(ia => ia.contractName),
-          eventsItem->Internal.getItemDcs,
+          indexingAddresses->IndexingAddresses.dcsToStore,
           updatedFetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
           ->Array.every(
@@ -1172,9 +1178,9 @@ describe("FetchState.registerDynamicContracts", () => {
           ),
         ),
         ~message=`the no-events registration wins,
-          the conflicting events dc is spliced out,
+          the conflicting events dc is not queued,
           and the address never enters Gravatar partitions`,
-      ).toEqual((Some("UnknownContract"), Some([]), true))
+      ).toEqual((Some("UnknownContract"), [noEventsDc->dcToStore], true))
     },
   )
 
@@ -1492,10 +1498,10 @@ describe("FetchState.registerDynamicContracts", () => {
     let updatedFetchState = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcItem2, dcItem1])
 
     t.expect(
-      (dcItem1->Internal.getItemDcs, dcItem2->Internal.getItemDcs),
-      ~message=`Should choose the earliest dc from the batch
-  And remove the dc from the later one, so they are not duplicated in the db`,
-    ).toEqual((Some([]), Some([dc2])))
+      indexingAddresses->IndexingAddresses.dcsToStore,
+      ~message=`Should queue only the earliest dc from the batch,
+  so the later one isn't duplicated in the db`,
+    ).toEqual([dc2->dcToStore])
     let expected = makeIndexingContractsWithDynamics([dc2], ~static=[mockAddress0])
     t.expect(
       (
