@@ -51,10 +51,11 @@ type partition = {
   // Both must be non-zero before the minimum is trusted for chunk sizing.
   sourceRangeCapacity: int,
   prevSourceRangeCapacity: int,
-  // Items/block observed in the latest response. This is independent from the
+  // Smoothed items/block observed in responses. This is independent from the
   // source's range capacity: even a response truncated by our own itemsTarget
   // cap is useful density evidence while saying nothing about source capacity.
-  eventDensity: float,
+  // None distinguishes a new partition from a real zero-density observation.
+  eventDensity: option<float>,
   // Tracks the latestFetchedBlock.blockNumber of the most recent response
   // that updated sourceRangeCapacity. Prevents degradation of the chunking
   // heuristic when parallel query responses arrive out of order.
@@ -120,14 +121,9 @@ let getMinHistoryRange = (p: partition) => {
   }
 }
 
-// Density is trusted only after two source-capacity observations — a single
-// response is too noisy to size the next query by.
-let getTrustedDensity = (p: partition) => {
-  switch (p.sourceRangeCapacity, p.prevSourceRangeCapacity) {
-  | (0, _) | (_, 0) => None
-  | _ => Some(p.eventDensity)
-  }
-}
+// Density has its own initialization signal and is useful independently from
+// source-capacity history, including when an itemsTarget cap truncates a response.
+let getTrustedDensity = (p: partition) => p.eventDensity
 
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
@@ -209,11 +205,14 @@ module OptimizedPartitions = {
       nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
       let minRange = getMinQueryRange([p1, p2])
       // The merged partition indexes both parents' addresses, so its expected
-      // event rate is the sum of their densities. Parents without a trusted
-      // density contribute 0; if none has one, eventDensity stays 0 and the
-      // partition probes for a fresh signal instead of chunking.
-      let inheritedDensity =
-        p1->getTrustedDensity->Option.getOr(0.) +. p2->getTrustedDensity->Option.getOr(0.)
+      // event rate is the sum of their densities. If neither parent has a
+      // trusted density, the merged partition probes for a fresh signal
+      // instead of treating zero as an observed density.
+      let inheritedDensity = switch (p1->getTrustedDensity, p2->getTrustedDensity) {
+      | (Some(p1Density), Some(p2Density)) => Some(p1Density +. p2Density)
+      | (Some(density), None) | (None, Some(density)) => Some(density)
+      | (None, None) => None
+      }
       {
         id: newId,
         dynamicContract: Some(contractName),
@@ -476,7 +475,14 @@ module OptimizedPartitions = {
     // Update density for every response, independently from whether this range
     // is valid evidence of source capacity. A cap hit is still useful density
     // evidence because it reports items returned across the scanned range.
-    let updatedEventDensity = itemsCount->Int.toFloat /. blockRange->Int.toFloat
+    let observedEventDensity = itemsCount->Int.toFloat /. blockRange->Int.toFloat
+    // Seed from the first observation, then smooth every later observation
+    // with a 1:1 moving average. Keeping initialization explicit is important:
+    // zero is valid density evidence and must participate in the next blend.
+    let updatedEventDensity = switch p.eventDensity {
+    | None => Some(observedEventDensity)
+    | Some(eventDensity) => Some((eventDensity +. observedEventDensity) /. 2.)
+    }
 
     // Skip updating source capacity if a later response already updated it.
     // Prevents degradation of the chunking heuristic when parallel query
@@ -999,7 +1005,7 @@ OptimizedPartitions.t => {
             mutPendingQueries: [],
             sourceRangeCapacity: 0,
             prevSourceRangeCapacity: 0,
-            eventDensity: 0.,
+            eventDensity: None,
             latestSourceRangeCapacityUpdateBlock: 0,
           })
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
@@ -1604,13 +1610,12 @@ type partitionFillState = {
 // frontier advances evenly. In-flight reservations release as responses land,
 // so acceptance redistributes across ticks.
 //
-// A partition with a trusted positive density (two or more responses — see
-// getMinHistoryRange) generates real, density-sized chunks toward the target.
-// Any other partition (no signal, one noisy sample, or a density-0 estimate)
-// generates one open-ended probe sized to the events its range to the target is
-// expected to hold — rangeTargetDensity × (chainTargetBlock − fromBlock + 1) /
-// inRangeCount — so several unknown-density partitions probe in parallel within
-// one budget, each scaled by how much of the range it still has to cover.
+// A partition with source-capacity history and a positive density generates
+// density-sized chunks toward the target. Any other partition (no signal, no
+// capacity history, or a density-0 estimate) generates one open-ended probe
+// sized to the events its range to the target is expected to hold —
+// rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
+// unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
@@ -1799,10 +1804,9 @@ let getNextQuery = (
       inRangeCount > 0 && rangeToTarget > 0 ? freshBudget /. rangeToTarget->Int.toFloat : 0.
 
     // Phase B: generate each in-range partition's candidates — strict chunks
-    // toward the target sized by real density (up to the pending-chunk cap), or,
-    // for a partition without a trusted positive density, a single open-ended
-    // probe at its even share of the budget. No budget check here; the
-    // acceptance pass below decides which candidates make the cut.
+    // when both source-capacity history and density are known, or an open-ended
+    // budget probe otherwise. No budget check here; the acceptance pass below
+    // decides which candidates make the cut.
     //
     // Chunks require a POSITIVE trusted density: density 0 prices every chunk at
     // ~nothing, so an open-ended probe (full server scan range in one response)
@@ -2035,7 +2039,7 @@ let make = (
       mutPendingQueries: [],
       sourceRangeCapacity: 0,
       prevSourceRangeCapacity: 0,
-      eventDensity: 0.,
+      eventDensity: None,
       latestSourceRangeCapacityUpdateBlock: 0,
     })
   }

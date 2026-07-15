@@ -179,7 +179,6 @@ describe("SourceManager source priority with Live sources", () => {
   let addressesByContractName = Dict.make()
 
   let mockQuery = (): FetchState.query => {
-    ...defaultQuery,
     partitionId: "0",
     itemsTarget: 5000,
     itemsEst: 5000,
@@ -427,7 +426,7 @@ describe("SourceManager fetchNext", () => {
       dynamicContract: None,
       mutPendingQueries: [],
       sourceRangeCapacity: 0,
-      eventDensity: 0.,
+      eventDensity: None,
       prevSourceRangeCapacity: 0,
       latestSourceRangeCapacityUpdateBlock: 0,
     }
@@ -498,7 +497,7 @@ describe("SourceManager fetchNext", () => {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
         sourceRangeCapacity: 10,
-        eventDensity: 0.,
+        eventDensity: None,
         prevSourceRangeCapacity: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
@@ -548,7 +547,6 @@ describe("SourceManager fetchNext", () => {
         ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
       ).toEqual([
         {
-          ...defaultQuery,
           partitionId: "2",
           itemsTarget: 16_667,
           itemsEst: 16_667,
@@ -559,7 +557,6 @@ describe("SourceManager fetchNext", () => {
           addressesByContractName: partition2.addressesByContractName,
         },
         {
-          ...defaultQuery,
           partitionId: "0",
           // Starts at block 5 vs partition "2"'s block 2, so it covers less of
           // the range to the target and gets a smaller probe.
@@ -572,7 +569,6 @@ describe("SourceManager fetchNext", () => {
           addressesByContractName: partition0.addressesByContractName,
         },
         {
-          ...defaultQuery,
           partitionId: "1",
           // Starts furthest ahead (block 6), so it gets the smallest probe.
           itemsTarget: 9_259,
@@ -1441,7 +1437,6 @@ describe("SourceManager.executeQuery", () => {
   let addressesByContractName = Dict.make()
 
   let mockQuery = (): FetchState.query => {
-    ...defaultQuery,
     partitionId: "0",
     itemsTarget: 5000,
     itemsEst: 5000,

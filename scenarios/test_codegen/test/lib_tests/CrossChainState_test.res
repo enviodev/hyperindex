@@ -104,7 +104,7 @@ let makeFetchingChainState = (
     mutPendingQueries: [],
     sourceRangeCapacity: 0,
     prevSourceRangeCapacity: 0,
-    eventDensity: 0.,
+    eventDensity: None,
     latestSourceRangeCapacityUpdateBlock: 0,
   }
   let indexingAddresses =
@@ -300,7 +300,7 @@ describe("CrossChainState fetch control", () => {
         mutPendingQueries: [],
         sourceRangeCapacity: 10,
         prevSourceRangeCapacity: 10,
-        eventDensity: 10., // density = 100 / 10 = 10 items/block
+        eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
         latestSourceRangeCapacityUpdateBlock: 0,
       }
       let indexingAddresses1 =
