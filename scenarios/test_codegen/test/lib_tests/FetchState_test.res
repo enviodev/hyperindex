@@ -4746,3 +4746,77 @@ describe("mergeIntoBuffer", () => {
     ])
   })
 })
+
+describe("FetchState.getNextQuery caps per-chain concurrency", () => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let addressesByContractName = Dict.fromArray([("MockContract", [mockAddress0])])
+
+  let makePartition = (~idx, ~inFlight): FetchState.partition => {
+    id: idx->Int.toString,
+    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName,
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: inFlight
+      ? [
+          {
+            fromBlock: 1,
+            toBlock: None,
+            isChunk: false,
+            itemsTarget: 1,
+            itemsEst: 1,
+            fetchedBlock: None,
+          },
+        ]
+      : [],
+    sourceRangeCapacity: 0,
+    prevSourceRangeCapacity: 0,
+    eventDensity: None,
+    latestSourceRangeCapacityUpdateBlock: 0,
+  }
+
+  let makeFetchState = (~partitionsCount, ~inFlightCount): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=Array.fromInitializer(~length=partitionsCount, idx =>
+        makePartition(~idx, ~inFlight=idx < inFlightCount)
+      ),
+      ~maxAddrInPartition=1,
+      ~nextPartitionIndex=partitionsCount,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  let countQueries = (fetchState: FetchState.t) =>
+    switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100000,
+      ~chainTargetItems=1_000_000.,
+    ) {
+    | Ready(queries) => queries->Array.length
+    | _ => 0
+    }
+
+  it("accepts at most 100 queries counting in-flight ones", t => {
+    t.expect({
+      "freshOnly": makeFetchState(~partitionsCount=120, ~inFlightCount=0)->countQueries,
+      "withInFlight": makeFetchState(~partitionsCount=120, ~inFlightCount=30)->countQueries,
+      "underCap": makeFetchState(~partitionsCount=50, ~inFlightCount=0)->countQueries,
+    }).toEqual({
+      "freshOnly": 100,
+      "withInFlight": 70,
+      "underCap": 50,
+    })
+  })
+})

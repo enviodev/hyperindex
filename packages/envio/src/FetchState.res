@@ -1465,6 +1465,11 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 // Most parallel in-flight chunk queries a single partition may have at once.
 let maxPendingChunksPerPartition = 12
 
+// Most parallel in-flight queries a single chain may have at once, across all
+// its partitions. Bounds source load on chains with many partitions, where the
+// per-partition cap alone would admit thousands of concurrent queries.
+let maxChainConcurrency = 100
+
 // Generates candidate queries for a gap range (a hole left between
 // completed/pending chunks, e.g. from an out-of-order partial response). Gaps
 // carry the range's low fromBlock, so the acceptance pass takes them before
@@ -1939,12 +1944,21 @@ let getNextQuery = (
     let streamCount = acceptanceStream->Array.length
     let remainingBudget = ref(chainTargetItems)
     let acceptIdx = ref(0)
-    while remainingBudget.contents > 0. && acceptIdx.contents < streamCount {
+    // In-flight queries count against the chain's concurrency cap alongside the
+    // ones accepted this tick; once the cap is reached no later candidate can be
+    // accepted (they're only later in fromBlock order), so the walk stops.
+    let usedConcurrency = ref(reservations->Array.length)
+    while (
+      remainingBudget.contents > 0. &&
+      acceptIdx.contents < streamCount &&
+      usedConcurrency.contents < maxChainConcurrency
+    ) {
       let (_, itemsEst, maybeQuery) = acceptanceStream->Array.getUnsafe(acceptIdx.contents)
       switch maybeQuery {
       | Some(query) =>
         let partitionIdx = partitionIndexById->Dict.getUnsafe(query.partitionId)
         queriesByPartitionIndex->Array.getUnsafe(partitionIdx)->Array.push(query)->ignore
+        usedConcurrency := usedConcurrency.contents + 1
       | None => ()
       }
       remainingBudget := remainingBudget.contents -. itemsEst->Int.toFloat
