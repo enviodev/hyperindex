@@ -214,10 +214,12 @@ let durationToMs = (duration: rateLimitDuration) =>
   }
 
 // The name becomes both a Postgres cache-table suffix and a .envio/cache file
-// path segment, so it must be a plain identifier. Rejecting path separators and
-// other unsafe characters up front keeps the (name, scope) <-> table <-> path
-// mapping reversible and blocks path traversal.
-let effectNameRe = /^[A-Za-z0-9_-]+$/
+// path segment. Path separators are excluded from the charset and a leading dot
+// is disallowed, so a name can never be "." / ".." or otherwise traverse out of
+// the cache dir; dots elsewhere are fine and keep existing names like
+// "token.metadata" working, since the (name, scope) <-> table <-> path mapping
+// stays reversible.
+let effectNameRe = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/
 
 let createEffect = (
   options: effectOptions<'input, 'output>,
@@ -225,7 +227,7 @@ let createEffect = (
 ) => {
   if !(effectNameRe->RegExp.test(options.name)) {
     JsError.throwWithMessage(
-      `Invalid effect name "${options.name}". Effect names may only contain letters, numbers, underscores and hyphens, because the name is used as the cache table name and cache file path.`,
+      `Invalid effect name "${options.name}". Effect names may contain letters, numbers, underscores, hyphens and dots (but must not start with a dot or contain a path separator), because the name is used as the cache table name and cache file path.`,
     )
   }
   let outputSchema =
