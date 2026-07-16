@@ -9,7 +9,7 @@ use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
 use crate::evm_hypersync_source::types::{
-    sol_value_to_param, OnEventRegistration, Log, ParamMeta, ParamValue,
+    sol_value_to_param, Log, OnEventRegistration, ParamMeta, ParamValue,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
