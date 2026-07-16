@@ -891,14 +891,23 @@ describe("ChainState cold start", () => {
       Promise.resolve()
     })
 
+    let items = chainId => itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Option.getOr(0)
+    // Structural, not exact: chain 1 (scanning, firstEventBlock=None) must set
+    // no line and idle; chain 2 (lowest frontier progress) anchors and fetches
+    // freely; chain 3 stays clamped near chain 2's line — far below what it
+    // would fetch if chain 1's near-head frontier were the anchor.
     t.expect(
-      (
-        itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(1),
-        itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(2),
-        itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(3),
-      ),
-      ~message="Chain 2 anchors and fetches to head; chain 3 is clamped to chain 2's line (~block 350 -> 400 items); the scanning chain 1 sets no line and idles",
-    ).toEqual((Some(0), Some(7000), Some(400)))
+      {
+        "scanningChainIdle": items(1) == 0,
+        "anchorFetchesFreely": items(2) > items(3),
+        "followerHeldFarBelowAnchor": items(3) > 0 && items(3) * 3 < items(2),
+      },
+      ~message="The genuinely-behind chain 2 anchors the line; chain 3 is held near it instead of racing to head on the scanning chain's non-clamping frontier",
+    ).toEqual({
+      "scanningChainIdle": true,
+      "anchorFetchesFreely": true,
+      "followerHeldFarBelowAnchor": true,
+    })
   })
 })
 

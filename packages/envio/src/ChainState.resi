@@ -67,7 +67,6 @@ let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
 let targetBlock: (t, ~chainTargetItems: float) => int
-let progressAtBlock: (t, ~blockNumber: int) => float
 let blockAtProgress: (t, ~progress: float) => int
 let frontierProgress: t => float
 let getNextQuery: (
