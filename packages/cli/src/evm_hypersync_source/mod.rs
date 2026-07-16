@@ -304,23 +304,28 @@ impl EvmHypersyncClient {
         let contract_name_by_address = built.contract_name_by_address;
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        // Scope the lease to the HTTP exchange: the decode below runs long
-        // after the stream is done, and holding the slot through it would
-        // inflate in-flight and grow the pool for connections that are free.
+        // Scope the lease to the HTTP exchange only: fetch the raw Arrow page
+        // under the lease and materialize/decode after it's dropped. Both are
+        // CPU phases that run long after the stream is done, and holding the
+        // slot through them would inflate in-flight and grow the pool for
+        // connections that are free.
         let res = {
             let lease = self.pool.acquire().map_err(map_err)?;
             lease
                 .client()
-                .get_with_rate_limit(&query)
+                .get_arrow_with_rate_limit(&query)
                 .await
                 .context("run inner query")
                 .map_err(map_err)?
         };
 
-        let response = match res {
+        let arrow_response = match res {
             RateLimitResponse::Success { response, .. } => response,
             RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
         };
+        let response = hypersync_client::QueryResponse::try_from(&arrow_response)
+            .context("convert arrow response")
+            .map_err(map_err)?;
 
         let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
         let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
