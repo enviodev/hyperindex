@@ -77,3 +77,22 @@ describe("Internal.EffectCache address mapping", () => {
     ).toEqual([None, None, None, None])
   })
 })
+
+describe("createEffect name validation", () => {
+  it("Rejects names that aren't safe as a cache table name / file path segment", t => {
+    let attempt = name =>
+      switch Envio.createEffect(
+        {name, input: S.string, output: S.string, rateLimit: Disable},
+        async ({input}) => input,
+      ) {
+      | _ => true
+      | exception JsExn(_) => false
+      }
+
+    // First is valid; the rest carry a path separator, traversal, whitespace,
+    // or other characters that would break the table/path mapping.
+    t.expect(
+      ["ok_name-1", "a/b", "../evil", "has space", "semi;colon"]->Array.map(attempt),
+    ).toEqual([true, false, false, false, false])
+  })
+})

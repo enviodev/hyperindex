@@ -665,12 +665,20 @@ type schemaCacheTableInfo = {
 // (`envio_<chainId>_effect_<name>`) cache-table formats. Kept in sync with
 // Internal.EffectCache.
 let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
+  // The column guard requires the effect-cache shape (exactly an `id` + `output`
+  // pair) so a user entity table that happens to match the name pattern is never
+  // mistaken for an effect cache.
   `SELECT
     t.table_name,
     ${getCacheRowCountFnName}(t.table_name) as count
    FROM information_schema.tables t
    WHERE t.table_schema = '${pgSchema}'
-   AND t.table_name ~ '^envio_([0-9]+_)?effect_.+';`
+   AND t.table_name ~ '^envio_([0-9]+_)?effect_.+'
+   AND (
+     SELECT array_agg(c.column_name::text ORDER BY c.column_name::text)
+     FROM information_schema.columns c
+     WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name
+   ) = ARRAY['id', 'output'];`
 }
 
 type psqlExecState =

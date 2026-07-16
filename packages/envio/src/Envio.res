@@ -213,10 +213,21 @@ let durationToMs = (duration: rateLimitDuration) =>
   | Milliseconds(ms) => ms
   }
 
+// The name becomes both a Postgres cache-table suffix and a .envio/cache file
+// path segment, so it must be a plain identifier. Rejecting path separators and
+// other unsafe characters up front keeps the (name, scope) <-> table <-> path
+// mapping reversible and blocks path traversal.
+let effectNameRe = /^[A-Za-z0-9_-]+$/
+
 let createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
+  if !(effectNameRe->RegExp.test(options.name)) {
+    JsError.throwWithMessage(
+      `Invalid effect name "${options.name}". Effect names may only contain letters, numbers, underscores and hyphens, because the name is used as the cache table name and cache file path.`,
+    )
+  }
   let outputSchema =
     S.schema(_ => options.output)->(Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>)
   let itemSchema = S.schema((s): Internal.effectCacheItem => {
