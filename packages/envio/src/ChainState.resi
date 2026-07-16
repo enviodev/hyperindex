@@ -50,7 +50,8 @@ let chainConfig: t => Config.chain
 let getReorgThresholdBlockNumbersBelow: (t, ~blockNumber: int) => array<int>
 let getLatestValidScannedBlock: (
   t,
-  ~blockNumbersAndHashes: array<ReorgDetection.blockDataWithTimestamp>,
+  ~blockStore: BlockStore.t,
+  ~blockNumbers: array<int>,
 ) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool

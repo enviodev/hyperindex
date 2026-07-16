@@ -14,7 +14,10 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
-      Promise.resolve({Source.result: Ok([]), requestStats: []})
+      Promise.resolve({
+        Source.result: Ok(BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false)),
+        requestStats: [],
+      })
     },
     getHeightOrThrow: () => {
       // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"

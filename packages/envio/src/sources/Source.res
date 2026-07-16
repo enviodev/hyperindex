@@ -12,6 +12,61 @@ type blockRangeFetchStats = {
 // per (source, method) into the envio_source_request_* metrics.
 type requestStat = {method: string, seconds: float}
 
+// Native clients use this structured error when one logical operation owns
+// multiple backend requests. It lets the source return timings even when the
+// operation ultimately fails and SourceManager retries it.
+exception NativeRequestFailed(string)
+
+type nativeRequestFailure = {
+  cause: exn,
+  message: option<string>,
+  requestStats: array<requestStat>,
+}
+
+let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
+  let originalMessage = switch exn->JsExn.anyToExnInternal {
+  | JsExn(jsExn) => jsExn->JsExn.message
+  | _ => None
+  }
+  let decoded = switch originalMessage {
+  | Some(message) =>
+    switch message->JSON.parseOrThrow->JSON.Decode.object {
+    | exception _ => None
+    | Some(obj) =>
+      switch (obj->Dict.get("kind"), obj->Dict.get("message")) {
+      | (Some(String("RequestFailed")), Some(String(message))) => {
+          let requestStats = switch obj->Dict.get("requestStats") {
+          | Some(Array(stats)) =>
+            stats->Array.filterMap(stat =>
+              switch stat->JSON.Decode.object {
+              | Some(obj) =>
+                switch (obj->Dict.get("method"), obj->Dict.get("seconds")) {
+                | (Some(String(method)), Some(Number(seconds))) => Some({method, seconds})
+                | _ => None
+                }
+              | None => None
+              }
+            )
+          | _ => []
+          }
+          Some((message, requestStats))
+        }
+      | _ => None
+      }
+    | None => None
+    }
+  | None => None
+  }
+  switch decoded {
+  | Some((message, requestStats)) => {
+      cause: NativeRequestFailed(message),
+      message: Some(message),
+      requestStats,
+    }
+  | None => {cause: exn, message: originalMessage, requestStats: []}
+  }
+}
+
 /**
 Thes response returned from a block range fetch
 */
@@ -37,16 +92,25 @@ type blockRangeFetchResponse = {
 type getHeightResponse = {height: int, requestStats: array<requestStat>}
 
 type getBlockHashesResponse = {
-  result: result<array<ReorgDetection.blockDataWithTimestamp>, exn>,
+  result: result<BlockStore.t, exn>,
   requestStats: array<requestStat>,
 }
+
+exception InconsistentResponse({
+  method: string,
+  blockNumber: option<int>,
+  storedHash: option<string>,
+  receivedHash: option<string>,
+  missingBlockNumbers: array<int>,
+})
 
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
 
-exception RateLimited({resetMs: int})
+type rateLimited = {resetMs: int}
+exception RateLimited(rateLimited)
 
 type getItemsError =
   | UnsupportedSelection({message: string})
@@ -84,8 +148,9 @@ type t = {
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
-  // Invoked by SourceManager once a rollback target is known so the source can
-  // drop any state that may now point at an orphaned chain (e.g. RPC block cache).
+  // Invoked when a reorg or internally inconsistent response means local state
+  // may point at an orphaned chain (e.g. the RPC block cache). For an
+  // inconsistent response the target is the block before the retried range.
   onReorg?: (~rollbackTargetBlock: int) => unit,
   // Present only on the simulate source: the items a test fed in. The chain
   // tracks which of these never reach a handler so the run can report dead

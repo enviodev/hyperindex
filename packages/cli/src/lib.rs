@@ -18,6 +18,7 @@ mod hbs_templating;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
+mod request_stats;
 pub mod scripts;
 mod service_health;
 mod svm_hypersync_source;

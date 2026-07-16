@@ -138,13 +138,10 @@ describe("Block store reorg detection", () => {
     )
   })
 
-  it("Detects a reorg when a page contains the same block number with different hashes", t => {
+  it("Rejects a response containing the same block number with different hashes", t => {
+    let conflictingPage = makePage([(10, "0x10"), (10, "0x10-different")])
     t.expect(
-      mock([])->BlockStore.merge(
-        makePage([(10, "0x10"), (10, "0x10-different")]),
-        ~fromBlock=0,
-        ~reportOnly=false,
-      ),
+      conflictingPage->BlockStore.responseConflict,
       ~message="The second observation of block 10 collides with the first one inside the same page",
     ).toEqual(
       Null.Value({
@@ -155,11 +152,7 @@ describe("Block store reorg detection", () => {
     )
 
     t.expect(
-      mock([])->BlockStore.merge(
-        makePage([(10, "0x10"), (10, "0x10")]),
-        ~fromBlock=0,
-        ~reportOnly=false,
-      ),
+      makePage([(10, "0x10"), (10, "0x10")])->BlockStore.responseConflict,
       ~message="Duplicate block numbers with the same hash are accepted",
     ).toEqual(Null.Null)
   })
@@ -191,9 +184,9 @@ describe("Block store reorg detection", () => {
   it("Correctly finds the latest valid scanned block", t => {
     let store = mock(scannedHashesFixture)
     let latestValid = pairs =>
-      store->BlockStore.latestValidBlock(
-        ~blockNumbers=pairs->Array.map(((n, _)) => n),
-        ~hashes=pairs->Array.map(((_, h)) => h),
+      store->BlockStore.latestValidBlockFromStore(
+        makePage(pairs),
+        pairs->Array.map(((n, _)) => n),
       )
 
     t.expect(

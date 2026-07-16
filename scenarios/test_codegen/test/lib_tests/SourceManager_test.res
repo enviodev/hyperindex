@@ -87,6 +87,27 @@ let onNewBlockMock = () => {
   }
 }
 
+describe("native request failures", () => {
+  it("keeps timings and maps a wrapped HyperSync rate limit", t => {
+    let exn = try {
+      JsError.throwWithMessage(
+        `{"kind":"RequestFailed","message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
+      )
+    } catch {
+    | exn => exn
+    }
+    let failure = exn->Source.unpackNativeRequestFailure
+
+    t.expect(failure.requestStats).toEqual([
+      {Source.method: "getBlockHashes", seconds: 0.25},
+    ])
+    switch exn->HyperSync.mapRateLimitedExn {
+    | Source.RateLimited({resetMs}) => t.expect(resetMs).toEqual(2500)
+    | _ => t.expect(false, ~message="Expected a mapped rate-limit exception").toEqual(true)
+    }
+  })
+})
+
 describe("SourceManager creation", () => {
   it("Successfully creates with a sync source", t => {
     let source = MockIndexer.Source.make([]).source
@@ -1453,6 +1474,33 @@ describe("SourceManager.executeQuery", () => {
       {"fromBlock": 0, "toBlock": None, "retry": 0, "p": "0"},
     ])
     resolveGetItemsOrThrow([])
+    t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("calls source.onReorg before retrying an inconsistent response", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    t.expect(sourceMock.reorgCalls).toEqual([])
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] =>
+      // The response contains block 9 twice with different hashes: once as the
+      // range's parent guard and once as the reported latest block.
+      call.resolve([], ~latestFetchedBlockNumber=9, ~latestFetchedBlockHash="0x0a")
+    | _ => JsError.throwWithMessage("Expected the first source call")
+    }
+
+    await Utils.delay(200)
+    t.expect(sourceMock.reorgCalls).toEqual([9])
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected the retry after cache invalidation")
+    }
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 

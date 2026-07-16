@@ -8,16 +8,8 @@ type logsQueryPage = {
   blockStore: BlockStore.t,
 }
 
-type missingParams = {
-  queryName: string,
-  missingParams: array<string>,
-}
-
-type queryError = UnexpectedMissingParams(missingParams)
-
-let queryErrorToMsq: queryError => string
-
-type queryResponse<'a> = result<'a, queryError>
+let reraiseIfRateLimited: exn => unit
+let mapRateLimitedExn: exn => exn
 
 module GetLogs: {
   type error =
@@ -37,27 +29,3 @@ module GetLogs: {
     ~addressesByContractName: dict<array<Address.t>>,
   ) => promise<logsQueryPage>
 }
-
-let queryBlockData: (
-  ~client: HyperSyncClient.t,
-  ~blockNumber: int,
-  ~sourceName: string,
-  ~chainId: int,
-  ~logger: Pino.t,
-) => promise<(
-  queryResponse<option<ReorgDetection.blockDataWithTimestamp>>,
-  array<Source.requestStat>,
-)>
-
-let queryBlockDataMulti: (
-  ~client: HyperSyncClient.t,
-  ~blockNumbers: array<int>,
-  ~sourceName: string,
-  ~chainId: int,
-  ~logger: Pino.t,
-) => promise<(
-  queryResponse<array<ReorgDetection.blockDataWithTimestamp>>,
-  array<Source.requestStat>,
-)>
-
-let mapExn: queryResponse<'a> => result<'a, exn>

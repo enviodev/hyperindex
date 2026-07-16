@@ -714,6 +714,7 @@ module Source = {
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
     getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+    reorgCalls: array<int>,
     // TODO: Remove in favor of getItemsOrThrowCalls
     resolveGetItemsOrThrow: (
       array<itemMock>,
@@ -724,7 +725,7 @@ module Source = {
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
     getBlockHashesCalls: array<array<int>>,
-    resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+    resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
     // Height subscription mocking
     heightSubscriptionCalls: array<bool>,
     triggerHeightSubscription: int => unit,
@@ -745,6 +746,7 @@ module Source = {
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
     let getItemsOrThrowCalls = []
+    let reorgCalls = []
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
     // Height subscription state
@@ -791,6 +793,7 @@ module Source = {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getItemsOrThrowCalls,
+      reorgCalls,
       resolveGetItemsOrThrow: (
         items,
         ~resolveAt=#all,
@@ -824,8 +827,13 @@ module Source = {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
+        let blockStore = BlockStore.fromJs(
+          blockHashes,
+          ~ecosystem=Evm,
+          ~shouldChecksum=false,
+        )
         getBlockHashesResolveFns->Array.forEach(
-          resolve => resolve({Source.result: Ok(blockHashes), requestStats: []}),
+          resolve => resolve({Source.result: Ok(blockStore), requestStats: []}),
         )
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
@@ -937,6 +945,15 @@ module Source = {
                   | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
                   | None => ()
                   }
+                  let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                  observedBlocks->Array.forEach(block => {
+                    let page = BlockStore.fromJs(
+                      [block],
+                      ~ecosystem=Evm,
+                      ~shouldChecksum=false,
+                    )
+                    responseBlockStore->BlockStore.appendPage(page)
+                  })
                   resolve({
                     Source.knownHeight,
                     parsedQueueItems: items->Array.map(
@@ -973,11 +990,7 @@ module Source = {
                       },
                     ),
                     transactionStore: None,
-                    blockStore: BlockStore.fromJs(
-                      observedBlocks,
-                      ~ecosystem=Evm,
-                      ~shouldChecksum=false,
-                    ),
+                    blockStore: responseBlockStore,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
@@ -991,6 +1004,9 @@ module Source = {
               }
             })
           }),
+          onReorg: (~rollbackTargetBlock) => {
+            reorgCalls->Array.push(rollbackTargetBlock)->ignore
+          },
           createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
           | true =>
             Some(
