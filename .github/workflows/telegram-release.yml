@@ -131,9 +131,9 @@ jobs:
             parse_mode=""
           fi
 
-          # DRY_RUN is only ever set on a manual run, so a real release always
-          # sends regardless of the input default.
-          if [[ "$DRY_RUN" == "true" ]]; then
+          # Gate on the event, not just the input. dry_run defaults to true, and
+          # a release must never inherit that default and go quiet.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN" == "true" ]]; then
             echo "Dry run. Nothing sent. parse_mode=${parse_mode:-none (plain text)}"
             echo "--- message below ---"
             printf '%s\n' "$message"
