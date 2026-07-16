@@ -559,8 +559,8 @@ const testEffectWithCache = createEffect(
   async ({ context, input }) => {
     deepEqual(
       Object.keys(context),
-      ["effect", "cache"],
-      "log and chain are enumerable getters on the prototype, so not in own-key Object.keys",
+      ["effect", "cache", "chain"],
+      "log is a prototype getter (not an own key); chain is an own enumerable property",
     );
     deepEqual(context.cache, true);
     expectType<

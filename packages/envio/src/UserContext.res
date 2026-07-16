@@ -27,24 +27,24 @@ Utils.Object.defineProperty(
     }),
   },
 )
-// Enumerable getter on the prototype (like `log`), reading the per-instance
-// chain stored non-enumerably by the constructor. Throws on cross-chain effects.
 %%raw(`
-Object.defineProperty(effectContextPrototype, "chain", {
-  enumerable: true,
-  get: function() {
-    if (this._chainId === undefined) {
-      throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
-    }
-    return { id: this._chainId };
-  }
-});
+// Top-level so the getter is created once, not per context. \`this\` is the
+// EffectContext instance; only cross-chain contexts install it.
+function throwCrossChainChainAccess() {
+  throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
+}
+var crossChainChainDescriptor = { get: throwCrossChainChainAccess, enumerable: true };
 var EffectContext = function(params, chainId, effectName, defaultShouldCache, callEffect) {
   paramsByThis.set(this, params);
-  Object.defineProperty(this, "_chainId", { value: chainId });
-  Object.defineProperty(this, "_effectName", { value: effectName });
   this.effect = callEffect;
   this.cache = defaultShouldCache;
+  if (chainId === undefined) {
+    // Cross-chain: reading context.chain throws, via the shared getter.
+    Object.defineProperty(this, "_effectName", { value: effectName });
+    Object.defineProperty(this, "chain", crossChainChainDescriptor);
+  } else {
+    this.chain = { id: chainId };
+  }
 };
 EffectContext.prototype = effectContextPrototype;
 `)

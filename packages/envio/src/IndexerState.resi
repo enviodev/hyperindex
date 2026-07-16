@@ -16,37 +16,6 @@ module EntityTables: {
   let get: (t, ~entityName: string) => InMemoryTable.Entity.t
 }
 
-type effectRateLimitState = {
-  callsPerDuration: int,
-  durationMs: int,
-  mutable availableCalls: int,
-  mutable windowStartTime: float,
-  mutable queueCount: int,
-  mutable nextWindowPromise: option<promise<unit>>,
-}
-
-type effectCacheInMemTable = {
-  mutable idsToStore: array<string>,
-  mutable invalidationsCount: int,
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
-  mutable changesCount: float,
-  effect: Internal.effect,
-  scope: Internal.chainScope,
-  table: Table.table,
-  rateLimitState: option<effectRateLimitState>,
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
-}
-
-// Owns all per-(effect, scope) runtime state. Cache tables are dropped on
-// rollback; rate-limit windows survive it.
-module EffectState: {
-  type t
-  let getTable: (t, ~effect: Internal.effect, ~scope: Internal.chainScope) => effectCacheInMemTable
-  let forEach: (t, effectCacheInMemTable => unit) => unit
-  let resetForRollback: t => unit
-}
-
 type t
 
 let make: (

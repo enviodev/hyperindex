@@ -350,7 +350,7 @@ describe("E2E tests", () => {
       ~message="Shouldn't load anything from storage at this point",
     ).toEqual([])
     t.expect(
-      await indexerMock.queryEffectCache(testEffectWithCache),
+      await indexerMock.queryEffectCache(testEffectWithCache, ~scope=CrossChain),
       ~message="should have the cache entries in db",
     ).toEqual([
       {"id": `"test"`, "output": %raw(`"test-output"`)},
@@ -477,7 +477,7 @@ describe("E2E tests", () => {
     ))
 
     t.expect(
-      await indexerMock.queryEffectCache(testEffectWithCache),
+      await indexerMock.queryEffectCache(testEffectWithCache, ~scope=CrossChain),
       ~message="Should invalidate loaded cache and store new one",
     ).toEqual([
       {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
@@ -1025,7 +1025,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
 
     t.expect(
-      await indexerMock.queryEffectCache(testEffectWithCacheControl),
+      await indexerMock.queryEffectCache(testEffectWithCacheControl, ~scope=CrossChain),
       ~message="Should only have test2 in DB (test1 was called with cache=false and subsequent calls used in-memory cache)",
     ).toEqual([{"id": `"test2"`, "output": %raw(`"test2-output"`)}])
   })
@@ -1096,7 +1096,7 @@ describe("E2E tests", () => {
 
     // Verify that only p2's successful result was cached
     t.expect(
-      await indexerMock.queryEffectCache(throwingEffect),
+      await indexerMock.queryEffectCache(throwingEffect, ~scope=CrossChain),
       ~message="Should only cache p2's successful result, not p1's failed call",
     ).toEqual([{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}])
   })

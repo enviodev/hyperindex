@@ -364,7 +364,7 @@ module Indexer = {
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: 'input 'output. (
       Envio.effect<'input, 'output>,
-      ~scope: Internal.chainScope=?,
+      ~scope: Internal.chainScope,
     ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
@@ -617,7 +617,7 @@ module Indexer = {
           ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
-      queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope=Internal.CrossChain) => {
+      queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql

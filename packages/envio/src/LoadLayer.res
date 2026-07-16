@@ -72,7 +72,7 @@ let loadById = (
 let callEffect = (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
-  ~inMemTable: IndexerState.effectCacheInMemTable,
+  ~inMemTable: EffectState.effectCacheInMemTable,
   ~timerRef,
   ~onError,
 ) => {
@@ -132,7 +132,7 @@ let callEffect = (
 let rec executeWithRateLimit = (
   ~effect: Internal.effect,
   ~effectArgs: array<Internal.effectArgs>,
-  ~inMemTable: IndexerState.effectCacheInMemTable,
+  ~inMemTable: EffectState.effectCacheInMemTable,
   ~onError,
   ~isFromQueue: bool,
 ) => {
