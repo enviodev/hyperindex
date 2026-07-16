@@ -67,8 +67,7 @@ jobs:
           (( max_body < 0 )) && max_body=0
           body="$BODY"
           if [[ ${#body} -gt $max_body ]]; then
-            body="${body:0:$max_body}
-          … read the full notes on GitHub"
+            body="${body:0:$max_body}"$'\n'"… read the full notes on GitHub"
           fi
 
           # fenced ``` blocks -> <pre>; "## heading" -> <b>heading</b> (outside code)
@@ -88,9 +87,15 @@ jobs:
 
           # Safety net: if escaping still pushed the HTML past the hard limit,
           # send plain text truncated to 4096, which a hard cut cannot break.
-          if (( ${#message} > 4096 )); then
-            message="$(printf '🚢 HyperIndex %s released\n\n%s\n\n%s' "$TITLE" "$BODY" "$URL")"
-            message="${message:0:4096}"
+          # Telegram measures against 4096 UTF-16 units, where a non-BMP char
+          # (emoji) costs 2 but Bash's ${#var} and slices count 1, so both the
+          # check and the cut run on the UTF-16 encoding. "ignore" drops the
+          # dangling half when a cut lands inside a surrogate pair.
+          utf16_len() { python3 -c 'import sys; print(len(sys.stdin.read().encode("utf-16-le")) // 2)'; }
+
+          if (( $(printf '%s' "$message" | utf16_len) > 4096 )); then
+            message="$(printf '🚢 HyperIndex %s released\n\n%s\n\n%s' "$TITLE" "$BODY" "$URL" |
+              python3 -c 'import sys; sys.stdout.write(sys.stdin.read().encode("utf-16-le")[:8192].decode("utf-16-le", "ignore"))')"
             parse_mode=""
           fi
 
