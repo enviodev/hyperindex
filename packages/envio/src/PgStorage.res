@@ -1668,7 +1668,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId,
   ) => {
-    let (removedIdsResult, rollbackRows) = await Promise.all2((
+    let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
@@ -1685,16 +1685,17 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
 
+    let removedIds = removedIdRows->Array.map(row => row["id"])
     let restoredEntitiesResult = []
     rollbackRows->Array.forEach(row => {
       let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema)
       switch action {
       | SET => restoredEntitiesResult->Array.push(row)->ignore
-      | DELETE => removedIdsResult->Array.push({"id": entityId})->ignore
+      | DELETE => removedIds->Array.push(entityId)->ignore
       }
     })
 
-    (removedIdsResult, restoredEntitiesResult)
+    (removedIds, restoredEntitiesResult)
   }
 
   let writeBatchMethod = async (
