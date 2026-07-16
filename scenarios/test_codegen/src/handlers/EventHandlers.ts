@@ -5,6 +5,7 @@ import {
   S,
   type Logger,
   type EffectCaller,
+  type EffectChain,
   TestHelpers,
 } from "envio";
 import {
@@ -558,8 +559,8 @@ const testEffectWithCache = createEffect(
   async ({ context, input }) => {
     deepEqual(
       Object.keys(context),
-      ["effect", "cache"],
-      "Logger is on prototype and not included in Object.keys",
+      ["effect", "cache", "chain"],
+      "log is a prototype getter (not an own key); chain is an own enumerable property",
     );
     deepEqual(context.cache, true);
     expectType<
@@ -569,6 +570,7 @@ const testEffectWithCache = createEffect(
           readonly log: Logger;
           readonly effect: EffectCaller;
           cache: boolean;
+          readonly chain: EffectChain;
         }
       >
     >(true);

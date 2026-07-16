@@ -6,9 +6,14 @@
 // DbFunctions, Db, Migrations, InMemoryStore modules which use codegen code directly.
 
 // The type reflects an cache table in the db
-// It might be present even if the effect is not used in the application
+// It might be present even if the effect is not used in the application.
+// `initialState.cache` is keyed by `tableName` (the full cache address), so a
+// cross-chain and a chain-scoped cache for the same effect are tracked
+// independently.
 type effectCacheRecord = {
   effectName: string,
+  scope: Internal.chainScope,
+  tableName: string,
   // Number of rows in the table
   mutable count: int,
 }
@@ -40,8 +45,12 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
+// Carries the already-resolved cache address (`table`) rather than an effect +
+// scope: the scope is contextual (resolved per call from the handler's chain),
+// so the write layer only needs the concrete table it targets.
 type updatedEffectCache = {
-  effect: Internal.effect,
+  table: Table.table,
+  itemSchema: S.t<Internal.effectCacheItem>,
   items: array<Internal.effectCacheItem>,
   shouldInitialize: bool,
 }
@@ -112,7 +121,7 @@ type storage = {
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<{"id": string}>, array<unknown>)>,
+  ) => promise<(array<string>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,

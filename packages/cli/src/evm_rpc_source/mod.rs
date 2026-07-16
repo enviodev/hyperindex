@@ -12,7 +12,7 @@ mod interval;
 use crate::evm_hypersync_source::decode::DecoderCore;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
-    encode_address, OnEventRegistration, Log as DecoderLog, ParamValue,
+    encode_address, Log as DecoderLog, OnEventRegistration, ParamValue,
 };
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
@@ -211,22 +211,6 @@ impl EvmRpcClient {
         })
     }
 
-    /// Exposes the query's log selections for a given registration selection
-    /// and address index — used by tests and for debugging what a partition
-    /// would fetch.
-    #[napi]
-    pub fn build_log_selections(
-        &self,
-        registration_indexes: Vec<i64>,
-        addresses_by_contract_name: HashMap<String, Vec<String>>,
-    ) -> napi::Result<Vec<BuiltLogSelection>> {
-        let built = self
-            .selection_builder
-            .build(&registration_indexes, &addresses_by_contract_name)
-            .map_err(map_err)?;
-        Ok(built.log_selections)
-    }
-
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
         let height = self.inner.get_height().await.map_err(rpc_error_to_napi)?;
@@ -270,7 +254,10 @@ impl EvmRpcClient {
 
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, &params.addresses_by_contract_name)
+            .build(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
         let log_selections = built.log_selections;
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
@@ -462,7 +449,13 @@ impl EvmRpcClient {
         let mut topics: Vec<Option<&Vec<String>>> = selection
             .topics
             .iter()
-            .map(|values| if values.is_empty() { None } else { Some(values) })
+            .map(|values| {
+                if values.is_empty() {
+                    None
+                } else {
+                    Some(values)
+                }
+            })
             .collect();
         while matches!(topics.last(), Some(None)) {
             topics.pop();

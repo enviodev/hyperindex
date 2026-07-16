@@ -173,5 +173,10 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readdir: Path.t => promise<array<string>> = "readdir"
+
+    type stats
+    @module("fs") @scope("promises")
+    external stat: Path.t => promise<stats> = "stat"
+    @send external statsIsDirectory: stats => bool = "isDirectory"
   }
 }

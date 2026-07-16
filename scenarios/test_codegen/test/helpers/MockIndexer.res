@@ -362,7 +362,10 @@ module Indexer = {
     queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
-    queryEffectCache: string => promise<array<{"id": string, "output": JSON.t}>>,
+    queryEffectCache: 'input 'output. (
+      Envio.effect<'input, 'output>,
+      ~scope: Internal.chainScope,
+    ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
@@ -387,6 +390,8 @@ module Indexer = {
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
+    // Lets regression tests surface fatal errors without terminating the Vitest worker.
+    ~onError=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
@@ -445,9 +450,12 @@ module Indexer = {
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
-    let onError = (errHandler: ErrorHandling.t) => {
-      errHandler->ErrorHandling.log
-      NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+    let onError = switch onError {
+    | Some(onError) => onError
+    | None => (errHandler: ErrorHandling.t) => {
+        errHandler->ErrorHandling.log
+        NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+      }
     }
 
     let graphqlClient = Rest.client(`${Env.Hasura.url}/v1/graphql`)
@@ -609,11 +617,11 @@ module Indexer = {
           ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
-      queryEffectCache: (effectName: string) => {
+      queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
+        let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
+        let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
-        )
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
@@ -648,6 +656,7 @@ module Indexer = {
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
           ~targetBufferSize?,
+          ~onError,
           ~mapStorage,
         )
       },

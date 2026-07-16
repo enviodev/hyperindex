@@ -21,8 +21,7 @@ use decode::DecoderCore;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
-    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue,
-    RollbackGuard,
+    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue, RollbackGuard,
 };
 
 static LOGGER_INIT: Once = Once::new();
@@ -62,9 +61,10 @@ impl EvmHypersyncClient {
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
-        let decoder = DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
-            .context("build decoder")
-            .map_err(map_err)?;
+        let decoder =
+            DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
+                .context("build decoder")
+                .map_err(map_err)?;
 
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
@@ -80,22 +80,6 @@ impl EvmHypersyncClient {
             decoder,
             selection_builder,
         })
-    }
-
-    /// Exposes the query's log selections for a given registration selection
-    /// and address index — used by tests and for debugging what a partition
-    /// would fetch.
-    #[napi]
-    pub fn build_log_selections(
-        &self,
-        registration_indexes: Vec<i64>,
-        addresses_by_contract_name: HashMap<String, Vec<String>>,
-    ) -> napi::Result<Vec<BuiltLogSelection>> {
-        let built = self
-            .selection_builder
-            .build(&registration_indexes, &addresses_by_contract_name)
-            .map_err(map_err)?;
-        Ok(built.log_selections)
     }
 
     #[napi]
@@ -137,7 +121,10 @@ impl EvmHypersyncClient {
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, &params.addresses_by_contract_name)
+            .build(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
@@ -158,7 +145,10 @@ impl EvmHypersyncClient {
         // (blockNumber, transactionIndex), so those keys must come back on each
         // transaction row whenever any transaction field is requested.
         if !transaction_fields.is_empty() {
-            for field in [TransactionField::BlockNumber, TransactionField::TransactionIndex] {
+            for field in [
+                TransactionField::BlockNumber,
+                TransactionField::TransactionIndex,
+            ] {
                 if !transaction_fields.contains(&field) {
                     transaction_fields.push(field);
                 }

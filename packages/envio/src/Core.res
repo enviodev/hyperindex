@@ -10,10 +10,17 @@ type svmHypersyncClientCtor
 type hyperfuelClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type parseConfigYamlOptions = {
+  schema?: string,
+  env?: dict<string>,
+  files?: dict<string>,
+  isRescript?: bool,
+}
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
+  parseConfigYaml: (string, parseConfigYamlOptions) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("EvmHypersyncClient")
   evmHypersyncClient: evmHypersyncClientCtor,
@@ -197,6 +204,18 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
     ~configPath=configPath->Null.fromOption,
     ~directory=directory->Null.fromOption,
   )
+}
+
+// Pure config entry point: no cwd, config file, schema file, .env, or process env lookup.
+// A supplied schema is authoritative; omitted or blank schema text means an empty schema.
+let parseConfigYaml = (~schema=?, ~env=?, ~files=?, ~isRescript=false, yaml) => {
+  let addon = getAddon()
+  addon.parseConfigYaml(yaml, {
+    ?schema,
+    ?env,
+    ?files,
+    isRescript,
+  })
 }
 
 let runCli = args => {

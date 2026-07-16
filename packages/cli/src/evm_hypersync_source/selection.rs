@@ -22,7 +22,6 @@ pub struct TopicSelectionInput {
 /// One log selection of a built query: `addresses` scopes the selection to
 /// specific emitters (empty = any address), `topics` is the 4-position topic
 /// filter (empty position = match any).
-#[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuiltLogSelection {
     pub addresses: Vec<String>,
@@ -110,9 +109,7 @@ fn address_to_topic(address: &str) -> Result<String> {
 
 /// Fold selections without topic1..3 filters into one selection combining
 /// their topic0s, keeping the common case at a single log selection/request.
-fn compress(
-    selections: Vec<MaterializedTopicSelection>,
-) -> Vec<MaterializedTopicSelection> {
+fn compress(selections: Vec<MaterializedTopicSelection>) -> Vec<MaterializedTopicSelection> {
     let mut filterless_topic0s: Vec<String> = Vec::new();
     let mut with_filters = Vec::new();
     for selection in selections {
@@ -314,8 +311,7 @@ mod tests {
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const ADDR: &str = "0x1234567890abcdef1234567890abcdef12345678";
-    const ADDR_TOPIC: &str =
-        "0x0000000000000000000000001234567890abcdef1234567890abcdef12345678";
+    const ADDR_TOPIC: &str = "0x0000000000000000000000001234567890abcdef1234567890abcdef12345678";
 
     fn reg(
         id: i64,
@@ -388,7 +384,12 @@ mod tests {
     #[test]
     fn wildcard_selection_stays_address_free() {
         let builder = SelectionBuilder::from_registrations(&[reg(
-            0, SIGHASH_A, "C", true, false, Some(vec![]),
+            0,
+            SIGHASH_A,
+            "C",
+            true,
+            false,
+            Some(vec![]),
         )])
         .unwrap();
         let built = builder.build(&[0], &HashMap::new()).unwrap();
@@ -406,13 +407,10 @@ mod tests {
         // Wildcard event filtering an indexed param by the contract's own
         // addresses: the query stays address-unbound, the addresses fold into
         // topic1.
-        let builder = SelectionBuilder::from_registrations(&[reg(
-            0, SIGHASH_A, "C", true, true, None,
-        )])
-        .unwrap();
-        let built = builder
-            .build(&[0], &addresses(&[("C", &[ADDR])]))
-            .unwrap();
+        let builder =
+            SelectionBuilder::from_registrations(&[reg(0, SIGHASH_A, "C", true, true, None)])
+                .unwrap();
+        let built = builder.build(&[0], &addresses(&[("C", &[ADDR])])).unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -430,12 +428,15 @@ mod tests {
     #[test]
     fn contract_without_addresses_is_skipped() {
         let builder = SelectionBuilder::from_registrations(&[reg(
-            0, SIGHASH_A, "C", false, true, Some(vec![]),
+            0,
+            SIGHASH_A,
+            "C",
+            false,
+            true,
+            Some(vec![]),
         )])
         .unwrap();
-        let built = builder
-            .build(&[0], &addresses(&[("C", &[])]))
-            .unwrap();
+        let built = builder.build(&[0], &addresses(&[("C", &[])])).unwrap();
         assert_eq!(built.log_selections, vec![]);
     }
 
@@ -448,9 +449,7 @@ mod tests {
             reg(1, SIGHASH_B, "C", false, true, Some(vec![])),
         ])
         .unwrap();
-        let built = builder
-            .build(&[1], &addresses(&[("C", &[ADDR])]))
-            .unwrap();
+        let built = builder.build(&[1], &addresses(&[("C", &[ADDR])])).unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
