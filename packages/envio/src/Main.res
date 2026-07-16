@@ -331,13 +331,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let raw =
-      rawOptions->(
-        Utils.magic: 'a => {
-          "name": string,
-          "where": unknown,
-        }
-      )
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown})
     HandlerRegister.registerOnBlock(
       ~name=raw["name"],
       ~where=raw["where"],
@@ -500,11 +494,8 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   PromClient.collectDefaultMetrics({"register": runtimeRegistry})
 
   app->get("/metrics", (_req, res) => {
-    res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
-    let _ =
-      Metrics.collect(~state=getIndexerState())->Promise.thenResolve(metrics =>
-        res->endWithData(metrics)
-      )
+    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
+    let _ = res->endWithData(Metrics.collect(~state=getIndexerState()))
   })
 
   app->get("/metrics/runtime", (_req, res) => {
@@ -636,9 +627,6 @@ let start = async (
     (onErrorReject.contents->Option.getUnsafe)(FatalError(errHandler.exn->Utils.prettifyExn))
   }
   let envioVersion = Utils.EnvioPackage.value.version
-  Prometheus.Info.set(~version=envioVersion)
-  Prometheus.ProcessStartTimeSeconds.set()
-  Prometheus.RollbackEnabled.set(~enabled=config.shouldRollbackOnReorg)
 
   if !isTest {
     startServer(~persistence, ~isDevelopmentMode, ~getState=() =>

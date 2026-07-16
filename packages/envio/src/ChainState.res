@@ -29,6 +29,16 @@ type t = {
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
   // prune / rollback lifecycle as the transaction store.
   blockStore: BlockStore.t,
+  // --- Per-chain metric counters, rendered by Metrics at scrape time. ---
+  mutable blockRangeFetchSeconds: float,
+  mutable blockRangeParseSeconds: float,
+  mutable blockRangeFetchCount: int,
+  mutable blockRangeFetchedEvents: int,
+  mutable blockRangeFetchedBlocks: int,
+  mutable reorgCount: int,
+  mutable reorgDetectedBlock: option<int>,
+  mutable rollbackTargetBlock: option<int>,
+  mutable progressLatencyMs: option<int>,
 }
 
 // Per-chain shape returned by the status API.
@@ -108,6 +118,15 @@ let make = (
     safeCheckpointTracking,
     transactionStore,
     blockStore,
+    blockRangeFetchSeconds: 0.,
+    blockRangeParseSeconds: 0.,
+    blockRangeFetchCount: 0,
+    blockRangeFetchedEvents: 0,
+    blockRangeFetchedBlocks: 0,
+    reorgCount: 0,
+    reorgDetectedBlock: None,
+    rollbackTargetBlock: None,
+    progressLatencyMs: None,
   }
 }
 
@@ -307,8 +326,6 @@ let makeFromDbState = (
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
 
-  Prometheus.ProgressEventsCount.set(~processedCount=resumedChainState.numEventsProcessed, ~chainId)
-
   let progressBlockNumber =
     // Can be -1 when not set
     resumedChainState.progressBlockNumber >= 0
@@ -350,6 +367,43 @@ let committedProgressBlockNumber = (cs: t) => cs.committedProgressBlockNumber
 let numEventsProcessed = (cs: t) => cs.numEventsProcessed
 let pendingBudget = (cs: t) => cs.pendingBudget
 let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock
+
+// --- Metric counters. ---
+
+let recordBlockRangeFetch = (
+  cs: t,
+  ~totalTimeElapsed,
+  ~parsingTimeElapsed,
+  ~numEvents,
+  ~blockRangeSize,
+) => {
+  cs.blockRangeFetchSeconds = cs.blockRangeFetchSeconds +. totalTimeElapsed
+  cs.blockRangeParseSeconds = cs.blockRangeParseSeconds +. parsingTimeElapsed
+  cs.blockRangeFetchCount = cs.blockRangeFetchCount + 1
+  cs.blockRangeFetchedEvents = cs.blockRangeFetchedEvents + numEvents
+  cs.blockRangeFetchedBlocks = cs.blockRangeFetchedBlocks + blockRangeSize
+}
+
+let recordReorgDetected = (cs: t, ~blockNumber) => {
+  cs.reorgCount = cs.reorgCount + 1
+  cs.reorgDetectedBlock = Some(blockNumber)
+}
+
+let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = Some(blockNumber)
+
+let blockRangeFetchSeconds = (cs: t) => cs.blockRangeFetchSeconds
+let blockRangeParseSeconds = (cs: t) => cs.blockRangeParseSeconds
+let blockRangeFetchCount = (cs: t) => cs.blockRangeFetchCount
+let blockRangeFetchedEvents = (cs: t) => cs.blockRangeFetchedEvents
+let blockRangeFetchedBlocks = (cs: t) => cs.blockRangeFetchedBlocks
+let reorgCount = (cs: t) => cs.reorgCount
+let reorgDetectedBlock = (cs: t) => cs.reorgDetectedBlock
+let rollbackTargetBlock = (cs: t) => cs.rollbackTargetBlock
+let progressLatencyMs = (cs: t) => cs.progressLatencyMs
+let partitionsCount = (cs: t) => cs.fetchState->FetchState.partitionsCount
+let bufferBlockNumber = (cs: t) => cs.fetchState->FetchState.bufferBlockNumber
+let endBlock = (cs: t) => cs.fetchState.endBlock
+let numAddresses = (cs: t) => cs.indexingAddresses->IndexingAddresses.size
 
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
@@ -772,19 +826,6 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 
   switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
   | Some(chainAfterBatch) => {
-      if cs.committedProgressBlockNumber !== chainAfterBatch.progressBlockNumber {
-        Prometheus.ProgressBlockNumber.set(
-          ~blockNumber=chainAfterBatch.progressBlockNumber,
-          ~chainId,
-        )
-      }
-      if cs.numEventsProcessed !== chainAfterBatch.totalEventsProcessed {
-        Prometheus.ProgressEventsCount.set(
-          ~processedCount=chainAfterBatch.totalEventsProcessed,
-          ~chainId,
-        )
-      }
-
       // Calculate and set latency metrics. The payload block is materialised or
       // inline by processing time; its timestamp may still be absent (e.g. an
       // SVM slot with no block row) — the metric is skipped then.
@@ -802,10 +843,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       ) {
       | Some(blockTimestamp) =>
         let blockTimestampMs = blockTimestamp->(Utils.magic: unknown => int) * 1000
-        Prometheus.ProgressLatency.set(
-          ~latencyMs=Date.now()->Float.toInt - blockTimestampMs,
-          ~chainId,
-        )
+        cs.progressLatencyMs = Some(Date.now()->Float.toInt - blockTimestampMs)
       | None => ()
       }
 
@@ -850,7 +888,6 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 let markReady = (cs: t) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
-    Prometheus.ProgressReady.set(~chainId=cs.chainConfig.id)
   }
 
 // Roll a chain back to a reorg target. With a progress diff, restore fetch/
@@ -865,7 +902,6 @@ let rollback = (
   ~rollbackTargetBlockNumber,
   ~isReorgChain,
 ) => {
-  let chainId = cs.chainConfig.id
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
     let newTotalEventsProcessed =
@@ -876,12 +912,6 @@ let rollback = (
         ~message="Missing events-processed diff for rolled-back chain",
       )
 
-    if cs.committedProgressBlockNumber !== newProgressBlockNumber {
-      Prometheus.ProgressBlockNumber.set(~blockNumber=newProgressBlockNumber, ~chainId)
-    }
-    if cs.numEventsProcessed !== newTotalEventsProcessed {
-      Prometheus.ProgressEventsCount.set(~processedCount=newTotalEventsProcessed, ~chainId)
-    }
     if isReorgChain {
       cs.reorgDetection =
         cs.reorgDetection->ReorgDetection.rollbackToValidBlockNumber(

@@ -129,18 +129,15 @@ let rec onQueryResponse = async (
     } = response
 
     if knownHeight > chainState->ChainState.knownHeight {
-      Prometheus.SourceHeight.set(
-        ~blockNumber=knownHeight,
-        ~chainId=(chainState->ChainState.chainConfig).id,
-        // The knownHeight from response won't necessarily
-        // belong to the currently active source.
-        // But for simplicity, assume it does.
-        ~sourceName=(chainState->ChainState.sourceManager->SourceManager.getActiveSource).name,
-      )
+      // The knownHeight from response won't necessarily
+      // belong to the currently active source.
+      // But for simplicity, assume it does.
+      chainState
+      ->ChainState.sourceManager
+      ->SourceManager.reportActiveSourceHeight(~height=knownHeight)
     }
 
-    Prometheus.FetchingBlockRange.increment(
-      ~chainId=chain->ChainMap.Chain.toChainId,
+    chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
       ~numEvents=parsedQueueItems->Array.length,
@@ -183,10 +180,8 @@ let rec onQueryResponse = async (
             ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
           ),
         )
-        Prometheus.ReorgCount.increment(~chain)
-        Prometheus.ReorgDetectionBlockNumber.set(
+        chainState->ChainState.recordReorgDetected(
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
-          ~chain,
         )
         if (state->IndexerState.config).shouldRollbackOnReorg {
           Some(reorgDetected.scannedBlock.blockNumber)

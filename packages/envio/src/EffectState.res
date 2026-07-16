@@ -9,8 +9,27 @@ type effectRateLimitState = {
   durationMs: int,
   mutable availableCalls: int,
   mutable windowStartTime: float,
-  mutable queueCount: int,
   mutable nextWindowPromise: option<promise<unit>>,
+}
+
+// Per-(effect, scope) counters rendered into the envio_effect_* metrics.
+// Keyed by cache table name and kept outside the cache tables so a rollback
+// (which drops the tables) never rewinds the monotonic counters.
+type effectStats = {
+  effectName: string,
+  scope: Internal.chainScope,
+  // Wall-clock time with at least one call in flight.
+  mutable callSeconds: float,
+  // Cumulative per-call time; exceeds callSeconds under parallel execution.
+  mutable callSecondsTotal: float,
+  mutable callCount: int,
+  mutable activeCallsCount: int,
+  mutable prevCallStartTimerRef: Performance.timeRef,
+  mutable queueCount: int,
+  mutable queueWaitSeconds: float,
+  mutable invalidationsCount: int,
+  // Number of persisted cache rows; seeded from the db on restart.
+  mutable cacheCount: int,
 }
 
 type effectCacheInMemTable = {
@@ -30,9 +49,7 @@ type effectCacheInMemTable = {
   scope: Internal.chainScope,
   table: Table.table,
   rateLimitState: option<effectRateLimitState>,
-  // Per-scope active-call bookkeeping, surfaced through the Effect metrics.
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
+  stats: effectStats,
 }
 
 type t = {
@@ -43,9 +60,42 @@ type t = {
   // reflects real API throughput, not indexing progress, so a reorg must not
   // refill an effect's budget.
   rateLimits: dict<effectRateLimitState>,
+  // Metric counters keyed by the same name. Survive rollback: prometheus
+  // counters must stay monotonic.
+  stats: dict<effectStats>,
 }
 
-let make = (): t => {tables: Dict.make(), rateLimits: Dict.make()}
+let make = (): t => {tables: Dict.make(), rateLimits: Dict.make(), stats: Dict.make()}
+
+let getStats = (self: t, ~tableName, ~effectName, ~scope) =>
+  switch self.stats->Utils.Dict.dangerouslyGetNonOption(tableName) {
+  | Some(existing) => existing
+  | None =>
+    let created: effectStats = {
+      effectName,
+      scope,
+      callSeconds: 0.,
+      callSecondsTotal: 0.,
+      callCount: 0,
+      activeCallsCount: 0,
+      prevCallStartTimerRef: %raw(`null`),
+      queueCount: 0,
+      queueWaitSeconds: 0.,
+      invalidationsCount: 0,
+      cacheCount: 0,
+    }
+    self.stats->Dict.set(tableName, created)
+    created
+  }
+
+let stats = (self: t) => self.stats
+
+// Seed the persisted-rows count from the db on restart, before any cache table
+// is lazily created.
+let setCacheCount = (self: t, ~effectName, ~scope, ~count) => {
+  let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
+  (self->getStats(~tableName, ~effectName, ~scope)).cacheCount = count
+}
 
 let getRateLimitState = (self: t, ~tableName, ~effect: Internal.effect) =>
   switch effect.rateLimit {
@@ -60,7 +110,6 @@ let getRateLimitState = (self: t, ~tableName, ~effect: Internal.effect) =>
           durationMs,
           availableCalls: callsPerDuration,
           windowStartTime: Date.now(),
-          queueCount: 0,
           nextWindowPromise: None,
         }
         self.rateLimits->Dict.set(tableName, created)
@@ -85,8 +134,7 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
       scope,
       table: Internal.makeCacheTable(~effectName=effect.name, ~scope),
       rateLimitState: self->getRateLimitState(~tableName, ~effect),
-      activeCallsCount: 0,
-      prevCallStartTimerRef: %raw(`null`),
+      stats: self->getStats(~tableName, ~effectName=effect.name, ~scope),
     }
     self.tables->Dict.set(tableName, inMemTable)
     inMemTable

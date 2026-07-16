@@ -10,6 +10,44 @@ type rollbackState =
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
+// Metric counters rendered by Metrics at scrape time. The records are exposed
+// read-only through the accessors below; mutation goes through the record*
+// operations.
+type handlerStat = {
+  contract: string,
+  event: string,
+  mutable processingSeconds: float,
+  mutable processingCount: int,
+  mutable preloadSeconds: float,
+  mutable preloadCount: int,
+  mutable preloadSecondsTotal: float,
+  mutable preloadPendingCount: int,
+  mutable preloadPendingTimerRef: Performance.timeRef,
+}
+
+type storageLoadStat = {
+  operation: string,
+  storage: string,
+  mutable seconds: float,
+  mutable secondsTotal: float,
+  mutable count: int,
+  mutable whereSize: int,
+  mutable size: int,
+  mutable pendingCount: int,
+  mutable pendingTimerRef: Performance.timeRef,
+}
+
+type storageWriteStat = {
+  storage: string,
+  mutable seconds: float,
+  mutable count: int,
+}
+
+type historyPruneStat = {
+  mutable seconds: float,
+  mutable count: int,
+}
+
 module EntityTables: {
   type t = dict<InMemoryTable.Entity.t>
   let make: array<Internal.entityConfig> => t
@@ -100,6 +138,33 @@ let isStopped: t => bool
 let epoch: t => int
 let pruneStaleEntityHistoryThrottler: t => Throttler.t
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
+let preloadSeconds: t => float
+let processingSeconds: t => float
+let handlerStats: t => dict<handlerStat>
+let storageLoadStats: t => dict<storageLoadStat>
+let storageWriteStats: t => dict<storageWriteStat>
+let historyPruneStats: t => dict<historyPruneStat>
+let rollbackSeconds: t => float
+let rollbackCount: t => int
+let rollbackEventsCount: t => float
+
+// Metric counters.
+let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
+let recordHandlerDuration: (t, ~contract: string, ~event: string, ~duration: float) => unit
+let startPreloadHandler: (t, ~contract: string, ~event: string) => Performance.timeRef
+let endPreloadHandler: (t, Performance.timeRef, ~contract: string, ~event: string) => unit
+let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
+let endStorageLoad: (
+  t,
+  Performance.timeRef,
+  ~storage: string,
+  ~operation: string,
+  ~whereSize: int,
+  ~size: int,
+) => unit
+let recordStorageWrite: (t, ~storage: string, ~timeSeconds: float) => unit
+let recordHistoryPrune: (t, ~entityName: string, ~timeSeconds: float) => unit
+let recordRollbackSuccess: (t, ~timeSeconds: float, ~rollbackedProcessedEvents: float) => unit
 
 // Store domain operations.
 let queueProcessedBatch: (t, ~batch: Batch.t) => unit

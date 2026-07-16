@@ -8,6 +8,10 @@ type requestStatAgg = {mutable count: int, mutable seconds: float}
 type sourceState = {
   source: Source.t,
   mutable knownHeight: int,
+  // Highest height observed for this source, rendered into
+  // envio_source_known_height. Kept apart from knownHeight, which drives the
+  // height-subscription wait logic.
+  mutable reportedHeight: int,
   mutable unsubscribe: option<unit => unit>,
   mutable pendingHeightResolvers: array<int => unit>,
   mutable disabled: bool,
@@ -44,6 +48,11 @@ type t = {
   sourcesState: array<sourceState>,
   mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
+  // Cumulative time spent in each status, rendered into the
+  // envio_indexing_idle/source_waiting/source_querying_seconds counters.
+  mutable idleSeconds: float,
+  mutable waitingForNewBlockSeconds: float,
+  mutable queryingSeconds: float,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
@@ -91,6 +100,32 @@ let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
   })
   samples
 }
+
+// Per-source observed heights for envio_source_known_height. Sources with no
+// observed height yet are skipped.
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: int,
+  height: int,
+}
+
+let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    if sourceState.reportedHeight > 0 {
+      samples->Array.push({
+        sourceName: sourceState.source.name,
+        chainId: sourceState.source.chain->ChainMap.Chain.toChainId,
+        height: sourceState.reportedHeight,
+      })
+    }
+  })
+  samples
+}
+
+let idleSeconds = (sourceManager: t) => sourceManager.idleSeconds
+let waitingForNewBlockSeconds = (sourceManager: t) => sourceManager.waitingForNewBlockSeconds
+let queryingSeconds = (sourceManager: t) => sourceManager.queryingSeconds
 
 // Partition queries currently in flight on this chain's sources. Summed across
 // chains by CrossChainState to enforce the indexer-wide concurrency budget.
@@ -221,14 +256,11 @@ let make = (
   | None =>
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
-  Prometheus.IndexingConcurrency.set(
-    ~concurrency=0,
-    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
-  )
   {
     sourcesState: sources->Array.map(source => {
       source,
       knownHeight: 0,
+      reportedHeight: 0,
       unsubscribe: None,
       pendingHeightResolvers: [],
       disabled: false,
@@ -247,6 +279,9 @@ let make = (
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
+    idleSeconds: 0.,
+    waitingForNewBlockSeconds: 0.,
+    queryingSeconds: 0.,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
     rateLimitWaiters: 0,
@@ -256,18 +291,24 @@ let make = (
 }
 
 let trackNewStatus = (sourceManager: t, ~newStatus) => {
-  let promCounter = switch sourceManager.status {
-  | Idle => Prometheus.IndexingIdleTime.counter
-  | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
-  | Querieng => Prometheus.IndexingQueryTime.counter
+  let elapsed = sourceManager.statusStart->Performance.secondsSince
+  switch sourceManager.status {
+  | Idle => sourceManager.idleSeconds = sourceManager.idleSeconds +. elapsed
+  | WaitingForNewBlock =>
+    sourceManager.waitingForNewBlockSeconds = sourceManager.waitingForNewBlockSeconds +. elapsed
+  | Querieng => sourceManager.queryingSeconds = sourceManager.queryingSeconds +. elapsed
   }
-  promCounter->Prometheus.SafeCounter.handleFloat(
-    ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Performance.secondsSince,
-  )
   sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
+
+// Record a height observed for the active source outside the height-wait loop
+// (e.g. carried on a block-range fetch response).
+let reportActiveSourceHeight = (sourceManager: t, ~height) =>
+  switch sourceManager.sourcesState->Array.find(s => s.source === sourceManager.activeSource) {
+  | Some(sourceState) if height > sourceState.reportedHeight => sourceState.reportedHeight = height
+  | _ => ()
+  }
 
 // Carry out the fetch decision made by CrossChainState.checkAndFetch: either
 // dispatch the admitted queries or start waiting for a new block. Selection
@@ -307,20 +348,12 @@ let dispatch = async (
       // when they were admitted; here we just execute them.
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
-      Prometheus.IndexingConcurrency.set(
-        ~concurrency=sourceManager.fetchingPartitionsCount,
-        ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-      )
       sourceManager->trackNewStatus(~newStatus=Querieng)
       let _ = await queries
       ->Array.map(q => {
         let promise = q->executeQuery
         let _ = promise->Promise.thenResolve(_ => {
           sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          Prometheus.IndexingConcurrency.set(
-            ~concurrency=sourceManager.fetchingPartitionsCount,
-            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-          )
           if sourceManager.fetchingPartitionsCount === 0 {
             sourceManager->trackNewStatus(~newStatus=Idle)
           }
@@ -465,13 +498,8 @@ let getSourceNewHeight = async (
     }
   }
 
-  // Update Prometheus only if height increased
-  if newHeight.contents > initialHeight {
-    Prometheus.SourceHeight.set(
-      ~sourceName=source.name,
-      ~chainId=source.chain->ChainMap.Chain.toChainId,
-      ~blockNumber=newHeight.contents,
-    )
+  if newHeight.contents > sourceState.reportedHeight {
+    sourceState.reportedHeight = newHeight.contents
   }
 
   newHeight.contents

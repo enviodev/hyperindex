@@ -33,7 +33,7 @@ let runPrune = async (state: IndexerState.t) => {
           ),
         )
       }
-      Prometheus.RollbackHistoryPrune.increment(
+      state->IndexerState.recordHistoryPrune(
         ~timeSeconds=Performance.secondsSince(timeRef),
         ~entityName=entityConfig.name,
       )

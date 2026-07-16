@@ -1,82 +1,63 @@
 open Vitest
 
-describe("Metrics.renderGauge", () => {
-  it("Hand-rolls prometheus gauge text with one sample per chain", t => {
-    let rendered = Metrics.renderGauge(
+describe("Metrics rendering helpers", () => {
+  it("Renders metrics separated by a blank line, keeping 3 decimals after the point", t => {
+    let b: Metrics.builder = {out: ""}
+    b->Metrics.single(
+      ~name="envio_preload_seconds",
+      ~help="Cumulative preload time.",
+      ~kind="counter",
+      ~value=816.8360346669994,
+    )
+    b->Metrics.series(
       ~name="envio_indexing_addresses",
       ~help="The number of addresses indexed on chain.",
-      ~chains=Dict.fromArray([("1", 3), ("137", 0)]),
-      ~value=count => count,
+      ~kind="gauge",
+      ~entries=[(`{chainId="1"}`, 3.), (`{chainId="137"}`, 0.)],
+      ~value=v => v,
     )
 
-    t.expect(rendered).toBe(
-      `# HELP envio_indexing_addresses The number of addresses indexed on chain.
+    t.expect(b.out).toBe(`# HELP envio_preload_seconds Cumulative preload time.
+# TYPE envio_preload_seconds counter
+envio_preload_seconds 816.836
+
+# HELP envio_indexing_addresses The number of addresses indexed on chain.
 # TYPE envio_indexing_addresses gauge
 envio_indexing_addresses{chainId="1"} 3
-envio_indexing_addresses{chainId="137"} 0`,
-    )
+envio_indexing_addresses{chainId="137"} 0`)
   })
 
-  it("Renders only the header when there are no chains", t => {
-    let rendered = Metrics.renderGauge(
-      ~name="envio_indexing_addresses",
-      ~help="help",
-      ~chains=Dict.make(),
-      ~value=count => count,
+  it("Renders only the header for a series without entries and skips seriesOpt None samples", t => {
+    let b: Metrics.builder = {out: ""}
+    b->Metrics.series(
+      ~name="envio_indexing_end_block",
+      ~help="The block number to stop indexing at.",
+      ~kind="gauge",
+      ~entries=[],
+      ~value=v => v,
+    )
+    b->Metrics.seriesOpt(
+      ~name="envio_source_request_seconds_total",
+      ~help="Cumulative time spent on data source requests.",
+      ~kind="counter",
+      ~entries=[(`{method="getLogs"}`, 1.5), (`{method="heightSubscription"}`, 0.)],
+      ~value=v => v !== 0. ? Some(v) : None,
     )
 
-    t.expect(rendered).toBe(`# HELP envio_indexing_addresses help
-# TYPE envio_indexing_addresses gauge`)
-  })
-})
+    t.expect(b.out).toBe(`# HELP envio_indexing_end_block The block number to stop indexing at.
+# TYPE envio_indexing_end_block gauge
 
-describe("Metrics.renderSourceRequests", () => {
-  it(
-    "Hand-rolls both HELP/TYPE blocks with one sample pair per (source, chain, method), omitting zero-second lines",
-    t => {
-      let rendered = Metrics.renderSourceRequests(
-        ~samples=[
-          {
-            SourceManager.sourceName: "HyperSync",
-            chainId: 1,
-            method: "getLogs",
-            count: 3,
-            seconds: 816.8360346669994,
-          },
-          {
-            SourceManager.sourceName: "RPC (host)",
-            chainId: 137,
-            method: "heightSubscription",
-            count: 1,
-            seconds: 0.,
-          },
-        ],
-      )
-
-      t.expect(rendered).toBe(
-        `
-# HELP envio_source_request_total The number of requests made to data sources.
-# TYPE envio_source_request_total counter
-envio_source_request_total{source="HyperSync",chainId="1",method="getLogs"} 3
-envio_source_request_total{source="RPC (host)",chainId="137",method="heightSubscription"} 1
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
-envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 816.836`,
-      )
-    },
-  )
-
-  it("Renders nothing when there are no samples", t => {
-    let rendered = Metrics.renderSourceRequests(~samples=[])
-
-    t.expect(rendered).toBe("")
+envio_source_request_seconds_total{method="getLogs"} 1.5`)
   })
 })
 
 describe("Metrics.collect", () => {
-  Async.it("Returns the base registry metrics untouched when there is no state", async t => {
-    let collected = await Metrics.collect(~state=None)
-    let base = await PromClient.defaultRegister->PromClient.metrics
-    t.expect(collected).toBe(base)
+  it("Renders only the indexer info when there is no state", t => {
+    t.expect(Metrics.collect(~state=None)).toBe(`# HELP envio_info Information about the indexer
+# TYPE envio_info gauge
+envio_info{version="${Utils.EnvioPackage.value.version}"} 1
+`)
   })
 })

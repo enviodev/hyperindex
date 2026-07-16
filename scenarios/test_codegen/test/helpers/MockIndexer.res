@@ -396,9 +396,6 @@ module Indexer = {
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
-    // TODO: Should stop using global client
-    PromClient.defaultRegister->PromClient.resetMetrics
-
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
     | None => Logging.setLogLevel(#silent)
@@ -625,14 +622,37 @@ module Indexer = {
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
-        switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
-        | Some(m) =>
-          (await m.get())["values"]->Array.map(v => {
-            value: v.value->Int.toString,
-            labels: v.labels,
-          })
-        | None => []
-        }
+        // Parse the metric's samples back out of the rendered /metrics text.
+        Metrics.collect(~state=Some(state))
+        ->String.split("\n")
+        ->Array.filterMap(line =>
+          if line->String.startsWith(name ++ "{") || line->String.startsWith(name ++ " ") {
+            let rest = line->String.slice(~start=name->String.length)
+            let (labelsPart, value) = switch rest->String.lastIndexOf(" ") {
+            | -1 => ("", rest)
+            | i => (
+                rest->String.slice(~start=0, ~end=i),
+                rest->String.slice(~start=i + 1),
+              )
+            }
+            let labels = Dict.make()
+            if labelsPart->String.startsWith("{") {
+              labelsPart
+              ->String.slice(~start=1, ~end=labelsPart->String.length - 1)
+              ->String.split(",")
+              ->Array.forEach(pair =>
+                switch pair->String.split("=") {
+                | [key, quoted] =>
+                  labels->Dict.set(key, quoted->String.slice(~start=1, ~end=quoted->String.length - 1))
+                | _ => ()
+                }
+              )
+            }
+            Some({value, labels})
+          } else {
+            None
+          }
+        )
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.

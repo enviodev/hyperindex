@@ -1779,25 +1779,16 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     // Initialize sink if configured
     let sinkPromise = switch sink {
-    | Some(sink) => {
-        let timerRef = Performance.now()
-        Some(
-          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
-          ->Promise.thenResolve(_ => {
-            Prometheus.StorageWrite.increment(
-              ~storage=sink.name,
-              ~timeSeconds=timerRef->Performance.secondsSince,
-            )
-            None
-          })
-          // Otherwise it fails with unhandled exception
-          ->Utils.Promise.catchResolve(exn => Some(exn)),
-        )
-      }
+    | Some(sink) =>
+      Some(
+        sink.writeBatch(~batch, ~updatedEntities=chUpdates)
+        ->Promise.thenResolve(_ => None)
+        // Otherwise it fails with unhandled exception
+        ->Utils.Promise.catchResolve(exn => Some(exn)),
+      )
     | None => None
     }
 
-    let primaryTimerRef = Performance.now()
     await writeBatch(
       sql,
       ~batch,
@@ -1811,10 +1802,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~updatedEntities=pgUpdates,
       ~sinkPromise,
       ~chainMetaData,
-    )
-    Prometheus.StorageWrite.increment(
-      ~storage="postgres",
-      ~timeSeconds=primaryTimerRef->Performance.secondsSince,
     )
   }
 

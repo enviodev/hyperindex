@@ -3,8 +3,22 @@ type effectRateLimitState = {
   durationMs: int,
   mutable availableCalls: int,
   mutable windowStartTime: float,
-  mutable queueCount: int,
   mutable nextWindowPromise: option<promise<unit>>,
+}
+
+// Per-(effect, scope) metric counters. Survive rollback so they stay monotonic.
+type effectStats = {
+  effectName: string,
+  scope: Internal.chainScope,
+  mutable callSeconds: float,
+  mutable callSecondsTotal: float,
+  mutable callCount: int,
+  mutable activeCallsCount: int,
+  mutable prevCallStartTimerRef: Performance.timeRef,
+  mutable queueCount: int,
+  mutable queueWaitSeconds: float,
+  mutable invalidationsCount: int,
+  mutable cacheCount: int,
 }
 
 type effectCacheInMemTable = {
@@ -16,8 +30,7 @@ type effectCacheInMemTable = {
   scope: Internal.chainScope,
   table: Table.table,
   rateLimitState: option<effectRateLimitState>,
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
+  stats: effectStats,
 }
 
 // Opaque store of all per-(effect, scope) runtime state.
@@ -30,3 +43,7 @@ let getTable: (t, ~effect: Internal.effect, ~scope: Internal.chainScope) => effe
 let forEach: (t, effectCacheInMemTable => unit) => unit
 // Drop the cache tables but keep the rate-limit windows across a rollback.
 let resetForRollback: t => unit
+// Metric counters keyed by cache table name.
+let stats: t => dict<effectStats>
+// Seed the persisted-rows count from the db on restart.
+let setCacheCount: (t, ~effectName: string, ~scope: Internal.chainScope, ~count: int) => unit

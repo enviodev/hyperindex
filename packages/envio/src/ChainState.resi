@@ -53,6 +53,30 @@ let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
+// Metric counters, rendered by Metrics at scrape time.
+let recordBlockRangeFetch: (
+  t,
+  ~totalTimeElapsed: float,
+  ~parsingTimeElapsed: float,
+  ~numEvents: int,
+  ~blockRangeSize: int,
+) => unit
+let recordReorgDetected: (t, ~blockNumber: int) => unit
+let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
+let blockRangeFetchSeconds: t => float
+let blockRangeParseSeconds: t => float
+let blockRangeFetchCount: t => int
+let blockRangeFetchedEvents: t => int
+let blockRangeFetchedBlocks: t => int
+let reorgCount: t => int
+let reorgDetectedBlock: t => option<int>
+let rollbackTargetBlock: t => option<int>
+let progressLatencyMs: t => option<int>
+let partitionsCount: t => int
+let bufferBlockNumber: t => int
+let endBlock: t => option<int>
+let numAddresses: t => int
+
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>

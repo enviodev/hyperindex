@@ -61,11 +61,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(
-        ~count=effectCacheRecord.count,
-        ~effectName,
-        ~scope=scope->Internal.EffectCache.scopeToString,
-      )
+      inMemTable.stats.cacheCount = effectCacheRecord.count
       acc
       ->Array.push(
         (
@@ -129,6 +125,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
 
+    let timerRef = Performance.now()
     await persistence.storage.writeBatch(
       ~batch,
       ~rollback,
@@ -138,6 +135,10 @@ let runOneWrite = async (state: IndexerState.t) => {
       ~updatedEntities,
       ~updatedEffectsCache,
       ~chainMetaData,
+    )
+    state->IndexerState.recordStorageWrite(
+      ~storage=persistence.storage.name,
+      ~timeSeconds=timerRef->Performance.secondsSince,
     )
 
     state->IndexerState.markCommitted(~upToCheckpointId)
