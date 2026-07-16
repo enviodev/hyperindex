@@ -112,7 +112,7 @@ type storage = {
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<{"id": string}>, array<unknown>)>,
+  ) => promise<(array<string>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
