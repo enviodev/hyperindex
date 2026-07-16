@@ -38,6 +38,15 @@ type effectCacheInMemTable = {
   mutable prevCallStartTimerRef: Performance.timeRef,
 }
 
+// Owns all per-(effect, scope) runtime state. Cache tables are dropped on
+// rollback; rate-limit windows survive it.
+module EffectState: {
+  type t
+  let getTable: (t, ~effect: Internal.effect, ~scope: Internal.chainScope) => effectCacheInMemTable
+  let forEach: (t, effectCacheInMemTable => unit) => unit
+  let resetForRollback: t => unit
+}
+
 type t
 
 let make: (
@@ -100,8 +109,7 @@ let config: t => Config.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
-let effects: t => dict<effectCacheInMemTable>
-let effectRateLimits: t => dict<effectRateLimitState>
+let effectState: t => EffectState.t
 let committedCheckpointId: t => Internal.checkpointId
 let processedCheckpointId: t => Internal.checkpointId
 let processedBatches: t => array<Batch.t>

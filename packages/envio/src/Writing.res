@@ -16,8 +16,8 @@ let getChangesCount = (state: IndexerState.t) => {
     total := total.contents +. (state->InMemoryStore.getInMemTable(~entityConfig)).changesCount
   })
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable => {
+  ->IndexerState.effectState
+  ->IndexerState.EffectState.forEach(inMemTable => {
     total := total.contents +. inMemTable.changesCount
   })
   state
@@ -38,8 +38,8 @@ let waitForCommit = (state: IndexerState.t): promise<unit> =>
 let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updatedEffectCache> => {
   let acc = []
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable => {
+  ->IndexerState.effectState
+  ->IndexerState.EffectState.forEach(inMemTable => {
     let {idsToStore, dict, effect, invalidationsCount, scope, table} = inMemTable
     switch idsToStore {
     | [] => ()
@@ -208,8 +208,8 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
     ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable =>
+  ->IndexerState.effectState
+  ->IndexerState.EffectState.forEach(inMemTable =>
     inMemTable->InMemoryStore.dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
   )
 }

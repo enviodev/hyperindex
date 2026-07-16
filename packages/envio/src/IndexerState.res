@@ -68,8 +68,8 @@ type effectCacheInMemTable = {
   mutable changesCount: float,
   effect: Internal.effect,
   // The scope this cache is for and its resolved db table (the address). The
-  // in-mem table is keyed in `effects` by `table.tableName`, so a cross-chain
-  // and a chain-scoped cache for the same effect stay isolated.
+  // in-mem table is keyed by `table.tableName`, so a cross-chain and a
+  // chain-scoped cache for the same effect stay isolated.
   scope: Internal.chainScope,
   table: Table.table,
   // None when the effect has no rate limit.
@@ -79,18 +79,82 @@ type effectCacheInMemTable = {
   mutable prevCallStartTimerRef: Performance.timeRef,
 }
 
+// Owns all per-(effect, scope) runtime state and its lifecycle. The two maps
+// have different rollback semantics, so keeping them together with an explicit
+// `resetForRollback` makes the invariant enforced rather than remembered.
+module EffectState = {
+  type t = {
+    // Cache tables keyed by cache table name. Dropped on rollback — the cache
+    // is re-derivable from the db.
+    mutable tables: dict<effectCacheInMemTable>,
+    // Rate-limit windows keyed by the same name. Survive rollback: rate
+    // limiting reflects real API throughput, not indexing progress, so a reorg
+    // must not refill an effect's budget.
+    rateLimits: dict<effectRateLimitState>,
+  }
+
+  let make = (): t => {tables: Dict.make(), rateLimits: Dict.make()}
+
+  let getRateLimitState = (self: t, ~tableName, ~effect: Internal.effect) =>
+    switch effect.rateLimit {
+    | None => None
+    | Some({callsPerDuration, durationMs}) =>
+      Some(
+        switch self.rateLimits->Utils.Dict.dangerouslyGetNonOption(tableName) {
+        | Some(existing) => existing
+        | None =>
+          let created: effectRateLimitState = {
+            callsPerDuration,
+            durationMs,
+            availableCalls: callsPerDuration,
+            windowStartTime: Date.now(),
+            queueCount: 0,
+            nextWindowPromise: None,
+          }
+          self.rateLimits->Dict.set(tableName, created)
+          created
+        },
+      )
+    }
+
+  // Get, or lazily create, the in-mem table for an (effect, scope). A recreated
+  // table (e.g. after a rollback) reuses the surviving rate-limit window.
+  let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) => {
+    let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
+    switch self.tables->Utils.Dict.dangerouslyGetNonOption(tableName) {
+    | Some(inMemTable) => inMemTable
+    | None =>
+      let inMemTable: effectCacheInMemTable = {
+        idsToStore: [],
+        dict: Dict.make(),
+        changesCount: 0.,
+        invalidationsCount: 0,
+        effect,
+        scope,
+        table: Internal.makeCacheTable(~effectName=effect.name, ~scope),
+        rateLimitState: self->getRateLimitState(~tableName, ~effect),
+        activeCallsCount: 0,
+        prevCallStartTimerRef: %raw(`null`),
+      }
+      self.tables->Dict.set(tableName, inMemTable)
+      inMemTable
+    }
+  }
+
+  let forEach = (self: t, fn) => self.tables->Utils.Dict.forEach(fn)
+
+  // Drop the cache tables (re-derivable from the db) but keep the rate-limit
+  // windows so a reorg doesn't hand an effect a fresh budget.
+  let resetForRollback = (self: t) => self.tables = Dict.make()
+}
+
 type t = {
   config: Config.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
   mutable entities: EntityTables.t,
-  mutable effects: dict<effectCacheInMemTable>,
-  // Per-scope rate-limit windows, keyed by cache table name. Kept outside
-  // `effects` (which a rollback wipes) so an effect's rate-limit budget isn't
-  // refilled by a reorg — rate limiting reflects real API throughput, not
-  // indexing progress.
-  effectRateLimits: dict<effectRateLimitState>,
+  effectState: EffectState.t,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint persisted to the db.
   mutable committedCheckpointId: Internal.checkpointId,
@@ -169,8 +233,7 @@ let make = (
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities),
-    effects: Dict.make(),
-    effectRateLimits: Dict.make(),
+    effectState: EffectState.make(),
     rollback: None,
     committedCheckpointId,
     processedCheckpointId: committedCheckpointId,
@@ -416,8 +479,7 @@ let config = (state: t) => state.config
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
-let effects = (state: t) => state.effects
-let effectRateLimits = (state: t) => state.effectRateLimits
+let effectState = (state: t) => state.effectState
 let committedCheckpointId = (state: t) => state.committedCheckpointId
 let processedCheckpointId = (state: t) => state.processedCheckpointId
 let processedBatches = (state: t) => state.processedBatches
@@ -517,7 +579,7 @@ let beginRollbackDiff = (
   ~progressBlockNumberByChainId,
 ) => {
   state.entities = EntityTables.make(state.allEntities)
-  state.effects = Dict.make()
+  state.effectState->EffectState.resetForRollback
   state.rollback = Some({
     targetCheckpointId,
     diffCheckpointId,

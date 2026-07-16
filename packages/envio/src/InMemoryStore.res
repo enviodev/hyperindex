@@ -12,50 +12,7 @@ let getEffectInMemTable = (
   state: IndexerState.t,
   ~effect: Internal.effect,
   ~scope: Internal.chainScope,
-) => {
-  let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-  let effects = state->IndexerState.effects
-  switch effects->Utils.Dict.dangerouslyGetNonOption(tableName) {
-  | Some(inMemTable) => inMemTable
-  | None =>
-    let inMemTable: IndexerState.effectCacheInMemTable = {
-      idsToStore: [],
-      dict: Dict.make(),
-      changesCount: 0.,
-      invalidationsCount: 0,
-      effect,
-      scope,
-      table: Internal.makeCacheTable(~effectName=effect.name, ~scope),
-      // Reuse (or lazily create) the rate-limit window from the survivor dict so
-      // it persists across the rollback reset of `effects`.
-      rateLimitState: switch effect.rateLimit {
-      | None => None
-      | Some({callsPerDuration, durationMs}) =>
-        let rateLimits = state->IndexerState.effectRateLimits
-        Some(
-          switch rateLimits->Utils.Dict.dangerouslyGetNonOption(tableName) {
-          | Some(existing) => existing
-          | None =>
-            let created: IndexerState.effectRateLimitState = {
-              callsPerDuration,
-              durationMs,
-              availableCalls: callsPerDuration,
-              windowStartTime: Date.now(),
-              queueCount: 0,
-              nextWindowPromise: None,
-            }
-            rateLimits->Dict.set(tableName, created)
-            created
-          },
-        )
-      },
-      activeCallsCount: 0,
-      prevCallStartTimerRef: %raw(`null`),
-    }
-    effects->Dict.set(tableName, inMemTable)
-    inMemTable
-  }
-}
+) => state->IndexerState.effectState->IndexerState.EffectState.getTable(~effect, ~scope)
 
 let hasEffectOutput = (inMemTable: IndexerState.effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
