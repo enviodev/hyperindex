@@ -285,8 +285,8 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
-  // Definitions drive query/decode building; the registrations drive routing
-  // (they carry `isWildcard` and become each decoded item's `onEventRegistration`).
+  // Definitions drive query/decode building; registrations drive routing and
+  // are attached directly to decoded runtime items.
   let eventConfigs =
     onEventRegistrations->Array.map(reg =>
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
@@ -488,6 +488,16 @@ let make = (
 
       switch maybeConfig {
       | None => ()
+      // Exclude instructions from failed transactions. HyperSync has no
+      // server-side predicate to filter instructions by parent-transaction
+      // success (`InstructionSelection` only exposes `is_inner`, and
+      // instruction/transaction selections union at block level rather than
+      // joining), so we filter client-side on the `isCommitted` flag HyperSync
+      // already delivers on every instruction row (a required column, zero extra
+      // bandwidth). When HyperSync adds a server-side `is_committed` predicate the
+      // query can push this down and the client-side check becomes a redundant
+      // safety net.
+      | Some(_) if !instr.isCommitted => ()
       | Some(onEventRegistration) =>
         let eventConfig =
           onEventRegistration.eventConfig->(
@@ -521,7 +531,7 @@ let make = (
         parsedQueueItems
         ->Array.push(
           Internal.Event({
-            onEventRegistration,
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
             chain,
             blockNumber: instr.slot,
             logIndex: synthLogIndex(instr),

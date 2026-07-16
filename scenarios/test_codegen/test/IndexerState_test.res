@@ -79,8 +79,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           blockNumber: currentBlockNumber.contents,
           logIndex,
           transactionIndex: 0,
-          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
-            Utils.magic: string => Internal.onEventRegistration
+          // Carries an `index` so the buffer's dedup key resolves; the rest of
+          // the registration is unused by this test.
+          onEventRegistration: {"index": 0}->(
+            Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
           payload: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
             Utils.magic: string => Internal.eventPayload
@@ -106,7 +108,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
-            ~indexingAddresses,
             ~query,
             ~latestFetchedBlock={
               blockNumber: currentBlockNumber.contents,
@@ -188,8 +189,10 @@ describe("IndexerState", () => {
           blockNumber: 0,
           logIndex: 0,
           transactionIndex: 0,
-          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
-            Utils.magic: string => Internal.onEventRegistration
+          // Carries an `index` so the buffer's dedup key resolves; the rest of
+          // the registration is unused by this test.
+          onEventRegistration: {"index": 0}->(
+            Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
           payload: `mock initial event`->(Utils.magic: string => Internal.eventPayload),
         })
@@ -288,7 +291,6 @@ describe("IndexerState", () => {
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
                 fetchState.contents->FetchState.handleQueryResult(
-                  ~indexingAddresses,
                   ~query,
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[
@@ -297,8 +299,9 @@ describe("IndexerState", () => {
                       blockNumber,
                       logIndex: 0,
                       transactionIndex: 0,
-                      onEventRegistration: "Mock onEventRegistration"->(
-                        Utils.magic: string => Internal.onEventRegistration
+                      // Carries an `index` so the buffer's dedup key resolves.
+                      onEventRegistration: {"index": 0}->(
+                        Utils.magic: {"index": int} => Internal.onEventRegistration
                       ),
                       payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
                     }),
@@ -379,7 +382,10 @@ describe("IndexerState", () => {
               blockNumber: 15,
               logIndex: 0,
               transactionIndex: 0,
-              onEventRegistration: "Mock onEventRegistration"->(Utils.magic: string => Internal.onEventRegistration),
+              // Carries an `index` so the buffer's dedup key resolves.
+              onEventRegistration: {"index": 0}->(
+                Utils.magic: {"index": int} => Internal.onEventRegistration
+              ),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
           ],

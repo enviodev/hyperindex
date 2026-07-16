@@ -98,7 +98,7 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
 
 let capturedQueries: array<SvmHyperSyncClient.query> = []
 
-let mockClient: SvmHyperSyncClient.t = {
+let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
@@ -106,23 +106,67 @@ let mockClient: SvmHyperSyncClient.t = {
     // mock returns empty pages (materialisation is covered by the Rust unit
     // tests). This test asserts the item shape and the query columns.
     Promise.resolve((
-      mockResponse,
+      response,
       TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
       BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
     ))
   },
 }
 
+let mockClient = makeMockClient()
+
+// Two instructions matching the same config, one from a committed transaction
+// and one from a failed (uncommitted) transaction. HyperSync delivers both;
+// the runtime drops the failed one.
+let mixedCommittedResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
+  nextSlot: slot + 1,
+  responseBytes: 0,
+  data: {
+    blocks: [
+      {
+        slot,
+        blockhash: blockHash,
+        blockTime,
+      },
+    ],
+    instructions: [
+      {
+        slot,
+        transactionIndex: 965,
+        instructionAddress: [1],
+        programId: metaplexProgramId,
+        accounts: [],
+        data: "0x21",
+        d1: "0x21",
+        isInner: false,
+        isCommitted: true,
+      },
+      {
+        slot,
+        transactionIndex: 966,
+        instructionAddress: [2],
+        programId: metaplexProgramId,
+        accounts: [],
+        data: "0x21",
+        d1: "0x21",
+        isInner: false,
+        isCommitted: false,
+      },
+    ],
+    logs: [],
+  },
+}
+
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = (~onEventRegistrations=[makeReg()]) => {
+let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
       {
         "SvmHypersyncClient": {
-          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => mockClient,
+          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => client,
         },
       }->(Utils.magic: {..} => Core.addon),
     )
@@ -145,8 +189,8 @@ let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it("omits block on the item and requests opted-in table columns", async t => {
-    let source = makeSource()
     let reg = makeReg()
+    let source = makeSource(~onEventRegistrations=[reg])
 
     let response = await source.getItemsOrThrow(
       ~fromBlock=slot - 10,
@@ -167,11 +211,12 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
 
     let item = switch response.parsedQueueItems {
-    | [Internal.Event({blockNumber, payload})] =>
+    | [Internal.Event({blockNumber, payload, onEventRegistration})] =>
       let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
       Some({
         "blockNumber": blockNumber,
         "block": instruction.block,
+        "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
       })
     | _ => None
     }
@@ -185,6 +230,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         // `block` is omitted here; it's materialised from the store at batch
         // prep, which this test doesn't run.
         "block": None,
+        "usesSourceRegistration": true,
       }),
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join, so selections carry no include flags.
@@ -324,4 +370,44 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       })
     },
   )
+
+  let deliveredInstructionAddresses = (response: Source.blockRangeFetchResponse) =>
+    response.parsedQueueItems->Array.filterMap(item =>
+      switch item {
+      | Internal.Event({payload}) =>
+        let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+        Some(instruction.instructionAddress)
+      | _ => None
+      }
+    )
+
+  // The failed-tx instruction (address [2], isCommitted: false) is dropped
+  // before dispatch; only the committed instruction (address [1]) is delivered.
+  Async.it("drops instructions from failed transactions", async t => {
+    let reg = makeReg()
+    let source = makeSource(
+      ~onEventRegistrations=[reg],
+      ~client=makeMockClient(~response=mixedCommittedResponse),
+    )
+
+    let response = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~contractNameByAddress,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~selection={
+        onEventRegistrations: [reg],
+        dependsOnAddresses: true,
+      },
+      ~itemsTarget=5000,
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    t.expect(deliveredInstructionAddresses(response)).toEqual([[1]])
+  })
 })

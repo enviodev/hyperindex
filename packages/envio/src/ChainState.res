@@ -4,6 +4,8 @@
 
 type t = {
   logger: Pino.t,
+  // The registrations used to build this chain's sources and route native items.
+  onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
   // The chain-wide address index. Not `mutable`: the dict is mutated in place by
   // register/rollback, so the reference is stable across fetchState versions.
@@ -61,9 +63,22 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
   addresses
 }
 
+let validateOnEventRegistrations = (
+  ~chainId: int,
+  registrations: array<Internal.onEventRegistration>,
+) =>
+  registrations->Array.forEachWithIndex((registration, expectedIndex) => {
+    if registration.index !== expectedIndex {
+      JsError.throwWithMessage(
+        `Invalid onEvent registration index for chain ${chainId->Int.toString}: ${registration.eventConfig.contractName}.${registration.eventConfig.name} has index ${registration.index->Int.toString}, but its ChainState position is ${expectedIndex->Int.toString}.`,
+      )
+    }
+  })
+
 let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations=[],
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
@@ -76,20 +91,24 @@ let make = (
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~logger: Pino.t,
 ): t => {
-  logger,
-  fetchState,
-  indexingAddresses,
-  sourceManager,
-  chainConfig,
-  isProgressAtHead,
-  timestampCaughtUpToHeadOrEndblock,
-  committedProgressBlockNumber,
-  numEventsProcessed,
-  pendingBudget: 0.,
-  reorgDetection,
-  safeCheckpointTracking,
-  transactionStore,
-  blockStore,
+  validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
+  {
+    logger,
+    onEventRegistrations,
+    fetchState,
+    indexingAddresses,
+    sourceManager,
+    chainConfig,
+    isProgressAtHead,
+    timestampCaughtUpToHeadOrEndblock,
+    committedProgressBlockNumber,
+    numEventsProcessed,
+    pendingBudget: 0.,
+    reorgDetection,
+    safeCheckpointTracking,
+    transactionStore,
+    blockStore,
+  }
 }
 
 let makeInternal = (
@@ -217,6 +236,7 @@ let makeInternal = (
   make(
     ~chainConfig,
     ~fetchState,
+    ~onEventRegistrations,
     ~indexingAddresses=indexingAddressIndex,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
@@ -599,6 +619,9 @@ let materializePageItems = async (
   ))
 }
 
+let filterByClientAddress = (cs: t, items: array<Internal.item>): array<Internal.item> =>
+  items->FetchState.filterByClientAddress(~indexingAddresses=cs.indexingAddresses)
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -631,12 +654,7 @@ let handleQueryResult = (
 
   cs.fetchState =
     fs
-    ->FetchState.handleQueryResult(
-      ~indexingAddresses=cs.indexingAddresses,
-      ~query,
-      ~latestFetchedBlock,
-      ~newItems,
-    )
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.

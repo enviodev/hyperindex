@@ -117,17 +117,17 @@ let prepareRollbackDiff = async (
   ->Array.map(async entityConfig => {
     let entityTable = state->getInMemTable(~entityConfig)
 
-    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+    let (removedIds, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
     )
 
-    removedIdsResult->Array.forEach(data => {
-      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
+    removedIds->Array.forEach(entityId => {
+      deletedEntities->Utils.Dict.push(entityConfig.name, entityId)
       entityTable->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Delete({
-          entityId: data["id"],
+          entityId,
           checkpointId: rollbackDiffCheckpointId,
         }),
       )
