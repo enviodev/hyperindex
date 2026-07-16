@@ -77,10 +77,11 @@ let callEffect = (
   ~onError,
 ) => {
   let effectName = effect.name
+  let scopeLabel = inMemTable.scope->Internal.EffectCache.scopeToString
   let hadActiveCalls = inMemTable.activeCallsCount > 0
   inMemTable.activeCallsCount = inMemTable.activeCallsCount + 1
   Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-    ~labels=effectName,
+    ~labels={"effect": effectName, "scope": scopeLabel},
     ~value=inMemTable.activeCallsCount,
   )
 
@@ -110,7 +111,7 @@ let callEffect = (
   ->Promise.finally(() => {
     inMemTable.activeCallsCount = inMemTable.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-      ~labels=effectName,
+      ~labels={"effect": effectName, "scope": scopeLabel},
       ~value=inMemTable.activeCallsCount,
     )
     let newTimer = Performance.now()
@@ -193,7 +194,11 @@ let rec executeWithRateLimit = (
     if immediateCount > 0 && isFromQueue {
       // Update queue count metric
       state.queueCount = state.queueCount - immediateCount
-      Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+      Prometheus.EffectQueueCount.set(
+        ~count=state.queueCount,
+        ~effectName,
+        ~scope=inMemTable.scope->Internal.EffectCache.scopeToString,
+      )
     }
 
     // Handle queued items
@@ -201,7 +206,11 @@ let rec executeWithRateLimit = (
       if !isFromQueue {
         // Update queue count metric
         state.queueCount = state.queueCount + queuedArgs->Array.length
-        Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+        Prometheus.EffectQueueCount.set(
+          ~count=state.queueCount,
+          ~effectName,
+          ~scope=inMemTable.scope->Internal.EffectCache.scopeToString,
+        )
       }
 
       let millisUntilReset = ref(0)

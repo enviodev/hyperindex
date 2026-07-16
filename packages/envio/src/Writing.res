@@ -61,7 +61,11 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
+      Prometheus.EffectCacheCount.set(
+        ~count=effectCacheRecord.count,
+        ~effectName,
+        ~scope=scope->Internal.EffectCache.scopeToString,
+      )
       acc
       ->Array.push(
         (

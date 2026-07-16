@@ -232,8 +232,12 @@ let makeFromDbState = (
 
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
-  initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
-    Prometheus.EffectCacheCount.set(~count, ~effectName)
+  initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
+    Prometheus.EffectCacheCount.set(
+      ~count,
+      ~effectName,
+      ~scope=scope->Internal.EffectCache.scopeToString,
+    )
   })
 
   // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
