@@ -442,6 +442,161 @@ describe("E2E rollback tests", () => {
     await testSingleChainRollback(~t, ~sourceMock, ~indexerMock)
   })
 
+  Async.it("Rolls back SET -> DELETE -> SET to the deleted state", async t => {
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let resolveIndexerError = ref(None)
+    let indexerErrorPromise = Promise.make((resolve, _reject) => {
+      resolveIndexerError := Some(resolve)
+    })
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {
+          chain: #1337,
+          sourceConfig: Config.CustomSources([sourceMock.source]),
+        },
+      ],
+      ~onError=errHandler => {
+        let resolve = resolveIndexerError.contents->Option.getOrThrow(
+          ~message="Indexer error observer was not initialized",
+        )
+        resolve(errHandler)
+      },
+    )
+    await Utils.delay(0)
+    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 101,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.\"SimpleEntity".set({id: "1", value: "before-delete"})
+          },
+        },
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.\"SimpleEntity".deleteUnsafe("1")
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=102,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    sourceMock.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 103,
+          logIndex: 0,
+          handler: async ({context}) => {
+            context.\"SimpleEntity".set({id: "1", value: "after-recreate"})
+          },
+        },
+      ],
+      ~latestFetchedBlockNumber=103,
+    )
+    await indexerMock.getBatchWritePromise()
+
+    // getBatchWritePromise can observe the loop between the response resolving
+    // and processing starting, so wait until this specific batch is visible.
+    let shouldKeepWaitingForHistory = ref(true)
+    let rec waitForRecreatedEntityHistory = async () => {
+      if shouldKeepWaitingForHistory.contents {
+        let hasRecreatedEntityHistory =
+          (await indexerMock.queryHistory(SimpleEntity))->Array.length === 3
+        if shouldKeepWaitingForHistory.contents && !hasRecreatedEntityHistory {
+          await Utils.delay(1)
+          await waitForRecreatedEntityHistory()
+        }
+      }
+    }
+    let historyWaitTimeoutId = ref(None)
+    let historyWaitTimeout = Promise.make((resolve, _reject) => {
+      historyWaitTimeoutId := Some(setTimeout(resolve, 5_000))
+    })
+    let historyWaitResult = await Promise.race([
+      waitForRecreatedEntityHistory()->Promise.thenResolve(_ => Ok()),
+      indexerErrorPromise->Promise.thenResolve(errHandler => Error(Some(errHandler))),
+      historyWaitTimeout->Promise.thenResolve(_ => Error(None)),
+    ])
+    shouldKeepWaitingForHistory := false
+    historyWaitTimeoutId.contents->Option.forEach(clearTimeout)
+    switch historyWaitResult {
+    | Ok() => ()
+    | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
+    | Error(None) => JsError.throwWithMessage("Timed out waiting for SET -> DELETE -> SET history")
+    }
+
+    t.expect(
+      await Promise.all2((
+        indexerMock.query(SimpleEntity),
+        indexerMock.queryHistory(SimpleEntity),
+      )),
+      ~message="Should establish SET -> DELETE -> SET history before the rollback",
+    ).toEqual((
+      [{Indexer.Entities.SimpleEntity.id: "1", value: "after-recreate"}],
+      [
+        Set({
+          checkpointId: 2n,
+          entityId: "1",
+          entity: {Indexer.Entities.SimpleEntity.id: "1", value: "before-delete"},
+        }),
+        Delete({checkpointId: 3n, entityId: "1"}),
+        Set({
+          checkpointId: 4n,
+          entityId: "1",
+          entity: {Indexer.Entities.SimpleEntity.id: "1", value: "after-recreate"},
+        }),
+      ],
+    ))
+
+    // Detect a reorg at block 103, then establish block 102 (the DELETE
+    // checkpoint) as the latest valid block.
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~latestFetchedBlockNumber=104,
+      ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x103-reorged"},
+    )
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    t.expect(
+      sourceMock.getBlockHashesCalls,
+      ~message="Should query the scanned blocks below the reorg",
+    ).toEqual([[100, 102]])
+    sourceMock.resolveGetBlockHashes([
+      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+    ])
+
+    switch await Promise.race([
+      indexerMock.getRollbackReadyPromise()->Promise.thenResolve(_ => Ok()),
+      indexerErrorPromise->Promise.thenResolve(errHandler => Error(errHandler)),
+    ]) {
+    | Ok() => ()
+    | Error(errHandler) => errHandler->ErrorHandling.raiseExn
+    }
+
+    // Commit the rollback diff without recreating the entity on the canonical chain.
+    sourceMock.resolveGetItemsOrThrow(
+      [],
+      ~latestFetchedBlockNumber=103,
+      ~latestFetchedBlockHash="0x103-reorged",
+    )
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(
+      await indexerMock.query(SimpleEntity),
+      ~message="The entity should remain deleted at the rollback target",
+    ).toEqual([])
+  })
+
   Async.it("Parks a reorg detected while a batch is still processing", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],

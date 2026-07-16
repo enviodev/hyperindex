@@ -331,11 +331,11 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "1",
-        labels: Dict.fromArray([("effect", "testEffect")]),
+        labels: Dict.fromArray([("effect", "testEffect"), ("scope", "crossChain")]),
       },
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
       },
     ])
     t.expect(
@@ -344,7 +344,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
       },
     ])
     t.expect(
@@ -352,7 +352,7 @@ describe("E2E tests", () => {
       ~message="Shouldn't load anything from storage at this point",
     ).toEqual([])
     t.expect(
-      await indexerMock.queryEffectCache("testEffectWithCache"),
+      await indexerMock.queryEffectCache(testEffectWithCache, ~scope=CrossChain),
       ~message="should have the cache entries in db",
     ).toEqual([
       {"id": `"test"`, "output": %raw(`"test-output"`)},
@@ -372,7 +372,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
       },
     ])
 
@@ -467,19 +467,19 @@ describe("E2E tests", () => {
       [
         {
           value: "1",
-          labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+          labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
         },
       ],
       [
         {
           value: "2",
-          labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+          labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
         },
       ],
     ))
 
     t.expect(
-      await indexerMock.queryEffectCache("testEffectWithCache"),
+      await indexerMock.queryEffectCache(testEffectWithCache, ~scope=CrossChain),
       ~message="Should invalidate loaded cache and store new one",
     ).toEqual([
       {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
@@ -549,6 +549,123 @@ describe("E2E tests", () => {
       ~message="context.log access from inside an effect must not throw",
     ).toEqual((None, Some("test-output")))
   })
+
+  Async.it(
+    "Chain-scoped effects expose context.chain.id, persist per chain, and reject cross-chain nesting",
+    async t => {
+      let sourceMock = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {
+            chain: #1337,
+            sourceConfig: Config.CustomSources([sourceMock.source]),
+          },
+        ],
+      )
+      await Utils.delay(0)
+
+      let chainScopedEffect = Envio.createEffect(
+        {
+          name: "chainScopedE2E",
+          input: S.string,
+          output: S.int,
+          rateLimit: Disable,
+          cache: true,
+          crossChain: false,
+        },
+        async ({context}) => context.chain.id,
+      )
+      let crossChainEffect = Envio.createEffect(
+        {
+          name: "crossChainE2E",
+          input: S.string,
+          output: S.string,
+          rateLimit: Disable,
+        },
+        // Reading context.chain on a cross-chain effect must throw before this
+        // ever returns.
+        async ({context}) => "chain-" ++ context.chain.id->Int.toString,
+      )
+      let crossChainParent = Envio.createEffect(
+        {
+          name: "crossChainParentE2E",
+          input: S.string,
+          output: S.int,
+          rateLimit: Disable,
+        },
+        async ({context}) => await context.effect(chainScopedEffect, "nested"),
+      )
+
+      sourceMock.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      let msgOf = exn =>
+        switch exn {
+        | JsExn(e) => e->JsExn.message->Option.getOr("")
+        | _ => ""
+        }
+
+      let chainId = ref(None)
+      let crossChainAccessError = ref("")
+      let nestedError = ref("")
+      sourceMock.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 100,
+            logIndex: 0,
+            handler: async ({context}) => {
+              chainId := Some(await context.effect(chainScopedEffect, "a"))
+              crossChainAccessError :=
+                (
+                  switch await context.effect(crossChainEffect, "b") {
+                  | _ => ""
+                  | exception exn => msgOf(exn)
+                  }
+                )
+              nestedError :=
+                (
+                  switch await context.effect(crossChainParent, "c") {
+                  | _ => ""
+                  | exception exn => msgOf(exn)
+                  }
+                )
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect((
+        chainId.contents,
+        crossChainAccessError.contents,
+        nestedError.contents,
+      )).toEqual((
+        Some(1337),
+        "context.chain is not available on the cross-chain effect \"crossChainE2E\". Set `crossChain: false` in its options to scope the effect to a single chain, then read context.chain.id.",
+        "The cross-chain effect \"crossChainParentE2E\" cannot call the chain-scoped effect \"chainScopedE2E\", because a cross-chain effect isn't tied to a single chain. Make \"chainScopedE2E\" cross-chain (`crossChain: true`), or make \"crossChainParentE2E\" chain-scoped (`crossChain: false`).",
+      ))
+
+      // The chain-scoped output landed in the per-chain cache table, not the
+      // flat cross-chain one.
+      t.expect((
+        await indexerMock.queryEffectCache(chainScopedEffect, ~scope=Chain(1337)),
+        await indexerMock.metric("envio_effect_cache"),
+      )).toEqual((
+        [{"id": `"a"`, "output": %raw(`1337`)}],
+        [
+          {
+            value: "1",
+            labels: Dict.fromArray([("effect", "chainScopedE2E"), ("scope", "1337")]),
+          },
+        ],
+      ))
+    },
+  )
 
   Async.it(
     "Should attempt fallback source when primary source fails with missing params",
@@ -708,24 +825,26 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 6 times total",
-    ).toEqual([{value: "6", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([
+      {value: "6", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])},
+    ])
 
     // Check that we captured metrics during execution
     // With 2 calls per window and 6 total calls: 4 items queued, max 2 active
     t.expect(
       queueMetricDuringExecution.contents->Option.getOrThrow,
       ~message="queue should have 4 items during execution",
-    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])}])
     t.expect(
       activeMetricDuringExecution.contents->Option.getOrThrow,
       ~message="active calls should be at rate limit (2)",
-    ).toEqual([{value: "2", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "2", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])}])
 
     // Final check - queue should be empty
     t.expect(
       await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all windows complete",
-    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])}])
   })
 
   Async.it("Effect rate limiting with single call per window", async t => {
@@ -810,18 +929,20 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 4 times total",
-    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([
+      {value: "4", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])},
+    ])
 
     // Check that we captured metrics during execution
     // With 1 call per window and 4 total calls: 3 items queued, max 1 active
     t.expect(
       queueMetricDuringExecution.contents->Option.getOrThrow,
       ~message="queue should have 3 items during execution",
-    ).toEqual([{value: "3", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "3", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])}])
     t.expect(
       activeMetricDuringExecution.contents->Option.getOrThrow,
       ~message="active calls should be at rate limit (1)",
-    ).toEqual([{value: "1", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "1", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])}])
 
     // Check metrics after first window
     let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getOrThrow
@@ -837,7 +958,7 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all batches complete",
-    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])}])
   })
 
   Async.it("Effect cache can be disabled per-call via context.cache", async t => {
@@ -910,7 +1031,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
 
     t.expect(
-      await indexerMock.queryEffectCache("testEffectWithCacheControl"),
+      await indexerMock.queryEffectCache(testEffectWithCacheControl, ~scope=CrossChain),
       ~message="Should only have test2 in DB (test1 was called with cache=false and subsequent calls used in-memory cache)",
     ).toEqual([{"id": `"test2"`, "output": %raw(`"test2-output"`)}])
   })
@@ -981,7 +1102,7 @@ describe("E2E tests", () => {
 
     // Verify that only p2's successful result was cached
     t.expect(
-      await indexerMock.queryEffectCache("throwingEffect"),
+      await indexerMock.queryEffectCache(throwingEffect, ~scope=CrossChain),
       ~message="Should only cache p2's successful result, not p1's failed call",
     ).toEqual([{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}])
   })
