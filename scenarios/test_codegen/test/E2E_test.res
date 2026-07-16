@@ -640,10 +640,13 @@ describe("E2E tests", () => {
 
       t.expect((
         chainId.contents,
-        crossChainAccessError.contents->String.includes("crossChain: false"),
-        nestedError.contents->String.includes("crossChainParentE2E") &&
-          nestedError.contents->String.includes("chainScopedE2E"),
-      )).toEqual((Some(1337), true, true))
+        crossChainAccessError.contents,
+        nestedError.contents,
+      )).toEqual((
+        Some(1337),
+        "context.chain is not available on the cross-chain effect \"crossChainE2E\". Set `crossChain: false` in its options to scope the effect to a single chain, then read context.chain.id.",
+        "The cross-chain effect \"crossChainParentE2E\" cannot call the chain-scoped effect \"chainScopedE2E\", because a cross-chain effect isn't tied to a single chain. Make \"chainScopedE2E\" cross-chain (`crossChain: true`), or make \"crossChainParentE2E\" chain-scoped (`crossChain: false`).",
+      ))
 
       // The chain-scoped output landed in the per-chain cache table, not the
       // flat cross-chain one.

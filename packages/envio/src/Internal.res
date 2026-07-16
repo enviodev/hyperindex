@@ -772,9 +772,12 @@ type effect = {
 }
 
 // The scope an effect call resolves to. Cross-chain effects share one cache;
-// chain-scoped effects keep an isolated cache per chain.
+// chain-scoped effects keep an isolated cache per chain. Unboxed: `CrossChain`
+// is the string "crossChain" and `Chain(id)` is the raw chain id, discriminated
+// by runtime type.
+@unboxed
 type effectScope =
-  | CrossChain
+  | @as("crossChain") CrossChain
   | Chain(int)
 
 let cacheTablePrefix = "envio_effect_"
