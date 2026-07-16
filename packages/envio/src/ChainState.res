@@ -467,9 +467,10 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
 
 // Block range that cross-chain progress alignment maps fractions over: from
 // the chain's startBlock to the last block it can fetch right now. The lower
-// bound is deliberately static — anchoring it at firstEventBlock would
-// collapse a chain's progress to 0 the moment its first event is discovered,
-// yanking every other chain's alignment line below their own frontiers.
+// bound is deliberately static — anchoring it at firstEventBlock would make
+// two chains sitting at the same block read different progress fractions
+// depending on whether each has discovered its first event yet, so the
+// anchor's line could map below a follower's own frontier and stall it.
 let progressRange = (cs: t) => {
   let fetchState = cs.fetchState
   (fetchState.startBlock, cs->fetchCeiling)
