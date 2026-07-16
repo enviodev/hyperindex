@@ -409,6 +409,7 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "envio-cloud-cli",
                 "envio-docs",
                 "indexer-blocks",
                 "indexer-configuration",
