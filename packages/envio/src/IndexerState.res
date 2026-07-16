@@ -45,26 +45,13 @@ module EntityTables = {
   }
 }
 
-type effectCacheInMemTable = {
-  // Cache keys whose handler output is persisted on the next write. Drained
-  // each write; eviction is driven by the per-entry checkpointId instead.
-  mutable idsToStore: array<string>,
-  mutable invalidationsCount: int,
-  // Each entry is stamped with the checkpoint that referenced it (or
-  // loadedFromDbCheckpointId for db reads), so committed entries can be
-  // dropped once persisted/re-derivable, mirroring entity changes.
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
-  mutable changesCount: float,
-  effect: Internal.effect,
-}
-
 type t = {
   config: Config.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
   mutable entities: EntityTables.t,
-  mutable effects: dict<effectCacheInMemTable>,
+  effectState: EffectState.t,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint persisted to the db.
   mutable committedCheckpointId: Internal.checkpointId,
@@ -143,7 +130,7 @@ let make = (
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities),
-    effects: Dict.make(),
+    effectState: EffectState.make(),
     rollback: None,
     committedCheckpointId,
     processedCheckpointId: committedCheckpointId,
@@ -211,8 +198,12 @@ let makeFromDbState = (
 
   Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
   Prometheus.ReorgThreshold.set(~isInReorgThreshold)
-  initialState.cache->Utils.Dict.forEach(({effectName, count}) => {
-    Prometheus.EffectCacheCount.set(~count, ~effectName)
+  initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
+    Prometheus.EffectCacheCount.set(
+      ~count,
+      ~effectName,
+      ~scope=scope->Internal.EffectCache.scopeToString,
+    )
   })
 
   // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
@@ -385,7 +376,7 @@ let config = (state: t) => state.config
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
-let effects = (state: t) => state.effects
+let effectState = (state: t) => state.effectState
 let committedCheckpointId = (state: t) => state.committedCheckpointId
 let processedCheckpointId = (state: t) => state.processedCheckpointId
 let processedBatches = (state: t) => state.processedBatches
@@ -485,7 +476,7 @@ let beginRollbackDiff = (
   ~progressBlockNumberByChainId,
 ) => {
   state.entities = EntityTables.make(state.allEntities)
-  state.effects = Dict.make()
+  state.effectState->EffectState.resetForRollback
   state.rollback = Some({
     targetCheckpointId,
     diffCheckpointId,

@@ -654,8 +654,6 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
-let cacheTablePrefixLength = Internal.cacheTablePrefix->String.length
-
 type schemaCacheTableInfo = {
   @as("table_name")
   tableName: string,
@@ -663,13 +661,24 @@ type schemaCacheTableInfo = {
   count: int,
 }
 
+// Matches both the cross-chain (`envio_effect_<name>`) and chain-scoped
+// (`envio_<chainId>_effect_<name>`) cache-table formats. Kept in sync with
+// Internal.EffectCache.
 let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
-  `SELECT 
+  // The column guard requires the effect-cache shape (exactly an `id` + `output`
+  // pair) so a user entity table that happens to match the name pattern is never
+  // mistaken for an effect cache.
+  `SELECT
     t.table_name,
     ${getCacheRowCountFnName}(t.table_name) as count
    FROM information_schema.tables t
-   WHERE t.table_schema = '${pgSchema}' 
-   AND t.table_name LIKE '${Internal.cacheTablePrefix}%';`
+   WHERE t.table_schema = '${pgSchema}'
+   AND t.table_name ~ '^envio_([0-9]+_)?effect_.+'
+   AND (
+     SELECT array_agg(c.column_name::text ORDER BY c.column_name::text)
+     FROM information_schema.columns c
+     WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name
+   ) = ARRAY['id', 'output'];`
 }
 
 type psqlExecState =
@@ -1111,8 +1120,10 @@ let rec writeBatch = async (
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
         updatedEffectsCache
-        ->Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
-          setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
+        ->Array.map((
+          {table, itemSchema, items, shouldInitialize}: Persistence.updatedEffectCache,
+        ) => {
+          setEffectCacheOrThrow(~table, ~itemSchema, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
       ))
@@ -1157,9 +1168,9 @@ let rec writeBatch = async (
   }
 }
 
-// Returns the most recent entity state for IDs that need to be restored during rollback.
-// For each ID modified after the rollback target, retrieves its latest state at or before the target.
-let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+// Returns the most recent history row at or before the rollback target for IDs changed after it.
+// envio_change is included so ReScript can turn SET rows into restores and DELETE rows into removals.
+let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getPgDbFieldName->Some
@@ -1175,35 +1186,40 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
     ~entityIndex=entityConfig.index,
   )
 
-  `SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
-  AND EXISTS (
-    SELECT 1
-    FROM "${pgSchema}"."${historyTableName}" h
-    WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-      AND h."${EntityHistory.checkpointIdFieldName}" > $1
-  )
-ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC`
+  `SELECT DISTINCT ON ("${Table.idFieldName}") ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"
+  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
+    AND EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE h."${Table.idFieldName}" = "${historyTableName}"."${Table.idFieldName}"
+        AND h."${EntityHistory.checkpointIdFieldName}" > $1
+    )
+  ORDER BY "${Table.idFieldName}", "${EntityHistory.checkpointIdFieldName}" DESC`
 }
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
-// These entities should be deleted during rollback.
+// DELETE rows at or before the target are returned by the restore query and classified in ReScript.
 let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
-  `SELECT DISTINCT ${Table.idFieldName}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" > $1
-AND NOT EXISTS (
-  SELECT 1
-  FROM "${pgSchema}"."${historyTableName}" h
-  WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-    AND h."${EntityHistory.checkpointIdFieldName}" <= $1
-)`
+  `SELECT DISTINCT "${Table.idFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"
+  WHERE "${EntityHistory.checkpointIdFieldName}" > $1
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE h."${Table.idFieldName}" = "${historyTableName}"."${Table.idFieldName}"
+        AND h."${EntityHistory.checkpointIdFieldName}" <= $1
+    )`
 }
+
+let rollbackRowStateSchema = S.object(s => (
+  s.field(Table.idFieldName, S.string),
+  s.field(EntityHistory.changeFieldName, EntityHistory.RowAction.schema),
+))
 
 let make = (
   ~sql: Postgres.sql,
@@ -1238,32 +1254,66 @@ let make = (
     envioTables->Utils.Array.notEmpty
   }
 
+  // Scans .envio/cache into a list of (cache table, absolute TSV path). Flat
+  // `<name>.tsv` files map to cross-chain caches; a numeric subdirectory
+  // `<chainId>/<name>.tsv` maps to a chain-scoped cache. Exactly one directory
+  // level is supported. A non-numeric directory that contains TSVs is rejected.
+  // Returns [] when .envio/cache doesn't exist.
+  let scanCacheDir = async () => {
+    let topEntries = try {
+      await NodeJs.Fs.Promises.readdir(cacheDirPath)
+    } catch {
+    | _ => []
+    }
+    let result = []
+    let _ = await topEntries
+    ->Array.map(async entry => {
+      let entryPath = NodeJs.Path.join(cacheDirPath, entry)
+      let isDir = (await NodeJs.Fs.Promises.stat(entryPath))->NodeJs.Fs.Promises.statsIsDirectory
+      if isDir {
+        let subEntries = await NodeJs.Fs.Promises.readdir(entryPath)
+        let tsvs = subEntries->Array.filter(sub => sub->String.endsWith(".tsv"))
+        switch Internal.EffectCache.parseChainId(entry) {
+        | Some(chainId) =>
+          tsvs->Array.forEach(sub => {
+            let effectName = sub->String.slice(~start=0, ~end=-4)
+            let table = Internal.makeCacheTable(~effectName, ~scope=Chain(chainId))
+            result
+            ->Array.push((table, NodeJs.Path.join(entryPath, sub)->NodeJs.Path.toString))
+            ->ignore
+          })
+        | None =>
+          if tsvs->Utils.Array.notEmpty {
+            JsError.throwWithMessage(
+              `Invalid effect cache directory ".envio/cache/${entry}". Chain cache directories must be named by a numeric chain id (e.g. "1"). Found cache files: ${tsvs->Array.joinUnsafe(
+                  ", ",
+                )}.`,
+            )
+          }
+        }
+      } else if entry->String.endsWith(".tsv") {
+        let effectName = entry->String.slice(~start=0, ~end=-4)
+        let table = Internal.makeCacheTable(~effectName, ~scope=CrossChain)
+        result->Array.push((table, entryPath->NodeJs.Path.toString))->ignore
+      }
+    })
+    ->Promise.all
+    result
+  }
+
   let restoreEffectCache = async (~withUpload) => {
     if withUpload {
-      // Try to restore cache tables from binary files
-      let nothingToUploadErrorMessage = "Nothing to upload."
-
-      switch await Promise.all2((
-        NodeJs.Fs.Promises.readdir(cacheDirPath)
-        ->Promise.thenResolve(e => Ok(e))
-        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
-        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName),
-      )) {
-      | (Ok(entries), Ok(psqlExec)) => {
-          let cacheFiles = entries->Array.filter(entry => {
-            entry->String.endsWith(".tsv")
-          })
-
-          let _ = await cacheFiles
-          ->Array.map(entry => {
-            let effectName = entry->String.slice(~start=0, ~end=-4)
-            let table = Internal.makeCacheTable(~effectName)
-
+      // Try to restore cache tables from the .envio/cache TSV files
+      switch await scanCacheDir() {
+      | [] => Logging.info("No cache found to upload.")
+      | entries =>
+        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
+        | Ok(psqlExec) =>
+          let _ = await entries
+          ->Array.map(((table, inputFile)) => {
             sql
             ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
             ->Promise.then(() => {
-              let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
-
               let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
               Promise.make(
@@ -1283,14 +1333,8 @@ let make = (
             })
           })
           ->Promise.all
-
           Logging.info("Successfully uploaded cache.")
-        }
-      | (Error(message), _)
-      | (_, Error(message)) =>
-        if message === nothingToUploadErrorMessage {
-          Logging.info("No cache found to upload.")
-        } else {
+        | Error(message) =>
           Logging.error(`Failed to upload cache, continuing without it. ${message}`)
         }
       }
@@ -1315,8 +1359,14 @@ let make = (
 
     let cache = Dict.make()
     cacheTableInfo->Array.forEach(({tableName, count}) => {
-      let effectName = tableName->String.slice(~start=cacheTablePrefixLength)
-      cache->Dict.set(effectName, ({effectName, count}: Persistence.effectCacheRecord))
+      switch Internal.EffectCache.fromTableName(tableName) {
+      | Some((effectName, scope)) =>
+        cache->Dict.set(
+          tableName,
+          ({effectName, scope, tableName, count}: Persistence.effectCacheRecord),
+        )
+      | None => ()
+      }
     })
     cache
   }
@@ -1480,12 +1530,11 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let setEffectCacheOrThrow = async (
-    ~effect: Internal.effect,
+    ~table: Table.table,
+    ~itemSchema,
     ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => {
-    let {table, itemSchema} = effect.storageMeta
-
     if initialize {
       let _ = await sql->Postgres.unsafe(
         makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
@@ -1531,24 +1580,36 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             )
 
             let promises = cacheTableInfo->Array.map(async ({tableName}) => {
-              let cacheName = tableName->String.slice(~start=cacheTablePrefixLength)
-              let outputFile =
-                NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
-
-              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
-
-              Promise.make((resolve, reject) => {
-                NodeJs.ChildProcess.execWithOptions(
-                  command,
-                  psqlExecOptions,
-                  (~error, ~stdout, ~stderr as _) => {
-                    switch error {
-                    | Value(error) => reject(error)
-                    | Null => resolve(stdout)
-                    }
-                  },
+              switch Internal.EffectCache.fromTableName(tableName) {
+              | Some((effectName, scope)) =>
+                // Reverse mapping: chain-scoped caches dump into a per-chain
+                // subdirectory, created here if needed.
+                let outputPath = NodeJs.Path.join(
+                  cacheDirPath,
+                  Internal.EffectCache.toCachePath(~effectName, ~scope),
                 )
-              })
+                let _ = await NodeJs.Fs.Promises.mkdir(
+                  ~path=NodeJs.Path.dirname(outputPath->NodeJs.Path.toString),
+                  ~options={recursive: true},
+                )
+                let outputFile = outputPath->NodeJs.Path.toString
+
+                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
+
+                await Promise.make((resolve, reject) => {
+                  NodeJs.ChildProcess.execWithOptions(
+                    command,
+                    psqlExecOptions,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                })
+              | None => ""
+              }
             })
 
             let _ = await promises->Promise.all
@@ -1663,7 +1724,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId,
   ) => {
-    await Promise.all2((
+    let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
@@ -1671,14 +1732,26 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
-      // Get entities that should be restored to their state at or before rollback target
+      // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
+        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
+
+    let removedIds = removedIdRows->Array.map(row => row["id"])
+    let restoredEntitiesResult = []
+    rollbackRows->Array.forEach(row => {
+      let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema)
+      switch action {
+      | SET => restoredEntitiesResult->Array.push(row)->ignore
+      | DELETE => removedIds->Array.push(entityId)->ignore
+      }
+    })
+
+    (removedIds, restoredEntitiesResult)
   }
 
   let writeBatchMethod = async (
