@@ -653,6 +653,7 @@ module Indexer = {
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
           ~targetBufferSize?,
+          ~onError,
           ~mapStorage,
         )
       },

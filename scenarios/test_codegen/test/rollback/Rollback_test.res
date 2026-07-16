@@ -487,13 +487,32 @@ describe("E2E rollback tests", () => {
 
     // getBatchWritePromise can observe the loop between the response resolving
     // and processing starting, so wait until this specific batch is visible.
-    let hasRecreatedEntityHistory = ref(false)
-    while !hasRecreatedEntityHistory.contents {
-      hasRecreatedEntityHistory :=
-        (await indexerMock.queryHistory(SimpleEntity))->Array.length === 3
-      if !hasRecreatedEntityHistory.contents {
-        await Utils.delay(1)
+    let shouldKeepWaitingForHistory = ref(true)
+    let rec waitForRecreatedEntityHistory = async () => {
+      if shouldKeepWaitingForHistory.contents {
+        let hasRecreatedEntityHistory =
+          (await indexerMock.queryHistory(SimpleEntity))->Array.length === 3
+        if shouldKeepWaitingForHistory.contents && !hasRecreatedEntityHistory {
+          await Utils.delay(1)
+          await waitForRecreatedEntityHistory()
+        }
       }
+    }
+    let historyWaitTimeoutId = ref(None)
+    let historyWaitTimeout = Promise.make((resolve, _reject) => {
+      historyWaitTimeoutId := Some(setTimeout(resolve, 5_000))
+    })
+    let historyWaitResult = await Promise.race([
+      waitForRecreatedEntityHistory()->Promise.thenResolve(_ => Ok()),
+      indexerErrorPromise->Promise.thenResolve(errHandler => Error(Some(errHandler))),
+      historyWaitTimeout->Promise.thenResolve(_ => Error(None)),
+    ])
+    shouldKeepWaitingForHistory := false
+    historyWaitTimeoutId.contents->Option.forEach(clearTimeout)
+    switch historyWaitResult {
+    | Ok() => ()
+    | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
+    | Error(None) => JsError.throwWithMessage("Timed out waiting for SET -> DELETE -> SET history")
     }
 
     t.expect(
