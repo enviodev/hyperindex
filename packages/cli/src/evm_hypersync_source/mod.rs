@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::sync::Once;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Once, RwLock};
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
@@ -21,8 +22,7 @@ use decode::DecoderCore;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
-    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue,
-    RollbackGuard,
+    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue, RollbackGuard,
 };
 
 static LOGGER_INIT: Once = Once::new();
@@ -42,9 +42,83 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
     napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"))
 }
 
+// A reqwest client speaking HTTP/2 multiplexes every request to the host over a
+// single TCP connection, whose concurrent-stream cap is negotiated per
+// connection (typically ~100). Requests beyond the cap queue client-side, so
+// one client stalls at high query concurrency. Each hypersync_client::Client
+// owns its own reqwest client (own connection), so the pool grows by one
+// client per STREAMS_PER_CLIENT concurrent requests to keep every request on
+// a connection with stream budget to spare.
+const STREAMS_PER_CLIENT: usize = 64;
+// Past this point extra connections stop helping — bandwidth and decode
+// threads become the ceiling — so cap the pool regardless of concurrency.
+const MAX_CLIENTS: usize = 8;
+
+fn desired_pool_size(in_flight: usize) -> usize {
+    in_flight.div_ceil(STREAMS_PER_CLIENT).clamp(1, MAX_CLIENTS)
+}
+
+struct InFlightGuard<'a>(&'a AtomicUsize);
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+struct ClientPool {
+    cfg: ClientConfig,
+    user_agent: String,
+    clients: RwLock<Vec<Arc<hypersync_client::Client>>>,
+    in_flight: AtomicUsize,
+    next: AtomicUsize,
+}
+
+impl ClientPool {
+    fn new(cfg: ClientConfig, user_agent: String) -> Result<ClientPool> {
+        let first =
+            hypersync_client::Client::new_with_agent(cfg.clone().into(), user_agent.clone())
+                .context("build client")?;
+        Ok(ClientPool {
+            cfg,
+            user_agent,
+            clients: RwLock::new(vec![Arc::new(first)]),
+            in_flight: AtomicUsize::new(0),
+            next: AtomicUsize::new(0),
+        })
+    }
+
+    // Grow-only: idle clients are cheap and the underlying client already
+    // recreates its connection every 60s, so shrinking buys nothing.
+    fn acquire(&self) -> Result<(Arc<hypersync_client::Client>, InFlightGuard<'_>)> {
+        let in_flight = self.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+        let guard = InFlightGuard(&self.in_flight);
+        let desired = desired_pool_size(in_flight);
+        if self.clients.read().unwrap().len() < desired {
+            let mut clients = self.clients.write().unwrap();
+            while clients.len() < desired {
+                clients.push(Arc::new(
+                    hypersync_client::Client::new_with_agent(
+                        self.cfg.clone().into(),
+                        self.user_agent.clone(),
+                    )
+                    .context("build pooled client")?,
+                ));
+            }
+        }
+        let clients = self.clients.read().unwrap();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % clients.len();
+        Ok((clients[idx].clone(), guard))
+    }
+
+    fn first(&self) -> Arc<hypersync_client::Client> {
+        self.clients.read().unwrap()[0].clone()
+    }
+}
+
 #[napi]
 pub struct EvmHypersyncClient {
-    inner: hypersync_client::Client,
+    pool: ClientPool,
     enable_checksum_addresses: bool,
     decoder: DecoderCore,
     selection_builder: SelectionBuilder,
@@ -62,20 +136,19 @@ impl EvmHypersyncClient {
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
-        let decoder = DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
-            .context("build decoder")
-            .map_err(map_err)?;
+        let decoder =
+            DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
+                .context("build decoder")
+                .map_err(map_err)?;
 
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
             .map_err(map_err)?;
 
-        let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
-            .context("build client")
-            .map_err(map_err)?;
+        let pool = ClientPool::new(cfg, user_agent).map_err(map_err)?;
 
         Ok(EvmHypersyncClient {
-            inner,
+            pool,
             enable_checksum_addresses,
             decoder,
             selection_builder,
@@ -84,7 +157,7 @@ impl EvmHypersyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.inner.get_height().await.map_err(|e| {
+        let height = self.pool.first().get_height().await.map_err(|e| {
             // The client embeds a `{:?}` debug dump (a full backtrace when
             // RUST_BACKTRACE is set) in its error message; keep only the first
             // line so it stays readable when the indexer surfaces it on retries.
@@ -98,8 +171,8 @@ impl EvmHypersyncClient {
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
+        let (client, _in_flight) = self.pool.acquire().map_err(map_err)?;
+        let res = client
             .get_with_rate_limit(&query)
             .await
             .context("run inner query")
@@ -121,7 +194,10 @@ impl EvmHypersyncClient {
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, &params.addresses_by_contract_name)
+            .build(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
@@ -142,7 +218,10 @@ impl EvmHypersyncClient {
         // (blockNumber, transactionIndex), so those keys must come back on each
         // transaction row whenever any transaction field is requested.
         if !transaction_fields.is_empty() {
-            for field in [TransactionField::BlockNumber, TransactionField::TransactionIndex] {
+            for field in [
+                TransactionField::BlockNumber,
+                TransactionField::TransactionIndex,
+            ] {
                 if !transaction_fields.contains(&field) {
                     transaction_fields.push(field);
                 }
@@ -182,8 +261,8 @@ impl EvmHypersyncClient {
         let contract_name_by_address = built.contract_name_by_address;
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
+        let (client, _in_flight) = self.pool.acquire().map_err(map_err)?;
+        let res = client
             .get_with_rate_limit(&query)
             .await
             .context("run inner query")
@@ -944,5 +1023,50 @@ mod tests {
         assert_eq!(parsed["kind"], "MissingFields");
         assert_eq!(parsed["fields"][0], "block.timestamp");
         assert_eq!(parsed["fields"][1], "transaction.hash");
+    }
+
+    #[test]
+    fn desired_pool_size_scales_with_in_flight() {
+        assert_eq!(
+            (0..=6)
+                .map(|i| desired_pool_size(i * 64))
+                .collect::<Vec<_>>(),
+            vec![1, 1, 2, 3, 4, 5, 6]
+        );
+        assert_eq!(desired_pool_size(65), 2);
+        // Clamped at MAX_CLIENTS
+        assert_eq!(desired_pool_size(2000), 8);
+    }
+
+    #[test]
+    fn client_pool_grows_and_releases_in_flight() {
+        let pool = ClientPool::new(
+            ClientConfig {
+                url: "https://eth.hypersync.xyz".to_string(),
+                api_token: "test".to_string(),
+                ..Default::default()
+            },
+            "test-agent".to_string(),
+        )
+        .unwrap();
+
+        let guards: Vec<_> = (0..65).map(|_| pool.acquire().unwrap()).collect();
+        assert_eq!(
+            (
+                pool.clients.read().unwrap().len(),
+                pool.in_flight.load(Ordering::Relaxed)
+            ),
+            (2, 65)
+        );
+
+        drop(guards);
+        // Grow-only: dropping guards releases in_flight but keeps the clients.
+        assert_eq!(
+            (
+                pool.clients.read().unwrap().len(),
+                pool.in_flight.load(Ordering::Relaxed)
+            ),
+            (2, 0)
+        );
     }
 }
