@@ -110,45 +110,41 @@ impl ClientPool {
     // its connection right before a request lands on it.
     // Grow-only: idle clients are cheap and the underlying client already
     // recreates its connection every 60s, so shrinking buys nothing.
-    fn acquire(&self) -> Result<Lease> {
-        let claim_non_full = || {
-            let clients = self.clients.read().unwrap();
-            for pooled in clients.iter() {
-                // fetch_add claims the slot atomically; concurrent acquires that
-                // push a client just past the cap back off and move on.
-                if pooled.in_flight.fetch_add(1, Ordering::Relaxed) < STREAMS_PER_CLIENT {
-                    return Some(Lease(pooled.clone()));
-                }
-                pooled.in_flight.fetch_sub(1, Ordering::Relaxed);
+    // fetch_add claims the slot atomically; concurrent acquires that push a
+    // client just past the cap back off and move on.
+    fn try_claim(clients: &[Arc<PooledClient>]) -> Option<Lease> {
+        for pooled in clients {
+            if pooled.in_flight.fetch_add(1, Ordering::Relaxed) < STREAMS_PER_CLIENT {
+                return Some(Lease(pooled.clone()));
             }
-            None
-        };
+            pooled.in_flight.fetch_sub(1, Ordering::Relaxed);
+        }
+        None
+    }
 
-        if let Some(lease) = claim_non_full() {
+    fn acquire(&self) -> Result<Lease> {
+        if let Some(lease) = Self::try_claim(&self.clients.read().unwrap()) {
             return Ok(lease);
         }
 
-        {
-            let mut clients = self.clients.write().unwrap();
-            if clients.len() < MAX_CLIENTS {
-                let pooled = self.new_client()?;
-                pooled.in_flight.fetch_add(1, Ordering::Relaxed);
-                let lease = Lease(pooled.clone());
-                clients.push(pooled);
-                return Ok(lease);
-            }
+        let mut clients = self.clients.write().unwrap();
+        // Concurrent acquires that all failed the scan queue on this lock, and
+        // the first one through grows the pool — so re-claim before growing,
+        // otherwise each of them would add a client for the same single spill.
+        if let Some(lease) = Self::try_claim(&clients) {
+            return Ok(lease);
         }
-
-        // Retry after the write lock: another acquire may have freed or added
-        // capacity between our scan and here.
-        if let Some(lease) = claim_non_full() {
+        if clients.len() < MAX_CLIENTS {
+            let pooled = self.new_client()?;
+            pooled.in_flight.fetch_add(1, Ordering::Relaxed);
+            let lease = Lease(pooled.clone());
+            clients.push(pooled);
             return Ok(lease);
         }
 
         // Pool at MAX_CLIENTS and every client at capacity: overflow onto the
         // least-loaded client rather than queueing here — the connection-level
         // queue in reqwest handles the excess.
-        let clients = self.clients.read().unwrap();
         let pooled = clients
             .iter()
             .min_by_key(|p| p.in_flight.load(Ordering::Relaxed))
@@ -1135,5 +1131,35 @@ mod tests {
 
         drop((saturating, overflow));
         assert_eq!(pool_loads(&pool), vec![0; MAX_CLIENTS]);
+    }
+
+    #[test]
+    fn client_pool_grows_once_per_spill_under_contention() {
+        let pool = test_pool();
+
+        // Saturate the first client, then race a batch of acquires for the
+        // single spill slot. Only one of them should grow the pool — the rest
+        // must re-claim capacity added by the winner instead of growing too.
+        let full_first: Vec<_> = (0..STREAMS_PER_CLIENT)
+            .map(|_| pool.acquire().unwrap())
+            .collect();
+
+        let barrier = std::sync::Barrier::new(16);
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..16)
+                .map(|_| {
+                    s.spawn(|| {
+                        barrier.wait();
+                        pool.acquire().unwrap()
+                    })
+                })
+                .collect();
+            let spilled: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+            assert_eq!(pool_loads(&pool), vec![STREAMS_PER_CLIENT, 16]);
+            drop(spilled);
+        });
+
+        drop(full_first);
+        assert_eq!(pool_loads(&pool), vec![0, 0]);
     }
 }
