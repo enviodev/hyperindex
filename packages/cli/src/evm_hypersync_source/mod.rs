@@ -46,72 +46,119 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 // single TCP connection, whose concurrent-stream cap is negotiated per
 // connection (typically ~100). Requests beyond the cap queue client-side, so
 // one client stalls at high query concurrency. Each hypersync_client::Client
-// owns its own reqwest client (own connection), so the pool grows by one
-// client per STREAMS_PER_CLIENT concurrent requests to keep every request on
-// a connection with stream budget to spare.
+// owns its own reqwest client (own connection), so the pool holds several and
+// treats each as full at STREAMS_PER_CLIENT concurrent requests.
 const STREAMS_PER_CLIENT: usize = 64;
 // Past this point extra connections stop helping — bandwidth and decode
 // threads become the ceiling — so cap the pool regardless of concurrency.
 const MAX_CLIENTS: usize = 8;
 
-fn desired_pool_size(in_flight: usize) -> usize {
-    in_flight.div_ceil(STREAMS_PER_CLIENT).clamp(1, MAX_CLIENTS)
+struct PooledClient {
+    client: hypersync_client::Client,
+    in_flight: AtomicUsize,
 }
 
-struct InFlightGuard<'a>(&'a AtomicUsize);
+// Keeps the client alive for the request and releases its in-flight slot on
+// drop (including error paths).
+struct Lease(Arc<PooledClient>);
 
-impl Drop for InFlightGuard<'_> {
+impl Lease {
+    fn client(&self) -> &hypersync_client::Client {
+        &self.0.client
+    }
+}
+
+impl Drop for Lease {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        self.0.in_flight.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
 struct ClientPool {
     cfg: ClientConfig,
     user_agent: String,
-    clients: RwLock<Vec<Arc<hypersync_client::Client>>>,
-    in_flight: AtomicUsize,
-    next: AtomicUsize,
+    clients: RwLock<Vec<Arc<PooledClient>>>,
 }
 
 impl ClientPool {
+    fn new_client(&self) -> Result<Arc<PooledClient>> {
+        Ok(Arc::new(PooledClient {
+            client: hypersync_client::Client::new_with_agent(
+                self.cfg.clone().into(),
+                self.user_agent.clone(),
+            )
+            .context("build pooled client")?,
+            in_flight: AtomicUsize::new(0),
+        }))
+    }
+
     fn new(cfg: ClientConfig, user_agent: String) -> Result<ClientPool> {
-        let first =
-            hypersync_client::Client::new_with_agent(cfg.clone().into(), user_agent.clone())
-                .context("build client")?;
-        Ok(ClientPool {
+        let pool = ClientPool {
             cfg,
             user_agent,
-            clients: RwLock::new(vec![Arc::new(first)]),
-            in_flight: AtomicUsize::new(0),
-            next: AtomicUsize::new(0),
-        })
+            clients: RwLock::new(vec![]),
+        };
+        let first = pool.new_client()?;
+        pool.clients.write().unwrap().push(first);
+        Ok(pool)
     }
 
+    // Fill-first: pack requests into the earliest clients so their connections
+    // stay warm and later clients only come into play (and only get created)
+    // when everything before them is at stream capacity. Spreading evenly would
+    // leave every connection lukewarm at low load, and an idle one can drop
+    // its connection right before a request lands on it.
     // Grow-only: idle clients are cheap and the underlying client already
     // recreates its connection every 60s, so shrinking buys nothing.
-    fn acquire(&self) -> Result<(Arc<hypersync_client::Client>, InFlightGuard<'_>)> {
-        let in_flight = self.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
-        let guard = InFlightGuard(&self.in_flight);
-        let desired = desired_pool_size(in_flight);
-        if self.clients.read().unwrap().len() < desired {
+    fn acquire(&self) -> Result<Lease> {
+        let claim_non_full = (|| {
+            let clients = self.clients.read().unwrap();
+            for pooled in clients.iter() {
+                // fetch_add claims the slot atomically; concurrent acquires that
+                // push a client just past the cap back off and move on.
+                if pooled.in_flight.fetch_add(1, Ordering::Relaxed) < STREAMS_PER_CLIENT {
+                    return Some(Lease(pooled.clone()));
+                }
+                pooled.in_flight.fetch_sub(1, Ordering::Relaxed);
+            }
+            None
+        });
+
+        if let Some(lease) = claim_non_full() {
+            return Ok(lease);
+        }
+
+        {
             let mut clients = self.clients.write().unwrap();
-            while clients.len() < desired {
-                clients.push(Arc::new(
-                    hypersync_client::Client::new_with_agent(
-                        self.cfg.clone().into(),
-                        self.user_agent.clone(),
-                    )
-                    .context("build pooled client")?,
-                ));
+            if clients.len() < MAX_CLIENTS {
+                let pooled = self.new_client()?;
+                pooled.in_flight.fetch_add(1, Ordering::Relaxed);
+                let lease = Lease(pooled.clone());
+                clients.push(pooled);
+                return Ok(lease);
             }
         }
+
+        // Retry after the write lock: another acquire may have freed or added
+        // capacity between our scan and here.
+        if let Some(lease) = claim_non_full() {
+            return Ok(lease);
+        }
+
+        // Pool at MAX_CLIENTS and every client at capacity: overflow onto the
+        // least-loaded client rather than queueing here — the connection-level
+        // queue in reqwest handles the excess.
         let clients = self.clients.read().unwrap();
-        let idx = self.next.fetch_add(1, Ordering::Relaxed) % clients.len();
-        Ok((clients[idx].clone(), guard))
+        let pooled = clients
+            .iter()
+            .min_by_key(|p| p.in_flight.load(Ordering::Relaxed))
+            .expect("pool is never empty")
+            .clone();
+        pooled.in_flight.fetch_add(1, Ordering::Relaxed);
+        Ok(Lease(pooled))
     }
 
-    fn first(&self) -> Arc<hypersync_client::Client> {
+    fn first(&self) -> Arc<PooledClient> {
         self.clients.read().unwrap()[0].clone()
     }
 }
@@ -157,7 +204,7 @@ impl EvmHypersyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.pool.first().get_height().await.map_err(|e| {
+        let height = self.pool.first().client.get_height().await.map_err(|e| {
             // The client embeds a `{:?}` debug dump (a full backtrace when
             // RUST_BACKTRACE is set) in its error message; keep only the first
             // line so it stays readable when the indexer surfaces it on retries.
@@ -171,8 +218,9 @@ impl EvmHypersyncClient {
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let (client, _in_flight) = self.pool.acquire().map_err(map_err)?;
-        let res = client
+        let lease = self.pool.acquire().map_err(map_err)?;
+        let res = lease
+            .client()
             .get_with_rate_limit(&query)
             .await
             .context("run inner query")
@@ -261,8 +309,9 @@ impl EvmHypersyncClient {
         let contract_name_by_address = built.contract_name_by_address;
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let (client, _in_flight) = self.pool.acquire().map_err(map_err)?;
-        let res = client
+        let lease = self.pool.acquire().map_err(map_err)?;
+        let res = lease
+            .client()
             .get_with_rate_limit(&query)
             .await
             .context("run inner query")
@@ -1025,22 +1074,8 @@ mod tests {
         assert_eq!(parsed["fields"][1], "transaction.hash");
     }
 
-    #[test]
-    fn desired_pool_size_scales_with_in_flight() {
-        assert_eq!(
-            (0..=6)
-                .map(|i| desired_pool_size(i * 64))
-                .collect::<Vec<_>>(),
-            vec![1, 1, 2, 3, 4, 5, 6]
-        );
-        assert_eq!(desired_pool_size(65), 2);
-        // Clamped at MAX_CLIENTS
-        assert_eq!(desired_pool_size(2000), 8);
-    }
-
-    #[test]
-    fn client_pool_grows_and_releases_in_flight() {
-        let pool = ClientPool::new(
+    fn test_pool() -> ClientPool {
+        ClientPool::new(
             ClientConfig {
                 url: "https://eth.hypersync.xyz".to_string(),
                 api_token: "test".to_string(),
@@ -1048,25 +1083,57 @@ mod tests {
             },
             "test-agent".to_string(),
         )
-        .unwrap();
+        .unwrap()
+    }
 
-        let guards: Vec<_> = (0..65).map(|_| pool.acquire().unwrap()).collect();
-        assert_eq!(
-            (
-                pool.clients.read().unwrap().len(),
-                pool.in_flight.load(Ordering::Relaxed)
-            ),
-            (2, 65)
-        );
+    fn pool_loads(pool: &ClientPool) -> Vec<usize> {
+        pool.clients
+            .read()
+            .unwrap()
+            .iter()
+            .map(|p| p.in_flight.load(Ordering::Relaxed))
+            .collect()
+    }
 
-        drop(guards);
-        // Grow-only: dropping guards releases in_flight but keeps the clients.
-        assert_eq!(
-            (
-                pool.clients.read().unwrap().len(),
-                pool.in_flight.load(Ordering::Relaxed)
-            ),
-            (2, 0)
-        );
+    #[test]
+    fn client_pool_fills_first_client_before_growing() {
+        let pool = test_pool();
+
+        let full_first: Vec<_> = (0..STREAMS_PER_CLIENT)
+            .map(|_| pool.acquire().unwrap())
+            .collect();
+        assert_eq!(pool_loads(&pool), vec![64]);
+
+        // The 65th request spills into a newly created second client.
+        let spill = pool.acquire().unwrap();
+        assert_eq!(pool_loads(&pool), vec![64, 1]);
+
+        // Freeing a slot on the first client makes it the target again.
+        drop(full_first);
+        let after_release = pool.acquire().unwrap();
+        assert_eq!(pool_loads(&pool), vec![1, 1]);
+
+        drop((spill, after_release));
+        // Grow-only: releasing everything keeps the clients around.
+        assert_eq!(pool_loads(&pool), vec![0, 0]);
+    }
+
+    #[test]
+    fn client_pool_overflows_at_max_clients() {
+        let pool = test_pool();
+
+        let saturating: Vec<_> = (0..MAX_CLIENTS * STREAMS_PER_CLIENT)
+            .map(|_| pool.acquire().unwrap())
+            .collect();
+        assert_eq!(pool_loads(&pool), vec![64; 8]);
+
+        // Beyond full capacity the pool stays at MAX_CLIENTS and overflows
+        // onto the least-loaded client instead of creating more.
+        let overflow = pool.acquire().unwrap();
+        let loads = pool_loads(&pool);
+        assert_eq!((loads.len(), loads.iter().sum::<usize>()), (8, 513));
+
+        drop((saturating, overflow));
+        assert_eq!(pool_loads(&pool), vec![0; 8]);
     }
 }
