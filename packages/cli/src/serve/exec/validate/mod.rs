@@ -1235,6 +1235,7 @@ mod tests {
                 columns: vec![
                     column("id", "text", Scalar::String),
                     column("big", "numeric", Scalar::Numeric),
+                    column("floating", "float8", Scalar::Float8),
                     column("json", "jsonb", Scalar::Jsonb),
                     Column {
                         api_name: "maybe".to_string(),
@@ -1503,6 +1504,22 @@ mod tests {
             .unwrap();
             assert_eq!(eq_sql_text(op), literal);
         }
+    }
+
+    #[test]
+    fn overflowing_float_variable_is_rejected_before_sql() {
+        let err = plan(
+            "query($v: float8!) { User(where: {floating: {_eq: $v}}) { id } }",
+            Some(r#"{"v": 1e400}"#),
+        )
+        .unwrap_err();
+        assert_eq!(
+            (err.message.as_str(), err.code),
+            (
+                "The value 1.0e400 lies outside the bounds. Is it overflowing the float bounds?",
+                CODE_PARSE_FAILED,
+            )
+        );
     }
 
     #[test]

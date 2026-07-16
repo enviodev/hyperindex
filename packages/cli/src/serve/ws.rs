@@ -176,17 +176,26 @@ impl Outbound {
 #[derive(Clone)]
 enum LiveQueryEvent {
     Pending,
-    Data(Arc<str>),
+    Data { refresh_epoch: u64, root: Arc<str> },
     Error(Arc<GraphQLError>),
 }
 
 struct LiveQueryCohort {
     events: watch::Sender<LiveQueryEvent>,
+    refresh: Arc<LiveQueryRefresh>,
+}
+
+struct LiveQueryRefresh {
+    wake: Notify,
+    epoch: AtomicU64,
 }
 
 struct LiveQuerySubscription {
     alias: String,
     events: watch::Receiver<LiveQueryEvent>,
+    /// The cohort result visible when this subscriber joined is historical.
+    /// Its first payload must come from a later shared poll.
+    required_refresh_epoch: u64,
     /// Keeps the cohort discoverable while this subscriber is alive. The
     /// poll task itself holds only a Weak, so it stops when the last
     /// receiver leaves.
@@ -212,33 +221,46 @@ impl LiveQueryRegistry {
             let mut cohorts = self.cohorts.lock().expect("live-query registry poisoned");
             if let Some(cohort) = cohorts.get(&key).and_then(Weak::upgrade) {
                 tracing::debug!(cohort = key.stable_hash(), "joining live-query cohort");
+                let events = cohort.events.subscribe();
+                let required_refresh_epoch =
+                    cohort.refresh.epoch.fetch_add(1, Ordering::AcqRel) + 1;
+                // Notify permits coalesce, so many simultaneous joiners cause
+                // one shared refresh instead of one query per subscriber.
+                cohort.refresh.wake.notify_one();
                 LiveQuerySubscription {
                     alias,
-                    events: cohort.events.subscribe(),
+                    events,
+                    required_refresh_epoch,
                     _cohort: cohort,
                 }
             } else {
                 let (events, receiver) = watch::channel(LiveQueryEvent::Pending);
+                let refresh = Arc::new(LiveQueryRefresh {
+                    wake: Notify::new(),
+                    epoch: AtomicU64::new(0),
+                });
                 let cohort = Arc::new(LiveQueryCohort {
                     events: events.clone(),
+                    refresh: refresh.clone(),
                 });
                 let weak = Arc::downgrade(&cohort);
                 cohorts.insert(key.clone(), weak.clone());
-                new_cohort = Some((events, weak, live.take().unwrap()));
+                new_cohort = Some((events, refresh, weak, live.take().unwrap()));
                 tracing::debug!(cohort = key.stable_hash(), "starting live-query cohort");
                 LiveQuerySubscription {
                     alias,
                     events: receiver,
+                    required_refresh_epoch: 0,
                     _cohort: cohort,
                 }
             }
         };
 
-        if let Some((events, weak, live)) = new_cohort {
+        if let Some((events, refresh, weak, live)) = new_cohort {
             let registry = self.clone();
             let state = state.clone();
             tokio::spawn(async move {
-                run_live_query_cohort(registry, key, weak, state, live, events).await;
+                run_live_query_cohort(registry, key, weak, state, live, events, refresh).await;
             });
         }
         subscription
@@ -262,12 +284,14 @@ async fn run_live_query_cohort(
     state: AppState,
     live: exec::CompiledLiveQuery,
     events: watch::Sender<LiveQueryEvent>,
+    refresh: Arc<LiveQueryRefresh>,
 ) {
     let poll_interval = state.serve.ws_poll_interval;
     let jitter = cohort_jitter(&key, poll_interval);
     let first_tick = tokio::time::Instant::now() + poll_interval + jitter;
     let mut ticks = tokio::time::interval_at(first_tick, poll_interval);
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut published_refresh_epoch = 0u64;
     let mut last_payload: Option<Arc<str>> = None;
     let mut consecutive_failures = 0u32;
 
@@ -279,16 +303,33 @@ async fn run_live_query_cohort(
                 Err(_) => break,
             },
         };
+        // A join request that arrives after this load is intentionally not
+        // satisfied by the in-flight query: the follow-up notify triggers a
+        // poll that started after the subscriber joined.
+        let poll_refresh_epoch = refresh.epoch.load(Ordering::Acquire);
         let result = exec::poll_live_query(&state.serve, &live).await;
         drop(poll_permit);
 
         match result {
             Ok(body) => {
                 consecutive_failures = 0;
-                if last_payload.as_deref() != Some(body.as_str()) {
-                    let body: Arc<str> = body.into();
-                    last_payload = Some(body.clone());
-                    if events.send(LiveQueryEvent::Data(body)).is_err() {
+                if last_payload.as_deref() != Some(body.as_str())
+                    || poll_refresh_epoch > published_refresh_epoch
+                {
+                    let root: Arc<str> = body.into();
+                    last_payload = Some(root.clone());
+                    published_refresh_epoch = poll_refresh_epoch;
+                    // Unchanged scheduled polls stay inside the cohort and
+                    // wake nobody. A post-join refresh is published even if
+                    // its body is identical, and subscribers suppress it
+                    // unless they are the joiner waiting for this epoch.
+                    if events
+                        .send(LiveQueryEvent::Data {
+                            refresh_epoch: poll_refresh_epoch,
+                            root,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -307,6 +348,7 @@ async fn run_live_query_cohort(
         tokio::select! {
             _ = events.closed() => break,
             _ = ticks.tick() => {}
+            _ = refresh.wake.notified() => {}
         }
     }
 
@@ -870,14 +912,21 @@ async fn run_live_query_subscription(
     let LiveQuerySubscription {
         alias,
         mut events,
+        required_refresh_epoch,
         _cohort,
     } = subscription;
+    let mut last_payload: Option<Arc<str>> = None;
 
     loop {
         let event = events.borrow_and_update().clone();
         match event {
             LiveQueryEvent::Pending => {}
-            LiveQueryEvent::Data(root) => {
+            LiveQueryEvent::Data {
+                refresh_epoch,
+                root,
+            } if refresh_epoch >= required_refresh_epoch
+                && last_payload.as_deref() != Some(root.as_ref()) =>
+            {
                 let alias_json = serde_json::to_string(&alias).unwrap();
                 let mut body = String::with_capacity(alias_json.len() + root.len() + 13);
                 body.push_str("{\"data\":{");
@@ -886,7 +935,9 @@ async fn run_live_query_subscription(
                 body.push_str(&root);
                 body.push_str("}}");
                 send_frame(&sender, protocol.data_type(), &id, Some(&body));
+                last_payload = Some(root);
             }
+            LiveQueryEvent::Data { .. } => {}
             LiveQueryEvent::Error(error) => {
                 send_error(&sender, protocol, &id, &error);
                 return;

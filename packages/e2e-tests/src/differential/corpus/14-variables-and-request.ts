@@ -17,6 +17,11 @@ export default defineCases([
     variables: { f: 0.5 },
   },
   {
+    name: "vr-error-float8-variable-overflow",
+    query: `query ($f: float8!) { EntityWithAllNonArrayTypes(where: {float_: {_lt: $f}}, order_by: {id: asc}) { id } }`,
+    rawVariables: `{"f":1e400}`,
+  },
+  {
     // Hasura accepts a JSON string for a float8 variable.
     name: "vr-var-float8-string-coerced",
     query: `query ($f: float8!) { EntityWithAllNonArrayTypes(where: {float_: {_eq: $f}}, order_by: {id: asc}) { id float_ } }`,

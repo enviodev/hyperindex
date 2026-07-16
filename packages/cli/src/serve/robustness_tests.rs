@@ -856,6 +856,112 @@ async fn identical_live_queries_share_one_postgres_poll_loop() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn live_query_cohort_joiner_waits_for_a_fresh_poll() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    // Make a scheduled poll impossible during the assertion window. A
+    // joining subscriber must request one shared refresh rather than replay
+    // the cohort's cached pre-insert payload.
+    env.ws_poll_interval_ms = 30_000;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+
+    let query = r#"subscription { SimpleEntity(where: {id: {_eq: "cohort-fresh"}}) { id value } }"#;
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "first",
+            "type": "subscribe",
+            "payload": { "query": query }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("first subscriber receives the initial result")
+        .unwrap()
+        .unwrap();
+    let TMessage::Text(first) = first else {
+        panic!("expected text data frame");
+    };
+    let first: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(
+        first["payload"]["data"]["SimpleEntity"],
+        serde_json::json!([])
+    );
+
+    server
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            r#"INSERT INTO public."SimpleEntity" (id, value) VALUES ('cohort-fresh', 'new')"#,
+            &[],
+        )
+        .await
+        .unwrap();
+
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "joiner",
+            "type": "subscribe",
+            "payload": { "query": query }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let joined = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = ws.next().await.expect("websocket remains open").unwrap();
+            let TMessage::Text(text) = message else {
+                continue;
+            };
+            let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if frame["id"] == "joiner" {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("joiner should receive a fresh shared poll without waiting 30 seconds");
+    assert_eq!(
+        joined["payload"]["data"]["SimpleEntity"],
+        serde_json::json!([{"id": "cohort-fresh", "value": "new"}]),
+        "a new subscriber must not receive the cohort's cached pre-subscription payload"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn websocket_global_connection_limit_rejects_before_upgrade() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::http::HeaderValue;

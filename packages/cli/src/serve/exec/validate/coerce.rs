@@ -472,6 +472,15 @@ pub(super) fn coerce_column_value<'a>(
                     ),
                 ));
             };
+            if let Num::Big(original) = &num {
+                // Lossless JSON-number decoding keeps values such as 1e400
+                // as original text. That is correct for numeric/jsonb, but
+                // Float/float8 must reject values outside f64 bounds during
+                // validation instead of handing Postgres an overflowing cast.
+                if !matches!(original.parse::<f64>(), Ok(f) if f.is_finite()) {
+                    return Err(float_bounds_error(path, &num.display(ctx)));
+                }
+            }
             if overflowed_literal {
                 return Err(float_bounds_error(path, &num.display(ctx)));
             }

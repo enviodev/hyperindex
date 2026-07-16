@@ -113,9 +113,12 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
         .make_pg_pool()
         .context("Failed creating Postgres pool")?;
 
-    let catalog = wait_for_pg(&pool, &env.pg_schema, env.startup_retry_budget_ms)
-        .await
-        .map_err(|error| postgres_startup_error(&env, error))?;
+    let catalog = tokio::select! {
+        result = wait_for_pg(&pool, &env.pg_schema, env.startup_retry_budget_ms) => {
+            result.map_err(|error| postgres_startup_error(&env, error))?
+        }
+        _ = shutdown_signal() => return Ok(()),
+    };
 
     let model = model::ServerModel::build(project_schema, catalog, &env)?;
 
