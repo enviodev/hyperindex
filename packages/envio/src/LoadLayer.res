@@ -89,7 +89,7 @@ let callEffect = (
     let elapsed = Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-        ~labels=effectName,
+        ~labels={"effect": effectName, "scope": scopeLabel},
         ~value=elapsed,
       )
     }
@@ -116,14 +116,16 @@ let callEffect = (
     )
     let newTimer = Performance.now()
     Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
+      ~labels={"effect": effectName, "scope": scopeLabel},
       ~value=Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=newTimer),
     )
     inMemTable.prevCallStartTimerRef = newTimer
 
-    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
+    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(
+      ~labels={"effect": effectName, "scope": scopeLabel},
+    )
     Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
+      ~labels={"effect": effectName, "scope": scopeLabel},
       ~value=timerRef->Performance.secondsSince,
     )
   })

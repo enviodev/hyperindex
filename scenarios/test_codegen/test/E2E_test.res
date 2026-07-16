@@ -329,11 +329,11 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "1",
-        labels: Dict.fromArray([("effect", "testEffect")]),
+        labels: Dict.fromArray([("effect", "testEffect"), ("scope", "crossChain")]),
       },
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
       },
     ])
     t.expect(
@@ -465,7 +465,7 @@ describe("E2E tests", () => {
       [
         {
           value: "1",
-          labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+          labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
         },
       ],
       [
@@ -823,7 +823,9 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 6 times total",
-    ).toEqual([{value: "6", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([
+      {value: "6", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])},
+    ])
 
     // Check that we captured metrics during execution
     // With 2 calls per window and 6 total calls: 4 items queued, max 2 active
@@ -925,7 +927,9 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_call_total"),
       ~message="should have called effect 4 times total",
-    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([
+      {value: "4", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])},
+    ])
 
     // Check that we captured metrics during execution
     // With 1 call per window and 4 total calls: 3 items queued, max 1 active

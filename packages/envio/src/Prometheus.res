@@ -620,19 +620,19 @@ module EffectCalls = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_call_seconds",
     ~help="Processing time taken to call the Effect function.",
-    ~labelSchema=effectLabelsSchema,
+    ~labelSchema=effectScopeLabelsSchema,
   )
 
   let sumTimeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_call_seconds_total",
     ~help="Cumulative time spent calling the Effect function during the indexing process.",
-    ~labelSchema=effectLabelsSchema,
+    ~labelSchema=effectScopeLabelsSchema,
   )
 
   let totalCallsCount = SafeCounter.makeOrThrow(
     ~name="envio_effect_call_total",
     ~help="Cumulative number of resolved Effect function calls during the indexing process.",
-    ~labelSchema=effectLabelsSchema,
+    ~labelSchema=effectScopeLabelsSchema,
   )
 
   let activeCallsCount = SafeGauge.makeOrThrow(
