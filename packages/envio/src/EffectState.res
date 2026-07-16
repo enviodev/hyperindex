@@ -29,7 +29,6 @@ type effectCacheInMemTable = {
   // chain-scoped cache for the same effect stay isolated.
   scope: Internal.chainScope,
   table: Table.table,
-  // None when the effect has no rate limit.
   rateLimitState: option<effectRateLimitState>,
   // Per-scope active-call bookkeeping, surfaced through the Effect metrics.
   mutable activeCallsCount: int,
