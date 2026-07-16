@@ -86,6 +86,11 @@ type t = {
   allEntities: array<Internal.entityConfig>,
   mutable entities: EntityTables.t,
   mutable effects: dict<effectCacheInMemTable>,
+  // Per-scope rate-limit windows, keyed by cache table name. Kept outside
+  // `effects` (which a rollback wipes) so an effect's rate-limit budget isn't
+  // refilled by a reorg — rate limiting reflects real API throughput, not
+  // indexing progress.
+  effectRateLimits: dict<effectRateLimitState>,
   mutable rollback: option<Persistence.rollback>,
   // Last checkpoint persisted to the db.
   mutable committedCheckpointId: Internal.checkpointId,
@@ -165,6 +170,7 @@ let make = (
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities),
     effects: Dict.make(),
+    effectRateLimits: Dict.make(),
     rollback: None,
     committedCheckpointId,
     processedCheckpointId: committedCheckpointId,
@@ -411,6 +417,7 @@ let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
 let effects = (state: t) => state.effects
+let effectRateLimits = (state: t) => state.effectRateLimits
 let committedCheckpointId = (state: t) => state.committedCheckpointId
 let processedCheckpointId = (state: t) => state.processedCheckpointId
 let processedBatches = (state: t) => state.processedBatches

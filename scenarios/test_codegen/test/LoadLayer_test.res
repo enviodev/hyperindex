@@ -954,8 +954,63 @@ describe("LoadLayer effect scope isolation", () => {
 
     let _ = await Promise.all([a1, b1, a2])
 
-    // chain 2 finished first because its window wasn't consumed by chain 1;
-    // all three handlers ultimately ran.
-    t.expect((order->Array.get(0), callCount.contents)).toEqual((Some("chain2-a"), 3))
+    // chain 2's immediate call resolves ahead of chain 1's queued "b" because
+    // its window wasn't consumed by chain 1; all three handlers ultimately ran.
+    let chain2Index = order->Array.indexOf("chain2-a")
+    let queuedChain1Index = order->Array.indexOf("chain1-b")
+    t.expect((
+      callCount.contents,
+      chain2Index >= 0 && chain2Index < queuedChain1Index,
+    )).toEqual((3, true))
+  })
+
+  Async.it("Keeps the rate-limit budget across a rollback reset", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
+
+    let callCount = ref(0)
+    let effect =
+      Envio.createEffect(
+        {
+          name: "rollbackRateLimit",
+          input: S.string,
+          output: S.string,
+          rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+          crossChain: false,
+          cache: false,
+        },
+        async ({input}) => {
+          callCount := callCount.contents + 1
+          input ++ "-out"
+        },
+      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let call = makeCaller(
+      ~effect,
+      ~loadManager,
+      ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+      ~indexerState,
+    )
+
+    // Consume chain 1's single-call-per-window budget.
+    let _ = await call(~scope=Chain(1), ~input="a")
+
+    // A reorg wipes the effect in-mem tables (IndexerState.beginRollbackDiff).
+    indexerState->IndexerState.beginRollbackDiff(
+      ~targetCheckpointId=0n,
+      ~diffCheckpointId=0n,
+      ~progressBlockNumberByChainId=Dict.make(),
+    )
+
+    // The window hasn't elapsed, so the budget must still be spent: the next
+    // call is queued (not run) rather than getting a fresh budget from the reset.
+    let pending = call(~scope=Chain(1), ~input="b")
+    await Utils.delay(0)
+    await Utils.delay(0)
+    let countWhileQueued = callCount.contents
+    let _ = await pending
+
+    t.expect((countWhileQueued, callCount.contents)).toEqual((1, 2))
   })
 })

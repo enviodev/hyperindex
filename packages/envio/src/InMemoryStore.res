@@ -26,17 +26,28 @@ let getEffectInMemTable = (
       effect,
       scope,
       table: Internal.makeCacheTable(~effectName=effect.name, ~scope),
+      // Reuse (or lazily create) the rate-limit window from the survivor dict so
+      // it persists across the rollback reset of `effects`.
       rateLimitState: switch effect.rateLimit {
       | None => None
       | Some({callsPerDuration, durationMs}) =>
-        Some({
-          callsPerDuration,
-          durationMs,
-          availableCalls: callsPerDuration,
-          windowStartTime: Date.now(),
-          queueCount: 0,
-          nextWindowPromise: None,
-        })
+        let rateLimits = state->IndexerState.effectRateLimits
+        Some(
+          switch rateLimits->Utils.Dict.dangerouslyGetNonOption(tableName) {
+          | Some(existing) => existing
+          | None =>
+            let created: IndexerState.effectRateLimitState = {
+              callsPerDuration,
+              durationMs,
+              availableCalls: callsPerDuration,
+              windowStartTime: Date.now(),
+              queueCount: 0,
+              nextWindowPromise: None,
+            }
+            rateLimits->Dict.set(tableName, created)
+            created
+          },
+        )
       },
       activeCallsCount: 0,
       prevCallStartTimerRef: %raw(`null`),

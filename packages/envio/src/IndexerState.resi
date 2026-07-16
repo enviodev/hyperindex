@@ -101,6 +101,7 @@ let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
 let effects: t => dict<effectCacheInMemTable>
+let effectRateLimits: t => dict<effectRateLimitState>
 let committedCheckpointId: t => Internal.checkpointId
 let processedCheckpointId: t => Internal.checkpointId
 let processedBatches: t => array<Batch.t>
