@@ -249,14 +249,16 @@ let loadEffect = (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
-  ~scope: Internal.effectScope,
+  ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
   ~item,
   ~ecosystem,
 ) => {
   let effectName = effect.name
-  let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
+  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
+  let table = inMemTable.table
+  let tableName = table.tableName
   // The operation key must differ per scope so chain-scoped calls with the same
   // input never dedup across chains. Cross-chain keeps the bare effect name so
   // the storage-load metric stays stable.
@@ -264,7 +266,6 @@ let loadEffect = (
   | CrossChain => `${effectName}.effect`
   | Chain(chainId) => `${effectName}.effect.${chainId->Int.toString}`
   }
-  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
 
   let load = async (args, ~onError) => {
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
@@ -278,7 +279,6 @@ let loadEffect = (
     ) {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
       let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
-      let table = Internal.makeCacheTable(~effectName, ~scope)
       let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {

@@ -11,21 +11,21 @@ let getInMemTable = (
 let getEffectInMemTable = (
   state: IndexerState.t,
   ~effect: Internal.effect,
-  ~scope: Internal.effectScope,
+  ~scope: Internal.chainScope,
 ) => {
   let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
   let effects = state->IndexerState.effects
   switch effects->Utils.Dict.dangerouslyGetNonOption(tableName) {
-  | Some(table) => table
+  | Some(inMemTable) => inMemTable
   | None =>
-    let table: IndexerState.effectCacheInMemTable = {
+    let inMemTable: IndexerState.effectCacheInMemTable = {
       idsToStore: [],
       dict: Dict.make(),
       changesCount: 0.,
       invalidationsCount: 0,
       effect,
       scope,
-      tableName,
+      table: Internal.makeCacheTable(~effectName=effect.name, ~scope),
       rateLimitState: switch effect.rateLimit {
       | None => None
       | Some({callsPerDuration, durationMs}) =>
@@ -41,8 +41,8 @@ let getEffectInMemTable = (
       activeCallsCount: 0,
       prevCallStartTimerRef: %raw(`null`),
     }
-    effects->Dict.set(tableName, table)
-    table
+    effects->Dict.set(tableName, inMemTable)
+    inMemTable
   }
 }
 

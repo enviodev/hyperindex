@@ -1112,8 +1112,10 @@ let rec writeBatch = async (
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
         updatedEffectsCache
-        ->Array.map(({effect, scope, items, shouldInitialize}: Persistence.updatedEffectCache) => {
-          setEffectCacheOrThrow(~effect, ~scope, ~items, ~initialize=shouldInitialize)
+        ->Array.map((
+          {table, itemSchema, items, shouldInitialize}: Persistence.updatedEffectCache,
+        ) => {
+          setEffectCacheOrThrow(~table, ~itemSchema, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
       ))
@@ -1515,14 +1517,11 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   }
 
   let setEffectCacheOrThrow = async (
-    ~effect: Internal.effect,
-    ~scope: Internal.effectScope,
+    ~table: Table.table,
+    ~itemSchema,
     ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => {
-    let {itemSchema} = effect.storageMeta
-    let table = Internal.makeCacheTable(~effectName=effect.name, ~scope)
-
     if initialize {
       let _ = await sql->Postgres.unsafe(
         makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),

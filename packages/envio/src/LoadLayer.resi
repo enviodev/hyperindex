@@ -25,7 +25,7 @@ let loadEffect: (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
-  ~scope: Internal.effectScope,
+  ~scope: Internal.chainScope,
   ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,

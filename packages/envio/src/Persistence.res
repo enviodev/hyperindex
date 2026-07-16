@@ -12,7 +12,7 @@
 // independently.
 type effectCacheRecord = {
   effectName: string,
-  scope: Internal.effectScope,
+  scope: Internal.chainScope,
   tableName: string,
   // Number of rows in the table
   mutable count: int,
@@ -45,9 +45,12 @@ type initialState = {
   envioInfo: option<JSON.t>,
 }
 
+// Carries the already-resolved cache address (`table`) rather than an effect +
+// scope: the scope is contextual (resolved per call from the handler's chain),
+// so the write layer only needs the concrete table it targets.
 type updatedEffectCache = {
-  effect: Internal.effect,
-  scope: Internal.effectScope,
+  table: Table.table,
+  itemSchema: S.t<Internal.effectCacheItem>,
   items: array<Internal.effectCacheItem>,
   shouldInitialize: bool,
 }

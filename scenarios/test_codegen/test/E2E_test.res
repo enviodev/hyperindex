@@ -350,7 +350,7 @@ describe("E2E tests", () => {
       ~message="Shouldn't load anything from storage at this point",
     ).toEqual([])
     t.expect(
-      await indexerMock.queryEffectCache("testEffectWithCache"),
+      await indexerMock.queryEffectCache(testEffectWithCache),
       ~message="should have the cache entries in db",
     ).toEqual([
       {"id": `"test"`, "output": %raw(`"test-output"`)},
@@ -477,7 +477,7 @@ describe("E2E tests", () => {
     ))
 
     t.expect(
-      await indexerMock.queryEffectCache("testEffectWithCache"),
+      await indexerMock.queryEffectCache(testEffectWithCache),
       ~message="Should invalidate loaded cache and store new one",
     ).toEqual([
       {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
@@ -651,7 +651,7 @@ describe("E2E tests", () => {
       // The chain-scoped output landed in the per-chain cache table, not the
       // flat cross-chain one.
       t.expect((
-        await indexerMock.queryEffectCacheTable("envio_1337_effect_chainScopedE2E"),
+        await indexerMock.queryEffectCache(chainScopedEffect, ~scope=Chain(1337)),
         await indexerMock.metric("envio_effect_cache"),
       )).toEqual((
         [{"id": `"a"`, "output": %raw(`1337`)}],
@@ -1025,7 +1025,7 @@ describe("E2E tests", () => {
     ).toEqual(2)
 
     t.expect(
-      await indexerMock.queryEffectCache("testEffectWithCacheControl"),
+      await indexerMock.queryEffectCache(testEffectWithCacheControl),
       ~message="Should only have test2 in DB (test1 was called with cache=false and subsequent calls used in-memory cache)",
     ).toEqual([{"id": `"test2"`, "output": %raw(`"test2-output"`)}])
   })
@@ -1096,7 +1096,7 @@ describe("E2E tests", () => {
 
     // Verify that only p2's successful result was cached
     t.expect(
-      await indexerMock.queryEffectCache("throwingEffect"),
+      await indexerMock.queryEffectCache(throwingEffect),
       ~message="Should only cache p2's successful result, not p1's failed call",
     ).toEqual([{"id": `"shouldn't-fail"`, "output": %raw(`"shouldn't-fail-output"`)}])
   })

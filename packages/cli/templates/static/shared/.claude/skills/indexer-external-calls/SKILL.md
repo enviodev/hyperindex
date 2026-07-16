@@ -91,23 +91,21 @@ const getTokenMetadata = createEffect(
 | `rateLimit` | `false \| { calls, per }` | required |
 | `crossChain` | `boolean` | `true` |
 
-## Cross-chain vs chain-scoped effects
+## crossChain (per-chain caching)
 
-`crossChain` controls whether an effect's cache (and rate-limit window) is shared across every chain or isolated per chain.
+`crossChain` decides whether an input is cached and rate-limited once globally or once per chain. Default `true`.
 
-- **Omitted / `crossChain: true` (default):** one shared cache for the effect across all chains. The cache table is `envio_effect_<name>`, dumped to `.envio/cache/<name>.tsv`. `context.chain` is **not** available — reading it throws.
-- **`crossChain: false`:** an isolated cache and an independent rate-limit window **per chain**. Each chain gets its own table `envio_<chainId>_effect_<name>`, dumped to `.envio/cache/<chainId>/<name>.tsv`. The handler can read `context.chain.id` (the chain the effect was called on). The same input on two chains is computed and cached separately; it only deduplicates within one chain.
+- **`crossChain: true` (default):** one shared cache. Use for chain-agnostic calls — the result is the same whatever chain asked (token metadata, a price by symbol).
+- **`crossChain: false`:** a separate cache and rate-limit budget per chain, and `context.chain.id` becomes available in the handler. Use when the result depends on the chain — an on-chain read, a per-chain RPC. The same input is fetched once per chain instead of once globally.
 
 ```ts
-// Chain-scoped: per-chain cache + rate limit, context.chain.id available.
+// Result depends on the chain -> crossChain: false, read context.chain.id
 const getBalance = createEffect(
   { name: "getBalance", input: S.string, output: S.bigint, rateLimit: false, crossChain: false },
   async ({ input: account, context }) => rpcFor(context.chain.id).getBalance(account)
 );
 ```
 
-Nesting rules: a handler may call either kind. A chain-scoped effect may call chain-scoped or cross-chain effects. A cross-chain effect may call other cross-chain effects, but calling a chain-scoped effect from a cross-chain effect throws (a cross-chain effect isn't tied to one chain, so there's no chain to resolve).
-
-> Changing an effect's `crossChain` (or `name`) changes its cache identity — the old cache tables/files no longer apply.
+A cross-chain effect can only call other cross-chain effects (it has no single chain to resolve a chain-scoped call against); a chain-scoped effect can call either. Reading `context.chain` on a cross-chain effect throws. Changing an effect's `crossChain` or `name` starts a fresh cache.
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

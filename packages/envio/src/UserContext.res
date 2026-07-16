@@ -27,22 +27,24 @@ Utils.Object.defineProperty(
     }),
   },
 )
+// Enumerable getter on the prototype (like `log`), reading the per-instance
+// chain stored non-enumerably by the constructor. Throws on cross-chain effects.
 %%raw(`
+Object.defineProperty(effectContextPrototype, "chain", {
+  enumerable: true,
+  get: function() {
+    if (this._chainId === undefined) {
+      throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
+    }
+    return { id: this._chainId };
+  }
+});
 var EffectContext = function(params, chainId, effectName, defaultShouldCache, callEffect) {
   paramsByThis.set(this, params);
+  Object.defineProperty(this, "_chainId", { value: chainId });
+  Object.defineProperty(this, "_effectName", { value: effectName });
   this.effect = callEffect;
   this.cache = defaultShouldCache;
-  // An enumerable getter closing over the resolved chain, so it shows up on the
-  // context like a normal field but throws on cross-chain effects.
-  Object.defineProperty(this, "chain", {
-    enumerable: true,
-    get: function() {
-      if (chainId === undefined) {
-        throw new Error('context.chain is not available on the cross-chain effect "' + effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
-      }
-      return { id: chainId };
-    }
-  });
 };
 EffectContext.prototype = effectContextPrototype;
 `)

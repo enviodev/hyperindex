@@ -67,11 +67,11 @@ type effectCacheInMemTable = {
   mutable dict: dict<Change.t<Internal.effectOutput>>,
   mutable changesCount: float,
   effect: Internal.effect,
-  // The scope this table caches for, and its resolved cache-table name (the
-  // address). The table is keyed in `effects` by this name, so a cross-chain
-  // and a chain-scoped table for the same effect stay isolated.
-  scope: Internal.effectScope,
-  tableName: string,
+  // The scope this cache is for and its resolved db table (the address). The
+  // in-mem table is keyed in `effects` by `table.tableName`, so a cross-chain
+  // and a chain-scoped cache for the same effect stay isolated.
+  scope: Internal.chainScope,
+  table: Table.table,
   // None when the effect has no rate limit.
   rateLimitState: option<effectRateLimitState>,
   // Per-scope active-call bookkeeping, surfaced through the Effect metrics.

@@ -771,12 +771,12 @@ type effect = {
   rateLimit: option<rateLimitOptions>,
 }
 
-// The scope an effect call resolves to. Cross-chain effects share one cache;
-// chain-scoped effects keep an isolated cache per chain. Unboxed: `CrossChain`
-// is the string "crossChain" and `Chain(id)` is the raw chain id, discriminated
-// by runtime type.
+// Whether some piece of data (currently an effect cache; entities in a future
+// version) is shared across every chain or isolated to a single chain. Unboxed:
+// `CrossChain` is the string "crossChain" and `Chain(id)` is the raw chain id,
+// discriminated by runtime type.
 @unboxed
-type effectScope =
+type chainScope =
   | @as("crossChain") CrossChain
   | Chain(int)
 
@@ -801,7 +801,7 @@ module EffectCache = {
   // Inverse of toTableName. Returns None for any table name that isn't a cache
   // table. Chain-scoped is tried first: the `_effect_` separator keeps effect
   // names that themselves start with digits unambiguous.
-  let fromTableName = (tableName): option<(string, effectScope)> =>
+  let fromTableName = (tableName): option<(string, chainScope)> =>
     switch RegExp.exec(chainScopedRe, tableName) {
     | Some(result) =>
       switch (

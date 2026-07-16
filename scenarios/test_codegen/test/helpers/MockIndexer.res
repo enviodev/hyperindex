@@ -362,8 +362,10 @@ module Indexer = {
     queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
-    queryEffectCache: string => promise<array<{"id": string, "output": JSON.t}>>,
-    queryEffectCacheTable: string => promise<array<{"id": string, "output": JSON.t}>>,
+    queryEffectCache: 'input 'output. (
+      Envio.effect<'input, 'output>,
+      ~scope: Internal.chainScope=?,
+    ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
@@ -610,14 +612,9 @@ module Indexer = {
           ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
-      queryEffectCache: (effectName: string) => {
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
-      },
-      queryEffectCacheTable: (tableName: string) => {
+      queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope=Internal.CrossChain) => {
+        let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
+        let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
