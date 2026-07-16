@@ -16,8 +16,8 @@ let getChangesCount = (state: IndexerState.t) => {
     total := total.contents +. (state->InMemoryStore.getInMemTable(~entityConfig)).changesCount
   })
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable => {
+  ->IndexerState.effectState
+  ->EffectState.forEach(inMemTable => {
     total := total.contents +. inMemTable.changesCount
   })
   state
@@ -38,9 +38,9 @@ let waitForCommit = (state: IndexerState.t): promise<unit> =>
 let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updatedEffectCache> => {
   let acc = []
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable => {
-    let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+  ->IndexerState.effectState
+  ->EffectState.forEach(inMemTable => {
+    let {idsToStore, dict, effect, invalidationsCount, scope, table} = inMemTable
     switch idsToStore {
     | [] => ()
     | ids =>
@@ -51,17 +51,33 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
         }
       )
       let effectName = effect.name
-      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+      let tableName = table.tableName
+      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(tableName) {
       | Some(c) => c
       | None =>
-        let c: Persistence.effectCacheRecord = {effectName, count: 0}
-        cache->Dict.set(effectName, c)
+        let c: Persistence.effectCacheRecord = {effectName, scope, tableName, count: 0}
+        cache->Dict.set(tableName, c)
         c
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-      acc->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))->ignore
+      Prometheus.EffectCacheCount.set(
+        ~count=effectCacheRecord.count,
+        ~effectName,
+        ~scope=scope->Internal.EffectCache.scopeToString,
+      )
+      acc
+      ->Array.push(
+        (
+          {
+            table,
+            itemSchema: effect.storageMeta.itemSchema,
+            items,
+            shouldInitialize,
+          }: Persistence.updatedEffectCache
+        ),
+      )
+      ->ignore
     }
     inMemTable.idsToStore = []
     inMemTable.invalidationsCount = 0
@@ -192,8 +208,8 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
     ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable =>
+  ->IndexerState.effectState
+  ->EffectState.forEach(inMemTable =>
     inMemTable->InMemoryStore.dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
   )
 }

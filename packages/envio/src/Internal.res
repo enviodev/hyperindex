@@ -761,33 +761,108 @@ type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheStorageMeta = {
   itemSchema: S.t<effectCacheItem>,
   outputSchema: S.t<effectOutput>,
-  table: Table.table,
 }
-type rateLimitState = {
+type rateLimitOptions = {
   callsPerDuration: int,
   durationMs: int,
-  mutable availableCalls: int,
-  mutable windowStartTime: float,
-  mutable queueCount: int,
-  mutable nextWindowPromise: option<promise<unit>>,
 }
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,
+  // When true (the default) a single cache is shared across every chain and the
+  // handler must not read context.chain. When false the cache is isolated per
+  // chain and context.chain.id is available.
+  crossChain: bool,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
-  // The number of functions that are currently running.
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
-  rateLimit: option<rateLimitState>,
+  rateLimit: option<rateLimitOptions>,
 }
+
+// Whether some piece of data (currently an effect cache; entities in a future
+// version) is shared across every chain or isolated to a single chain. Unboxed:
+// `CrossChain` is the string "crossChain" and `Chain(id)` is the raw chain id,
+// discriminated by runtime type.
+@unboxed
+type chainScope =
+  | @as("crossChain") CrossChain
+  | Chain(int)
+
 let cacheTablePrefix = "envio_effect_"
+
+// The single reversible mapping between an effect's (name, scope) and its
+// canonical Postgres cache-table name and .envio/cache file path. Everything
+// that needs a cache address goes through here instead of slicing prefixes.
+//   CrossChain  ->  envio_effect_<name>        <name>.tsv
+//   Chain(1)    ->  envio_1_effect_<name>      1/<name>.tsv
+//   Chain(137)  ->  envio_137_effect_<name>    137/<name>.tsv
+module EffectCache = {
+  let toTableName = (~effectName, ~scope) =>
+    switch scope {
+    | CrossChain => cacheTablePrefix ++ effectName
+    | Chain(chainId) => `envio_${chainId->Int.toString}_effect_${effectName}`
+    }
+
+  // "crossChain" or the decimal chain id. Used as the `scope` Prometheus label.
+  let scopeToString = scope =>
+    switch scope {
+    | CrossChain => "crossChain"
+    | Chain(chainId) => chainId->Int.toString
+    }
+
+  // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —
+  // Int.fromString alone follows parseInt semantics and accepts both.
+  let parseChainId = str =>
+    switch Int.fromString(str) {
+    | Some(chainId) if chainId >= 0 && chainId->Int.toString === str => Some(chainId)
+    | _ => None
+    }
+
+  let chainScopedRe = /^envio_([0-9]+)_effect_(.+)$/
+  let crossChainRe = /^envio_effect_(.+)$/
+
+  // Inverse of toTableName. Returns None for any table name that isn't a cache
+  // table. Chain-scoped is tried first: the `_effect_` separator keeps effect
+  // names that themselves start with digits unambiguous.
+  let fromTableName = (tableName): option<(string, chainScope)> =>
+    switch RegExp.exec(chainScopedRe, tableName) {
+    | Some(result) =>
+      switch (
+        RegExp.Result.matches(result)->Array.get(0),
+        RegExp.Result.matches(result)->Array.get(1),
+      ) {
+      | (Some(Some(chainIdStr)), Some(Some(effectName))) =>
+        switch parseChainId(chainIdStr) {
+        | Some(chainId) => Some((effectName, Chain(chainId)))
+        | None => None
+        }
+      | _ => None
+      }
+    | None =>
+      switch RegExp.exec(crossChainRe, tableName) {
+      | Some(result) =>
+        switch RegExp.Result.matches(result)->Array.get(0) {
+        | Some(Some(effectName)) => Some((effectName, CrossChain))
+        | _ => None
+        }
+      | None => None
+      }
+    }
+
+  // Relative posix path within .envio/cache. Chain-scoped caches live one
+  // directory level deep, named by chain id.
+  let toCachePath = (~effectName, ~scope) =>
+    switch scope {
+    | CrossChain => effectName ++ ".tsv"
+    | Chain(chainId) => `${chainId->Int.toString}/${effectName}.tsv`
+    }
+}
+
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
-let makeCacheTable = (~effectName) => {
+let makeCacheTable = (~effectName, ~scope) => {
   Table.mkTable(
-    cacheTablePrefix ++ effectName,
+    EffectCache.toTableName(~effectName, ~scope),
     ~fields=[
       Table.mkField("id", String, ~fieldSchema=S.string, ~isPrimaryKey=true),
       Table.mkField("output", Json, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
