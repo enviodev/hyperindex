@@ -1787,8 +1787,22 @@ describe("E2E tests", () => {
         await indexerMock.getBatchWritePromise()
       }
 
-      // The follower is below its own head (frontier 100 < head 105) but starved
-      // of budget. It must keep polling for new blocks rather than going silent.
+      // The follower is below its own head (frontier 100 < head 105). The
+      // indexer is realtime, so the cross-chain alignment clamp is dropped:
+      // instead of being starved behind the backfilling leader, the follower
+      // fetches its small range to head...
+      await MockIndexer.Helper.waitItemsQuery(followerSource)
+      let followerCall = followerSource.getItemsOrThrowCalls->Array.getUnsafe(0)
+      t.expect(
+        followerCall.payload["fromBlock"],
+        ~message="follower fetches its own range to head instead of waiting behind the leader",
+      ).toEqual(101)
+      followerCall.resolve([], ~latestFetchedBlockNumber=105)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // ...and once at head it goes back to polling for new blocks rather
+      // than going silent.
       t.expect(
         followerSource.getHeightOrThrowCalls->Array.length > followerPollsBefore,
         ~message="follower keeps polling getHeightOrThrow while the leader backfills a large range",

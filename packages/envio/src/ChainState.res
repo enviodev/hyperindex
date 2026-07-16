@@ -466,12 +466,13 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
 }
 
 // Block range that cross-chain progress alignment maps fractions over: from
-// the first block that can hold this chain's events to the last block it can
-// fetch right now.
+// the chain's startBlock to the last block it can fetch right now. The lower
+// bound is deliberately static — anchoring it at firstEventBlock would
+// collapse a chain's progress to 0 the moment its first event is discovered,
+// yanking every other chain's alignment line below their own frontiers.
 let progressRange = (cs: t) => {
   let fetchState = cs.fetchState
-  let lower = fetchState.firstEventBlock->Option.getOr(fetchState.startBlock)
-  (lower, cs->fetchCeiling)
+  (fetchState.startBlock, cs->fetchCeiling)
 }
 
 // A degenerate range (chain already at or past its last block) maps to 1 so it
@@ -491,6 +492,12 @@ let blockAtProgress = (cs: t, ~progress) => {
   let (lower, upper) = cs->progressRange
   lower + Math.ceil(progress *. (upper - lower)->Int.toFloat)->Float.toInt
 }
+
+// The fetch frontier as a fraction of the alignable range — what the
+// cross-chain waterfall aligns other chains against. Based on blocks actually
+// fetched, so it holds up even while this chain's queries are in flight.
+let frontierProgress = (cs: t) =>
+  cs->progressAtBlock(~blockNumber=cs.fetchState->FetchState.bufferBlockNumber)
 
 // Propose queries sized against this chain's target block. Called by
 // CrossChainState's waterfall, furthest-behind chain first, with

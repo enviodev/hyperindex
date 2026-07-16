@@ -201,10 +201,13 @@ let totalReservedSize = (crossChainState: t) => {
 // automatically. Starting a new query requires at least 10% of the target pool
 // to be free. A chain visited after the budget falls below that admission unit
 // doesn't query this round — reservations release as responses land, so the
-// next tick redistributes. Chains that do get budget are additionally capped
-// at the first querying chain's target progress mapped onto their own range, so
-// no chain runs further ahead than the chain currently using the pool. Waiting
-// and idle chains do not establish this alignment line.
+// next tick redistributes. Every other chain is additionally capped at the
+// most-behind chain's fetch-frontier progress mapped onto its own range, so no
+// chain runs ahead of the chain the pool is prioritizing — including on ticks
+// where that chain is mid-fetch and emits no new query. A chain with no known
+// height can't anchor this line (there's no range to measure against), and
+// once the whole indexer has caught up (isRealtime) the clamp is dropped —
+// chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -235,11 +238,20 @@ let checkAndFetch = async (
   // gets more since a forced catch-up query there costs a head-poll roundtrip.
   let chunkItemsMultiplier = crossChainState.isRealtime ? 3. : 1.5
 
+  let prioritizedChainStates = crossChainState->priorityOrder
+
+  // Alignment anchor: the most-behind chain with a known height. Anchoring on
+  // its current frontier (not on the target of whichever chain happens to
+  // query this tick) keeps the line in place while the anchor's queries are
+  // still in flight.
+  let alignment = crossChainState.isRealtime
+    ? None
+    : prioritizedChainStates
+      ->Array.find(cs => cs->ChainState.knownHeight != 0)
+      ->Option.map(cs => ((cs->ChainState.chainConfig).id, cs->ChainState.frontierProgress))
+
   let actionByChain = Dict.make()
-  let maxProgress = ref(None)
-  crossChainState
-  ->priorityOrder
-  ->Array.forEach(cs => {
+  prioritizedChainStates->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     if remaining.contents < minimumAdmissionBudget {
       // More than 90% of the target pool is ready or reserved. Do not attempt
@@ -257,21 +269,13 @@ let checkAndFetch = async (
       let chainTargetItems =
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
-      let candidateProgress = switch maxProgress.contents {
-      | None if !isCold =>
-        Some(
-          cs->ChainState.progressAtBlock(
-            ~blockNumber=cs->ChainState.targetBlock(~chainTargetItems),
-          ),
-        )
+      let maxTargetBlock = switch alignment {
+      // 5% margin past the anchor's line: chains whose progress tracks the
+      // anchor closely would otherwise flap in and out of the clamp on every
+      // small frontier move, stalling their pipeline every other tick.
+      | Some((anchorChainId, progress)) if anchorChainId !== chainId =>
+        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.05))
       | _ => None
-      }
-      let maxTargetBlock = switch maxProgress.contents {
-      | None => None
-      // 5% margin past the leader's line: chains whose progress tracks the
-      // leader closely would otherwise flap in and out of the clamp as
-      // leadership alternates, stalling their pipeline every other tick.
-      | Some(progress) => Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.05))
       }
       switch cs->ChainState.getNextQuery(
         ~chainTargetItems,
@@ -297,14 +301,6 @@ let checkAndFetch = async (
             : FetchState.WaitingForNewBlock
         actionByChain->Utils.Dict.setByInt(chainId, action)
       | Ready(queries) => {
-          // A density-bearing chain establishes the alignment line only after
-          // proving that it can use the pool. Waiting and idle chains leave it
-          // open for the next chain; cold-chain targets remain guesses and do
-          // not lead, as before.
-          switch candidateProgress {
-          | Some(progress) => maxProgress := Some(progress)
-          | None => ()
-          }
           let consumed =
             queries->Array.reduce(0., (acc, query: FetchState.query) =>
               acc +. query.itemsEst->Int.toFloat
