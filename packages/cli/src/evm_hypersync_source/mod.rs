@@ -48,7 +48,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 // one client stalls at high query concurrency. Each hypersync_client::Client
 // owns its own reqwest client (own connection), so the pool holds several and
 // treats each as full at STREAMS_PER_CLIENT concurrent requests.
-const STREAMS_PER_CLIENT: usize = 64;
+const STREAMS_PER_CLIENT: usize = 80;
 // Past this point extra connections stop helping — bandwidth and decode
 // threads become the ceiling — so cap the pool regardless of concurrency.
 const MAX_CLIENTS: usize = 8;
@@ -157,10 +157,6 @@ impl ClientPool {
         pooled.in_flight.fetch_add(1, Ordering::Relaxed);
         Ok(Lease(pooled))
     }
-
-    fn first(&self) -> Arc<PooledClient> {
-        self.clients.read().unwrap()[0].clone()
-    }
 }
 
 #[napi]
@@ -204,7 +200,8 @@ impl EvmHypersyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.pool.first().client.get_height().await.map_err(|e| {
+        let lease = self.pool.acquire().map_err(map_err)?;
+        let height = lease.client().get_height().await.map_err(|e| {
             // The client embeds a `{:?}` debug dump (a full backtrace when
             // RUST_BACKTRACE is set) in its error message; keep only the first
             // line so it stays readable when the indexer surfaces it on retries.
@@ -1102,11 +1099,11 @@ mod tests {
         let full_first: Vec<_> = (0..STREAMS_PER_CLIENT)
             .map(|_| pool.acquire().unwrap())
             .collect();
-        assert_eq!(pool_loads(&pool), vec![64]);
+        assert_eq!(pool_loads(&pool), vec![STREAMS_PER_CLIENT]);
 
-        // The 65th request spills into a newly created second client.
+        // The next request spills into a newly created second client.
         let spill = pool.acquire().unwrap();
-        assert_eq!(pool_loads(&pool), vec![64, 1]);
+        assert_eq!(pool_loads(&pool), vec![STREAMS_PER_CLIENT, 1]);
 
         // Freeing a slot on the first client makes it the target again.
         drop(full_first);
@@ -1125,15 +1122,18 @@ mod tests {
         let saturating: Vec<_> = (0..MAX_CLIENTS * STREAMS_PER_CLIENT)
             .map(|_| pool.acquire().unwrap())
             .collect();
-        assert_eq!(pool_loads(&pool), vec![64; 8]);
+        assert_eq!(pool_loads(&pool), vec![STREAMS_PER_CLIENT; MAX_CLIENTS]);
 
         // Beyond full capacity the pool stays at MAX_CLIENTS and overflows
         // onto the least-loaded client instead of creating more.
         let overflow = pool.acquire().unwrap();
         let loads = pool_loads(&pool);
-        assert_eq!((loads.len(), loads.iter().sum::<usize>()), (8, 513));
+        assert_eq!(
+            (loads.len(), loads.iter().sum::<usize>()),
+            (MAX_CLIENTS, MAX_CLIENTS * STREAMS_PER_CLIENT + 1)
+        );
 
         drop((saturating, overflow));
-        assert_eq!(pool_loads(&pool), vec![0; 8]);
+        assert_eq!(pool_loads(&pool), vec![0; MAX_CLIENTS]);
     }
 }
