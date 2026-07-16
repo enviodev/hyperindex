@@ -795,6 +795,21 @@ module EffectCache = {
     | Chain(chainId) => `envio_${chainId->Int.toString}_effect_${effectName}`
     }
 
+  // "crossChain" or the decimal chain id. Used as the `scope` Prometheus label.
+  let scopeToString = scope =>
+    switch scope {
+    | CrossChain => "crossChain"
+    | Chain(chainId) => chainId->Int.toString
+    }
+
+  // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —
+  // Int.fromString alone follows parseInt semantics and accepts both.
+  let parseChainId = str =>
+    switch Int.fromString(str) {
+    | Some(chainId) if chainId >= 0 && chainId->Int.toString === str => Some(chainId)
+    | _ => None
+    }
+
   let chainScopedRe = /^envio_([0-9]+)_effect_(.+)$/
   let crossChainRe = /^envio_effect_(.+)$/
 
@@ -809,7 +824,7 @@ module EffectCache = {
         RegExp.Result.matches(result)->Array.get(1),
       ) {
       | (Some(Some(chainIdStr)), Some(Some(effectName))) =>
-        switch Int.fromString(chainIdStr) {
+        switch parseChainId(chainIdStr) {
         | Some(chainId) => Some((effectName, Chain(chainId)))
         | None => None
         }

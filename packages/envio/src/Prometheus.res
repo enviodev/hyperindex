@@ -606,6 +606,16 @@ let effectLabelsSchema = S.object(s => {
   s.field("effect", S.string)
 })
 
+// For metrics whose backing state lives per scope ("crossChain" or a chain
+// id) — without the label, scopes of the same effect would clobber each
+// other's gauge value.
+let effectScopeLabelsSchema = S.schema(s =>
+  {
+    "effect": s.matches(S.string),
+    "scope": s.matches(S.string),
+  }
+)
+
 module EffectCalls = {
   let timeCounter = SafeCounter.makeOrThrow(
     ~name="envio_effect_call_seconds",
@@ -628,7 +638,7 @@ module EffectCalls = {
   let activeCallsCount = SafeGauge.makeOrThrow(
     ~name="envio_effect_active_calls",
     ~help="The number of Effect function calls that are currently running.",
-    ~labelSchema=effectLabelsSchema,
+    ~labelSchema=effectScopeLabelsSchema,
   )
 }
 
@@ -636,11 +646,11 @@ module EffectCacheCount = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_effect_cache",
     ~help="The number of items in the effect cache.",
-    ~labelSchema=effectLabelsSchema,
+    ~labelSchema=effectScopeLabelsSchema,
   )
 
-  let set = (~count, ~effectName) => {
-    gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
+  let set = (~count, ~effectName, ~scope) => {
+    gauge->SafeGauge.handleInt(~labels={"effect": effectName, "scope": scope}, ~value=count)
   }
 }
 
@@ -660,7 +670,7 @@ module EffectQueueCount = {
   let gauge = SafeGauge.makeOrThrow(
     ~name="envio_effect_queue",
     ~help="The number of effect calls waiting in the rate limit queue.",
-    ~labelSchema=effectLabelsSchema,
+    ~labelSchema=effectScopeLabelsSchema,
   )
 
   let timeCounter = SafeCounter.makeOrThrow(
@@ -669,8 +679,8 @@ module EffectQueueCount = {
     ~labelSchema=effectLabelsSchema,
   )
 
-  let set = (~count, ~effectName) => {
-    gauge->SafeGauge.handleInt(~labels=effectName, ~value=count)
+  let set = (~count, ~effectName, ~scope) => {
+    gauge->SafeGauge.handleInt(~labels={"effect": effectName, "scope": scope}, ~value=count)
   }
 }
 

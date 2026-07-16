@@ -342,7 +342,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
       },
     ])
     t.expect(
@@ -370,7 +370,7 @@ describe("E2E tests", () => {
     ).toEqual([
       {
         value: "2",
-        labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+        labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
       },
     ])
 
@@ -471,7 +471,7 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: Dict.fromArray([("effect", "testEffectWithCache")]),
+          labels: Dict.fromArray([("effect", "testEffectWithCache"), ("scope", "crossChain")]),
         },
       ],
     ))
@@ -658,7 +658,7 @@ describe("E2E tests", () => {
         [
           {
             value: "1",
-            labels: Dict.fromArray([("effect", "chainScopedE2E")]),
+            labels: Dict.fromArray([("effect", "chainScopedE2E"), ("scope", "1337")]),
           },
         ],
       ))
@@ -830,17 +830,17 @@ describe("E2E tests", () => {
     t.expect(
       queueMetricDuringExecution.contents->Option.getOrThrow,
       ~message="queue should have 4 items during execution",
-    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "4", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])}])
     t.expect(
       activeMetricDuringExecution.contents->Option.getOrThrow,
       ~message="active calls should be at rate limit (2)",
-    ).toEqual([{value: "2", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "2", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])}])
 
     // Final check - queue should be empty
     t.expect(
       await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all windows complete",
-    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectMultiWindow")])}])
+    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectMultiWindow"), ("scope", "crossChain")])}])
   })
 
   Async.it("Effect rate limiting with single call per window", async t => {
@@ -932,11 +932,11 @@ describe("E2E tests", () => {
     t.expect(
       queueMetricDuringExecution.contents->Option.getOrThrow,
       ~message="queue should have 3 items during execution",
-    ).toEqual([{value: "3", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "3", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])}])
     t.expect(
       activeMetricDuringExecution.contents->Option.getOrThrow,
       ~message="active calls should be at rate limit (1)",
-    ).toEqual([{value: "1", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "1", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])}])
 
     // Check metrics after first window
     let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getOrThrow
@@ -952,7 +952,7 @@ describe("E2E tests", () => {
     t.expect(
       await indexerMock.metric("envio_effect_queue"),
       ~message="queue should be empty after all batches complete",
-    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectNested")])}])
+    ).toEqual([{value: "0", labels: Dict.fromArray([("effect", "testEffectNested"), ("scope", "crossChain")])}])
   })
 
   Async.it("Effect cache can be disabled per-call via context.cache", async t => {

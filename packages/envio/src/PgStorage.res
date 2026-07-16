@@ -1260,7 +1260,7 @@ let make = (
       if isDir {
         let subEntries = await NodeJs.Fs.Promises.readdir(entryPath)
         let tsvs = subEntries->Array.filter(sub => sub->String.endsWith(".tsv"))
-        switch Int.fromString(entry) {
+        switch Internal.EffectCache.parseChainId(entry) {
         | Some(chainId) =>
           tsvs->Array.forEach(sub => {
             let effectName = sub->String.slice(~start=0, ~end=-4)

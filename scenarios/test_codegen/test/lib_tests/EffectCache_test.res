@@ -52,6 +52,23 @@ describe("Internal.EffectCache address mapping", () => {
     )).toEqual((Some(("1_effect_x", CrossChain)), Some(("x", Chain(1)))))
   })
 
+  it("Parses only canonical decimal chain ids", t => {
+    t.expect(
+      ["1", "137", "007", "1foo", "", "-1", "1.5"]->Array.map(Internal.EffectCache.parseChainId),
+    ).toEqual([Some(1), Some(137), None, None, None, None, None])
+  })
+
+  it("Rejects table names with a non-canonical chain id", t => {
+    t.expect(Internal.EffectCache.fromTableName("envio_007_effect_foo")).toEqual(None)
+  })
+
+  it("Maps scope to its Prometheus label value", t => {
+    t.expect((
+      Internal.EffectCache.scopeToString(CrossChain),
+      Internal.EffectCache.scopeToString(Chain(137)),
+    )).toEqual(("crossChain", "137"))
+  })
+
   it("Returns None for tables that aren't effect caches", t => {
     t.expect(
       ["envio_chains", "envio_checkpoints", "User", "envio_effect_"]->Array.map(
