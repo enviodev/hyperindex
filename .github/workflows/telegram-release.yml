@@ -118,16 +118,26 @@ jobs:
           parse_mode="HTML"
 
           # Safety net: if escaping still pushed the HTML past the hard limit,
-          # send plain text truncated to 4096, which a hard cut cannot break.
+          # fall back to plain text, which a hard cut cannot break.
           # Telegram measures against 4096 UTF-16 units, where a non-BMP char
-          # (emoji) costs 2 but Bash's ${#var} and slices count 1, so both the
-          # check and the cut run on the UTF-16 encoding. "ignore" drops the
-          # dangling half when a cut lands inside a surrogate pair.
+          # (emoji) costs 2 but Bash's ${#var} and slices count 1, so every
+          # measurement and cut here runs on the UTF-16 encoding. "ignore" drops
+          # the dangling half when a cut lands inside a surrogate pair.
           utf16_len() { python3 -c 'import sys; print(len(sys.stdin.read().encode("utf-16-le")) // 2)'; }
+          utf16_cut() { python3 -c 'import sys; sys.stdout.write(sys.stdin.read().encode("utf-16-le")[: int(sys.argv[1]) * 2].decode("utf-16-le", "ignore"))' "$1"; }
 
           if (( $(printf '%s' "$message" | utf16_len) > 4096 )); then
-            message="$(printf '🚢 HyperIndex %s released\n\n%s\n\n%s' "$TITLE" "$BODY" "$URL" |
-              python3 -c 'import sys; sys.stdout.write(sys.stdin.read().encode("utf-16-le")[:8192].decode("utf-16-le", "ignore"))')"
+            # Budget the notes against the header and link rather than cutting
+            # the assembled message, which would drop the link off the end and
+            # leave no way back to the release.
+            plain_header="$(printf '🚢 HyperIndex %s released' "$TITLE")"
+            plain_budget=$(( 4096
+              - $(printf '%s' "$plain_header" | utf16_len)
+              - $(printf '%s' "$URL" | utf16_len)
+              - 4 ))
+            (( plain_budget < 0 )) && plain_budget=0
+            plain_notes="$(printf '%s' "$BODY" | utf16_cut "$plain_budget")"
+            message="$(printf '%s\n\n%s\n\n%s' "$plain_header" "$plain_notes" "$URL")"
             parse_mode=""
           fi
 
