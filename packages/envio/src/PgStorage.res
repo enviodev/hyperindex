@@ -1157,9 +1157,9 @@ let rec writeBatch = async (
   }
 }
 
-// Returns the most recent entity state for IDs that need to be restored during rollback.
-// For each ID modified after the rollback target, retrieves its latest state at or before the target.
-let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+// Returns the most recent history row at or before the rollback target for IDs changed after it.
+// envio_change is included so ReScript can turn SET rows into restores and DELETE rows into removals.
+let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getPgDbFieldName->Some
@@ -1175,35 +1175,40 @@ let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig
     ~entityIndex=entityConfig.index,
   )
 
-  `SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
-  AND EXISTS (
-    SELECT 1
-    FROM "${pgSchema}"."${historyTableName}" h
-    WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-      AND h."${EntityHistory.checkpointIdFieldName}" > $1
-  )
-ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC`
+  `SELECT DISTINCT ON ("${Table.idFieldName}") ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"
+  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
+    AND EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE h."${Table.idFieldName}" = "${historyTableName}"."${Table.idFieldName}"
+        AND h."${EntityHistory.checkpointIdFieldName}" > $1
+    )
+  ORDER BY "${Table.idFieldName}", "${EntityHistory.checkpointIdFieldName}" DESC`
 }
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
-// These entities should be deleted during rollback.
+// DELETE rows at or before the target are returned by the restore query and classified in ReScript.
 let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
-  `SELECT DISTINCT ${Table.idFieldName}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" > $1
-AND NOT EXISTS (
-  SELECT 1
-  FROM "${pgSchema}"."${historyTableName}" h
-  WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-    AND h."${EntityHistory.checkpointIdFieldName}" <= $1
-)`
+  `SELECT DISTINCT "${Table.idFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"
+  WHERE "${EntityHistory.checkpointIdFieldName}" > $1
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE h."${Table.idFieldName}" = "${historyTableName}"."${Table.idFieldName}"
+        AND h."${EntityHistory.checkpointIdFieldName}" <= $1
+    )`
 }
+
+let rollbackRowStateSchema = S.object(s => (
+  s.field(Table.idFieldName, S.string),
+  s.field(EntityHistory.changeFieldName, EntityHistory.RowAction.schema),
+))
 
 let make = (
   ~sql: Postgres.sql,
@@ -1663,7 +1668,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId,
   ) => {
-    await Promise.all2((
+    let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
@@ -1671,14 +1676,26 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
-      // Get entities that should be restored to their state at or before rollback target
+      // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
+        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
+
+    let removedIds = removedIdRows->Array.map(row => row["id"])
+    let restoredEntitiesResult = []
+    rollbackRows->Array.forEach(row => {
+      let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema)
+      switch action {
+      | SET => restoredEntitiesResult->Array.push(row)->ignore
+      | DELETE => removedIds->Array.push(entityId)->ignore
+      }
+    })
+
+    (removedIds, restoredEntitiesResult)
   }
 
   let writeBatchMethod = async (
