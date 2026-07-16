@@ -330,6 +330,43 @@ let makeCreateHistoryTableQuery = (
     }
   })
 
+  let (partitionBy, orderBy, ttl) = switch entityConfig.storage.clickhouseOptions {
+  | Some(options) => (options.partitionBy, options.orderBy, options.ttl)
+  | None => (None, None, None)
+  }
+
+  let orderByColumns = switch orderBy {
+  | Some(fieldNames) =>
+    fieldNames
+    ->Array.map(fieldName =>
+      switch entityConfig.table.fields->Array.findMap(field =>
+        switch field {
+        | Field(f) if f.fieldName === fieldName => Some(f)
+        | _ => None
+        }
+      ) {
+      | Some(f) => `\`${f->Table.getClickHouseDbFieldName}\``
+      | None =>
+        // Validated at codegen, so a miss means the schema and the
+        // persisted config diverged.
+        JsError.throwWithMessage(
+          `ClickHouse orderBy field "${fieldName}" is not defined on entity "${entityConfig.name}"`,
+        )
+      }
+    )
+    ->Array.joinUnsafe(", ")
+  | None => `${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName}`
+  }
+
+  let partitionByClause = switch partitionBy {
+  | Some(expression) => `\nPARTITION BY ${expression}`
+  | None => ""
+  }
+  let ttlClause = switch ttl {
+  | Some(expression) => `\nTTL ${expression}`
+  | None => ""
+  }
+
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
@@ -346,8 +383,8 @@ let makeCreateHistoryTableQuery = (
       ~isArray=false,
     )}
 )
-ENGINE = ${tableEngine}
-ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+ENGINE = ${tableEngine}${partitionByClause}
+ORDER BY (${orderByColumns})${ttlClause}`
 }
 
 // Generate CREATE TABLE query for checkpoints

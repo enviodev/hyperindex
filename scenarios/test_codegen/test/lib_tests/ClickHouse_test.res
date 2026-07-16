@@ -140,6 +140,123 @@ ORDER BY (id, envio_checkpoint_id)`
     )
   })
 
+  describe("makeCreateHistoryTableQuery with @storage(clickhouse: {...}) table options", () => {
+    Async.it(
+      "Should apply partitionBy, orderBy and ttl to the history table SQL",
+      async t => {
+        let config = MockIndexerConfig.parseYaml(
+          ~schema=`
+type Transfer @storage(clickhouse: {
+  partitionBy: "toYYYYMM(timestamp)",
+  orderBy: ["timestamp"],
+  ttl: "timestamp + INTERVAL 2 YEAR"
+}) {
+  id: ID!
+  timestamp: Timestamp!
+  amount: BigInt!
+}
+`,
+          `
+name: clickhouse-options
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+        ).config
+        let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+
+        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
+
+        t.expect(
+          {
+            "storage": entityConfig.storage,
+            "query": query,
+          },
+          ~message="Table options should reach the entity storage and the history table SQL",
+        ).toEqual({
+          "storage": (
+            {
+              postgres: false,
+              clickhouse: true,
+              clickhouseOptions: {
+                partitionBy: "toYYYYMM(timestamp)",
+                orderBy: ["timestamp"],
+                ttl: "timestamp + INTERVAL 2 YEAR",
+              },
+            }: Internal.entityStorage
+          ),
+          "query": `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_Transfer\` (
+  \`id\` String,
+  \`timestamp\` DateTime64(3, 'UTC'),
+  \`amount\` String,
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (\`timestamp\`)
+TTL timestamp + INTERVAL 2 YEAR`,
+        })
+      },
+    )
+
+    Async.it(
+      "Should resolve orderBy field names to renamed and linked-entity columns",
+      async t => {
+        let config = MockIndexerConfig.parseYaml(
+          ~schema=`
+type Trade @storage(clickhouse: {orderBy: ["baseToken", "tradeTime"]}) {
+  id: ID!
+  baseToken: Token!
+  tradeTime: Timestamp!
+}
+
+type Token @storage(clickhouse: true) {
+  id: ID!
+}
+`,
+          `
+name: clickhouse-order-by
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    column_name_format: snake_case
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+        ).config
+        let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Trade")
+
+        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
+
+        t.expect(
+          query,
+          ~message="orderBy should use the ClickHouse column names, not the schema field names",
+        ).toBe(`CREATE TABLE IF NOT EXISTS test_db.\`envio_history_Trade\` (
+  \`id\` String,
+  \`base_token_id\` String,
+  \`trade_time\` DateTime64(3, 'UTC'),
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+ORDER BY (\`base_token_id\`, \`trade_time\`)`)
+      },
+    )
+  })
+
   describe("makeCreateViewQuery", () => {
     Async.it(
       "Should create SQL for A entity view",

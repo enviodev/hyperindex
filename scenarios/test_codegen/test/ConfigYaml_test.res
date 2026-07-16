@@ -1362,6 +1362,24 @@ type Token @storage(postgres: false, clickhouse: false) {
       "enables no storage",
     ),
     (
+      "rejects unknown clickhouse table options",
+      `
+type Token @storage(clickhouse: {indexGranularity: 1024}) {
+  id: ID!
+}
+`,
+      "Unknown \`clickhouse\` option \`indexGranularity\`",
+    ),
+    (
+      "rejects clickhouse orderBy referencing missing fields",
+      `
+type Token @storage(clickhouse: {orderBy: ["missing"]}) {
+  id: ID!
+}
+`,
+      "\`clickhouse.orderBy\` references field \`missing\` which doesn't exist",
+    ),
+    (
       "rejects empty storage directives",
       `
 type Token @storage {
