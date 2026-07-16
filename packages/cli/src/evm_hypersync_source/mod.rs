@@ -111,7 +111,7 @@ impl ClientPool {
     // Grow-only: idle clients are cheap and the underlying client already
     // recreates its connection every 60s, so shrinking buys nothing.
     fn acquire(&self) -> Result<Lease> {
-        let claim_non_full = (|| {
+        let claim_non_full = || {
             let clients = self.clients.read().unwrap();
             for pooled in clients.iter() {
                 // fetch_add claims the slot atomically; concurrent acquires that
@@ -122,7 +122,7 @@ impl ClientPool {
                 pooled.in_flight.fetch_sub(1, Ordering::Relaxed);
             }
             None
-        });
+        };
 
         if let Some(lease) = claim_non_full() {
             return Ok(lease);
