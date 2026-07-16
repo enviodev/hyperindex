@@ -852,18 +852,8 @@ module EffectCache = {
 
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
 let makeCacheTable = (~effectName, ~scope) => {
-  let tableName = EffectCache.toTableName(~effectName, ~scope)
-
-  // Postgres silently truncates identifiers past 63 bytes, which would make the
-  // resolved table name diverge from what cache discovery reads back. Effect
-  // names are ASCII (validated in createEffect), so length is the byte count.
-  if tableName->String.length > 63 {
-    JsError.throwWithMessage(
-      `The effect cache table name "${tableName}" exceeds PostgreSQL's 63-character identifier limit. Use a shorter name for effect "${effectName}".`,
-    )
-  }
   Table.mkTable(
-    tableName,
+    EffectCache.toTableName(~effectName, ~scope),
     ~fields=[
       Table.mkField("id", String, ~fieldSchema=S.string, ~isPrimaryKey=true),
       Table.mkField("output", Json, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
