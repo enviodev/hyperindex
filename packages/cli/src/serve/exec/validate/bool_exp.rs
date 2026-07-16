@@ -20,14 +20,14 @@ pub(super) fn coerce_bool_exp<'a>(
     let mut parts: Vec<ir::BoolExp> = Vec::new();
     for (key, value) in entries {
         let kpath = format!("{path}.{key}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&key)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(key)) else {
             return Err(verr(
                 kpath,
                 format!("field '{key}' not found in type: '{type_name}'"),
             ));
         };
         let value = resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &kpath)?;
-        match key.as_str() {
+        match key {
             "_and" | "_or" => {
                 let items = expect_list(value, &kpath)?;
                 let mut inner: Vec<ir::BoolExp> = Vec::new();
@@ -48,13 +48,23 @@ pub(super) fn coerce_bool_exp<'a>(
                 parts.push(ir::BoolExp::Not(Box::new(inner)));
             }
             _ => {
-                if let Some(col) = table.column_by_api_name(&key) {
+                if let Some(col) = table.column_by_api_name(key) {
                     let ops = coerce_comparison(ctx, col, value, &kpath)?;
                     for op in ops {
                         parts.push(ir::BoolExp::Compare {
                             column: col.db_name.clone(),
                             scalar: col.scalar,
-                            pg_type: col.pg_type.clone(),
+                            // `_in: []` has no value-level cast to infer from,
+                            // so carry the complete scalar element cast as
+                            // the SQL compiler's fallback. Array columns still
+                            // use their element type here; `param_array` adds
+                            // the outer list suffix.
+                            pg_type: super::coerce::column_pg_cast(
+                                col.scalar,
+                                &col.pg_type,
+                                &col.pg_type_schema,
+                                false,
+                            ),
                             is_array: col.is_array,
                             op,
                         });
@@ -109,6 +119,14 @@ fn comparison_type_name(scalar: Scalar, pg_type: &str, is_array: bool) -> String
     }
 }
 
+#[derive(Clone, Copy)]
+struct ComparisonColumn<'a> {
+    scalar: Scalar,
+    pg_type: &'a str,
+    pg_type_schema: &'a str,
+    is_array: bool,
+}
+
 fn coerce_comparison<'a>(
     ctx: &'a Ctx<'a>,
     col: &Column,
@@ -118,9 +136,12 @@ fn coerce_comparison<'a>(
     let type_name = comparison_type_name(col.scalar, &col.pg_type, col.is_array);
     coerce_comparison_ops(
         ctx,
-        col.scalar,
-        &col.pg_type,
-        col.is_array,
+        ComparisonColumn {
+            scalar: col.scalar,
+            pg_type: &col.pg_type,
+            pg_type_schema: &col.pg_type_schema,
+            is_array: col.is_array,
+        },
         &type_name,
         v,
         path,
@@ -129,9 +150,7 @@ fn coerce_comparison<'a>(
 
 fn coerce_comparison_ops<'a>(
     ctx: &'a Ctx<'a>,
-    scalar: Scalar,
-    pg_type: &str,
-    is_array: bool,
+    column: ComparisonColumn<'_>,
     type_name: &str,
     v: V<'a>,
     path: &str,
@@ -146,20 +165,29 @@ fn coerce_comparison_ops<'a>(
         // when the comparison type itself is absent (e.g. Int predicates
         // with no int column anywhere), fall back to accepting the op.
         if let Some(def) = type_def {
-            if def.input_field(&op).is_none() {
+            if def.input_field(op).is_none() {
                 return Err(verr(
                     opath,
                     format!("field '{op}' not found in type: '{type_name}'"),
                 ));
             }
         }
-        let loc = type_def.and_then(|d| d.input_field(&op));
+        let loc = type_def.and_then(|d| d.input_field(op));
         let value = match loc {
             Some(fd) => resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &opath)?,
             None => value,
         };
-        let scalar_value =
-            |v: V<'a>, p: &str| coerce_column_value(ctx, scalar, pg_type, is_array, v, p);
+        let scalar_value = |v: V<'a>, p: &str| {
+            coerce_column_value(
+                ctx,
+                column.scalar,
+                column.pg_type,
+                column.pg_type_schema,
+                column.is_array,
+                v,
+                p,
+            )
+        };
         let list_value = |v: V<'a>, p: &str| -> GResult<Vec<ir::SqlValue>> {
             let items = expect_list(v, p)?;
             let mut out = Vec::new();
@@ -168,7 +196,7 @@ fn coerce_comparison_ops<'a>(
             }
             Ok(out)
         };
-        let compare = match op.as_str() {
+        let compare = match op {
             "_eq" => ir::CompareOp::Eq(scalar_value(value, &opath)?),
             "_neq" => ir::CompareOp::Neq(scalar_value(value, &opath)?),
             "_gt" => ir::CompareOp::Gt(scalar_value(value, &opath)?),
@@ -220,9 +248,12 @@ fn coerce_comparison_ops<'a>(
                     }
                     let text_ops = coerce_comparison_ops(
                         ctx,
-                        Scalar::String,
-                        "text",
-                        false,
+                        ComparisonColumn {
+                            scalar: Scalar::String,
+                            pg_type: "text",
+                            pg_type_schema: "pg_catalog",
+                            is_array: false,
+                        },
                         "String_comparison_exp",
                         cv,
                         &cpath,
@@ -261,7 +292,7 @@ fn coerce_aggregate_bool_exp<'a>(
     let mut out: Vec<ir::BoolExp> = Vec::new();
     for (op, value) in expect_object(v, &type_name, path)? {
         let opath = format!("{path}.{op}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&op)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(op)) else {
             return Err(verr(
                 opath,
                 format!("field '{op}' not found in type: '{type_name}'"),
@@ -279,14 +310,14 @@ fn coerce_aggregate_bool_exp<'a>(
         let mut has_arguments = false;
         for (key, kv) in entries {
             let kpath = format!("{opath}.{key}");
-            let Some(kfd) = inner_def.and_then(|d| d.input_field(&key)) else {
+            let Some(kfd) = inner_def.and_then(|d| d.input_field(key)) else {
                 return Err(verr(
                     kpath,
                     format!("field '{key}' not found in type: '{inner_type}'"),
                 ));
             };
             let kv = resolve_nested(ctx, kv, &kfd.ty, kfd.default_value.is_some(), &kpath)?;
-            match key.as_str() {
+            match key {
                 "arguments" => {
                     has_arguments = true;
                     if op == "count" {
@@ -327,7 +358,16 @@ fn coerce_aggregate_bool_exp<'a>(
                         (Scalar::Boolean, "bool", "Boolean_comparison_exp")
                     };
                     predicate = Some(coerce_comparison_ops(
-                        ctx, scalar, pg, false, cmp, kv, &kpath,
+                        ctx,
+                        ComparisonColumn {
+                            scalar,
+                            pg_type: pg,
+                            pg_type_schema: "pg_catalog",
+                            is_array: false,
+                        },
+                        cmp,
+                        kv,
+                        &kpath,
                     )?);
                 }
                 _ => {}
@@ -349,7 +389,7 @@ fn coerce_aggregate_bool_exp<'a>(
             remote_column: rel.remote_db_column.clone(),
             remote_table: rt.clone(),
             pred: ir::AggregatePredicate {
-                op: op.clone(),
+                op: op.to_string(),
                 columns,
                 distinct,
                 filter,

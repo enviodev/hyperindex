@@ -46,6 +46,9 @@ async function main() {
           ...(corpusCase.variables !== undefined && {
             variables: corpusCase.variables,
           }),
+          ...(corpusCase.rawVariables !== undefined && {
+            rawVariables: corpusCase.rawVariables,
+          }),
           ...(corpusCase.operationName !== undefined && {
             operationName: corpusCase.operationName,
           }),

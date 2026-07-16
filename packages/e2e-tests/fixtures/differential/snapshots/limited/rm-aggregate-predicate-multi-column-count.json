@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ allRows: NftCollection(where: {tokens_aggregate: {count: {arguments: [owner_id, collection_id], distinct: false, predicate: {_gt: 0}}}}, order_by: {id: asc}) { id } distinctPairs: NftCollection(where: {tokens_aggregate: {count: {arguments: [owner_id, collection_id], distinct: true, predicate: {_gt: 1}}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "database query error",
+    "extensions": {
+     "path": "$",
+     "code": "unexpected"
+    }
+   }
+  ]
+ }
+}

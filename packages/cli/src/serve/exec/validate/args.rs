@@ -1,7 +1,7 @@
 use super::bool_exp::coerce_bool_exp;
 use super::coerce::{
     coerce_column_value, coerce_enum, coerce_limit, coerce_offset, coerce_string_strict,
-    parse_json_path,
+    column_pg_cast, parse_json_path,
 };
 use super::selection::Flat;
 use super::{
@@ -130,7 +130,15 @@ pub(super) fn coerce_by_pk_args<'a>(
         let col = table
             .column_by_api_name(&arg.name)
             .expect("by_pk argument must be a table column");
-        let value = coerce_column_value(ctx, col.scalar, &col.pg_type, col.is_array, v, &path)?;
+        let value = coerce_column_value(
+            ctx,
+            col.scalar,
+            &col.pg_type,
+            &col.pg_type_schema,
+            col.is_array,
+            v,
+            &path,
+        )?;
         pk.push((col.db_name.clone(), value));
     }
     Ok(pk)
@@ -169,7 +177,7 @@ pub(super) fn coerce_stream_args<'a>(
         let type_def = ctx.registry.get(&input_type);
         let mut initial: Option<V> = None;
         let mut descending = false;
-        for (key, value) in &entries {
+        for &(key, value) in &entries {
             let Some(fd) = type_def.and_then(|d| d.input_field(key)) else {
                 return Err(verr(
                     format!("{ipath}.{key}"),
@@ -177,8 +185,8 @@ pub(super) fn coerce_stream_args<'a>(
                 ));
             };
             let vpath = format!("{ipath}.{key}");
-            let v = resolve_nested(ctx, *value, &fd.ty, fd.default_value.is_some(), &vpath)?;
-            match key.as_str() {
+            let v = resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &vpath)?;
+            match key {
                 "initial_value" => initial = Some(v),
                 "ordering" if !v.is_null() => {
                     let dir = coerce_enum(ctx, v, "cursor_ordering", &vpath)?;
@@ -195,7 +203,7 @@ pub(super) fn coerce_stream_args<'a>(
         let value_def = ctx.registry.get(&value_type);
         let cols = expect_object(initial, &value_type, &init_path)?;
         for (key, value) in ordered_keys(table, cols) {
-            let Some(fd) = value_def.and_then(|d| d.input_field(&key)) else {
+            let Some(fd) = value_def.and_then(|d| d.input_field(key)) else {
                 return Err(verr(
                     format!("{init_path}.{key}"),
                     format!("field '{key}' not found in type: '{value_type}'"),
@@ -204,15 +212,17 @@ pub(super) fn coerce_stream_args<'a>(
             let vpath = format!("{init_path}.{key}");
             let v = resolve_nested(ctx, value, &fd.ty, fd.default_value.is_some(), &vpath)?;
             let col = table
-                .column_by_api_name(&key)
+                .column_by_api_name(key)
                 .expect("cursor value input field must be a table column");
+            let cast = column_pg_cast(col.scalar, &col.pg_type, &col.pg_type_schema, col.is_array);
             let initial_value = if v.is_null() {
-                None
+                Some(ir::SqlValue::null(cast.clone()))
             } else {
                 Some(coerce_column_value(
                     ctx,
                     col.scalar,
                     &col.pg_type,
+                    &col.pg_type_schema,
                     col.is_array,
                     v,
                     &vpath,
@@ -220,9 +230,7 @@ pub(super) fn coerce_stream_args<'a>(
             };
             cursor.push(ir::StreamCursor {
                 column: col.db_name.clone(),
-                scalar: col.scalar,
-                pg_type: col.pg_type.clone(),
-                is_array: col.is_array,
+                cast,
                 initial_value,
                 descending,
             });
@@ -312,12 +320,12 @@ pub(super) fn expect_object<'a>(
     v: V<'a>,
     type_name: &str,
     path: &str,
-) -> GResult<Vec<(String, V<'a>)>> {
+) -> GResult<Vec<(&'a str, V<'a>)>> {
     match v {
         V::L(q::Value::Object(map)) => {
-            Ok(map.iter().map(|(k, val)| (k.clone(), V::L(val))).collect())
+            Ok(map.iter().map(|(k, val)| (k.as_str(), V::L(val))).collect())
         }
-        V::J(Json::Object(map)) => Ok(map.iter().map(|(k, val)| (k.clone(), V::J(val))).collect()),
+        V::J(Json::Object(map)) => Ok(map.iter().map(|(k, val)| (k.as_str(), V::J(val))).collect()),
         other => Err(verr(
             path,
             format!(
@@ -332,17 +340,17 @@ pub(super) fn expect_object<'a>(
 /// then the rest alphabetically. Hasura's processing order is its HashMap's
 /// hash order, which cannot be reproduced; this matches every order the
 /// oracle snapshots pin.
-fn ordered_keys<'a>(table: &Table, entries: Vec<(String, V<'a>)>) -> Vec<(String, V<'a>)> {
+fn ordered_keys<'a>(table: &Table, entries: Vec<(&'a str, V<'a>)>) -> Vec<(&'a str, V<'a>)> {
     let pk_apis: Vec<&str> = table
         .primary_key
         .iter()
         .filter_map(|db| table.columns.iter().find(|c| &c.db_name == db))
         .map(|c| c.api_name.as_str())
         .collect();
-    let mut front: Vec<(String, V)> = Vec::new();
-    let mut rest: Vec<(String, V)> = Vec::new();
+    let mut front: Vec<(&str, V)> = Vec::new();
+    let mut rest: Vec<(&str, V)> = Vec::new();
     for entry in entries {
-        if pk_apis.contains(&entry.0.as_str()) {
+        if pk_apis.contains(&entry.0) {
             front.push(entry);
         } else {
             rest.push(entry);
@@ -418,7 +426,7 @@ fn expand_order_object<'a>(
     let type_def = ctx.registry.get(&type_name);
     for (key, value) in ordered_keys(table, entries) {
         let kpath = format!("{path}.{key}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&key)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(key)) else {
             return Err(verr(
                 kpath,
                 format!("field '{key}' not found in type: '{type_name}'"),
@@ -428,7 +436,7 @@ fn expand_order_object<'a>(
         if value.is_null() {
             continue;
         }
-        if let Some(col) = table.column_by_api_name(&key) {
+        if let Some(col) = table.column_by_api_name(key) {
             let dir = coerce_enum(ctx, value, "order_by", &kpath)?;
             let target = if chain.is_empty() {
                 ir::OrderTarget::Column {
@@ -476,7 +484,7 @@ fn expand_aggregate_order<'a>(
     let type_def = ctx.registry.get(&type_name);
     for (op, value) in expect_object(v, &type_name, path)? {
         let opath = format!("{path}.{op}");
-        let Some(fd) = type_def.and_then(|d| d.input_field(&op)) else {
+        let Some(fd) = type_def.and_then(|d| d.input_field(op)) else {
             return Err(verr(
                 opath,
                 format!("field '{op}' not found in type: '{type_name}'"),
@@ -503,7 +511,7 @@ fn expand_aggregate_order<'a>(
             let col_def = ctx.registry.get(&col_type);
             for (col_key, col_value) in expect_object(value, &col_type, &opath)? {
                 let cpath = format!("{opath}.{col_key}");
-                let Some(cfd) = col_def.and_then(|d| d.input_field(&col_key)) else {
+                let Some(cfd) = col_def.and_then(|d| d.input_field(col_key)) else {
                     return Err(verr(
                         cpath,
                         format!("field '{col_key}' not found in type: '{col_type}'"),
@@ -516,14 +524,14 @@ fn expand_aggregate_order<'a>(
                 }
                 let dir = coerce_enum(ctx, col_value, "order_by", &cpath)?;
                 let col = remote
-                    .column_by_api_name(&col_key)
+                    .column_by_api_name(col_key)
                     .expect("aggregate order_by field must be a column");
                 out.push(ir::OrderByItem {
                     target: ir::OrderTarget::ArrayRelAggregate {
                         path: chain.to_vec(),
                         remote_column: rel.remote_db_column.clone(),
                         remote_table: rel.remote_table.clone(),
-                        op: op.clone(),
+                        op: op.to_string(),
                         column: Some(col.db_name.clone()),
                     },
                     direction: order_direction(&dir),

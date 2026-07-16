@@ -28,6 +28,14 @@ export default defineCases([
     name: "rm-exists-bare-vs-predicate",
     query: `{ bare: NftCollection(where: {tokens: {}}, order_by: {id: asc}) { id } withPred: NftCollection(where: {tokens: {tokenId: {_gt: 1000}}}, order_by: {id: asc}) { id } }`,
   },
+  {
+    // Hasura v2.43 accepts multiple count arguments in the schema but emits
+    // count(col1, col2), so PostgreSQL returns a database-query error. Keep
+    // this live case to prevent an accidental API divergence.
+    name: "rm-aggregate-predicate-multi-column-count",
+    phases: ["limited"],
+    query: `{ allRows: NftCollection(where: {tokens_aggregate: {count: {arguments: [owner_id, collection_id], distinct: false, predicate: {_gt: 0}}}}, order_by: {id: asc}) { id } distinctPairs: NftCollection(where: {tokens_aggregate: {count: {arguments: [owner_id, collection_id], distinct: true, predicate: {_gt: 1}}}}, order_by: {id: asc}) { id } }`,
+  },
 
   // ── object-rel existence vs FK null-ness ─────────────────────────────
   {

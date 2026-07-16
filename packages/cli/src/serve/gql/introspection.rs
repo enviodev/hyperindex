@@ -426,6 +426,7 @@ mod tests {
                     api_name: "id".to_string(),
                     db_name: "id".to_string(),
                     pg_type: "text".to_string(),
+                    pg_type_schema: "pg_catalog".to_string(),
                     scalar: Scalar::String,
                     is_array: false,
                     nullable: false,
@@ -439,7 +440,6 @@ mod tests {
             }],
             pg_schema: "public".to_string(),
             response_limit: None,
-            enums: std::collections::HashMap::new(),
         };
         schema_build::build(&model, Role::Public)
     }

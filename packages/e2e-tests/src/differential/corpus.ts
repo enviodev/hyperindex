@@ -34,6 +34,9 @@ export interface CorpusCase {
   name: string;
   query: string;
   variables?: Record<string, unknown>;
+  /** Raw JSON object text for variables that JavaScript cannot represent
+   * losslessly (for example 1e400). Mutually exclusive with `variables`. */
+  rawVariables?: string;
   operationName?: string;
   /** Defaults to "public" — the role of unauthenticated requests. */
   role?: Role;
@@ -76,6 +79,9 @@ const seen = new Set<string>();
 export function defineCases(cases: CorpusCase[]): CorpusCase[] {
   for (const c of cases) {
     if (seen.has(c.name)) throw new Error(`Duplicate corpus case: ${c.name}`);
+    if (c.variables !== undefined && c.rawVariables !== undefined) {
+      throw new Error(`Corpus case ${c.name} defines variables twice`);
+    }
     seen.add(c.name);
   }
   return cases;

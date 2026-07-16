@@ -7,7 +7,7 @@ use crate::serve::model::{Column, Scalar, ServerModel, Table};
 use crate::serve::pg_catalog::RelationKind;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Role {
     Admin,
     Public,
@@ -114,22 +114,23 @@ fn agg_op_result_type(op: &str, c: &Column) -> TypeRef {
 }
 
 fn column_min_max_type(c: &Column) -> TypeRef {
-    let base = TypeRef::named(&scalar_type_name(c));
-    if c.is_array {
-        TypeRef::list(TypeRef::non_null(base))
-    } else {
-        base
-    }
+    TypeRef::named(&scalar_type_name(c))
 }
 
 /// Columns eligible for min/max fields (Hasura: all comparable scalars,
-/// excluding json/jsonb; arrays are excluded as well).
+/// excluding json/jsonb; arrays are excluded as well). `Scalar::Other`
+/// covers pg types like bytea with no min/max in Postgres — including them
+/// would generate fields whose execution PG rejects.
 fn min_max_columns(table: &Table) -> Vec<&Column> {
     table
         .columns
         .iter()
         .filter(|c| {
-            !c.is_array && !matches!(c.scalar, Scalar::Jsonb | Scalar::Json | Scalar::Boolean)
+            !c.is_array
+                && !matches!(
+                    c.scalar,
+                    Scalar::Jsonb | Scalar::Json | Scalar::Boolean | Scalar::Other
+                )
         })
         .collect()
 }
@@ -177,10 +178,32 @@ fn aggregate_bool_exp_targets(model: &ServerModel, role: Role) -> Vec<String> {
 }
 
 pub fn build(model: &ServerModel, role: Role) -> Registry {
+    build_internal(model, role).0
+}
+
+/// Startup validation: fails when a user entity name collides with a
+/// generated/built-in type name (like Hasura fails table tracking on
+/// conflicts). The admin registry is a superset of every role's types, so
+/// checking it covers all roles.
+pub fn check_type_collisions(model: &ServerModel) -> anyhow::Result<()> {
+    let (_, mut collisions) = build_internal(model, Role::Admin);
+    if collisions.is_empty() {
+        return Ok(());
+    }
+    collisions.sort();
+    collisions.dedup();
+    Err(anyhow::anyhow!(
+        "GraphQL type name collision(s): {}. An entity in schema.graphql clashes with a built-in or generated type name (e.g. \"<Entity>_aggregate\", \"<Entity>_bool_exp\", scalar or root type names). Rename the conflicting entity.",
+        collisions.join(", ")
+    ))
+}
+
+fn build_internal(model: &ServerModel, role: Role) -> (Registry, Vec<String>) {
     let mut b = Builder {
         model,
         role,
         types: BTreeMap::new(),
+        collisions: Vec::new(),
     };
     b.build_base_scalars_and_enums();
 
@@ -201,11 +224,29 @@ pub fn build(model: &ServerModel, role: Role) -> Registry {
     b.build_roots(&tables);
     b.build_meta_types();
 
-    Registry {
-        types: b.types,
-        query_root: "query_root".to_string(),
-        mutation_root: None,
-        subscription_root: "subscription_root".to_string(),
+    (
+        Registry {
+            types: b.types,
+            query_root: "query_root".to_string(),
+            mutation_root: None,
+            subscription_root: "subscription_root".to_string(),
+        },
+        b.collisions,
+    )
+}
+
+/// A synthetic column used to force on-demand creation of a shared
+/// `<scalar>_comparison_exp` type that is referenced unconditionally.
+fn stub_column(pg_type: &str, scalar: Scalar) -> Column {
+    Column {
+        api_name: "_".into(),
+        db_name: "_".into(),
+        pg_type: pg_type.into(),
+        pg_type_schema: "pg_catalog".into(),
+        scalar,
+        is_array: false,
+        nullable: true,
+        description: None,
     }
 }
 
@@ -213,19 +254,28 @@ struct Builder<'a> {
     model: &'a ServerModel,
     role: Role,
     types: BTreeMap<String, TypeDef>,
+    /// Names that were defined twice (or squatted by a user entity) —
+    /// nothing in the builder legitimately re-adds a name, so any duplicate
+    /// is a genuine collision surfaced by check_type_collisions.
+    collisions: Vec<String>,
 }
 
 impl<'a> Builder<'a> {
     fn add(&mut self, def: TypeDef) {
-        self.types.insert(def.name().to_string(), def);
+        let name = def.name().to_string();
+        if self.types.insert(name.clone(), def).is_some() {
+            self.collisions.push(name);
+        }
     }
 
     fn add_scalar(&mut self, name: &str) {
-        if !self.types.contains_key(name) {
-            self.add(TypeDef::Scalar {
+        match self.types.get(name) {
+            None => self.add(TypeDef::Scalar {
                 name: name.to_string(),
                 description: None,
-            });
+            }),
+            Some(TypeDef::Scalar { .. }) => {}
+            Some(_) => self.collisions.push(name.to_string()),
         }
     }
 
@@ -288,7 +338,10 @@ impl<'a> Builder<'a> {
         } else {
             format!("{scalar}_comparison_exp")
         };
-        if self.types.contains_key(&name) {
+        if let Some(existing) = self.types.get(&name) {
+            if !matches!(existing, TypeDef::InputObject { .. }) {
+                self.collisions.push(name.clone());
+            }
             return name;
         }
 
@@ -435,21 +488,15 @@ impl<'a> Builder<'a> {
     }
 
     fn build_jsonb_cast_exp(&mut self) {
-        if self.types.contains_key("jsonb_cast_exp") {
+        if let Some(existing) = self.types.get("jsonb_cast_exp") {
+            if !matches!(existing, TypeDef::InputObject { .. }) {
+                self.collisions.push("jsonb_cast_exp".to_string());
+            }
             return;
         }
         // The String member references String_comparison_exp; make sure it
         // exists.
-        let string_col = Column {
-            api_name: "_".into(),
-            db_name: "_".into(),
-            pg_type: "text".into(),
-            scalar: Scalar::String,
-            is_array: false,
-            nullable: true,
-            description: None,
-        };
-        let cmp = self.comparison_exp_name(&string_col);
+        let cmp = self.comparison_exp_name(&stub_column("text", Scalar::String));
         self.add(TypeDef::InputObject {
             name: "jsonb_cast_exp".to_string(),
             description: None,
@@ -793,7 +840,10 @@ impl<'a> Builder<'a> {
     /// are the remote side of array relationships.
     fn build_aggregate_order_by_types(&mut self, table: &Table) {
         let t = &table.name;
-        if self.types.contains_key(&format!("{t}_aggregate_order_by")) {
+        if let Some(existing) = self.types.get(&format!("{t}_aggregate_order_by")) {
+            if !matches!(existing, TypeDef::InputObject { .. }) {
+                self.collisions.push(format!("{t}_aggregate_order_by"));
+            }
             return;
         }
         let numeric_cols = numeric_columns(table);
@@ -856,7 +906,10 @@ impl<'a> Builder<'a> {
     /// (admin, or aggregatable tables).
     fn build_aggregate_bool_exp_types(&mut self, table: &Table) {
         let t = &table.name;
-        if self.types.contains_key(&format!("{t}_aggregate_bool_exp")) {
+        if let Some(existing) = self.types.get(&format!("{t}_aggregate_bool_exp")) {
+            if !matches!(existing, TypeDef::InputObject { .. }) {
+                self.collisions.push(format!("{t}_aggregate_bool_exp"));
+            }
             return;
         }
         let bool_cols: Vec<&Column> = table
@@ -870,6 +923,10 @@ impl<'a> Builder<'a> {
             if cols.is_empty() {
                 continue;
             }
+            // The `predicate` field below references Boolean_comparison_exp
+            // unconditionally; guarantee it exists even if no visible table
+            // column created it on demand.
+            self.comparison_exp_name(&stub_column("bool", Scalar::Boolean));
             fields.push(InputValueDef::new(
                 op,
                 None,
@@ -911,6 +968,10 @@ impl<'a> Builder<'a> {
                 ],
             });
         }
+        // The count `predicate` references Int_comparison_exp
+        // unconditionally; without this, a schema with no int4 column would
+        // reference a type that was never registered.
+        self.comparison_exp_name(&stub_column("int4", Scalar::Int));
         fields.push(InputValueDef::new(
             "count",
             None,
@@ -1169,5 +1230,114 @@ impl<'a> Builder<'a> {
             description: None,
             fields: sub_fields,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serve::model::{ArrayRelationship, Column, Scalar, ServerModel, Table};
+
+    fn col(api: &str, pg_type: &str, scalar: Scalar) -> Column {
+        Column {
+            api_name: api.to_string(),
+            db_name: api.to_string(),
+            pg_type: pg_type.to_string(),
+            pg_type_schema: "pg_catalog".to_string(),
+            scalar,
+            is_array: false,
+            nullable: false,
+            description: None,
+        }
+    }
+
+    fn table(name: &str, columns: Vec<Column>) -> Table {
+        Table {
+            name: name.to_string(),
+            kind: crate::serve::pg_catalog::RelationKind::Table,
+            description: None,
+            columns,
+            primary_key: vec!["id".to_string()],
+            object_relationships: vec![],
+            array_relationships: vec![],
+            admin_only: false,
+            public_aggregations: false,
+        }
+    }
+
+    fn model(tables: Vec<Table>) -> ServerModel {
+        let mut tables = tables;
+        tables.sort_by(|a, b| a.name.cmp(&b.name));
+        ServerModel {
+            tables,
+            pg_schema: "public".to_string(),
+            response_limit: None,
+        }
+    }
+
+    /// No table has an int4 or bool column, yet the count/bool predicates of
+    /// `<T>_aggregate_bool_exp_*` reference Int/Boolean_comparison_exp.
+    #[test]
+    fn aggregate_bool_exp_predicate_types_always_registered() {
+        let mut owner = table("Owner", vec![col("id", "text", Scalar::String)]);
+        owner.array_relationships.push(ArrayRelationship {
+            name: "pets".to_string(),
+            remote_table: "Pet".to_string(),
+            remote_db_column: "owner_id".to_string(),
+        });
+        let mut pet = table(
+            "Pet",
+            vec![
+                col("id", "text", Scalar::String),
+                col("owner_id", "text", Scalar::String),
+                col("vaccinated", "bool", Scalar::Boolean),
+            ],
+        );
+        pet.public_aggregations = true;
+        let registry = build(&model(vec![owner, pet]), Role::Public);
+        assert_eq!(
+            (
+                registry.get("Pet_aggregate_bool_exp_count").is_some(),
+                registry.get("Int_comparison_exp").is_some(),
+                registry.get("Boolean_comparison_exp").is_some(),
+            ),
+            (true, true, true)
+        );
+    }
+
+    /// bytea-like columns (Scalar::Other) have no min/max in Postgres; they
+    /// must not appear in `<T>_min_fields`/`<T>_max_fields`.
+    #[test]
+    fn other_scalar_columns_excluded_from_min_max() {
+        let mut t = table(
+            "Blob",
+            vec![
+                col("id", "text", Scalar::String),
+                col("payload", "bytea", Scalar::Other),
+            ],
+        );
+        t.public_aggregations = true;
+        let registry = build(&model(vec![t]), Role::Public);
+        let min_fields = match registry.get("Blob_min_fields") {
+            Some(TypeDef::Object { fields, .. }) => {
+                fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>()
+            }
+            _ => panic!("Blob_min_fields missing"),
+        };
+        assert_eq!(min_fields, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn min_max_omitted_when_only_other_columns() {
+        let mut t = table("Blob", vec![col("payload", "bytea", Scalar::Other)]);
+        t.public_aggregations = true;
+        let registry = build(&model(vec![t]), Role::Public);
+        assert_eq!(
+            (
+                registry.get("Blob_min_fields").is_none(),
+                registry.get("Blob_max_fields").is_none()
+            ),
+            (true, true)
+        );
     }
 }

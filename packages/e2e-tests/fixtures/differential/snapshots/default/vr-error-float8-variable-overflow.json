@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($f: float8!) { EntityWithAllNonArrayTypes(where: {float_: {_lt: $f}}, order_by: {id: asc}) { id } }",
+  "rawVariables": "{\"f\":1e400}"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "The value 1.0e400 lies outside the bounds. Is it overflowing the float bounds?",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllNonArrayTypes.args.where.float_._lt",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

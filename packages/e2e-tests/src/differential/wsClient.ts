@@ -21,6 +21,9 @@ export interface WsFrame {
 
 export interface WsSession {
   send(frame: WsFrame): void;
+  /** Sends an already-serialized frame, for JSON numbers JavaScript cannot
+   * represent without coercing them to Infinity/null. */
+  sendRaw(frame: string): void;
   /** Waits for the next frame matching the filter (keepalives skipped unless asked for). */
   next(
     filter?: (f: WsFrame) => boolean,
@@ -28,13 +31,25 @@ export interface WsSession {
   ): Promise<WsFrame>;
   /** All frames received so far (including keepalives). */
   frames: WsFrame[];
+  /**
+   * Throws if any data frame (`next`/`data`) arrived that no `next()` call
+   * consumed — a spurious extra payload the scenario never expected.
+   */
+  assertNoUnconsumedData(): void;
+  /** Resolves with the close code/reason once the socket closes. */
+  waitClose(timeoutMs?: number): Promise<{ code: number; reason: string }>;
   close(): Promise<void>;
 }
 
 export async function connect(
   url: string,
   protocol: WsProtocol,
-  options: { adminSecret?: string; initTimeoutMs?: number } = {}
+  options: {
+    adminSecret?: string;
+    initTimeoutMs?: number;
+    /** Skip the connection_init/connection_ack handshake entirely. */
+    skipInit?: boolean;
+  } = {}
 ): Promise<WsSession> {
   const socket = new WebSocket(url, protocol);
   const frames: WsFrame[] = [];
@@ -43,7 +58,9 @@ export async function connect(
     resolve: (f: WsFrame) => void;
   }[] = [];
   let closed = false;
+  let closeEvent: { code: number; reason: string } | undefined;
   let closeWaiter: (() => void) | undefined;
+  const closeWatchers: ((e: { code: number; reason: string }) => void)[] = [];
 
   socket.on("message", (data) => {
     const frame = JSON.parse(data.toString()) as WsFrame;
@@ -54,9 +71,11 @@ export async function connect(
       w!.resolve(frame);
     }
   });
-  socket.on("close", () => {
+  socket.on("close", (code, reason) => {
     closed = true;
+    closeEvent = { code, reason: reason.toString() };
     closeWaiter?.();
+    for (const w of closeWatchers.splice(0)) w(closeEvent);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -68,6 +87,9 @@ export async function connect(
     frames,
     send(frame) {
       socket.send(JSON.stringify(frame));
+    },
+    sendRaw(frame) {
+      socket.send(frame);
     },
     next(filter = (f) => f.type !== "ka" && f.type !== "ping", timeoutMs = 10_000) {
       const existing = frames.find((f) => !consumed.has(f) && filter(f));
@@ -95,6 +117,34 @@ export async function connect(
         });
       });
     },
+    assertNoUnconsumedData() {
+      const extra = frames.filter(
+        (f) => !consumed.has(f) && (f.type === "next" || f.type === "data")
+      );
+      if (extra.length > 0) {
+        throw new Error(
+          `Unconsumed extra data frame(s): ${JSON.stringify(extra)}`
+        );
+      }
+    },
+    waitClose(timeoutMs = 10_000) {
+      if (closeEvent) return Promise.resolve(closeEvent);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Timed out waiting for ws close; frames so far: ${JSON.stringify(frames)}`
+              )
+            ),
+          timeoutMs
+        );
+        closeWatchers.push((e) => {
+          clearTimeout(timer);
+          resolve(e);
+        });
+      });
+    },
     close() {
       if (closed) return Promise.resolve();
       const done = new Promise<void>((resolve) => {
@@ -106,11 +156,16 @@ export async function connect(
   };
   const consumed = new Set<WsFrame>();
 
-  const initPayload = options.adminSecret
-    ? { headers: { "x-hasura-admin-secret": options.adminSecret } }
-    : {};
-  session.send({ type: "connection_init", payload: initPayload });
-  await session.next((f) => f.type === "connection_ack", options.initTimeoutMs ?? 10_000);
+  if (!options.skipInit) {
+    const initPayload = options.adminSecret
+      ? { headers: { "x-hasura-admin-secret": options.adminSecret } }
+      : {};
+    session.send({ type: "connection_init", payload: initPayload });
+    await session.next(
+      (f) => f.type === "connection_ack",
+      options.initTimeoutMs ?? 10_000
+    );
+  }
   return session;
 }
 
@@ -130,9 +185,10 @@ let nextId = 1;
 export function subscribe(
   session: WsSession,
   protocol: WsProtocol,
-  payload: { query: string; variables?: Record<string, unknown> }
+  payload: { query: string; variables?: Record<string, unknown> },
+  explicitId?: string
 ): Subscription {
-  const id = String(nextId++);
+  const id = explicitId ?? String(nextId++);
   const startType = protocol === "graphql-transport-ws" ? "subscribe" : "start";
   const dataType = protocol === "graphql-transport-ws" ? "next" : "data";
   const stopType = protocol === "graphql-transport-ws" ? "complete" : "stop";

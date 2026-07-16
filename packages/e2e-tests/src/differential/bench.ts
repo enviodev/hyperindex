@@ -439,7 +439,7 @@ async function engineMode() {
   const sweepSeconds = (performance.now() - sweepStart) / 1000;
   const resources = sampler.stop();
 
-  results.sort((a, b) => (a.name < b.name ? -1 : 1));
+  results.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const withSpeedup = results.filter((r) => r.speedup !== undefined);
   const geomean = withSpeedup.length
     ? Math.exp(

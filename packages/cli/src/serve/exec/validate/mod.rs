@@ -18,6 +18,7 @@ mod args;
 mod bool_exp;
 mod coerce;
 mod fragments;
+pub mod json_numbers;
 mod prescan;
 mod selection;
 mod variables;
@@ -58,6 +59,17 @@ fn perr(path: impl Into<String>, message: impl Into<String>) -> GraphQLError {
         code: CODE_PARSE_FAILED,
         status: 200,
     }
+}
+
+/// Divergence from Hasura (which has no depth limit): nesting beyond this
+/// would overflow the stack in graphql_parser and the recursive walkers.
+const MAX_DEPTH: usize = 100;
+
+fn depth_error() -> GraphQLError {
+    verr(
+        "$.query",
+        format!("the query exceeds the maximum allowed nesting depth of {MAX_DEPTH}"),
+    )
 }
 
 /// Hasura reports syntax errors as validation-failed at `$.query`.
@@ -103,6 +115,19 @@ pub fn plan_request(
     request: &GraphQLRequest,
     transport: Transport,
 ) -> GResult<ir::Operation> {
+    if let Some(other) = request
+        .variables
+        .as_ref()
+        .filter(|v| !matches!(v, Json::Object(_) | Json::Null))
+    {
+        return Err(perr(
+            "$.variables",
+            format!(
+                "parsing HashMap failed, expected Object, but encountered {}",
+                aeson_kind(V::J(other))
+            ),
+        ));
+    }
     let query_text = request.query.as_deref().unwrap_or("");
     let scan = prescan(query_text)?;
     let doc = match q::parse_query::<String>(&scan.rewritten) {
@@ -158,13 +183,25 @@ pub fn plan_request(
         vars: build_variables(op.var_defs, variables_json)?,
         used_vars: RefCell::new(HashSet::new()),
         int_originals: scan.int_originals,
+        float_originals: scan.float_originals,
         inf_float_originals: scan.inf_float_originals,
+        var_number_originals: request.variable_number_originals.clone(),
     };
 
     // Fragment reachability (undefined spreads, cycles) is checked before
     // variables, which are checked before any schema validation — matching
     // Hasura's inline -> resolveVariables -> parse pipeline.
-    fragment_prepass(&ctx, op.selection_set, "$.selectionSet", &mut Vec::new())?;
+    let expanded_depth = fragment_prepass(
+        &ctx,
+        op.selection_set,
+        "$.selectionSet",
+        &mut Vec::new(),
+        &mut HashMap::new(),
+        0,
+    )?;
+    if expanded_depth > MAX_DEPTH {
+        return Err(depth_error());
+    }
     variable_prepass(&ctx, op.selection_set)?;
     if let Some(vars) = variables_json {
         let used = ctx.used_vars.borrow();
@@ -343,15 +380,24 @@ struct Ctx<'a> {
     response_limit: Option<i64>,
     fragments: HashMap<&'a str, &'a AFragment>,
     vars: HashMap<&'a str, VarInfo<'a>>,
-    used_vars: RefCell<HashSet<String>>,
+    used_vars: RefCell<HashSet<&'a str>>,
     /// i64-overflowing int literals were rewritten to magic sentinel values
     /// before parsing; this maps each sentinel back to the original digits.
     int_originals: HashMap<i64, String>,
+    /// Float literals whose exact decimal text cannot round-trip through
+    /// graphql-parser's f64 AST representation. Each is rewritten to a
+    /// unique sentinel and restored here for numeric SQL parameters.
+    float_originals: HashMap<u64, String>,
     /// f64-overflowing float literals were rewritten to per-occurrence
     /// finite sentinel values before parsing; this maps each sentinel's bit
     /// pattern back to the original digits, for reconstructing Hasura's
     /// error display of values the AST can no longer represent.
     inf_float_originals: HashMap<u64, String>,
+    /// JSON variable numbers that cannot round-trip through serde_json's
+    /// f64 were rewritten to sentinel values before body parsing (see
+    /// json_numbers.rs); maps each sentinel's bit pattern back to the
+    /// original number text.
+    var_number_originals: HashMap<u64, String>,
 }
 
 /// A value under coercion: either a GraphQL literal or a JSON value that
@@ -418,8 +464,8 @@ fn aeson_kind(v: V) -> &'static str {
 }
 
 impl<'a> Ctx<'a> {
-    fn mark_used(&self, name: &str) {
-        self.used_vars.borrow_mut().insert(name.to_string());
+    fn mark_used(&self, name: &'a str) {
+        self.used_vars.borrow_mut().insert(name);
     }
 
     /// Resolves a possibly-variable value at an input location, type-checking
@@ -580,7 +626,7 @@ fn plan_roots<'a>(
 /// Admin mutations: the registry has no mutation types yet, but real Hasura
 /// resolves unknown mutation fields against 'mutation_root', so walk the
 /// selection with an empty virtual type to reproduce those errors.
-fn plan_admin_mutation(ctx: &Ctx, set: &ASelSet) -> GResult<ir::Operation> {
+fn plan_admin_mutation<'a>(ctx: &'a Ctx<'a>, set: &'a ASelSet) -> GResult<ir::Operation> {
     let sel_path = "$.selectionSet";
     let flats = collect_fields(ctx, "mutation_root", &[set], sel_path)?;
     for flat in &flats {
@@ -1155,6 +1201,8 @@ fn intro_selection<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::serve::gql::schema_build;
+    use crate::serve::pg_catalog::RelationKind;
 
     #[test]
     fn graphql_name_validation() {
@@ -1163,5 +1211,468 @@ mod tests {
         assert!(!is_valid_graphql_name(""));
         assert!(!is_valid_graphql_name("9x"));
         assert!(!is_valid_graphql_name("a-b"));
+    }
+
+    fn column(name: &str, pg_type: &str, scalar: Scalar) -> Column {
+        Column {
+            api_name: name.to_string(),
+            db_name: name.to_string(),
+            pg_type: pg_type.to_string(),
+            pg_type_schema: "pg_catalog".to_string(),
+            scalar,
+            is_array: false,
+            nullable: false,
+            description: None,
+        }
+    }
+
+    fn test_model() -> ServerModel {
+        ServerModel {
+            tables: vec![Table {
+                name: "User".to_string(),
+                kind: RelationKind::Table,
+                description: None,
+                columns: vec![
+                    column("id", "text", Scalar::String),
+                    column("big", "numeric", Scalar::Numeric),
+                    column("floating", "float8", Scalar::Float8),
+                    column("json", "jsonb", Scalar::Jsonb),
+                    Column {
+                        api_name: "maybe".to_string(),
+                        db_name: "maybe".to_string(),
+                        pg_type: "text".to_string(),
+                        pg_type_schema: "pg_catalog".to_string(),
+                        scalar: Scalar::String,
+                        is_array: false,
+                        nullable: true,
+                        description: None,
+                    },
+                    Column {
+                        api_name: "status".to_string(),
+                        db_name: "status".to_string(),
+                        pg_type: "accounttype".to_string(),
+                        pg_type_schema: "tenant".to_string(),
+                        scalar: Scalar::PgEnum,
+                        is_array: false,
+                        nullable: false,
+                        description: None,
+                    },
+                ],
+                primary_key: vec!["id".to_string()],
+                object_relationships: vec![crate::serve::model::ObjectRelationship {
+                    name: "self_rel".to_string(),
+                    local_db_column: "id".to_string(),
+                    remote_table: "User".to_string(),
+                }],
+                array_relationships: vec![],
+                admin_only: false,
+                public_aggregations: false,
+            }],
+            pg_schema: "tenant".to_string(),
+            response_limit: None,
+        }
+    }
+
+    /// Plans a request the way the HTTP path does, including the lossy
+    /// variable-number rewrite of the raw variables text.
+    fn plan_with_transport(
+        query: &str,
+        variables: Option<&str>,
+        transport: Transport,
+    ) -> GResult<ir::Operation> {
+        let model = test_model();
+        let schema = RoleSchema {
+            registry: schema_build::build(&model, Role::Admin),
+            role: Role::Admin,
+        };
+        let (variables, variable_number_originals) = match variables {
+            Some(text) => match json_numbers::rewrite_lossy_numbers(text) {
+                Some((rewritten, originals)) => (
+                    Some(serde_json::from_str::<Json>(&rewritten).unwrap()),
+                    originals,
+                ),
+                None => (Some(serde_json::from_str(text).unwrap()), HashMap::new()),
+            },
+            None => (None, HashMap::new()),
+        };
+        let request = GraphQLRequest {
+            query: Some(query.to_string()),
+            variables,
+            operation_name: None,
+            variable_number_originals,
+        };
+        plan_request(&model, &schema, &request, transport)
+    }
+
+    fn plan(query: &str, variables: Option<&str>) -> GResult<ir::Operation> {
+        plan_with_transport(query, variables, Transport::Http)
+    }
+
+    /// The SQL text of a single `big: {_eq: ...}` comparison.
+    fn eq_sql_text(op: ir::Operation) -> String {
+        let Some(ir::RootField::Table(root)) = op.root_fields.into_iter().next() else {
+            panic!("expected a table root");
+        };
+        let ir::TableRootKind::Many { args, .. } = root.kind else {
+            panic!("expected a many root");
+        };
+        let Some(ir::BoolExp::Compare {
+            op: ir::CompareOp::Eq(v),
+            ..
+        }) = args.where_
+        else {
+            panic!("expected a single _eq comparison");
+        };
+        v.text.unwrap()
+    }
+
+    fn fragment_chain(count: usize, spreads_per_fragment: usize) -> String {
+        let mut q = String::from("query { User { ...f0 } } ");
+        for i in 0..count {
+            q.push_str(&format!("fragment f{i} on User {{ "));
+            if i + 1 < count {
+                for _ in 0..spreads_per_fragment {
+                    q.push_str(&format!("...f{} ", i + 1));
+                }
+            } else {
+                q.push_str("id ");
+            }
+            q.push('}');
+            q.push(' ');
+        }
+        q
+    }
+
+    #[test]
+    fn double_spread_fragment_chain_small_succeeds() {
+        assert!(plan(&fragment_chain(10, 2), None).is_ok());
+    }
+
+    #[test]
+    fn double_spread_fragment_chain_large_hits_selection_budget() {
+        // 2^40 naive expansions: must fail fast with the budget error
+        // instead of hanging or exhausting memory.
+        let err = plan(&fragment_chain(40, 2), None).unwrap_err();
+        assert_eq!(
+            err.message,
+            "the selection set exceeds the maximum of 50000 selections after fragment expansion"
+        );
+    }
+
+    #[test]
+    fn long_single_spread_fragment_chain_hits_depth_limit() {
+        // 100k chained fragments would recurse 100k frames in the prepass
+        // without the frame cap.
+        let err = plan(&fragment_chain(100_000, 1), None).unwrap_err();
+        assert_eq!(
+            err.message,
+            "the query exceeds the maximum allowed nesting depth of 100"
+        );
+    }
+
+    fn nested_not_query(n: usize) -> String {
+        let mut q = String::from("{ User(where: ");
+        for _ in 0..n {
+            q.push_str("{_not: ");
+        }
+        q.push_str("{id: {_eq: \"1\"}}");
+        for _ in 0..n {
+            q.push('}');
+        }
+        q.push_str(") { id } }");
+        q
+    }
+
+    #[test]
+    fn deep_valid_documents_pass() {
+        // graphql_parser itself rejects nesting much beyond ~46 input-object
+        // levels, so the deepest end-to-end-plannable documents sit well
+        // under the 100 limit; the exact-100 boundary is pinned on the
+        // pre-parse scan below.
+        assert!(plan(&nested_not_query(40), None).is_ok());
+        let mut q = String::from("{ User ");
+        for _ in 0..40 {
+            q.push_str("{ self_rel ");
+        }
+        q.push_str("{ id }");
+        for _ in 0..40 {
+            q.push('}');
+        }
+        q.push('}');
+        assert!(plan(&q, None).is_ok());
+    }
+
+    #[test]
+    fn prescan_depth_boundary() {
+        let at_limit = nested_not_query(96); // max bracket depth exactly 100
+        let over = nested_not_query(97);
+        let over_message = match prescan(&over) {
+            Err(e) => e.message,
+            Ok(_) => panic!("expected a depth error"),
+        };
+        assert_eq!(
+            (prescan(&at_limit).is_ok(), over_message),
+            (
+                true,
+                "the query exceeds the maximum allowed nesting depth of 100".to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn nesting_depth_over_limit_errors() {
+        for n in [97, 200, 100_000] {
+            let err = plan(&nested_not_query(n), None).unwrap_err();
+            assert_eq!(
+                (n, err.message.as_str(), err.code),
+                (
+                    n,
+                    "the query exceeds the maximum allowed nesting depth of 100",
+                    CODE_VALIDATION_FAILED
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn fragment_expansion_depth_over_limit_errors() {
+        // Each fragment nests 50 selection levels lexically (fine), but
+        // spreading one inside the other expands past 100.
+        let mut q = String::from("query { User { ...f0 } } ");
+        for i in 0..3 {
+            q.push_str(&format!("fragment f{i} on User {{ "));
+            let mut depth = 0;
+            for _ in 0..49 {
+                q.push_str("u { ");
+                depth += 1;
+            }
+            if i < 2 {
+                q.push_str(&format!("...f{} ", i + 1));
+            } else {
+                q.push_str("id ");
+            }
+            for _ in 0..depth {
+                q.push('}');
+            }
+            q.push_str("} ");
+        }
+        let err = plan(&q, None).unwrap_err();
+        assert_eq!(
+            err.message,
+            "the query exceeds the maximum allowed nesting depth of 100"
+        );
+    }
+
+    #[test]
+    fn fragment_cycle_error_is_preserved() {
+        let q = "query { User { ...a } } \
+                 fragment a on User { ...b } fragment b on User { ...a }";
+        let err = plan(q, None).unwrap_err();
+        assert_eq!(
+            err.message,
+            "the fragment definition(s) a and b form a cycle"
+        );
+    }
+
+    #[test]
+    fn big_integer_variable_reaches_sql_losslessly() {
+        let op = plan(
+            "query($v: numeric) { User(where: {big: {_eq: $v}}) { id } }",
+            Some(r#"{"v": 99999999999999999999999}"#),
+        )
+        .unwrap();
+        assert_eq!(eq_sql_text(op), "99999999999999999999999");
+    }
+
+    #[test]
+    fn high_precision_decimal_variable_reaches_sql_losslessly() {
+        let op = plan(
+            "query($v: numeric) { User(where: {big: {_eq: $v}}) { id } }",
+            Some(r#"{"v": 1.00000000000000000000001}"#),
+        )
+        .unwrap();
+        assert_eq!(eq_sql_text(op), "1.00000000000000000000001");
+    }
+
+    #[test]
+    fn numeric_float_literals_reach_sql_losslessly() {
+        for literal in ["1.00000000000000000001", "1e400"] {
+            let op = plan(
+                &format!("{{ User(where: {{big: {{_eq: {literal}}}}}) {{ id }} }}"),
+                None,
+            )
+            .unwrap();
+            assert_eq!(eq_sql_text(op), literal);
+        }
+    }
+
+    #[test]
+    fn overflowing_float_variable_is_rejected_before_sql() {
+        let err = plan(
+            "query($v: float8!) { User(where: {floating: {_eq: $v}}) { id } }",
+            Some(r#"{"v": 1e400}"#),
+        )
+        .unwrap_err();
+        assert_eq!(
+            (err.message.as_str(), err.code),
+            (
+                "The value 1.0e400 lies outside the bounds. Is it overflowing the float bounds?",
+                CODE_PARSE_FAILED,
+            )
+        );
+    }
+
+    #[test]
+    fn large_json_variable_numbers_reach_sql_losslessly() {
+        let op = plan(
+            "query($v: jsonb) { User(where: {json: {_contains: $v}}) { id } }",
+            Some(r#"{"v": {"n": 99999999999999999999999}}"#),
+        )
+        .unwrap();
+        let Some(ir::RootField::Table(root)) = op.root_fields.into_iter().next() else {
+            panic!("expected a table root");
+        };
+        let ir::TableRootKind::Many { args, .. } = root.kind else {
+            panic!("expected a many root");
+        };
+        let Some(ir::BoolExp::Compare {
+            op: ir::CompareOp::Contains(value),
+            ..
+        }) = args.where_
+        else {
+            panic!("expected a jsonb _contains comparison");
+        };
+        assert_eq!(
+            value.text.as_deref(),
+            Some(r#"{"n":99999999999999999999999}"#)
+        );
+    }
+
+    #[test]
+    fn client_cannot_spoof_variable_number_originals() {
+        let err = plan(
+            "query($v: numeric) { User(where: {big: {_eq: $v}}) { id } }",
+            Some(
+                r#"{"v": 1.5, "\u0001variable number originals": {"4609434218613702656": "999999999999999999"}}"#,
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, CODE_VALIDATION_FAILED);
+        assert!(
+            err.message
+                .contains("unexpected variables in variableValues"),
+            "client-owned variables must not be trusted as decoder metadata: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn websocket_rejects_non_object_variables() {
+        let model = test_model();
+        let schema = RoleSchema {
+            registry: schema_build::build(&model, Role::Admin),
+            role: Role::Admin,
+        };
+        let request = GraphQLRequest {
+            query: Some("{ User { id } }".to_string()),
+            variables: Some(serde_json::json!([])),
+            operation_name: None,
+            variable_number_originals: HashMap::new(),
+        };
+        let err = plan_request(&model, &schema, &request, Transport::Ws).unwrap_err();
+        assert_eq!(
+            (err.message.as_str(), err.path.as_str(), err.code),
+            (
+                "parsing HashMap failed, expected Object, but encountered Array",
+                "$.variables",
+                CODE_PARSE_FAILED,
+            )
+        );
+    }
+
+    #[test]
+    fn explicit_null_stream_cursor_is_a_bounded_position() {
+        let op = plan_with_transport(
+            "subscription { User_stream(batch_size: 2, cursor: {initial_value: {maybe: null}, ordering: DESC}) { id } }",
+            None,
+            Transport::Ws,
+        )
+        .unwrap();
+        let Some(ir::RootField::Table(root)) = op.root_fields.first() else {
+            panic!("expected a table root");
+        };
+        let ir::TableRootKind::Stream { cursor, .. } = &root.kind else {
+            panic!("expected a stream root");
+        };
+        assert_eq!(cursor.len(), 1);
+        let initial = cursor[0]
+            .initial_value
+            .as_ref()
+            .expect("explicit null must not become an unbounded cursor");
+        assert_eq!(
+            (initial.text.as_deref(), initial.cast.as_str()),
+            (None, "text")
+        );
+    }
+
+    #[test]
+    fn custom_enum_sql_cast_is_schema_qualified() {
+        let op = plan(r#"{ User(where: {status: {_eq: "ACTIVE"}}) { id } }"#, None).unwrap();
+        let Some(ir::RootField::Table(root)) = op.root_fields.first() else {
+            panic!("expected a table root");
+        };
+        let compiled = crate::serve::exec::sql::compile_root_full("tenant", root);
+        assert!(
+            compiled.sql.contains("::\"tenant\".\"accounttype\""),
+            "custom enum casts must resolve outside the default search_path: {}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn empty_custom_enum_in_casts_are_schema_qualified() {
+        for predicate in ["_in", "_nin"] {
+            let op = plan(
+                &format!(r#"{{ User(where: {{status: {{{predicate}: []}}}}) {{ id }} }}"#),
+                None,
+            )
+            .unwrap();
+            let Some(ir::RootField::Table(root)) = op.root_fields.first() else {
+                panic!("expected a table root");
+            };
+            let compiled = crate::serve::exec::sql::compile_root_full("tenant", root);
+            assert!(
+                compiled.sql.contains("::\"tenant\".\"accounttype\"[]"),
+                "empty {predicate} must retain the custom enum namespace: {}",
+                compiled.sql
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_number_variables_are_unchanged() {
+        for (vars, expected) in [
+            (r#"{"v": 1.5}"#, "1.5"),
+            (r#"{"v": 42}"#, "42"),
+            (r#"{"v": 1e2}"#, "100"),
+            (r#"{"v": -7}"#, "-7"),
+        ] {
+            let op = plan(
+                "query($v: numeric) { User(where: {big: {_eq: $v}}) { id } }",
+                Some(vars),
+            )
+            .unwrap();
+            assert_eq!((vars, eq_sql_text(op).as_str()), (vars, expected));
+        }
+    }
+
+    #[test]
+    fn unexpected_variables_still_reported() {
+        let err = plan(
+            "query { User { id } }",
+            Some(r#"{"v": 99999999999999999999999}"#),
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "unexpected variables in variableValues: v");
     }
 }

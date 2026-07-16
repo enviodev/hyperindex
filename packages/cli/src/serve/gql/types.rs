@@ -148,16 +148,24 @@ impl TypeDef {
         }
     }
 
+    // Field vectors are name-sorted by construction (schema_build sorts
+    // every object/input-object's fields), so lookups binary-search.
     pub fn field(&self, name: &str) -> Option<&FieldDef> {
         match self {
-            TypeDef::Object { fields, .. } => fields.iter().find(|f| f.name == name),
+            TypeDef::Object { fields, .. } => fields
+                .binary_search_by(|f| f.name.as_str().cmp(name))
+                .ok()
+                .map(|i| &fields[i]),
             _ => None,
         }
     }
 
     pub fn input_field(&self, name: &str) -> Option<&InputValueDef> {
         match self {
-            TypeDef::InputObject { fields, .. } => fields.iter().find(|f| f.name == name),
+            TypeDef::InputObject { fields, .. } => fields
+                .binary_search_by(|f| f.name.as_str().cmp(name))
+                .ok()
+                .map(|i| &fields[i]),
             _ => None,
         }
     }
