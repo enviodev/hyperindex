@@ -8,25 +8,13 @@ let getInMemTable = (
 ): InMemoryTable.Entity.t =>
   state->IndexerState.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
 
-let getEffectInMemTable = (state: IndexerState.t, ~effect: Internal.effect) => {
-  let key = effect.name
-  let effects = state->IndexerState.effects
-  switch effects->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(table) => table
-  | None =>
-    let table: IndexerState.effectCacheInMemTable = {
-      idsToStore: [],
-      dict: Dict.make(),
-      changesCount: 0.,
-      invalidationsCount: 0,
-      effect,
-    }
-    effects->Dict.set(key, table)
-    table
-  }
-}
+let getEffectInMemTable = (
+  state: IndexerState.t,
+  ~effect: Internal.effect,
+  ~scope: Internal.chainScope,
+) => state->IndexerState.effectState->EffectState.getTable(~effect, ~scope)
 
-let hasEffectOutput = (inMemTable: IndexerState.effectCacheInMemTable, key) =>
+let hasEffectOutput = (inMemTable: EffectState.effectCacheInMemTable, key) =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(Set(_)) => true
   | Some(Delete(_)) | None => false
@@ -36,7 +24,7 @@ let hasEffectOutput = (inMemTable: IndexerState.effectCacheInMemTable, key) =>
 // optional output, so it must never be wrapped in another option here: Some(None)
 // is encoded as the nested-option sentinel and would leak to the handler.
 let getEffectOutputUnsafe = (
-  inMemTable: IndexerState.effectCacheInMemTable,
+  inMemTable: EffectState.effectCacheInMemTable,
   key,
 ): Internal.effectOutput =>
   switch inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -47,7 +35,7 @@ let getEffectOutputUnsafe = (
 // Records a handler output. Persisted on the next write only when shouldCache;
 // otherwise kept in memory (re-run on a later miss) but never written to the db.
 let setEffectOutput = (
-  inMemTable: IndexerState.effectCacheInMemTable,
+  inMemTable: EffectState.effectCacheInMemTable,
   ~checkpointId,
   ~cacheKey,
   ~output,
@@ -65,7 +53,7 @@ let setEffectOutput = (
 
 // Seeds an entry from a db read. Stamped with loadedFromDbCheckpointId so it's
 // always droppable (re-readable from the db) and never re-persisted.
-let initEffectOutputFromDb = (inMemTable: IndexerState.effectCacheInMemTable, ~cacheKey, ~output) =>
+let initEffectOutputFromDb = (inMemTable: EffectState.effectCacheInMemTable, ~cacheKey, ~output) =>
   if inMemTable.dict->Utils.Dict.dangerouslyGetNonOption(cacheKey)->Option.isNone {
     inMemTable.changesCount = inMemTable.changesCount +. 1.
     inMemTable.dict->Dict.set(
@@ -78,7 +66,7 @@ let initEffectOutputFromDb = (inMemTable: IndexerState.effectCacheInMemTable, ~c
 // cache:false). Uncommitted entries stay warm. With keepLoadedFromDb, entries
 // seeded from a db read are spared. Mirrors entity dropCommittedChanges.
 let dropCommittedEffects = (
-  inMemTable: IndexerState.effectCacheInMemTable,
+  inMemTable: EffectState.effectCacheInMemTable,
   ~committedCheckpointId,
   ~keepLoadedFromDb,
 ) => {
