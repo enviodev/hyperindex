@@ -211,13 +211,15 @@ impl EvmHypersyncClient {
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let lease = self.pool.acquire().map_err(map_err)?;
-        let res = lease
-            .client()
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
+        let res = {
+            let lease = self.pool.acquire().map_err(map_err)?;
+            lease
+                .client()
+                .get_with_rate_limit(&query)
+                .await
+                .context("run inner query")
+                .map_err(map_err)?
+        };
         match res {
             RateLimitResponse::Success { response, .. } => {
                 convert_response(response, self.enable_checksum_addresses)
@@ -302,13 +304,18 @@ impl EvmHypersyncClient {
         let contract_name_by_address = built.contract_name_by_address;
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let lease = self.pool.acquire().map_err(map_err)?;
-        let res = lease
-            .client()
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
+        // Scope the lease to the HTTP exchange: the decode below runs long
+        // after the stream is done, and holding the slot through it would
+        // inflate in-flight and grow the pool for connections that are free.
+        let res = {
+            let lease = self.pool.acquire().map_err(map_err)?;
+            lease
+                .client()
+                .get_with_rate_limit(&query)
+                .await
+                .context("run inner query")
+                .map_err(map_err)?
+        };
 
         let response = match res {
             RateLimitResponse::Success { response, .. } => response,
