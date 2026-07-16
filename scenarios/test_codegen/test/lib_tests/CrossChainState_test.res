@@ -91,6 +91,8 @@ let makeFetchingChainState = (
   ~chainDensity=None,
   ~caughtUpOnce=false,
   ~bufferBlocks=[],
+  ~firstEventBlock=Some(0),
+  ~blockLag=0,
 ) => {
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
@@ -129,10 +131,10 @@ let makeFetchingChainState = (
     maxOnBlockBufferSize: 10000,
     chainId,
     contractConfigs: Dict.make(),
-    blockLag: 0,
+    blockLag,
     onBlockRegistrations: [],
     knownHeight,
-    firstEventBlock: Some(0),
+    firstEventBlock,
   }
   let mockSource = MockIndexer.Source.make([], ~chain=#1)
   ChainState.make(
@@ -831,6 +833,72 @@ describe("ChainState cold start", () => {
       (await probeSize(~targetBufferSize=10_000), await probeSize(~targetBufferSize=2_000)),
       ~message="The cold probe scales with the configured target buffer",
     ).toEqual((1000., 200.))
+  })
+
+  it("frontierProgress reads 100% at the lagged head", t => {
+    // knownHeight 1000 held back by blockLag 200 -> the fetchable head is 800.
+    // A chain fetched to 800 is fully caught up and must read 1.0, not 0.8, so
+    // it never looks behind against blocks it can't fetch yet.
+    let cs = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=800,
+      ~blockLag=200,
+    )
+    t.expect(cs->ChainState.frontierProgress).toBe(1.)
+  })
+
+  Async.it("a chain with no discovered first event never becomes a dead anchor", async t => {
+    // Chain 1 has found no events yet (firstEventBlock=None) but has already
+    // scanned to 90% of its range. FetchState.getProgressPercentage reports it
+    // at 0% (its priority rank), yet its fetch frontier is far ahead. The
+    // alignment anchor must be chain 2 (furthest behind by frontier progress),
+    // so chain 3 (just ahead of chain 2) is held near chain 2's line instead of
+    // racing to head on chain 1's non-clamping frontier.
+    let scanning = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=900,
+      ~chainDensity=Some(10.),
+      ~firstEventBlock=None,
+    )
+    let behind = makeFetchingChainState(
+      ~chainId=2,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=300,
+      ~chainDensity=Some(10.),
+    )
+    let slightlyAhead = makeFetchingChainState(
+      ~chainId=3,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=310,
+      ~chainDensity=Some(10.),
+    )
+    let cm = makeCrossChainState(
+      ~chainStatesList=[scanning, behind, slightlyAhead],
+      ~targetBufferSize=100_000,
+    )
+
+    let itemsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
+      itemsByChain->Utils.Dict.setByInt(
+        chain->ChainMap.Chain.toChainId,
+        switch action {
+        | Ready(queries) => queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
+        | _ => 0
+        },
+      )
+      Promise.resolve()
+    })
+
+    t.expect(
+      (
+        itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(1),
+        itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(2),
+        itemsByChain->Utils.Dict.dangerouslyGetByIntNonOption(3),
+      ),
+      ~message="Chain 2 anchors and fetches to head; chain 3 is clamped to chain 2's line (~block 350 -> 400 items); the scanning chain 1 sets no line and idles",
+    ).toEqual((Some(0), Some(7000), Some(400)))
   })
 })
 

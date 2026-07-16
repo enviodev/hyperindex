@@ -410,13 +410,17 @@ let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 // nudge it.
 let densityBlendWindow = 100.
 
-// The last block this chain can fetch right now: the head, or endBlock when
-// it's below the head.
+// The last block this chain can fetch right now: the lagged head
+// (knownHeight - blockLag, the frontier when a reorg-threshold blockLag holds
+// back the tip), or endBlock when it's below that head. Matching isFetchingAtHead's
+// definition of the head is what lets a chain parked at its lagged head read
+// 100% progress instead of looking behind against blocks it can't fetch.
 let fetchCeiling = (cs: t) => {
   let fetchState = cs.fetchState
+  let head = Pervasives.max(0, fetchState.knownHeight - fetchState.blockLag)
   switch fetchState.endBlock {
-  | Some(endBlock) => Pervasives.min(endBlock, fetchState.knownHeight)
-  | None => fetchState.knownHeight
+  | Some(endBlock) => Pervasives.min(endBlock, head)
+  | None => head
   }
 }
 

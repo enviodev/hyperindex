@@ -202,12 +202,13 @@ let totalReservedSize = (crossChainState: t) => {
 // to be free. A chain visited after the budget falls below that admission unit
 // doesn't query this round — reservations release as responses land, so the
 // next tick redistributes. Every other chain is additionally capped at the
-// most-behind chain's fetch-frontier progress mapped onto its own range, so no
+// lowest-frontier-progress chain's progress mapped onto its own range, so no
 // chain runs ahead of the chain the pool is prioritizing — including on ticks
 // where that chain is mid-fetch and emits no new query. A chain with no known
-// height can't anchor this line (there's no range to measure against), and
-// once the whole indexer has caught up (isRealtime) the clamp is dropped —
-// chains at head only trail each other by real-time block production.
+// height can't anchor this line (there's no range to measure against), a chain
+// caught up to its fetchable head reads 100% and so never anchors while another
+// is behind, and once the whole indexer has caught up (isRealtime) the clamp is
+// dropped — chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -240,15 +241,26 @@ let checkAndFetch = async (
 
   let prioritizedChainStates = crossChainState->priorityOrder
 
-  // Alignment anchor: the most-behind chain with a known height. Anchoring on
-  // its current frontier (not on the target of whichever chain happens to
-  // query this tick) keeps the line in place while the anchor's queries are
-  // still in flight.
+  // Alignment anchor: the known-height chain with the lowest fetch-frontier
+  // progress — the same metric the clamp maps other chains against, so the
+  // chain that sets the line is exactly the one furthest behind by that line's
+  // own measure. Anchoring on the frontier (not on the target of whichever
+  // chain happens to query this tick) keeps the line in place while the
+  // anchor's queries are still in flight. A chain caught up to its fetchable
+  // head reads 100% here and so never anchors while another chain is behind.
   let alignment = crossChainState.isRealtime
     ? None
-    : prioritizedChainStates
-      ->Array.find(cs => cs->ChainState.knownHeight != 0)
-      ->Option.map(cs => ((cs->ChainState.chainConfig).id, cs->ChainState.frontierProgress))
+    : prioritizedChainStates->Array.reduce(None, (acc, cs) =>
+        if cs->ChainState.knownHeight == 0 {
+          acc
+        } else {
+          let progress = cs->ChainState.frontierProgress
+          switch acc {
+          | Some((_, best)) if best <= progress => acc
+          | _ => Some(((cs->ChainState.chainConfig).id, progress))
+          }
+        }
+      )
 
   let actionByChain = Dict.make()
   prioritizedChainStates->Array.forEach(cs => {
