@@ -169,13 +169,18 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 
 // --- Fetch control. ---
 
-// Chains ordered furthest-behind first, so the shared buffer pool goes to the
-// chains with the most fetchable backfill work before the rest.
+// Chains ordered furthest-behind first by fetch-frontier progress, so the
+// shared buffer pool goes to the chains with the most fetchable backfill work
+// before the rest — and the same metric that sets the alignment line also
+// decides who draws budget first, so the anchor is served before any chain it
+// clamps. (Batch ordering keeps its own getProgressPercentage measure.) A chain
+// with no known height reads 100% here and sorts last, which is fine: it can't
+// fetch until its first block lands regardless of when it's visited.
 let priorityOrder = (crossChainState: t) =>
   crossChainState.chainStates
   ->Dict.valuesToArray
   ->Array.toSorted((a, b) =>
-    Float.compare(a->ChainState.getProgressPercentage, b->ChainState.getProgressPercentage)
+    Float.compare(a->ChainState.frontierProgress, b->ChainState.frontierProgress)
   )
 
 // In-flight estimated items across every chain — the live draw against
@@ -241,26 +246,18 @@ let checkAndFetch = async (
 
   let prioritizedChainStates = crossChainState->priorityOrder
 
-  // Alignment anchor: the known-height chain with the lowest fetch-frontier
-  // progress — the same metric the clamp maps other chains against, so the
-  // chain that sets the line is exactly the one furthest behind by that line's
-  // own measure. Anchoring on the frontier (not on the target of whichever
-  // chain happens to query this tick) keeps the line in place while the
-  // anchor's queries are still in flight. A chain caught up to its fetchable
-  // head reads 100% here and so never anchors while another chain is behind.
+  // Alignment anchor: the first known-height chain in priority order — which,
+  // since that order sorts by frontier progress, is the chain furthest behind
+  // by the very metric the clamp maps other chains against. Anchoring on the
+  // frontier (not on the target of whichever chain happens to query this tick)
+  // keeps the line in place while the anchor's queries are still in flight. A
+  // chain caught up to its fetchable head reads 100% and sorts past any behind
+  // chain, so it never anchors while another chain is behind.
   let alignment = crossChainState.isRealtime
     ? None
-    : prioritizedChainStates->Array.reduce(None, (acc, cs) =>
-        if cs->ChainState.knownHeight == 0 {
-          acc
-        } else {
-          let progress = cs->ChainState.frontierProgress
-          switch acc {
-          | Some((_, best)) if best <= progress => acc
-          | _ => Some(((cs->ChainState.chainConfig).id, progress))
-          }
-        }
-      )
+    : prioritizedChainStates
+      ->Array.find(cs => cs->ChainState.knownHeight != 0)
+      ->Option.map(cs => ((cs->ChainState.chainConfig).id, cs->ChainState.frontierProgress))
 
   let actionByChain = Dict.make()
   prioritizedChainStates->Array.forEach(cs => {

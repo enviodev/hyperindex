@@ -209,6 +209,26 @@ describe("CrossChainState fetch control", () => {
     ).toEqual([1, 2, 3])
   })
 
+  it("priorityOrder ranks by frontier progress, not event-based progress", t => {
+    // Chain 1 has found no events yet (firstEventBlock=None), so
+    // getProgressPercentage reports it at 0% even though its fetch frontier
+    // (900) is far ahead of chain 2's (300). Ordering by frontier progress must
+    // put the genuinely-behind chain 2 first, so it draws budget and anchors
+    // the line before the ahead-but-eventless chain 1.
+    let ahead = makeFetchingChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=900,
+      ~firstEventBlock=None,
+    )
+    let behind = makeFetchingChainState(~chainId=2, ~knownHeight=1000, ~latestFetchedBlock=300)
+    let cm = makeCrossChainState(~chainStatesList=[ahead, behind])
+
+    t.expect(
+      cm->CrossChainState.priorityOrder->Array.map(cs => (cs->ChainState.chainConfig).id),
+    ).toEqual([2, 1])
+  })
+
   Async.it("checkAndFetch dispatches every chain that has work, skipping idle ones", async t => {
     // Chains at head (onBlock-only, frontier == knownHeight) wait for a new
     // block, so they're dispatched with that action. A chain whose buffer is
