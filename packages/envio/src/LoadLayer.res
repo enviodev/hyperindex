@@ -290,7 +290,7 @@ let loadEffect = (
         } catch {
         | S.Raised(error) =>
           inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
-          inMemTable.stats.invalidationsCount = inMemTable.stats.invalidationsCount + 1
+          inMemTable.stats.invalidationsCount = inMemTable.stats.invalidationsCount +. 1.
           Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,

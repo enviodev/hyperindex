@@ -27,7 +27,7 @@ type effectStats = {
   mutable prevCallStartTimerRef: Performance.timeRef,
   mutable queueCount: int,
   mutable queueWaitSeconds: float,
-  mutable invalidationsCount: int,
+  mutable invalidationsCount: float,
   // Number of persisted cache rows; seeded from the db on restart. hasCache
   // marks that the effect persists at all, so an empty table still gets a
   // zero-valued gauge sample.
@@ -84,7 +84,7 @@ let getStats = (self: t, ~tableName, ~effectName, ~scope) =>
       prevCallStartTimerRef: %raw(`null`),
       queueCount: 0,
       queueWaitSeconds: 0.,
-      invalidationsCount: 0,
+      invalidationsCount: 0.,
       cacheCount: 0,
       hasCache: false,
     }

@@ -17,7 +17,7 @@ type effectStats = {
   mutable prevCallStartTimerRef: Performance.timeRef,
   mutable queueCount: int,
   mutable queueWaitSeconds: float,
-  mutable invalidationsCount: int,
+  mutable invalidationsCount: float,
   mutable cacheCount: int,
   mutable hasCache: bool,
 }

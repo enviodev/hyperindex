@@ -501,7 +501,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
       | Some((invalidations, queueWaitSeconds)) =>
         byEffect->Dict.set(
           s.effectName,
-          (invalidations + s.invalidationsCount, queueWaitSeconds +. s.queueWaitSeconds),
+          (invalidations +. s.invalidationsCount, queueWaitSeconds +. s.queueWaitSeconds),
         )
       | None => byEffect->Dict.set(s.effectName, (s.invalidationsCount, s.queueWaitSeconds))
       }
@@ -517,7 +517,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The number of effect cache invalidations.",
     ~kind="counter",
     ~entries=effectTotals,
-    ~value=((invalidations, _)) => invalidations > 0 ? Some(invalidations->Int.toFloat) : None,
+    ~value=((invalidations, _)) => invalidations > 0. ? Some(invalidations) : None,
   )
   b->seriesOpt(
     ~name="envio_effect_queue",
