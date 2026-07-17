@@ -733,7 +733,7 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                     // test failure instead of a quick retry on a fresh one).
                     env: %raw(`{
                       ENVIO_MAX_SOURCE_RETRIES: "1",
-                      ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS: "10000",
+                      ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS: "30000",
                       ...process.env,
                     }`),
                   },
