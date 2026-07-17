@@ -503,6 +503,7 @@ describe("CrossChainState fetch control", () => {
         ~indexingAddresses=indexingAddresses1,
         ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
         ~maxReorgDepth=200,
+        ~shouldRollbackOnReorg=false,
         ~committedProgressBlockNumber=-1,
         ~logger=Logging.getLogger(),
       )
