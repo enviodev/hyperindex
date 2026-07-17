@@ -1463,6 +1463,9 @@ let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) =>
 }
 
 // Most parallel in-flight chunk queries a single partition may have at once.
+// Only queries still being fetched count — a fetched chunk parked behind a gap
+// doesn't hold a slot, so a slow query at the queue head can't starve the
+// partition's pipeline.
 let maxPendingChunksPerPartition = 12
 
 // Most parallel in-flight queries a single chain may have at once, across all
@@ -1588,10 +1591,11 @@ type partitionFillState = {
   p: partition,
   cursor: int,
   // Chunks already generated for this partition during gap-fill — used with
-  // pendingCount against maxPendingChunksPerPartition.
+  // inFlightCount against maxPendingChunksPerPartition.
   chunksUsedThisCall: int,
-  // Existing mutPendingQueries count before this call — fixed for the call.
-  pendingCount: int,
+  // Still-being-fetched pending queries before this call — fixed for the call.
+  // A fetched chunk parked behind a gap doesn't hold a pipeline slot.
+  inFlightCount: int,
   queryEndBlock: option<int>,
   maybeChunkRange: option<int>,
 }
@@ -1647,9 +1651,15 @@ let getNextQuery = (
     // Every partition is visited once here regardless of whether it gets a
     // query pushed below — waiting-for-new-block bookkeeping shouldn't depend
     // on this tick's budget.
+    let chainInFlightCount = ref(0)
     for idx in 0 to partitionsCount - 1 {
       let partitionId = optimizedPartitions.idsInAscOrder->Array.getUnsafe(idx)
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
+      for pqIdx in 0 to p.mutPendingQueries->Array.length - 1 {
+        if (p.mutPendingQueries->Array.getUnsafe(pqIdx)).fetchedBlock === None {
+          chainInFlightCount := chainInFlightCount.contents + 1
+        }
+      }
       if (
         p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock.blockNumber < headBlockNumber
       ) {
@@ -1662,11 +1672,17 @@ let getNextQuery = (
       }
     }
 
+    // Fresh queries the acceptance pass can still admit this tick.
+    let availableConcurrency = maxChainConcurrency - chainInFlightCount.contents
+
     // A zero budget is an admission check: preserve the wait-state scan above,
     // but make every query-generation pass below empty. Caught-up chains also
-    // skip those passes because their action is already known.
+    // skip those passes because their action is already known. Same when the
+    // chain is at its concurrency cap — no candidate could be accepted.
     let partitionsCount =
-      chainTargetItems <= 0. || shouldWaitForNewBlock.contents ? 0 : partitionsCount
+      chainTargetItems <= 0. || shouldWaitForNewBlock.contents || availableConcurrency <= 0
+        ? 0
+        : partitionsCount
 
     // One bucket per partition, in idsInAscOrder order — gap-fill and the
     // budget pass both push into a partition's own bucket, so flattening at
@@ -1724,9 +1740,11 @@ let getNextQuery = (
       let p = optimizedPartitions.entities->Dict.getUnsafe(partitionId)
       partitionIndexById->Dict.set(partitionId, idx)
       let pendingCount = p.mutPendingQueries->Array.length
+      let inFlightCount = ref(0)
       for pqIdx in 0 to pendingCount - 1 {
         let pq = p.mutPendingQueries->Array.getUnsafe(pqIdx)
         if pq.fetchedBlock === None {
+          inFlightCount := inFlightCount.contents + 1
           chainReserved := chainReserved.contents +. pq.itemsEst->Int.toFloat
           reservations->Array.push((pq.fromBlock, pq.itemsEst))->ignore
         }
@@ -1751,9 +1769,16 @@ let getNextQuery = (
             ~knownHeight,
             ~chainTargetBlock,
             ~maybeChunkRange,
-            ~maxChunks=maxPendingChunksPerPartition - pendingCount - chunksUsedThisCall.contents,
+            ~maxChunks=maxPendingChunksPerPartition -
+            inFlightCount.contents -
+            chunksUsedThisCall.contents,
             ~partition=p,
-            ~partitionBudget=chainTargetItems /. partitionsCount->Int.toFloat,
+            // Equal-divide share among the partitions that can actually fetch
+            // this tick: with more partitions than free concurrency slots, only
+            // availableConcurrency of them get queries, so dividing by the full
+            // count would undersize every gap probe.
+            ~partitionBudget=chainTargetItems /.
+            Pervasives.min(partitionsCount, availableConcurrency)->Int.toFloat,
             ~chunkItemsMultiplier,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
@@ -1777,7 +1802,7 @@ let getNextQuery = (
           p,
           cursor: cursor.contents,
           chunksUsedThisCall: chunksUsedThisCall.contents,
-          pendingCount,
+          inFlightCount: inFlightCount.contents,
           queryEndBlock,
           maybeChunkRange,
         })
@@ -1796,9 +1821,23 @@ let getNextQuery = (
       | Some(eb) => fs.cursor <= eb
       | None => true
       } &&
-      fs.pendingCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
+      fs.inFlightCount + fs.chunksUsedThisCall < maxPendingChunksPerPartition
 
     let inRangeStates = fillStates->Array.filter(isInRange)
+    // The acceptance pass admits at most availableConcurrency fresh queries, in
+    // fromBlock order, and every kept partition contributes a candidate at its
+    // own cursor — so a partition past the first availableConcurrency in cursor
+    // order could only offer candidates behind at least that many earlier ones,
+    // which the concurrency cap stops the walk from ever reaching. Dropping
+    // those partitions up front skips pointless candidate generation and, via
+    // inRangeCount below, stops the budget from being split across partitions
+    // that can't fetch this tick.
+    let inRangeStates = if inRangeStates->Array.length > availableConcurrency {
+      inRangeStates->Array.sort((a, b) => Int.compare(a.cursor, b.cursor))
+      inRangeStates->Array.slice(~start=0, ~end=availableConcurrency)
+    } else {
+      inRangeStates
+    }
     let inRangeCount = inRangeStates->Array.length
     // Even share of the fresh budget across the partitions actually fetching
     // this tick (not every partition — so budget isn't stranded on ones below
@@ -1834,7 +1873,7 @@ let getNextQuery = (
       | (Some(minHistoryRange), Some(density)) if density > 0. =>
         let chunkSize = Js.Math.ceil_int(minHistoryRange->Int.toFloat *. 1.8)
         let maxChunksRemaining =
-          maxPendingChunksPerPartition - fs.pendingCount - fs.chunksUsedThisCall
+          maxPendingChunksPerPartition - fs.inFlightCount - fs.chunksUsedThisCall
         // No chunk starts past chainTargetBlock; an emitted chunk still keeps
         // its full span (chunkToBlock may exceed the target — only
         // endBlock/mergeBlock are hard bounds).

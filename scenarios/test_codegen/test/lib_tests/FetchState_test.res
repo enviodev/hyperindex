@@ -4813,10 +4813,71 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
       "freshOnly": makeFetchState(~partitionsCount=120, ~inFlightCount=0)->countQueries,
       "withInFlight": makeFetchState(~partitionsCount=120, ~inFlightCount=30)->countQueries,
       "underCap": makeFetchState(~partitionsCount=50, ~inFlightCount=0)->countQueries,
+      "atCap": makeFetchState(~partitionsCount=120, ~inFlightCount=100)->countQueries,
     }).toEqual({
       "freshOnly": 100,
       "withInFlight": 70,
       "underCap": 50,
+      "atCap": 0,
     })
+  })
+
+  it("splits the budget across the queries the concurrency cap can admit", t => {
+    let queries = switch makeFetchState(
+      ~partitionsCount=120,
+      ~inFlightCount=0,
+    )->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1_000_000.) {
+    | Ready(queries) => queries
+    | _ => []
+    }
+    // 10 items/block budget density over the 100k-block range, split across the
+    // 100 admittable queries — not across all 120 partitions (which would give
+    // 8334 and leave a sixth of the budget undispatched).
+    t.expect({
+      "count": queries->Array.length,
+      "firstItemsTarget": (queries->Array.getUnsafe(0)).itemsTarget,
+    }).toEqual({
+      "count": 100,
+      "firstItemsTarget": 10000,
+    })
+  })
+
+  it("doesn't count fetched chunks against the partition pipeline cap", t => {
+    // A full 12-chunk pipeline where only the head chunk is still being
+    // fetched: the 11 fetched chunks parked behind it hold no slots, so the
+    // partition can still generate a query past the pipeline.
+    let mutPendingQueries: array<FetchState.pendingQuery> = Array.fromInitializer(~length=12, idx => {
+      FetchState.fromBlock: idx * 10 + 1,
+      toBlock: Some((idx + 1) * 10),
+      isChunk: true,
+      itemsTarget: 1,
+      itemsEst: 1,
+      fetchedBlock: idx === 0 ? None : Some({blockNumber: (idx + 1) * 10, blockTimestamp: 0}),
+    })
+    let fetchState = {
+      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[{...makePartition(~idx=0, ~inFlight=false), mutPendingQueries}],
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1000.),
+    ).toEqual(
+      FetchState.Ready([
+        {
+          partitionId: "0",
+          fromBlock: 121,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          itemsTarget: 999,
+          itemsEst: 999,
+          addressesByContractName,
+        },
+      ]),
+    )
   })
 })
