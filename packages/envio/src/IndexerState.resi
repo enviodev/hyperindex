@@ -10,45 +10,6 @@ type rollbackState =
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
-// Metric counters rendered by Metrics at scrape time. The records are exposed
-// read-only through the accessors below; mutation goes through the record*
-// operations.
-type handlerStat = {
-  contract: string,
-  event: string,
-  mutable processingSeconds: float,
-  // Floats: cumulative counters outgrow int32.
-  mutable processingCount: float,
-  mutable preloadSeconds: float,
-  mutable preloadCount: float,
-  mutable preloadSecondsTotal: float,
-  mutable preloadPendingCount: int,
-  mutable preloadPendingTimerRef: Performance.timeRef,
-}
-
-type storageLoadStat = {
-  operation: string,
-  storage: string,
-  mutable seconds: float,
-  mutable secondsTotal: float,
-  mutable count: float,
-  mutable whereSize: float,
-  mutable size: float,
-  mutable pendingCount: int,
-  mutable pendingTimerRef: Performance.timeRef,
-}
-
-type storageWriteStat = {
-  storage: string,
-  mutable seconds: float,
-  mutable count: int,
-}
-
-type historyPruneStat = {
-  mutable seconds: float,
-  mutable count: int,
-}
-
 module EntityTables: {
   type t = dict<InMemoryTable.Entity.t>
   let make: array<Internal.entityConfig> => t
@@ -139,15 +100,10 @@ let isStopped: t => bool
 let epoch: t => int
 let pruneStaleEntityHistoryThrottler: t => Throttler.t
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
-let preloadSeconds: t => float
-let processingSeconds: t => float
-let handlerStats: t => dict<handlerStat>
-let storageLoadStats: t => dict<storageLoadStat>
-let storageWriteStats: t => dict<storageWriteStat>
-let historyPruneStats: t => dict<historyPruneStat>
-let rollbackSeconds: t => float
-let rollbackCount: t => int
-let rollbackEventsCount: t => float
+
+// Read-only snapshot of every metric; the single window into the mutable
+// counters for the /metrics endpoint, the TUI and the console API.
+let toMetrics: t => Metrics.t
 
 // Metric counters.
 let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit

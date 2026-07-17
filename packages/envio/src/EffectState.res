@@ -92,8 +92,6 @@ let getStats = (self: t, ~tableName, ~effectName, ~scope) =>
     created
   }
 
-let stats = (self: t) => self.stats
-
 // Seed the persisted-rows count from the db on restart, before any cache table
 // is lazily created.
 let setCacheCount = (self: t, ~effectName, ~scope, ~count) => {
@@ -102,6 +100,71 @@ let setCacheCount = (self: t, ~effectName, ~scope, ~count) => {
   stats.cacheCount = count
   stats.hasCache = true
 }
+
+// --- Metric mutations. The stats records are opaque outside this module, so
+// every counter change goes through these. ---
+
+// Track a call starting at timerRef: bump the active count and extend the
+// wall-clock callSeconds, which counts overlapping calls once.
+let startCall = (stats: effectStats, ~timerRef) => {
+  let hadActiveCalls = stats.activeCallsCount > 0
+  stats.activeCallsCount = stats.activeCallsCount + 1
+  if hadActiveCalls {
+    let elapsed = Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=timerRef)
+    if elapsed > 0. {
+      stats.callSeconds = stats.callSeconds +. elapsed
+    }
+  }
+  stats.prevCallStartTimerRef = timerRef
+}
+
+// Finish a call started at startTimerRef: close the wall-clock interval and
+// record the call's own cumulative duration.
+let endCall = (stats: effectStats, ~startTimerRef) => {
+  stats.activeCallsCount = stats.activeCallsCount - 1
+  let newTimer = Performance.now()
+  stats.callSeconds =
+    stats.callSeconds +. Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=newTimer)
+  stats.prevCallStartTimerRef = newTimer
+
+  stats.callCount = stats.callCount +. 1.
+  stats.callSecondsTotal = stats.callSecondsTotal +. startTimerRef->Performance.secondsSince
+}
+
+let queueEnqueued = (stats: effectStats, ~count) => stats.queueCount = stats.queueCount + count
+
+let queueDequeued = (stats: effectStats, ~count) => stats.queueCount = stats.queueCount - count
+
+let addQueueWaitSeconds = (stats: effectStats, ~seconds) =>
+  stats.queueWaitSeconds = stats.queueWaitSeconds +. seconds
+
+// Bumps both the per-write invalidation count (consumed by the cache
+// persistence math) and the monotonic metric counter.
+let recordInvalidation = (inMemTable: effectCacheInMemTable) => {
+  inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
+  inMemTable.stats.invalidationsCount = inMemTable.stats.invalidationsCount +. 1.
+}
+
+let commitCacheCount = (inMemTable: effectCacheInMemTable, ~count) => {
+  inMemTable.stats.cacheCount = count
+  inMemTable.stats.hasCache = true
+}
+
+let toMetrics = (self: t): array<Metrics.effectMetrics> =>
+  self.stats
+  ->Dict.valuesToArray
+  ->Array.map(stats => {
+    Metrics.effect: stats.effectName,
+    scope: stats.scope->Internal.EffectCache.scopeToString,
+    callSeconds: stats.callSeconds,
+    callSecondsTotal: stats.callSecondsTotal,
+    callCount: stats.callCount,
+    activeCallsCount: stats.activeCallsCount,
+    queueCount: stats.queueCount,
+    queueWaitSeconds: stats.queueWaitSeconds,
+    invalidationsCount: stats.invalidationsCount,
+    cacheCount: stats.hasCache ? Some(stats.cacheCount) : None,
+  })
 
 let getRateLimitState = (self: t, ~tableName, ~effect: Internal.effect) =>
   switch effect.rateLimit {

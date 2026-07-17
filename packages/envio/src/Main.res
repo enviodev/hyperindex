@@ -1,4 +1,22 @@
-type chainData = ChainState.chainData
+// The public console/state chain shape. Kept to exactly this field set for
+// backward compatibility with consumers like RACE — new metric fields stay off
+// the HTTP response.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
@@ -11,6 +29,21 @@ type state =
       isPreRegisteringDynamicContracts: bool,
       rollbackOnReorg: bool,
     })
+
+let toChainData = (m: Metrics.chainMetrics): chainData => {
+  chainId: m.chainId,
+  poweredByHyperSync: m.poweredByHyperSync,
+  firstEventBlockNumber: m.firstEventBlockNumber,
+  latestProcessedBlock: m.latestProcessedBlock,
+  timestampCaughtUpToHeadOrEndblock: m.timestampCaughtUpToHeadOrEndblock,
+  numEventsProcessed: m.numEventsProcessed,
+  latestFetchedBlockNumber: m.latestFetchedBlockNumber,
+  knownHeight: m.knownHeight,
+  numBatchesFetched: m.numBatchesFetched,
+  startBlock: m.startBlock,
+  endBlock: m.endBlock,
+  numAddresses: m.numAddresses,
+}
 
 let chainDataSchema = S.schema((s): chainData => {
   chainId: s.matches(S.float),
@@ -25,25 +58,6 @@ let chainDataSchema = S.schema((s): chainData => {
   startBlock: s.matches(S.int),
   endBlock: s.matches(S.option(S.int)),
   numAddresses: s.matches(S.int),
-  isReady: s.matches(S.bool),
-  sourceBlockNumber: s.matches(S.int),
-  progressBlockNumber: s.matches(S.int),
-  progressLatencyMs: s.matches(S.option(S.int)),
-  concurrency: s.matches(S.int),
-  partitionsCount: s.matches(S.int),
-  bufferSize: s.matches(S.int),
-  bufferBlockNumber: s.matches(S.int),
-  idleSeconds: s.matches(S.float),
-  waitingForNewBlockSeconds: s.matches(S.float),
-  queryingSeconds: s.matches(S.float),
-  blockRangeFetchSeconds: s.matches(S.float),
-  blockRangeParseSeconds: s.matches(S.float),
-  blockRangeFetchCount: s.matches(S.float),
-  blockRangeFetchedEvents: s.matches(S.float),
-  blockRangeFetchedBlocks: s.matches(S.float),
-  reorgCount: s.matches(S.int),
-  reorgDetectedBlock: s.matches(S.option(S.int)),
-  rollbackTargetBlock: s.matches(S.option(S.int)),
 })
 let stateSchema = S.union([
   S.literal(Disabled({})),
@@ -514,7 +528,10 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
 
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
-    let _ = res->endWithData(Metrics.collect(~state=getIndexerState()))
+    let _ =
+      res->endWithData(
+        Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
+      )
   })
 
   app->get("/metrics/runtime", (_req, res) => {
@@ -652,8 +669,7 @@ let start = async (
       switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {
-          let chains =
-            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toData)
+          let chains = (state->IndexerState.toMetrics).chains->Array.map(toChainData)
           Active({
             envioVersion,
             chains,

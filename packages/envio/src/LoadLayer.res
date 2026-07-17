@@ -78,17 +78,7 @@ let callEffect = (
   ~timerRef,
   ~onError,
 ) => {
-  let stats = inMemTable.stats
-  let hadActiveCalls = stats.activeCallsCount > 0
-  stats.activeCallsCount = stats.activeCallsCount + 1
-
-  if hadActiveCalls {
-    let elapsed = Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=timerRef)
-    if elapsed > 0. {
-      stats.callSeconds = stats.callSeconds +. elapsed
-    }
-  }
-  stats.prevCallStartTimerRef = timerRef
+  inMemTable.stats->EffectState.startCall(~timerRef)
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
@@ -103,15 +93,7 @@ let callEffect = (
     onError(~inputKey=arg.cacheKey, ~exn)
   })
   ->Promise.finally(() => {
-    stats.activeCallsCount = stats.activeCallsCount - 1
-    let newTimer = Performance.now()
-    stats.callSeconds =
-      stats.callSeconds +.
-      Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=newTimer)
-    stats.prevCallStartTimerRef = newTimer
-
-    stats.callCount = stats.callCount +. 1.
-    stats.callSecondsTotal = stats.callSecondsTotal +. timerRef->Performance.secondsSince
+    inMemTable.stats->EffectState.endCall(~startTimerRef=timerRef)
   })
 }
 
@@ -175,15 +157,14 @@ let rec executeWithRateLimit = (
       ->ignore
     }
 
-    let stats = inMemTable.stats
     if immediateCount > 0 && isFromQueue {
-      stats.queueCount = stats.queueCount - immediateCount
+      inMemTable.stats->EffectState.queueDequeued(~count=immediateCount)
     }
 
     // Handle queued items
     if queuedArgs->Utils.Array.notEmpty {
       if !isFromQueue {
-        stats.queueCount = stats.queueCount + queuedArgs->Array.length
+        inMemTable.stats->EffectState.queueEnqueued(~count=queuedArgs->Array.length)
       }
 
       let millisUntilReset = ref(0)
@@ -203,8 +184,9 @@ let rec executeWithRateLimit = (
         nextWindowPromise
         ->Promise.then(() => {
           if millisUntilReset.contents > 0 {
-            stats.queueWaitSeconds =
-              stats.queueWaitSeconds +. millisUntilReset.contents->Int.toFloat /. 1000.
+            inMemTable.stats->EffectState.addQueueWaitSeconds(
+              ~seconds=millisUntilReset.contents->Int.toFloat /. 1000.,
+            )
           }
           executeWithRateLimit(
             ~effect,
@@ -289,8 +271,7 @@ let loadEffect = (
           inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
         } catch {
         | S.Raised(error) =>
-          inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
-          inMemTable.stats.invalidationsCount = inMemTable.stats.invalidationsCount +. 1.
+          inMemTable->EffectState.recordInvalidation
           Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,

@@ -624,7 +624,7 @@ module Indexer = {
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.
-        Metrics.collect(~state=Some(state))
+        Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
         ->String.split("\n")
         ->Array.filterMap(line =>
           if line->String.startsWith(name ++ "{") || line->String.startsWith(name ++ " ") {

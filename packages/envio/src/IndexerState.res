@@ -434,15 +434,91 @@ let isStopped = (state: t) => state.isStopped
 let epoch = (state: t) => state.epoch
 let pruneStaleEntityHistoryThrottler = (state: t) => state.writeThrottlers.pruneStaleEntityHistory
 let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
-let preloadSeconds = (state: t) => state.preloadSeconds
-let processingSeconds = (state: t) => state.processingSeconds
-let handlerStats = (state: t) => state.handlerStats
-let storageLoadStats = (state: t) => state.storageLoadStats
-let storageWriteStats = (state: t) => state.storageWriteStats
-let historyPruneStats = (state: t) => state.historyPruneStats
-let rollbackSeconds = (state: t) => state.rollbackSeconds
-let rollbackCount = (state: t) => state.rollbackCount
-let rollbackEventsCount = (state: t) => state.rollbackEventsCount
+
+// Read-only snapshot of every metric; the single window into the mutable
+// counters for the /metrics endpoint, the TUI and the console API.
+let toMetrics = (state: t): Metrics.t => {
+  let chainStates = state.crossChainState->CrossChainState.chainStates
+  let sourceRequests = []
+  let sourceHeights = []
+  chainStates->Utils.Dict.forEach(cs => {
+    let sourceManager = cs->ChainState.sourceManager
+    sourceManager
+    ->SourceManager.getRequestStatSamples
+    ->Array.forEach(s =>
+      sourceRequests->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        method: s.method,
+        count: s.count,
+        seconds: s.seconds,
+      })
+    )
+    sourceManager
+    ->SourceManager.getSourceHeightSamples
+    ->Array.forEach(s =>
+      sourceHeights->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        height: s.height,
+      })
+    )
+  })
+  let historyPrunes = []
+  state.historyPruneStats->Utils.Dict.forEachWithKey((s, entityName) =>
+    historyPrunes->Array.push({
+      Metrics.entity: entityName,
+      seconds: s.seconds,
+      count: s.count,
+    })
+  )
+  {
+    startTime: state.indexerStartTime,
+    targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
+    isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
+    rollbackEnabled: state.config.shouldRollbackOnReorg,
+    maxBatchSize: state.config.batchSize,
+    preloadSeconds: state.preloadSeconds,
+    processingSeconds: state.processingSeconds,
+    rollbackSeconds: state.rollbackSeconds,
+    rollbackCount: state.rollbackCount,
+    rollbackEventsCount: state.rollbackEventsCount,
+    chains: chainStates->Dict.valuesToArray->Array.map(ChainState.toMetrics),
+    handlers: state.handlerStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.contract: s.contract,
+      event: s.event,
+      processingSeconds: s.processingSeconds,
+      processingCount: s.processingCount,
+      preloadSeconds: s.preloadSeconds,
+      preloadCount: s.preloadCount,
+      preloadSecondsTotal: s.preloadSecondsTotal,
+    }),
+    effects: state.effectState->EffectState.toMetrics,
+    storageLoads: state.storageLoadStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.operation: s.operation,
+      storage: s.storage,
+      seconds: s.seconds,
+      secondsTotal: s.secondsTotal,
+      count: s.count,
+      whereSize: s.whereSize,
+      size: s.size,
+    }),
+    storageWrites: state.storageWriteStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.storage: s.storage,
+      seconds: s.seconds,
+      count: s.count,
+    }),
+    historyPrunes,
+    sourceRequests,
+    sourceHeights,
+  }
+}
 
 // --- Metric counters. ---
 

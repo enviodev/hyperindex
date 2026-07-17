@@ -1,6 +1,127 @@
-// Hand-rolled prometheus text rendering, computed from live indexer state at
-// scrape time. No prom-client involved: counters live on IndexerState and its
-// sub-states, gauges are derived from the state they describe.
+// Structured snapshot of every metric the indexer exposes, plus the hand-rolled
+// prometheus text rendering for it. The snapshot is produced by
+// IndexerState.toMetrics from live state at scrape time — no prom-client
+// involved — and is also the read-only view the TUI and the console API
+// consume, so the mutable counters never leak outside the state modules.
+
+type chainMetrics = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Clamped to endBlock once the chain has processed to it.
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+  isReady: bool,
+  // Raw source height, unlike knownHeight which is clamped to endBlock.
+  sourceBlockNumber: int,
+  // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
+  progressBlockNumber: int,
+  progressLatencyMs: option<int>,
+  concurrency: int,
+  partitionsCount: int,
+  bufferSize: int,
+  // Raw buffer block (may be -1), unlike the clamped latestFetchedBlockNumber.
+  bufferBlockNumber: int,
+  idleSeconds: float,
+  waitingForNewBlockSeconds: float,
+  queryingSeconds: float,
+  blockRangeFetchSeconds: float,
+  blockRangeParseSeconds: float,
+  blockRangeFetchCount: float,
+  blockRangeFetchedEvents: float,
+  blockRangeFetchedBlocks: float,
+  reorgCount: int,
+  reorgDetectedBlock: option<int>,
+  rollbackTargetBlock: option<int>,
+}
+
+type handlerMetrics = {
+  contract: string,
+  event: string,
+  processingSeconds: float,
+  processingCount: float,
+  preloadSeconds: float,
+  preloadCount: float,
+  preloadSecondsTotal: float,
+}
+
+type effectMetrics = {
+  effect: string,
+  scope: string,
+  callSeconds: float,
+  callSecondsTotal: float,
+  callCount: float,
+  activeCallsCount: int,
+  queueCount: int,
+  queueWaitSeconds: float,
+  invalidationsCount: float,
+  // None for effects that don't persist their cache.
+  cacheCount: option<int>,
+}
+
+type storageLoadMetrics = {
+  operation: string,
+  storage: string,
+  seconds: float,
+  secondsTotal: float,
+  count: float,
+  whereSize: float,
+  size: float,
+}
+
+type storageWriteMetrics = {
+  storage: string,
+  seconds: float,
+  count: int,
+}
+
+type historyPruneMetrics = {
+  entity: string,
+  seconds: float,
+  count: int,
+}
+
+type sourceRequestMetrics = {
+  source: string,
+  chainId: int,
+  method: string,
+  count: int,
+  seconds: float,
+}
+
+type sourceHeightMetrics = {
+  source: string,
+  chainId: int,
+  height: int,
+}
+
+type t = {
+  startTime: Date.t,
+  targetBufferSize: int,
+  isInReorgThreshold: bool,
+  rollbackEnabled: bool,
+  maxBatchSize: int,
+  preloadSeconds: float,
+  processingSeconds: float,
+  rollbackSeconds: float,
+  rollbackCount: int,
+  rollbackEventsCount: float,
+  chains: array<chainMetrics>,
+  handlers: array<handlerMetrics>,
+  effects: array<effectMetrics>,
+  storageLoads: array<storageLoadMetrics>,
+  storageWrites: array<storageWriteMetrics>,
+  historyPrunes: array<historyPruneMetrics>,
+  sourceRequests: array<sourceRequestMetrics>,
+  sourceHeights: array<sourceHeightMetrics>,
+}
 
 // Prometheus floats keep at most 3 decimals; integral values render without a
 // fractional part.
@@ -76,101 +197,54 @@ let single = (b: builder, ~name, ~help, ~kind, ~value) => {
   b->sample(~name, ~value)
 }
 
-let renderIndexerState = (b: builder, state: IndexerState.t) => {
-  let config = state->IndexerState.config
-  let crossChainState = state->IndexerState.crossChainState
-  let chainStates = state->IndexerState.chainStates
-
-  let chains =
-    chainStates
-    ->Dict.valuesToArray
-    ->Array.map(cs => {
-      let m = cs->ChainState.toData
-      (`{chainId="${m.chainId->Float.toString}"}`, m)
-    })
+let renderMetrics = (b: builder, metrics: t) => {
+  let chains = metrics.chains->Array.map(m => (`{chainId="${m.chainId->Float.toString}"}`, m))
   let handlers =
-    state
-    ->IndexerState.handlerStats
-    ->Dict.valuesToArray
-    ->Array.map((s: IndexerState.handlerStat) => (
+    metrics.handlers->Array.map(s => (
       `{contract="${s.contract->escapeLabelValue}",event="${s.event->escapeLabelValue}"}`,
       s,
     ))
-  let effects = {
-    let entries = []
-    state
-    ->IndexerState.effectState
-    ->EffectState.stats
-    ->Utils.Dict.forEach((s: EffectState.effectStats) =>
-      entries->Array.push((
-        `{effect="${s.effectName->escapeLabelValue}",scope="${s.scope->Internal.EffectCache.scopeToString}"}`,
-        s,
-      ))
-    )
-    entries
-  }
+  let effects =
+    metrics.effects->Array.map(s => (
+      `{effect="${s.effect->escapeLabelValue}",scope="${s.scope}"}`,
+      s,
+    ))
   let storageLoads =
-    state
-    ->IndexerState.storageLoadStats
-    ->Dict.valuesToArray
-    ->Array.map((s: IndexerState.storageLoadStat) => (
+    metrics.storageLoads->Array.map(s => (
       `{operation="${s.operation->escapeLabelValue}",storage="${s.storage->escapeLabelValue}"}`,
       s,
     ))
   let storageWrites =
-    state
-    ->IndexerState.storageWriteStats
-    ->Dict.valuesToArray
-    ->Array.map((s: IndexerState.storageWriteStat) => (
-      `{storage="${s.storage->escapeLabelValue}"}`,
-      s,
-    ))
-  let historyPrunes = {
-    let entries = []
-    state
-    ->IndexerState.historyPruneStats
-    ->Utils.Dict.forEachWithKey((s, entityName) =>
-      entries->Array.push((`{entity="${entityName->escapeLabelValue}"}`, s))
-    )
-    entries
-  }
+    metrics.storageWrites->Array.map(s => (`{storage="${s.storage->escapeLabelValue}"}`, s))
+  let historyPrunes =
+    metrics.historyPrunes->Array.map(s => (`{entity="${s.entity->escapeLabelValue}"}`, s))
   // Two sources can share a name (e.g. primary and fallback RPC urls on the
   // same host), so aggregate by label set — duplicate samples would make
   // Prometheus reject the scrape.
   let sourceRequests = {
-    let byLabels: dict<SourceManager.requestStatSample> = Dict.make()
-    chainStates->Utils.Dict.forEach(cs =>
-      cs
-      ->ChainState.sourceManager
-      ->SourceManager.getRequestStatSamples
-      ->Array.forEach((s: SourceManager.requestStatSample) => {
-        let labels = `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`
-        switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
-        | Some(existing) =>
-          byLabels->Dict.set(
-            labels,
-            {...existing, count: existing.count + s.count, seconds: existing.seconds +. s.seconds},
-          )
-        | None => byLabels->Dict.set(labels, s)
-        }
-      })
-    )
+    let byLabels: dict<sourceRequestMetrics> = Dict.make()
+    metrics.sourceRequests->Array.forEach(s => {
+      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`
+      switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
+      | Some(existing) =>
+        byLabels->Dict.set(
+          labels,
+          {...existing, count: existing.count + s.count, seconds: existing.seconds +. s.seconds},
+        )
+      | None => byLabels->Dict.set(labels, s)
+      }
+    })
     byLabels->Dict.toArray
   }
   let sources = {
     let byLabels: dict<int> = Dict.make()
-    chainStates->Utils.Dict.forEach(cs =>
-      cs
-      ->ChainState.sourceManager
-      ->SourceManager.getSourceHeightSamples
-      ->Array.forEach((s: SourceManager.sourceHeightSample) => {
-        let labels = `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`
-        switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
-        | Some(existing) if existing >= s.height => ()
-        | _ => byLabels->Dict.set(labels, s.height)
-        }
-      })
-    )
+    metrics.sourceHeights->Array.forEach(s => {
+      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`
+      switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
+      | Some(existing) if existing >= s.height => ()
+      | _ => byLabels->Dict.set(labels, s.height)
+      }
+    })
     byLabels->Dict.toArray
   }
 
@@ -178,13 +252,13 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="envio_preload_seconds",
     ~help="Cumulative time spent on preloading entities during batch processing.",
     ~kind="counter",
-    ~value=state->IndexerState.preloadSeconds,
+    ~value=metrics.preloadSeconds,
   )
   b->single(
     ~name="envio_processing_seconds",
     ~help="Cumulative time spent executing event handlers during batch processing.",
     ~kind="counter",
-    ~value=state->IndexerState.processingSeconds,
+    ~value=metrics.processingSeconds,
   )
   b->series(
     ~name="envio_progress_ready",
@@ -198,7 +272,9 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="hyperindex_synced_to_head",
     ~help="All chains fully synced",
     ~kind="gauge",
-    ~value=chains->Utils.Array.notEmpty && chains->Array.every(((_, m)) => m.isReady) ? 1. : 0.,
+    ~value=metrics.chains->Utils.Array.notEmpty && metrics.chains->Array.every(m => m.isReady)
+      ? 1.
+      : 0.,
   )
   b->series(
     ~name="envio_processing_handler_seconds",
@@ -281,7 +357,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="envio_process_start_time_seconds",
     ~help="Start time of the process since unix epoch in seconds.",
     ~kind="gauge",
-    ~value=state->IndexerState.indexerStartTime->Date.getTime /. 1000.,
+    ~value=metrics.startTime->Date.getTime /. 1000.,
   )
   b->series(
     ~name="envio_indexing_concurrency",
@@ -329,7 +405,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="envio_indexing_target_buffer_size",
     ~help="The indexer-wide target buffer size shared across all chains. The actual number of items in the queue may exceed this value, but the indexer always tries to keep the buffer filled up to this target.",
     ~kind="gauge",
-    ~value=crossChainState->CrossChainState.targetBufferSize->Int.toFloat,
+    ~value=metrics.targetBufferSize->Int.toFloat,
   )
   b->series(
     ~name="envio_indexing_buffer_block",
@@ -386,45 +462,45 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="envio_reorg_threshold",
     ~help="Whether indexing is currently within the reorg threshold",
     ~kind="gauge",
-    ~value=crossChainState->CrossChainState.isInReorgThreshold ? 1. : 0.,
+    ~value=metrics.isInReorgThreshold ? 1. : 0.,
   )
   b->single(
     ~name="envio_rollback_enabled",
     ~help="Whether rollback on reorg is enabled",
     ~kind="gauge",
-    ~value=config.shouldRollbackOnReorg ? 1. : 0.,
+    ~value=metrics.rollbackEnabled ? 1. : 0.,
   )
   b->single(
     ~name="envio_rollback_seconds",
     ~help="Rollback on reorg total time.",
     ~kind="counter",
-    ~value=state->IndexerState.rollbackSeconds,
+    ~value=metrics.rollbackSeconds,
   )
   b->single(
     ~name="envio_rollback_total",
     ~help="Number of successful rollbacks on reorg",
     ~kind="counter",
-    ~value=state->IndexerState.rollbackCount->Int.toFloat,
+    ~value=metrics.rollbackCount->Int.toFloat,
   )
   b->single(
     ~name="envio_rollback_events",
     ~help="Number of events rollbacked on reorg",
     ~kind="counter",
-    ~value=state->IndexerState.rollbackEventsCount,
+    ~value=metrics.rollbackEventsCount,
   )
   b->series(
     ~name="envio_rollback_history_prune_seconds",
     ~help="The total time spent pruning entity history which is not in the reorg threshold.",
     ~kind="counter",
     ~entries=historyPrunes,
-    ~value=(s: IndexerState.historyPruneStat) => s.seconds,
+    ~value=s => s.seconds,
   )
   b->series(
     ~name="envio_rollback_history_prune_total",
     ~help="Number of successful entity history prunes",
     ~kind="counter",
     ~entries=historyPrunes,
-    ~value=(s: IndexerState.historyPruneStat) => s.count->Int.toFloat,
+    ~value=s => s.count->Int.toFloat,
   )
   b->seriesOpt(
     ~name="envio_rollback_target_block",
@@ -437,7 +513,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="envio_processing_max_batch_size",
     ~help="The maximum number of items to process in a single batch.",
     ~kind="gauge",
-    ~value=config.batchSize->Int.toFloat,
+    ~value=metrics.maxBatchSize->Int.toFloat,
   )
   b->series(
     ~name="envio_progress_block",
@@ -462,7 +538,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
   )
   // Effects that were never called (e.g. seeded from the persisted cache only)
   // get no call samples.
-  let ifCalled = (s: EffectState.effectStats, value) =>
+  let ifCalled = (s: effectMetrics, value) =>
     s.callCount > 0. || s.activeCallsCount > 0 ? Some(value) : None
   b->seriesOpt(
     ~name="envio_effect_call_seconds",
@@ -499,25 +575,25 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The number of items in the effect cache.",
     ~kind="gauge",
     ~entries=effects,
-    ~value=s => s.hasCache ? Some(s.cacheCount->Int.toFloat) : None,
+    ~value=s => s.cacheCount->Option.map(Int.toFloat),
   )
   // Unlike the rest of the effect metrics, invalidations and queue waits keep
   // the effect-only label set, aggregated across scopes.
   let effectTotals = {
     let byEffect = Dict.make()
-    effects->Array.forEach(((_, s)) => {
-      switch byEffect->Utils.Dict.dangerouslyGetNonOption(s.effectName) {
+    metrics.effects->Array.forEach(s => {
+      switch byEffect->Utils.Dict.dangerouslyGetNonOption(s.effect) {
       | Some((invalidations, queueWaitSeconds)) =>
         byEffect->Dict.set(
-          s.effectName,
+          s.effect,
           (invalidations +. s.invalidationsCount, queueWaitSeconds +. s.queueWaitSeconds),
         )
-      | None => byEffect->Dict.set(s.effectName, (s.invalidationsCount, s.queueWaitSeconds))
+      | None => byEffect->Dict.set(s.effect, (s.invalidationsCount, s.queueWaitSeconds))
       }
     })
     let entries = []
-    byEffect->Utils.Dict.forEachWithKey((totals, effectName) =>
-      entries->Array.push((`{effect="${effectName->escapeLabelValue}"}`, totals))
+    byEffect->Utils.Dict.forEachWithKey((totals, effect) =>
+      entries->Array.push((`{effect="${effect->escapeLabelValue}"}`, totals))
     )
     entries
   }
@@ -583,14 +659,14 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Cumulative time spent writing batch data to storage.",
     ~kind="counter",
     ~entries=storageWrites,
-    ~value=(s: IndexerState.storageWriteStat) => s.seconds,
+    ~value=s => s.seconds,
   )
   b->series(
     ~name="envio_storage_write_total",
     ~help="Cumulative number of successful storage write operations during the indexing process.",
     ~kind="counter",
     ~entries=storageWrites,
-    ~value=(s: IndexerState.storageWriteStat) => s.count->Int.toFloat,
+    ~value=s => s.count->Int.toFloat,
   )
   b->series(
     ~name="envio_indexing_addresses",
@@ -601,7 +677,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
   )
 }
 
-let collect = (~state: option<IndexerState.t>) => {
+let collect = (~metrics: option<t>) => {
   let b = {out: ""}
   b->series(
     ~name="envio_info",
@@ -610,8 +686,8 @@ let collect = (~state: option<IndexerState.t>) => {
     ~entries=[(`{version="${Utils.EnvioPackage.value.version->escapeLabelValue}"}`, ())],
     ~value=() => 1.,
   )
-  switch state {
-  | Some(state) => b->renderIndexerState(state)
+  switch metrics {
+  | Some(metrics) => b->renderMetrics(metrics)
   | None => ()
   }
   b.out ++ "\n"

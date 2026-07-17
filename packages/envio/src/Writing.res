@@ -61,8 +61,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      inMemTable.stats.cacheCount = effectCacheRecord.count
-      inMemTable.stats.hasCache = true
+      inMemTable->EffectState.commitCacheCount(~count=effectCacheRecord.count)
       acc
       ->Array.push(
         (

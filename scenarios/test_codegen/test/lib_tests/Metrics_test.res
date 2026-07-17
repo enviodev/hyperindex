@@ -60,7 +60,7 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
 
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
-    t.expect(Metrics.collect(~state=None)).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=None)).toBe(`# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 `)

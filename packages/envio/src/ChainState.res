@@ -42,46 +42,6 @@ type t = {
   mutable progressLatencyMs: option<int>,
 }
 
-// Per-chain view snapshot shared by the status API, the TUI and the metrics
-// renderer.
-type chainData = {
-  chainId: float,
-  poweredByHyperSync: bool,
-  firstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  numEventsProcessed: float,
-  latestFetchedBlockNumber: int,
-  // Need this for API backwards compatibility
-  @as("currentBlockHeight")
-  knownHeight: int,
-  numBatchesFetched: int,
-  startBlock: int,
-  endBlock: option<int>,
-  numAddresses: int,
-  isReady: bool,
-  // Raw source height, unlike knownHeight which is clamped to endBlock.
-  sourceBlockNumber: int,
-  // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
-  progressBlockNumber: int,
-  progressLatencyMs: option<int>,
-  concurrency: int,
-  partitionsCount: int,
-  bufferSize: int,
-  // Raw buffer block (may be -1), unlike the clamped latestFetchedBlockNumber.
-  bufferBlockNumber: int,
-  idleSeconds: float,
-  waitingForNewBlockSeconds: float,
-  queryingSeconds: float,
-  blockRangeFetchSeconds: float,
-  blockRangeParseSeconds: float,
-  blockRangeFetchCount: float,
-  blockRangeFetchedEvents: float,
-  blockRangeFetchedBlocks: float,
-  reorgCount: int,
-  reorgDetectedBlock: option<int>,
-  rollbackTargetBlock: option<int>,
-}
 
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
@@ -772,8 +732,9 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
   timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
 }
 
-// Snapshot the chain's view for the status API, TUI and metrics renderer.
-let toData = (cs: t): chainData => {
+// Snapshot the chain's view for the metrics renderer; also feeds the TUI and
+// the status API.
+let toMetrics = (cs: t): Metrics.chainMetrics => {
   chainId: cs.chainConfig.id->Int.toFloat,
   poweredByHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
   firstEventBlockNumber: cs.fetchState.firstEventBlock,

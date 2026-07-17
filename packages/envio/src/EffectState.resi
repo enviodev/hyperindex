@@ -7,20 +7,9 @@ type effectRateLimitState = {
 }
 
 // Per-(effect, scope) metric counters. Survive rollback so they stay monotonic.
-type effectStats = {
-  effectName: string,
-  scope: Internal.chainScope,
-  mutable callSeconds: float,
-  mutable callSecondsTotal: float,
-  mutable callCount: float,
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
-  mutable queueCount: int,
-  mutable queueWaitSeconds: float,
-  mutable invalidationsCount: float,
-  mutable cacheCount: int,
-  mutable hasCache: bool,
-}
+// Opaque: mutation goes through the metric operations below, reads through
+// toMetrics.
+type effectStats
 
 type effectCacheInMemTable = {
   mutable idsToStore: array<string>,
@@ -44,7 +33,17 @@ let getTable: (t, ~effect: Internal.effect, ~scope: Internal.chainScope) => effe
 let forEach: (t, effectCacheInMemTable => unit) => unit
 // Drop the cache tables but keep the rate-limit windows across a rollback.
 let resetForRollback: t => unit
-// Metric counters keyed by cache table name.
-let stats: t => dict<effectStats>
+
+// Metric mutations.
+let startCall: (effectStats, ~timerRef: Performance.timeRef) => unit
+let endCall: (effectStats, ~startTimerRef: Performance.timeRef) => unit
+let queueEnqueued: (effectStats, ~count: int) => unit
+let queueDequeued: (effectStats, ~count: int) => unit
+let addQueueWaitSeconds: (effectStats, ~seconds: float) => unit
+let recordInvalidation: effectCacheInMemTable => unit
+let commitCacheCount: (effectCacheInMemTable, ~count: int) => unit
 // Seed the persisted-rows count from the db on restart.
 let setCacheCount: (t, ~effectName: string, ~scope: Internal.chainScope, ~count: int) => unit
+
+// Metric reads.
+let toMetrics: t => array<Metrics.effectMetrics>

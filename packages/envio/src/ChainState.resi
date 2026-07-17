@@ -86,46 +86,7 @@ let dispatch: (
 ) => promise<unit>
 
 // Views.
-// Per-chain view snapshot shared by the status API, the TUI and the metrics
-// renderer.
-type chainData = {
-  chainId: float,
-  poweredByHyperSync: bool,
-  firstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  numEventsProcessed: float,
-  latestFetchedBlockNumber: int,
-  @as("currentBlockHeight")
-  knownHeight: int,
-  numBatchesFetched: int,
-  startBlock: int,
-  endBlock: option<int>,
-  numAddresses: int,
-  isReady: bool,
-  // Raw source height, unlike knownHeight which is clamped to endBlock.
-  sourceBlockNumber: int,
-  // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
-  progressBlockNumber: int,
-  progressLatencyMs: option<int>,
-  concurrency: int,
-  partitionsCount: int,
-  bufferSize: int,
-  // Raw buffer block (may be -1), unlike the clamped latestFetchedBlockNumber.
-  bufferBlockNumber: int,
-  idleSeconds: float,
-  waitingForNewBlockSeconds: float,
-  queryingSeconds: float,
-  blockRangeFetchSeconds: float,
-  blockRangeParseSeconds: float,
-  blockRangeFetchCount: float,
-  blockRangeFetchedEvents: float,
-  blockRangeFetchedBlocks: float,
-  reorgCount: int,
-  reorgDetectedBlock: option<int>,
-  rollbackTargetBlock: option<int>,
-}
-let toData: t => chainData
+let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: t => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
