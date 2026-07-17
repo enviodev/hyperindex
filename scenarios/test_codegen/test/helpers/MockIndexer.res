@@ -179,10 +179,12 @@ module Storage = {
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
-        pruneStaleCheckpoints: (~safeCheckpointId as _) =>
-          JsError.throwWithMessage("Not implemented"),
-        pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          JsError.throwWithMessage("Not implemented"),
+        pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+        pruneStaleEntityHistory: async (
+          ~entityName as _,
+          ~entityIndex as _,
+          ~safeCheckpointId as _,
+        ) => (),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
           JsError.throwWithMessage("Not implemented"),
         getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
