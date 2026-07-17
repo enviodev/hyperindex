@@ -26,39 +26,47 @@ let selectFrom = (
   ~intervalMillis,
   ~safeCheckpointId,
 ) => {
-  let lastPrunedAt = (entityConfig: Internal.entityConfig) =>
-    lastPrunedAtMillis
-    ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
-    ->Option.getOr(0.)
-  let byOldestPrune = (a, b) => lastPrunedAt(a) -. lastPrunedAt(b)
+  let byOldestPrune = ((a, _), (b, _)) => a -. b
+  let toEntities = candidates => candidates->Array.map(((_, entityConfig)) => entityConfig)
 
-  let candidates = allEntities->Array.filter(entityConfig => entityConfig.storage.postgres)
-
-  let concurrent = isRollback
-    ? []
-    : candidates
-      ->Array.filter(entityConfig =>
+  let concurrentCandidates = []
+  let forcedCandidates = []
+  allEntities->Array.forEach(entityConfig => {
+    if entityConfig.storage.postgres {
+      let lastPrunedAt =
+        lastPrunedAtMillis
+        ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
+        ->Option.getOr(0.)
+      if (
+        !isRollback &&
         !(writtenEntityNames->Utils.Set.has(entityConfig.name)) &&
-        nowMillis -. lastPrunedAt(entityConfig) >= intervalMillis
-      )
-      ->Array.toSorted(byOldestPrune)
-      ->Array.slice(~start=0, ~end=maxEntitiesPerWrite)
+        nowMillis -. lastPrunedAt >= intervalMillis
+      ) {
+        concurrentCandidates->Array.push((lastPrunedAt, entityConfig))
+      } else if nowMillis -. lastPrunedAt >= intervalMillis *. forcedIntervalMultiplier {
+        forcedCandidates->Array.push((lastPrunedAt, entityConfig))
+      }
+    }
+  })
 
-  let concurrentNames = Utils.Set.make()
-  concurrent->Array.forEach(entityConfig =>
-    concurrentNames->Utils.Set.add(entityConfig.name)->ignore
-  )
+  let sortedConcurrent = concurrentCandidates->Array.toSorted(byOldestPrune)
+  // Concurrent candidates beyond the cap are not selected, so the starved
+  // ones among them still qualify for the forced group.
+  for idx in maxEntitiesPerWrite to sortedConcurrent->Array.length - 1 {
+    let (lastPrunedAt, _) = sortedConcurrent->Array.getUnsafe(idx)
+    if nowMillis -. lastPrunedAt >= intervalMillis *. forcedIntervalMultiplier {
+      forcedCandidates->Array.push(sortedConcurrent->Array.getUnsafe(idx))
+    }
+  }
 
-  let forced =
-    candidates
-    ->Array.filter(entityConfig =>
-      !(concurrentNames->Utils.Set.has(entityConfig.name)) &&
-      nowMillis -. lastPrunedAt(entityConfig) >= intervalMillis *. forcedIntervalMultiplier
-    )
+  {
+    safeCheckpointId,
+    concurrent: sortedConcurrent->Array.slice(~start=0, ~end=maxEntitiesPerWrite)->toEntities,
+    forced: forcedCandidates
     ->Array.toSorted(byOldestPrune)
     ->Array.slice(~start=0, ~end=maxEntitiesPerWrite)
-
-  {safeCheckpointId, concurrent, forced}
+    ->toEntities,
+  }
 }
 
 let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
