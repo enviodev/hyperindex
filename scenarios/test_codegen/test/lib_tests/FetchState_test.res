@@ -4880,4 +4880,46 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
       ]),
     )
   })
+
+  it("re-sorts partitions when a response overtakes another partition", t => {
+    // Exercises the handleQueryResult fast path (no dynamic contracts): the
+    // responding partition jumps from block 0 to 100, past the partition
+    // sitting at 50, so idsInAscOrder must be reordered without a full remake.
+    let fetchState = {
+      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          makePartition(~idx=0, ~inFlight=false),
+          {
+            ...makePartition(~idx=1, ~inFlight=false),
+            latestFetchedBlock: {blockNumber: 50, blockTimestamp: 0},
+          },
+        ],
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=2,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    let query: FetchState.query = {
+      partitionId: "0",
+      fromBlock: 1,
+      toBlock: None,
+      isChunk: false,
+      selection: normalSelection,
+      itemsTarget: 10,
+      itemsEst: 10,
+      addressesByContractName,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: 100, blockTimestamp: 0},
+        ~newItems=[],
+      )
+    t.expect(
+      updated.optimizedPartitions.idsInAscOrder,
+      ~message="partition 1 (still at block 50) must sort before partition 0 (now at 100)",
+    ).toEqual(["1", "0"])
+  })
 })
