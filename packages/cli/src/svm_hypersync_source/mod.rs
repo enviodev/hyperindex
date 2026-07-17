@@ -241,7 +241,9 @@ impl SvmHypersyncClient {
                 .map_err(|error| error_with_request_stats(error, &request_stats))?;
             if next_slot <= cursor {
                 let error = map_err(anyhow::anyhow!(
-                    "SVM block hash query made no progress: cursor={cursor}, next_slot={next_slot}"
+                    "Slot #{cursor} is not found in HyperSync yet. This happens when the request \
+                     is routed to a HyperSync replica that is slightly behind the head. Everything \
+                     is fine - indexing should continue correctly after a retry."
                 ));
                 return Err(error_with_request_stats(error, &request_stats));
             }

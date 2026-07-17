@@ -181,13 +181,14 @@ impl EvmHypersyncClient {
                 block_hash_page(response, self.enable_checksum_addresses)
                     .map_err(map_err)
                     .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            // Usually a replica lagging behind the requested range. Surfaced
-            // as an error so SourceManager owns the retry: it logs, backs off,
-            // and can fail over to another source, none of which an in-process
-            // loop could do.
+            // Surfaced as an error so SourceManager owns the retry: it logs,
+            // backs off, and can fail over to another source, none of which an
+            // in-process loop could do.
             if next_block <= cursor {
                 let error = map_err(anyhow::anyhow!(
-                    "EVM block hash query made no progress: cursor={cursor}, next_block={next_block}"
+                    "Block #{cursor} is not found in HyperSync yet. This happens when the request \
+                     is routed to a HyperSync replica that is slightly behind the head. Everything \
+                     is fine - indexing should continue correctly after a retry."
                 ));
                 return Err(error_with_request_stats(error, &request_stats));
             }

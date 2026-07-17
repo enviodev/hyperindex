@@ -171,21 +171,25 @@ let validateResponseBlockStore = (
   let missingBlockNumbers = blockStore->BlockStore.missingHashes(requiredBlockNumbers)
   switch conflict {
   | Some({blockNumber, storedHash, receivedHash}) =>
-    throw(Source.InconsistentResponse({
-      method,
-      blockNumber: Some(blockNumber),
-      storedHash: Some(storedHash),
-      receivedHash: Some(receivedHash),
-      missingBlockNumbers,
-    }))
+    throw(
+      Source.InconsistentResponse({
+        method,
+        blockNumber: Some(blockNumber),
+        storedHash: Some(storedHash),
+        receivedHash: Some(receivedHash),
+        missingBlockNumbers,
+      }),
+    )
   | None if missingBlockNumbers->Array.length > 0 =>
-    throw(Source.InconsistentResponse({
-      method,
-      blockNumber: None,
-      storedHash: None,
-      receivedHash: None,
-      missingBlockNumbers,
-    }))
+    throw(
+      Source.InconsistentResponse({
+        method,
+        blockNumber: None,
+        storedHash: None,
+        receivedHash: None,
+        missingBlockNumbers,
+      }),
+    )
   | None => ()
   }
 }
@@ -802,10 +806,7 @@ let executeQuery = async (
         ~logger,
       )
       sourceState->recordRequestStats(response.requestStats)
-      validateResponseBlockStore(
-        ~method="getItems",
-        ~blockStore=response.blockStore,
-      )
+      validateResponseBlockStore(~method="getItems", ~blockStore=response.blockStore)
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
@@ -814,13 +815,7 @@ let executeQuery = async (
       retryRef := retryRef.contents + 1
 
     | Source.InconsistentResponse(_) as err => {
-        await retryInconsistentResponse(
-          sourceState,
-          ~retry,
-          ~logger,
-          ~method="getItems",
-          ~err,
-        )
+        await retryInconsistentResponse(sourceState, ~retry, ~logger, ~method="getItems", ~err)
         source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=query.fromBlock - 1))
         retryRef := retryRef.contents + 1
       }
@@ -982,17 +977,17 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
           ~method="getBlockHashes",
           ~err,
         )
-        let lowestRequestedBlock = blockNumbers->Array.reduce(
-          blockNumbers->Array.get(0)->Option.getOr(0),
-          Pervasives.min,
-        )
+        let lowestRequestedBlock =
+          blockNumbers->Array.reduce(blockNumbers->Array.get(0)->Option.getOr(0), Pervasives.min)
         source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=lowestRequestedBlock - 1))
         retryRef := retryRef.contents + 1
       }
 
     | exn =>
+      // A short first retry covers the common transient case (e.g. a request
+      // routed to a HyperSync replica slightly behind the head).
       let backoffMillis = switch retry {
-      | 0 => 500
+      | 0 => 100
       | _ => 1000 * retry
       }
       let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
