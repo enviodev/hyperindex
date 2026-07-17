@@ -966,6 +966,34 @@ impl BlockStore {
         Ok(())
     }
 
+    /// Verify an EVM block-hash page covers `[from, to_exclusive)` densely:
+    /// every block present with a hash, and every non-genesis block carrying a
+    /// `parentHash`. The parent-link check skips absent neighbours (event
+    /// pages are sparse by design), so for an `include_all_blocks` range a gap
+    /// or a missing parent field must be rejected here — otherwise it could
+    /// hide exactly the mixed-fork seam the link check exists to catch.
+    pub(crate) fn validate_evm_dense_range(&self, from: i64, to_exclusive: i64) -> Result<()> {
+        if !matches!(self.ecosystem, Ecosystem::Evm { .. }) {
+            anyhow::bail!("dense-range validation only applies to EVM block stores");
+        }
+        let from = u64::try_from(from).context("range start is negative")?;
+        let to_exclusive = u64::try_from(to_exclusive).context("range end is negative")?;
+        let hash_field = EvmBlockField::Hash as usize;
+        let parent_field = EvmBlockField::ParentHash as usize;
+        let inner = self.inner.lock().unwrap();
+        for key in from..to_exclusive {
+            if inner.table.field_bytes(&key, hash_field).is_none() {
+                anyhow::bail!(
+                    "block #{key} is missing from a response that must cover the complete range"
+                );
+            }
+            if key > 0 && inner.table.field_bytes(&key, parent_field).is_none() {
+                anyhow::bail!("block #{key} is missing its parent hash in the response");
+            }
+        }
+        Ok(())
+    }
+
     /// Return the lowest inconsistent EVM parent link touched by `keys`: block
     /// N's `parentHash` must equal block N-1's `hash` whenever both are stored.
     /// EVM block numbers are dense, so unlike SVM no cursor coverage is needed
@@ -1914,6 +1942,31 @@ mod tests {
         aggregate.append_page(&next);
         let mismatch = aggregate.response_conflict().expect("cross-page link");
         assert_eq!(mismatch.block_number, 20);
+    }
+
+    #[test]
+    fn evm_dense_range_validation_rejects_gaps_and_missing_parents() {
+        let page = evm_page(vec![
+            linked_evm_block(10, 0x10, 0x09),
+            linked_evm_block(11, 0x11, 0x10),
+        ]);
+        assert!(page.validate_evm_dense_range(10, 12).is_ok());
+
+        // A gap inside the covered range.
+        let page = evm_page(vec![
+            linked_evm_block(10, 0x10, 0x09),
+            linked_evm_block(12, 0x12, 0x11),
+        ]);
+        let err = page.validate_evm_dense_range(10, 13).unwrap_err();
+        assert!(err.to_string().contains("block #11 is missing"));
+
+        // A block without its parent hash.
+        let page = evm_page(vec![
+            linked_evm_block(10, 0x10, 0x09),
+            hashed_evm_block(11, 0x11),
+        ]);
+        let err = page.validate_evm_dense_range(10, 12).unwrap_err();
+        assert!(err.to_string().contains("parent hash"));
     }
 
     #[test]

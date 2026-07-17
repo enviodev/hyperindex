@@ -192,6 +192,11 @@ impl EvmHypersyncClient {
                 ));
                 return Err(error_with_request_stats(error, &request_stats));
             }
+            page_store
+                .validate_evm_dense_range(cursor, next_block.min(to_block_exclusive))
+                .context("validate block-hash page")
+                .map_err(map_err)
+                .map_err(|error| error_with_request_stats(error, &request_stats))?;
             aggregate.append_page(&page_store);
             if next_block > to_block {
                 return Ok((aggregate, request_stats));
