@@ -183,6 +183,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     contractName: "ERC20",
     isWildcard,
     dependsOnAddresses,
+    startBlock: None,
     params,
     topicSelections: [
       {

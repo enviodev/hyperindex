@@ -42,6 +42,7 @@ pub struct EvmRpcClientConfig {
 // by the decoder on the Rust side (see `to_decoder_log`) and `removed` is unused,
 // so neither is carried here.
 #[napi(object)]
+#[derive(Clone)]
 pub struct RpcLog {
     pub address: String,
     pub topics: Vec<String>,
@@ -106,6 +107,11 @@ impl RawLog {
         DecoderLog {
             data: Some(self.data.clone()),
             topics: self.topics.iter().map(|t| Some(t.clone())).collect(),
+            // Routing's startBlock gate reads this; a malformed quantity is
+            // left unset here and surfaces as an error in `into_rpc_log`.
+            block_number: parse_hex_u64(&self.block_number)
+                .ok()
+                .and_then(|v| i64::try_from(v).ok()),
             ..Default::default()
         }
     }
@@ -261,6 +267,8 @@ impl EvmRpcClient {
             .map_err(map_err)?;
         let log_selections = built.log_selections;
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
+        let active_registrations: std::sync::Arc<HashSet<i64>> =
+            std::sync::Arc::new(params.registration_indexes.iter().copied().collect());
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
         let page_result = tokio::time::timeout(
             timeout,
@@ -269,6 +277,7 @@ impl EvmRpcClient {
                 to_block,
                 &log_selections,
                 &contract_name_by_address,
+                &active_registrations,
             ),
         )
         .await;
@@ -377,17 +386,20 @@ impl EvmRpcClient {
     }
 
     /// Fans out one `eth_getLogs` per selection concurrently, deduping the
-    /// merged results by `(blockNumber, logIndex)` — a log can satisfy more
-    /// than one selection when a single event's `where` is an OR of param
-    /// groups. Waits for every selection to settle (unlike `Promise.all`'s
-    /// fail-fast) so every request's timing is still captured for
-    /// `requestStats` even when one of them errors.
+    /// merged results by `(blockNumber, logIndex, registrationIndex)` — a log
+    /// can satisfy more than one selection (an event's `where` OR-groups, or
+    /// several registrations sharing a signature) and routing fans one log out
+    /// to several registrations, so only exact repeats are dropped. Waits for
+    /// every selection to settle (unlike `Promise.all`'s fail-fast) so every
+    /// request's timing is still captured for `requestStats` even when one of
+    /// them errors.
     async fn fetch_page(
         &self,
         from_block: u64,
         to_block: u64,
         selections: &[BuiltLogSelection],
         contract_name_by_address: &std::sync::Arc<HashMap<String, String>>,
+        active_registrations: &std::sync::Arc<HashSet<i64>>,
     ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
         if selections.is_empty() {
             return Ok((Vec::new(), Vec::new()));
@@ -401,6 +413,7 @@ impl EvmRpcClient {
                     to_block as i64,
                     selection,
                     contract_name_by_address.clone(),
+                    active_registrations.clone(),
                 )
                 .await;
             (result, started.elapsed().as_secs_f64())
@@ -409,7 +422,7 @@ impl EvmRpcClient {
 
         let mut items = Vec::new();
         let mut stats = Vec::with_capacity(results.len());
-        let mut seen: HashSet<(i64, i64)> = HashSet::new();
+        let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
         let mut first_err = None;
         for (result, seconds) in results {
             stats.push(RequestStat {
@@ -419,7 +432,11 @@ impl EvmRpcClient {
             match result {
                 Ok(page_items) => {
                     for item in page_items {
-                        if seen.insert((item.log.block_number, item.log.log_index)) {
+                        if seen.insert((
+                            item.log.block_number,
+                            item.log.log_index,
+                            item.on_event_registration_index,
+                        )) {
                             items.push(item);
                         }
                     }
@@ -443,6 +460,7 @@ impl EvmRpcClient {
         to_block: i64,
         selection: &BuiltLogSelection,
         contract_name_by_address: std::sync::Arc<HashMap<String, String>>,
+        active_registrations: std::sync::Arc<HashSet<i64>>,
     ) -> Result<Vec<RpcEventItem>, RpcError> {
         // eth_getLogs topic filters: `null` matches any value at a position;
         // trailing match-any positions are trimmed entirely.
@@ -475,30 +493,32 @@ impl EvmRpcClient {
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
             let should_checksum = decoder.checksummed_addresses();
-            raw_logs
-                .into_iter()
-                .filter_map(|raw| {
-                    let address = match raw.normalized_address(should_checksum) {
-                        Ok(address) => address,
-                        Err(e) => return Some(Err(e)),
-                    };
-                    // Decode failures are skipped like unrouted logs (matching
-                    // the pre-routing behavior where undecodable params made
-                    // the JS side drop the item).
-                    let routed = decoder
-                        .route_and_decode_napi(
-                            &raw.to_decoder_log(),
-                            contract_name_by_address.get(&address).map(String::as_str),
-                        )
-                        .ok()
-                        .flatten()?;
-                    Some(raw.into_rpc_log(address).map(|log| RpcEventItem {
-                        log,
+            let mut items = Vec::new();
+            for raw in raw_logs {
+                let address = raw.normalized_address(should_checksum)?;
+                // Decode failures are skipped like unrouted logs (matching
+                // the pre-routing behavior where undecodable params made
+                // the JS side drop the item).
+                let routed = decoder
+                    .route_and_decode_napi(
+                        &raw.to_decoder_log(),
+                        contract_name_by_address.get(&address).map(String::as_str),
+                        &active_registrations,
+                    )
+                    .unwrap_or_default();
+                if routed.is_empty() {
+                    continue;
+                }
+                let log = raw.into_rpc_log(address)?;
+                for routed in routed {
+                    items.push(RpcEventItem {
+                        log: log.clone(),
                         on_event_registration_index: routed.index,
                         params: routed.params,
-                    }))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
+                    });
+                }
+            }
+            Ok(items)
         })
         .await
         .map_err(|e| {

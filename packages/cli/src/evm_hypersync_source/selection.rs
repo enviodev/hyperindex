@@ -69,6 +69,7 @@ impl TopicSelection {
     }
 }
 
+#[derive(PartialEq, Eq)]
 struct MaterializedTopicSelection {
     topic0: Vec<String>,
     topic1: Vec<String>,
@@ -109,14 +110,23 @@ fn address_to_topic(address: &str) -> Result<String> {
 
 /// Fold selections without topic1..3 filters into one selection combining
 /// their topic0s, keeping the common case at a single log selection/request.
+/// Repeated topic0s and identical filtered selections are deduplicated —
+/// several registrations may select the same signature now that routing fans
+/// one log out to all of them.
 fn compress(selections: Vec<MaterializedTopicSelection>) -> Vec<MaterializedTopicSelection> {
     let mut filterless_topic0s: Vec<String> = Vec::new();
-    let mut with_filters = Vec::new();
+    let mut with_filters: Vec<MaterializedTopicSelection> = Vec::new();
     for selection in selections {
         if selection.has_filters() {
-            with_filters.push(selection);
+            if !with_filters.contains(&selection) {
+                with_filters.push(selection);
+            }
         } else {
-            filterless_topic0s.extend(selection.topic0);
+            for topic0 in selection.topic0 {
+                if !filterless_topic0s.contains(&topic0) {
+                    filterless_topic0s.push(topic0);
+                }
+            }
         }
     }
     let mut result = Vec::with_capacity(with_filters.len() + 1);
@@ -329,6 +339,7 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses,
+            start_block: None,
             params: vec![],
             topic_selections: vec![TopicSelectionInput {
                 topic0: vec![sighash.to_string()],
@@ -422,6 +433,52 @@ mod tests {
                     vec![],
                 ],
             }]
+        );
+    }
+
+    #[test]
+    fn compress_dedupes_repeated_topic0s_and_identical_filtered_selections() {
+        let builder = SelectionBuilder::from_registrations(&[
+            // Two registrations selecting the same signature with no filters,
+            // plus two with an identical topic1 filter.
+            reg(0, SIGHASH_A, "C", true, false, Some(vec![])),
+            reg(1, SIGHASH_A, "D", true, false, Some(vec![])),
+            reg(
+                2,
+                SIGHASH_B,
+                "C",
+                true,
+                false,
+                Some(vec![ADDR_TOPIC.to_string()]),
+            ),
+            reg(
+                3,
+                SIGHASH_B,
+                "D",
+                true,
+                false,
+                Some(vec![ADDR_TOPIC.to_string()]),
+            ),
+        ])
+        .unwrap();
+        let built = builder.build(&[0, 1, 2, 3], &HashMap::new()).unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                },
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![
+                        vec![SIGHASH_B.to_string()],
+                        vec![ADDR_TOPIC.to_string()],
+                        vec![],
+                        vec![],
+                    ],
+                },
+            ]
         );
     }
 

@@ -202,6 +202,8 @@ impl EvmHypersyncClient {
 
         let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
         let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
+        let active_registrations: HashSet<i64> =
+            params.registration_indexes.iter().copied().collect();
         let (items, blocks) = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
@@ -214,6 +216,7 @@ impl EvmHypersyncClient {
                 &transaction_store,
                 &block_store,
                 &contract_name_by_address,
+                &active_registrations,
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -380,6 +383,7 @@ fn process_response(
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
     contract_name_by_address: &std::collections::HashMap<String, String>,
+    active_registrations: &HashSet<i64>,
 ) -> std::result::Result<(Vec<EventItem>, Vec<BlockHeader>), ConvertError> {
     // The server returns one block per number; items reference them by number,
     // so keep them owned and track which numbers are present for coverage.
@@ -490,12 +494,13 @@ fn process_response(
                 contract_name_by_address
                     .get(&src_address)
                     .map(String::as_str),
+                active_registrations,
             )
             .context("decode event params")?;
-        if let Some(routed) = routed {
+        for routed in routed {
             items.push(EventItem {
                 log_index,
-                src_address,
+                src_address: src_address.clone(),
                 block_number,
                 transaction_index,
                 on_event_registration_index: routed.index,
@@ -693,6 +698,7 @@ mod tests {
                 contract_name: "Zero".to_string(),
                 is_wildcard: true,
                 depends_on_addresses: false,
+                start_block: None,
                 topic_selections: vec![],
                 block_fields: vec![],
                 transaction_fields: vec![],
@@ -730,6 +736,7 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -758,6 +765,7 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -791,6 +799,7 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -828,6 +837,7 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -855,6 +865,7 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -886,6 +897,7 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -924,6 +936,7 @@ mod tests {
             &store,
             &BlockStore::new_evm(false),
             &Default::default(),
+            &HashSet::from([0]),
         )
         .expect("expected success when block and transaction join");
 

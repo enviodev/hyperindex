@@ -254,6 +254,9 @@ module Registration = {
     contractName: string,
     isWildcard: bool,
     dependsOnAddresses: bool,
+    // Final start block; routing on the Rust side drops this registration's
+    // logs below it.
+    startBlock: option<int>,
     params: array<Internal.paramMeta>,
     topicSelections: array<topicSelectionInput>,
     // Capitalized field names matching the Rust BlockField/TransactionField
@@ -269,8 +272,8 @@ module Registration = {
     }
 
   let fromOnEventRegistrations = (
-      onEventRegistrations: array<Internal.evmOnEventRegistration>,
-    ): array<input> => {
+    onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  ): array<input> => {
     onEventRegistrations->Array.map(reg => {
       let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
       {
@@ -281,10 +284,9 @@ module Registration = {
         contractName: event.contractName,
         isWildcard: reg.isWildcard,
         dependsOnAddresses: reg.dependsOnAddresses,
+        startBlock: reg.startBlock,
         params: event.paramsMetadata,
-        topicSelections: reg.resolvedWhere.topicSelections->Array.map((
-          ts
-        ): topicSelectionInput => {
+        topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
           topic0: ts.topic0->EvmTypes.Hex.toStrings,
           topic1: ts.topic1->toTopicFilterInput,
           topic2: ts.topic2->toTopicFilterInput,
@@ -360,12 +362,8 @@ type t = {
 }
 
 @send
-external classNew: (
-  Core.evmHypersyncClientCtor,
-  cfg,
-  string,
-  array<Registration.input>,
-) => t = "new"
+external classNew: (Core.evmHypersyncClientCtor, cfg, string, array<Registration.input>) => t =
+  "new"
 
 let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations) =>
   Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventRegistrations)

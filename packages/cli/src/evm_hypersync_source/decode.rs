@@ -1,5 +1,5 @@
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use alloy_dyn_abi::{DecodedEvent, DynSolEvent, DynSolType};
@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
+use crate::evm_hypersync_source::selection::TopicSelectionInput;
 use crate::evm_hypersync_source::types::{
     sol_value_to_param, Log, OnEventRegistration, ParamMeta, ParamValue,
 };
@@ -51,29 +52,40 @@ impl MetaKey {
     }
 }
 
-/// One contract's naming for an event. Several contracts collapse to the same
-/// `MetaKey` when they emit the same-signature event; the positional decode is
-/// shared, the param names are not.
+/// One topic position's static constraint: `None` matches any value — either
+/// the position is unfiltered, or it carries a `ContractAddresses` marker
+/// whose temporal check stays on the JS `clientAddressFilter`.
+type StaticTopicFilter = Option<Vec<[u8; 32]>>;
+
+/// One registration's routing metadata for an event. Several registrations
+/// collapse to the same `MetaKey` when they select the same-signature event;
+/// the positional decode is shared, the param names and filters are not.
 struct EventVariant {
     on_event_registration_index: i64,
     params: Vec<ParamMeta>,
+    start_block: Option<i64>,
+    /// The registration's resolved `where` in DNF (outer Vec is OR); a log
+    /// matches when any selection's four positions all match. Empty means the
+    /// registration puts no static topic constraint on its logs.
+    topic_filters: Vec<[StaticTopicFilter; 4]>,
 }
 
-/// One positional decoder plus the per-contract namings layered over it. Two
-/// events sharing a `MetaKey` but indexing different params (same type list,
-/// same indexed count, different positions) can't be told apart by (topic0,
-/// topic count), so the first variant's layout backs the shared `decoder` and
-/// `apply_names` keys names off each variant.
+/// One positional decoder plus the per-registration namings layered over it.
+/// Two events sharing a `MetaKey` but indexing different params (same type
+/// list, same indexed count, different positions) can't be told apart by
+/// (topic0, topic count), so the first variant's layout backs the shared
+/// `decoder` and `apply_names` keys names off each variant.
 ///
-/// `wildcard_variant_idx`/`variant_idx_by_contract_name` index into `variants`
-/// and route a log to its registration: the log's address resolves to a
-/// contract name (via the partition's address index), the contract's own
-/// variant wins, and anything else falls back to the wildcard variant.
+/// `wildcard_variant_idxs`/`variant_idxs_by_contract_name` index into
+/// `variants` and fan a log out to its registrations: wildcard registrations
+/// always match, contract-bound registrations match iff the log's address is
+/// owned by that contract (via the partition's address index) — there is no
+/// fallback tier between them.
 struct RegisteredEvent {
     decoder: DynSolEvent,
     variants: Vec<EventVariant>,
-    wildcard_variant_idx: Option<usize>,
-    variant_idx_by_contract_name: HashMap<String, usize>,
+    wildcard_variant_idxs: Vec<usize>,
+    variant_idxs_by_contract_name: HashMap<String, Vec<usize>>,
 }
 
 #[derive(Clone)]
@@ -99,8 +111,8 @@ impl DecoderCore {
                     e.insert(RegisteredEvent {
                         decoder,
                         variants: Vec::new(),
-                        wildcard_variant_idx: None,
-                        variant_idx_by_contract_name: HashMap::new(),
+                        wildcard_variant_idxs: Vec::new(),
+                        variant_idxs_by_contract_name: HashMap::new(),
                     })
                 }
             };
@@ -119,35 +131,22 @@ impl DecoderCore {
                     ep.event_name,
                 );
             }
-            // Routing backstop mirroring the registration-time validation on
-            // the JS side: one variant per contract per key, and at most one
-            // wildcard variant per key.
             let variant_idx = event.variants.len();
-            if event
-                .variant_idx_by_contract_name
-                .insert(ep.contract_name.clone(), variant_idx)
-                .is_some()
-            {
-                anyhow::bail!(
-                    "Duplicate event detected: {} for contract {} shares the same topic0 and \
-                     topic count with another event of the contract",
-                    ep.event_name,
-                    ep.contract_name,
-                );
-            }
             if ep.is_wildcard {
-                anyhow::ensure!(
-                    event.wildcard_variant_idx.is_none(),
-                    "Another event is already registered with the same signature that would \
-                     interfere with wildcard filtering: {} for contract {}",
-                    ep.event_name,
-                    ep.contract_name,
-                );
-                event.wildcard_variant_idx = Some(variant_idx);
+                event.wildcard_variant_idxs.push(variant_idx);
+            } else {
+                event
+                    .variant_idxs_by_contract_name
+                    .entry(ep.contract_name.clone())
+                    .or_default()
+                    .push(variant_idx);
             }
             event.variants.push(EventVariant {
                 on_event_registration_index: ep.index,
                 params: ep.params.clone(),
+                start_block: ep.start_block,
+                topic_filters: parse_topic_filters(&ep.topic_selections)
+                    .with_context(|| format!("parse topic filters for {}", ep.event_name))?,
             });
         }
 
@@ -165,7 +164,8 @@ impl DecoderCore {
         &self,
         log: &Log,
         contract_name: Option<&str>,
-    ) -> Result<Option<RoutedEvent>> {
+        active_registrations: &HashSet<i64>,
+    ) -> Result<Vec<RoutedEvent>> {
         let topics: Vec<Option<LogArgument>> = log
             .topics
             .iter()
@@ -178,47 +178,82 @@ impl DecoderCore {
             .context("decode topics")?;
         let data = log.data.as_ref().context("get log.data")?;
         let data = Data::decode_hex(data).context("decode data")?;
-        self.route_and_decode(&topics, &data, contract_name)
+        self.route_and_decode(
+            &topics,
+            &data,
+            contract_name,
+            log.block_number,
+            active_registrations,
+        )
     }
 
     pub(crate) fn route_and_decode_simple(
         &self,
         log: &simple_types::Log,
         contract_name: Option<&str>,
-    ) -> Result<Option<RoutedEvent>> {
+        active_registrations: &HashSet<i64>,
+    ) -> Result<Vec<RoutedEvent>> {
         let data = log.data.as_ref().context("get log.data")?;
-        self.route_and_decode(&log.topics, data, contract_name)
+        let block_number = log
+            .block_number
+            .map(|n| i64::try_from(u64::from(n)).context("log.blockNumber overflow"))
+            .transpose()?;
+        self.route_and_decode(
+            &log.topics,
+            data,
+            contract_name,
+            block_number,
+            active_registrations,
+        )
     }
 
-    /// Routes a log to its registration and decodes with that registration's
-    /// param names. `contract_name` is the log address's owning contract per
-    /// the partition's address index; the contract's own variant wins, anything
-    /// else falls back to the key's wildcard variant. `Ok(None)` means the log
-    /// routes nowhere — unknown signature or no matching variant — and is
-    /// dropped by the caller.
+    /// Fans a log out to every matching registration and decodes once, applying
+    /// each registration's own param names. `contract_name` is the log
+    /// address's owning contract per the partition's address index: wildcard
+    /// registrations always match, contract-bound registrations match iff the
+    /// address is owned — there is no fallback tier. Only registrations in the
+    /// query's `active_registrations` selection participate, and each match
+    /// re-applies the registration's static topic filters and `startBlock`
+    /// gate, since another registration's broader selection may have fetched
+    /// the log. An empty result means the log routes nowhere and is dropped by
+    /// the caller.
     fn route_and_decode(
         &self,
         topics: &[Option<LogArgument>],
         data: &Data,
         contract_name: Option<&str>,
-    ) -> Result<Option<RoutedEvent>> {
+        block_number: Option<i64>,
+        active_registrations: &HashSet<i64>,
+    ) -> Result<Vec<RoutedEvent>> {
         let event = match self.events.get(&MetaKey::from_topics(topics)?) {
             Some(e) => e,
-            None => return Ok(None),
+            None => return Ok(Vec::new()),
         };
 
-        let variant_idx = match contract_name {
-            Some(name) => event
-                .variant_idx_by_contract_name
-                .get(name)
-                .copied()
-                .or(event.wildcard_variant_idx),
-            None => event.wildcard_variant_idx,
-        };
-        let variant = match variant_idx {
-            Some(idx) => &event.variants[idx],
-            None => return Ok(None),
-        };
+        let owned_idxs = contract_name
+            .and_then(|name| event.variant_idxs_by_contract_name.get(name))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let mut variant_idxs: Vec<usize> = event
+            .wildcard_variant_idxs
+            .iter()
+            .chain(owned_idxs)
+            .copied()
+            .filter(|&idx| {
+                let variant = &event.variants[idx];
+                active_registrations.contains(&variant.on_event_registration_index)
+                    && match (variant.start_block, block_number) {
+                        (Some(start), Some(number)) => number >= start,
+                        _ => true,
+                    }
+                    && matches_topic_filters(&variant.topic_filters, topics)
+            })
+            .collect();
+        if variant_idxs.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Deterministic item order per log, independent of wildcard/owned split.
+        variant_idxs.sort_unstable_by_key(|&idx| event.variants[idx].on_event_registration_index);
 
         let decoded = event
             .decoder
@@ -231,15 +266,81 @@ impl DecoderCore {
             )
             .context("decode log")?;
 
-        Ok(Some(RoutedEvent {
-            index: variant.on_event_registration_index,
-            params: ParamValue::Obj(apply_names(
-                decoded,
-                &variant.params,
-                self.checksummed_addresses,
-            )?),
-        }))
+        variant_idxs
+            .iter()
+            .map(|&idx| {
+                let variant = &event.variants[idx];
+                Ok(RoutedEvent {
+                    index: variant.on_event_registration_index,
+                    params: ParamValue::Obj(apply_names(
+                        decoded.clone(),
+                        &variant.params,
+                        self.checksummed_addresses,
+                    )?),
+                })
+            })
+            .collect()
     }
+}
+
+fn parse_topic_filters(
+    topic_selections: &[TopicSelectionInput],
+) -> Result<Vec<[StaticTopicFilter; 4]>> {
+    let parse_values = |values: &[String]| -> Result<Vec<[u8; 32]>> {
+        values
+            .iter()
+            .map(|v| {
+                LogArgument::decode_hex(v)
+                    .map(|arg| **arg)
+                    .with_context(|| format!("decode topic filter value {v}"))
+            })
+            .collect()
+    };
+    // An empty value list means match-any (mirroring query semantics), same as
+    // a `ContractAddresses` marker (`None` input) — the marker's check stays on
+    // the JS `clientAddressFilter`.
+    let parse_position = |input: &Option<Vec<String>>| -> Result<StaticTopicFilter> {
+        match input {
+            Some(values) if !values.is_empty() => Ok(Some(parse_values(values)?)),
+            _ => Ok(None),
+        }
+    };
+    topic_selections
+        .iter()
+        .map(|ts| {
+            Ok([
+                if ts.topic0.is_empty() {
+                    None
+                } else {
+                    Some(parse_values(&ts.topic0)?)
+                },
+                parse_position(&ts.topic1)?,
+                parse_position(&ts.topic2)?,
+                parse_position(&ts.topic3)?,
+            ])
+        })
+        .collect()
+}
+
+fn matches_topic_filters(
+    filters: &[[StaticTopicFilter; 4]],
+    topics: &[Option<LogArgument>],
+) -> bool {
+    if filters.is_empty() {
+        return true;
+    }
+    filters.iter().any(|selection| {
+        selection
+            .iter()
+            .enumerate()
+            .all(|(i, filter)| match filter {
+                None => true,
+                Some(values) => topics
+                    .get(i)
+                    .and_then(Option::as_ref)
+                    .is_some_and(|topic| values.iter().any(|v| v == &***topic)),
+            })
+    })
 }
 
 pub(crate) struct RoutedEvent {
@@ -363,6 +464,7 @@ mod tests {
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
                 depends_on_addresses: false,
+                start_block: None,
                 topic_selections: vec![],
                 block_fields: vec![],
                 transaction_fields: vec![],
@@ -396,9 +498,12 @@ mod tests {
             ..Default::default()
         };
 
-        let routed = core
-            .route_and_decode_napi(&log, Some("TestContract"))
-            .unwrap()
+        let mut routed = core
+            .route_and_decode_napi(&log, Some("TestContract"), &HashSet::from([7]))
+            .unwrap();
+        assert_eq!(routed.len(), 1);
+        let routed = routed
+            .pop()
             .expect("renamed event must decode under its real sighash");
 
         assert_eq!(routed.index, 7);
@@ -424,6 +529,141 @@ mod tests {
         }
     }
 
+    // One Transfer(address,uint256)-shaped registration; anonymous topic-count-1
+    // key so logs are easy to fabricate.
+    fn transfer_reg(
+        index: i64,
+        contract_name: &str,
+        is_wildcard: bool,
+        sighash: &str,
+    ) -> OnEventRegistration {
+        OnEventRegistration {
+            index,
+            sighash: sighash.to_string(),
+            topic_count: 1,
+            event_name: "E".to_string(),
+            contract_name: contract_name.to_string(),
+            is_wildcard,
+            depends_on_addresses: false,
+            start_block: None,
+            topic_selections: vec![],
+            block_fields: vec![],
+            transaction_fields: vec![],
+            params: vec![pm("value", "uint256", false)],
+        }
+    }
+
+    fn value_log(sighash: &str) -> Log {
+        use alloy_dyn_abi::DynSolValue;
+        use alloy_primitives::{hex, U256};
+        let data = DynSolValue::Tuple(vec![DynSolValue::Uint(U256::from(1u64), 256)]).abi_encode();
+        Log {
+            topics: vec![Some(sighash.to_string())],
+            data: Some(format!("0x{}", hex::encode(data))),
+            ..Default::default()
+        }
+    }
+
+    fn routed_indexes(routed: &[RoutedEvent]) -> Vec<i64> {
+        routed.iter().map(|r| r.index).collect()
+    }
+
+    #[test]
+    fn fans_out_to_wildcards_and_owned_contract_without_fallback_tier() {
+        let core = DecoderCore::from_registrations(
+            &[
+                transfer_reg(0, "Owned", false, VALID_SIGHASH),
+                transfer_reg(1, "W1", true, VALID_SIGHASH),
+                transfer_reg(2, "W2", true, VALID_SIGHASH),
+                transfer_reg(3, "Other", false, VALID_SIGHASH),
+            ],
+            false,
+        )
+        .unwrap();
+        let active = HashSet::from([0, 1, 2, 3]);
+        let log = value_log(VALID_SIGHASH);
+
+        // Owned address: the contract's registration plus every wildcard.
+        let owned = core
+            .route_and_decode_napi(&log, Some("Owned"), &active)
+            .unwrap();
+        assert_eq!(routed_indexes(&owned), vec![0, 1, 2]);
+
+        // Unowned address: wildcards only — no fallback into contract-bound
+        // registrations.
+        let unowned = core.route_and_decode_napi(&log, None, &active).unwrap();
+        assert_eq!(routed_indexes(&unowned), vec![1, 2]);
+    }
+
+    #[test]
+    fn routing_scoped_to_active_registrations() {
+        let core = DecoderCore::from_registrations(
+            &[
+                transfer_reg(0, "Owned", false, VALID_SIGHASH),
+                transfer_reg(1, "W1", true, VALID_SIGHASH),
+            ],
+            false,
+        )
+        .unwrap();
+        let log = value_log(VALID_SIGHASH);
+        let routed = core
+            .route_and_decode_napi(&log, Some("Owned"), &HashSet::from([0]))
+            .unwrap();
+        assert_eq!(routed_indexes(&routed), vec![0]);
+    }
+
+    #[test]
+    fn start_block_gates_each_registration_independently() {
+        let mut early = transfer_reg(0, "W1", true, VALID_SIGHASH);
+        early.start_block = Some(5);
+        let mut late = transfer_reg(1, "W2", true, VALID_SIGHASH);
+        late.start_block = Some(100);
+        let core = DecoderCore::from_registrations(&[early, late], false).unwrap();
+        let active = HashSet::from([0, 1]);
+        let mut log = value_log(VALID_SIGHASH);
+        log.block_number = Some(50);
+        let routed = core.route_and_decode_napi(&log, None, &active).unwrap();
+        assert_eq!(routed_indexes(&routed), vec![0]);
+    }
+
+    #[test]
+    fn static_topic_filters_reapplied_per_registration() {
+        const TOPIC1_A: &str = "0x00000000000000000000000000000000000000000000000000000000000000aa";
+        const TOPIC1_B: &str = "0x00000000000000000000000000000000000000000000000000000000000000bb";
+        let selection = |topic1| crate::evm_hypersync_source::selection::TopicSelectionInput {
+            topic0: vec![VALID_SIGHASH.to_string()],
+            topic1,
+            topic2: Some(vec![]),
+            topic3: Some(vec![]),
+        };
+        // Three same-signature wildcards: one filtering topic1 to A, one to B,
+        // and one with a ContractAddresses marker (None) that Rust must treat
+        // as match-any (the JS clientAddressFilter owns that check).
+        let mut filtered_a = transfer_reg(0, "WA", true, VALID_SIGHASH);
+        filtered_a.topic_count = 2;
+        filtered_a.params = vec![pm("who", "address", true), pm("value", "uint256", false)];
+        filtered_a.topic_selections = vec![selection(Some(vec![TOPIC1_A.to_string()]))];
+        let mut filtered_b = transfer_reg(1, "WB", true, VALID_SIGHASH);
+        filtered_b.topic_count = 2;
+        filtered_b.params = filtered_a.params.clone();
+        filtered_b.topic_selections = vec![selection(Some(vec![TOPIC1_B.to_string()]))];
+        let mut marker = transfer_reg(2, "WC", true, VALID_SIGHASH);
+        marker.topic_count = 2;
+        marker.params = filtered_a.params.clone();
+        marker.topic_selections = vec![selection(None)];
+
+        let core =
+            DecoderCore::from_registrations(&[filtered_a, filtered_b, marker], false).unwrap();
+        let active = HashSet::from([0, 1, 2]);
+        let log = Log {
+            topics: vec![Some(VALID_SIGHASH.to_string()), Some(TOPIC1_A.to_string())],
+            data: value_log(VALID_SIGHASH).data,
+            ..Default::default()
+        };
+        let routed = core.route_and_decode_napi(&log, None, &active).unwrap();
+        assert_eq!(routed_indexes(&routed), vec![0, 2]);
+    }
+
     #[test]
     fn rejects_metakey_collision_with_different_indexed_layout() {
         let sighash = alloy_json_abi::Event::parse("Foo(uint256 a, uint256 b)")
@@ -438,6 +678,7 @@ mod tests {
             contract_name: contract.to_string(),
             is_wildcard: false,
             depends_on_addresses: false,
+            start_block: None,
             topic_selections: vec![],
             block_fields: vec![],
             transaction_fields: vec![],
@@ -477,6 +718,7 @@ mod tests {
             contract_name: contract.to_string(),
             is_wildcard: false,
             depends_on_addresses: false,
+            start_block: None,
             topic_selections: vec![],
             block_fields: vec![],
             transaction_fields: vec![],
