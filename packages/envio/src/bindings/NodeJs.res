@@ -46,6 +46,29 @@ module Process = {
   @module external process: t = "process"
   @module("process") external cwd: unit => string = "cwd"
   @get external execPath: t => string = "execPath"
+
+  type memoryUsage = {
+    rss: float,
+    heapTotal: float,
+    heapUsed: float,
+    @as("external") external_: float,
+    arrayBuffers: float,
+  }
+  @module("process") external memoryUsage: unit => memoryUsage = "memoryUsage"
+
+  // Microseconds since process start.
+  type cpuUsage = {user: float, system: float}
+  @module("process") external cpuUsage: unit => cpuUsage = "cpuUsage"
+
+  @module("process") external uptime: unit => float = "uptime"
+  @module("process") external version: string = "version"
+}
+
+module PerfHooks = {
+  type eventLoopUtilization = {idle: float, active: float, utilization: float}
+  type performance
+  @module("perf_hooks") external performance: performance = "performance"
+  @send external eventLoopUtilization: performance => eventLoopUtilization = "eventLoopUtilization"
 }
 
 module ChildProcess = {

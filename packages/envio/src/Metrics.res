@@ -670,6 +670,8 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
 }
 
+let contentType = "text/plain; version=0.0.4; charset=utf-8"
+
 let collect = (~metrics: option<t>) => {
   let b = {out: ""}
   b->series(
@@ -683,5 +685,77 @@ let collect = (~metrics: option<t>) => {
   | Some(metrics) => b->renderMetrics(metrics)
   | None => ()
   }
+  b.out ++ "\n"
+}
+
+// Node.js runtime metrics for /metrics/runtime, read from process/perf_hooks
+// at scrape time. Uses the same metric names prom-client's default collectors
+// exposed here before, so existing dashboards keep working.
+let collectRuntime = () => {
+  let b = {out: ""}
+  let memory = NodeJs.Process.memoryUsage()
+  let cpu = NodeJs.Process.cpuUsage()
+  let elu = NodeJs.PerfHooks.performance->NodeJs.PerfHooks.eventLoopUtilization
+  b->single(
+    ~name="process_cpu_user_seconds_total",
+    ~help="Total user CPU time spent in seconds.",
+    ~kind="counter",
+    ~value=cpu.user /. 1_000_000.,
+  )
+  b->single(
+    ~name="process_cpu_system_seconds_total",
+    ~help="Total system CPU time spent in seconds.",
+    ~kind="counter",
+    ~value=cpu.system /. 1_000_000.,
+  )
+  b->single(
+    ~name="process_cpu_seconds_total",
+    ~help="Total user and system CPU time spent in seconds.",
+    ~kind="counter",
+    ~value=(cpu.user +. cpu.system) /. 1_000_000.,
+  )
+  b->single(
+    ~name="process_start_time_seconds",
+    ~help="Start time of the process since unix epoch in seconds.",
+    ~kind="gauge",
+    ~value=Date.now() /. 1000. -. NodeJs.Process.uptime(),
+  )
+  b->single(
+    ~name="process_resident_memory_bytes",
+    ~help="Resident memory size in bytes.",
+    ~kind="gauge",
+    ~value=memory.rss,
+  )
+  b->single(
+    ~name="nodejs_heap_size_total_bytes",
+    ~help="Process heap size from Node.js in bytes.",
+    ~kind="gauge",
+    ~value=memory.heapTotal,
+  )
+  b->single(
+    ~name="nodejs_heap_size_used_bytes",
+    ~help="Process heap size used from Node.js in bytes.",
+    ~kind="gauge",
+    ~value=memory.heapUsed,
+  )
+  b->single(
+    ~name="nodejs_external_memory_bytes",
+    ~help="Node.js external memory size in bytes.",
+    ~kind="gauge",
+    ~value=memory.external_,
+  )
+  b->single(
+    ~name="nodejs_eventloop_utilization",
+    ~help="Ratio of time the event loop is active, since process start.",
+    ~kind="gauge",
+    ~value=elu.utilization,
+  )
+  b->series(
+    ~name="nodejs_version_info",
+    ~help="Node.js version info.",
+    ~kind="gauge",
+    ~entries=[(`{version="${NodeJs.Process.version}"}`, ())],
+    ~value=() => 1.,
+  )
   b.out ++ "\n"
 }

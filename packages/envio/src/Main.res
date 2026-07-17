@@ -523,11 +523,8 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
     }
   })
 
-  let runtimeRegistry = PromClient.makeRegistry()
-  PromClient.collectDefaultMetrics({"register": runtimeRegistry})
-
   app->get("/metrics", (_req, res) => {
-    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
+    res->set("Content-Type", Metrics.contentType)
     let _ =
       res->endWithData(
         Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
@@ -535,11 +532,8 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   })
 
   app->get("/metrics/runtime", (_req, res) => {
-    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
-    let _ =
-      runtimeRegistry
-      ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+    res->set("Content-Type", Metrics.contentType)
+    let _ = res->endWithData(Metrics.collectRuntime())
   })
 
   let server = app->listen(Env.serverPort)
