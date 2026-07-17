@@ -724,8 +724,11 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                     workerData: workerData->(Utils.magic: workerData => JSON.t),
                     // Explicitly forward parent env so handlers running in
                     // the worker observe the same environment as the test
-                    // process (e.g. E2E_EXPECTED_END_BLOCK).
-                    env: %raw(`process.env`),
+                    // process (e.g. E2E_EXPECTED_END_BLOCK). A test run should
+                    // fail with the source's error rather than retry until the
+                    // test-runner timeout, so cap source retries unless the
+                    // user overrides the cap.
+                    env: %raw(`{ENVIO_MAX_SOURCE_RETRIES: "1", ...process.env}`),
                   },
                 )
               } catch {

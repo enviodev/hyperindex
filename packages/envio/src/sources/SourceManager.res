@@ -49,6 +49,7 @@ type t = {
   stalledPollingInterval: int,
   reducedPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
+  maxRetries: option<int>,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
@@ -194,6 +195,18 @@ let validateResponseBlockStore = (
   }
 }
 
+// In production a failing source is retried indefinitely (backoff and failover
+// keep the indexer alive through outages). With `maxRetries` set — the test
+// indexer caps it via ENVIO_MAX_SOURCE_RETRIES — the operation gives up once
+// the cap is reached and fails the run with the underlying error, so a test
+// against an unreachable source reports the real cause instead of hanging
+// until the test-runner timeout.
+let raiseIfRetriesExhausted = (sourceManager: t, ~retry, ~logger, ~err, ~msg) =>
+  switch sourceManager.maxRetries {
+  | Some(max) if retry >= max => err->ErrorHandling.mkLogAndRaise(~logger, ~msg)
+  | _ => ()
+  }
+
 let retryInconsistentResponse = async (
   sourceState: sourceState,
   ~retry: int,
@@ -273,6 +286,7 @@ let make = (
     ~backoffMultiplicative=2,
     ~maxRetryInterval=60_000,
   ),
+  ~maxRetries=Env.maxSourceRetries,
 ) => {
   let hasRealtime = sources->Array.some(s => s.sourceFor === Realtime)
   let initialActiveSource = switch sources->Array.find(source =>
@@ -305,6 +319,7 @@ let make = (
     stalledPollingInterval,
     reducedPollingInterval,
     getHeightRetryInterval,
+    maxRetries,
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
@@ -514,6 +529,12 @@ let getSourceNewHeight = async (
         }
       } catch {
       | exn =>
+        sourceManager->raiseIfRetriesExhausted(
+          ~retry=retry.contents,
+          ~logger,
+          ~err=exn,
+          ~msg=`Failed to fetch the chain height from the ${source.name} source. Make sure the endpoint is reachable.`,
+        )
         let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
         logger->Logging.childTrace({
           "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
@@ -810,11 +831,23 @@ let executeQuery = async (
       sourceState.lastFailedAt = None
       responseRef := Some(response)
     } catch {
-    | Source.RateLimited({resetMs}) =>
+    | Source.RateLimited({resetMs}) as err =>
+      sourceManager->raiseIfRetriesExhausted(
+        ~retry,
+        ~logger,
+        ~err,
+        ~msg=`The ${source.name} source keeps rate-limiting item requests.`,
+      )
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
     | Source.InconsistentResponse(_) as err => {
+        sourceManager->raiseIfRetriesExhausted(
+          ~retry,
+          ~logger,
+          ~err,
+          ~msg=`The ${source.name} source keeps returning internally inconsistent item responses.`,
+        )
         await retryInconsistentResponse(sourceState, ~retry, ~logger, ~method="getItems", ~err)
         source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=query.fromBlock - 1))
         retryRef := retryRef.contents + 1
@@ -873,6 +906,12 @@ let executeQuery = async (
         retryRef := 0
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
+        sourceManager->raiseIfRetriesExhausted(
+          ~retry,
+          ~logger,
+          ~err=exn,
+          ~msg=`Failed to fetch items from the ${source.name} source. Make sure the endpoint is reachable.`,
+        )
         // Start displaying warnings after 4 failures
         let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
         logger->log({
@@ -964,11 +1003,23 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       | Error(exn) => throw(exn)
       }
     } catch {
-    | Source.RateLimited({resetMs}) =>
+    | Source.RateLimited({resetMs}) as err =>
+      sourceManager->raiseIfRetriesExhausted(
+        ~retry,
+        ~logger,
+        ~err,
+        ~msg=`The ${source.name} source keeps rate-limiting block-hash requests.`,
+      )
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
     | Source.InconsistentResponse(_) as err => {
+        sourceManager->raiseIfRetriesExhausted(
+          ~retry,
+          ~logger,
+          ~err,
+          ~msg=`The ${source.name} source keeps returning internally inconsistent block-hash responses.`,
+        )
         await retryInconsistentResponse(
           sourceState,
           ~retry,
@@ -983,6 +1034,12 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       }
 
     | exn =>
+      sourceManager->raiseIfRetriesExhausted(
+        ~retry,
+        ~logger,
+        ~err=exn,
+        ~msg=`Failed to fetch block hashes from the ${source.name} source. Make sure the endpoint is reachable.`,
+      )
       // A short first retry covers the common transient case (e.g. a request
       // routed to a HyperSync replica slightly behind the head), doubling from
       // there.
