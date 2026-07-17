@@ -1,4 +1,4 @@
-type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
+type sourceManagerStatus = Idle | WaitingForNewBlock | Querying
 
 // Cumulative per-method request count/time for a source, aggregated from the
 // requestStat arrays returned by its methods. Rendered into
@@ -91,10 +91,6 @@ let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
   })
   samples
 }
-
-// Partition queries currently in flight on this chain's sources. Summed across
-// chains by CrossChainState to enforce the indexer-wide concurrency budget.
-let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
 
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
@@ -316,7 +312,7 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   let promCounter = switch sourceManager.status {
   | Idle => Prometheus.IndexingIdleTime.counter
   | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
-  | Querieng => Prometheus.IndexingQueryTime.counter
+  | Querying => Prometheus.IndexingQueryTime.counter
   }
   promCounter->Prometheus.SafeCounter.handleFloat(
     ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
@@ -368,7 +364,7 @@ let dispatch = async (
         ~concurrency=sourceManager.fetchingPartitionsCount,
         ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       )
-      sourceManager->trackNewStatus(~newStatus=Querieng)
+      sourceManager->trackNewStatus(~newStatus=Querying)
       let _ = await queries
       ->Array.map(q => {
         let promise = q->executeQuery
@@ -791,13 +787,7 @@ let executeQuery = async (
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
-        // Ceil (not truncate) so a sub-1 estimate from a sparse partition over a
-        // small range doesn't round down to 0 and ask the backend to cap the
-        // response at nothing — 0 items is indistinguishable from "no signal".
-        ~itemsTarget={
-          let est = query.estResponseSize->Math.ceil->Float.toInt
-          est > 0 ? est : FetchState.minEstResponseSize->Float.toInt
-        },
+        ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,
       )

@@ -19,6 +19,7 @@ let make: (
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
   ~transactionStore: TransactionStore.t=?,
+  ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
   ~logger: Pino.t,
 ) => t
@@ -67,12 +68,22 @@ let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
-let getProgressPercentageAt: (t, ~blockNumber: int) => float
+let chainDensity: t => option<float>
+let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
 let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
-let getNextQuery: t => FetchState.nextQuery
+let targetBlock: (t, ~chainTargetItems: float) => int
+let blockAtProgress: (t, ~progress: float) => int
+let frontierProgress: t => float
+let getNextQuery: (
+  t,
+  ~chainTargetItems: float,
+  ~chunkItemsMultiplier: float=?,
+  ~itemsTargetFloor: int=?,
+  ~maxTargetBlock: int=?,
+) => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

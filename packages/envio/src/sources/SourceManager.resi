@@ -31,8 +31,6 @@ type requestStatSample = {
 
 let getRequestStatSamples: t => array<requestStatSample>
 
-let inFlightCount: t => int
-
 let onReorg: (t, ~rollbackTargetBlock: int) => unit
 
 let dispatch: (

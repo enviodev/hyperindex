@@ -1,16 +1,14 @@
 open Vitest
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so the common fields don't have to be repeated;
+// every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
+  itemsTarget: 0,
+  itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -91,9 +89,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 0.,
+          itemsTarget: 0,
+          itemsEst: 0,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -275,9 +273,9 @@ describe("IndexerState", () => {
           eventBlocks->Array.forEach(
             blockNumber => {
               let query: FetchState.query = {
-                ...defaultQuery,
                 partitionId: "0",
-                estResponseSize: 0.,
+                itemsTarget: 0,
+                itemsEst: 0,
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
@@ -354,9 +352,9 @@ describe("IndexerState", () => {
         // (its batch-time snapshot held only block 5).
         let cs = state->IndexerState.getChainState(~chain)
         let concurrentQuery: FetchState.query = {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 0.,
+          itemsTarget: 0,
+          itemsEst: 0,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
