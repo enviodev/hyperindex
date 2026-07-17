@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Once;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
@@ -181,9 +181,15 @@ impl EvmHypersyncClient {
                 block_hash_page(response, self.enable_checksum_addresses)
                     .map_err(map_err)
                     .map_err(|error| error_with_request_stats(error, &request_stats))?;
+            // Usually a replica lagging behind the requested range. Surfaced
+            // as an error so SourceManager owns the retry: it logs, backs off,
+            // and can fail over to another source, none of which an in-process
+            // loop could do.
             if next_block <= cursor {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
+                let error = map_err(anyhow::anyhow!(
+                    "EVM block hash query made no progress: cursor={cursor}, next_block={next_block}"
+                ));
+                return Err(error_with_request_stats(error, &request_stats));
             }
             aggregate.append_page(&page_store);
             if next_block > to_block {
