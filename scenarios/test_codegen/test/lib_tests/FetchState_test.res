@@ -4822,7 +4822,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     })
   })
 
-  it("splits the budget across the queries the concurrency cap can admit", t => {
+  it("sizes probes by the full in-range count while admitting only up to the cap", t => {
     let queries = switch makeFetchState(
       ~partitionsCount=120,
       ~inFlightCount=0,
@@ -4830,15 +4830,15 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     | Ready(queries) => queries
     | _ => []
     }
-    // 10 items/block budget density over the 100k-block range, split across the
-    // 100 admittable queries — not across all 120 partitions (which would give
-    // 8334 and leave a sixth of the budget undispatched).
+    // 10 items/block budget density over the 100k-block range, split across all
+    // 120 in-range partitions — an honest per-partition share for budget
+    // control — even though the concurrency cap admits only 100 queries.
     t.expect({
       "count": queries->Array.length,
       "firstItemsTarget": (queries->Array.getUnsafe(0)).itemsTarget,
     }).toEqual({
       "count": 100,
-      "firstItemsTarget": 10000,
+      "firstItemsTarget": 8333,
     })
   })
 

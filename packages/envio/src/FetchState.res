@@ -1745,12 +1745,18 @@ let walkPartitionPending = (
 // per two responses.
 let pushForwardCandidates = (
   candidates: array<query>,
+  // May be truncated to the chain's free concurrency slots — a pure generation
+  // bound, see getNextQuery.
   ~inRangeStates: array<partitionFillState>,
+  // The full in-range partition count, pre-truncation. Probe sizing divides by
+  // this so each probe's itemsEst/itemsTarget stays the honest per-partition
+  // share for budget control — sizing by the (fewer) admittable queries would
+  // let every accepted probe over-fetch its share.
+  ~inRangeCount: int,
   ~chainTargetBlock: int,
   ~freshBudget: float,
   ~chunkItemsMultiplier: float,
 ) => {
-  let inRangeCount = inRangeStates->Array.length
   // Even share of the fresh budget across the partitions actually fetching
   // this tick (not every partition — so budget isn't stranded on ones below
   // the head, waiting, or already done). The fallback when there's no range to
@@ -2045,14 +2051,10 @@ let getNextQuery = (
     // advances evenly.
     let candidates = []
 
-    // Equal-divide share among the partitions that can actually fetch this
-    // tick: with more partitions than free concurrency slots, only
-    // availableConcurrency of them get queries, so dividing by the full count
-    // would undersize every gap probe.
+    // Each partition's equal-divide share of the tick's budget, used to price
+    // unknown-density gap probes.
     let partitionBudget =
-      partitionsCount == 0
-        ? 0.
-        : chainTargetItems /. Pervasives.min(partitionsCount, availableConcurrency)->Int.toFloat
+      partitionsCount == 0 ? 0. : chainTargetItems /. partitionsCount->Int.toFloat
 
     let fillStates = []
     for idx in 0 to partitionsCount - 1 {
@@ -2087,14 +2089,16 @@ let getNextQuery = (
       fs.inFlightCount + fs.chunksUsedThisCall < maxInFlightChunksPerPartition
 
     let inRangeStates = fillStates->Array.filter(isInRange)
+    let inRangeCount = inRangeStates->Array.length
     // The acceptance pass admits at most availableConcurrency fresh queries, in
     // fromBlock order, and every kept partition contributes a candidate at its
     // own cursor — so a partition past the first availableConcurrency in cursor
     // order could only offer candidates behind at least that many earlier ones,
     // which the concurrency cap stops the walk from ever reaching. Dropping
-    // those partitions up front skips pointless candidate generation and stops
-    // the budget from being split across partitions that can't fetch this tick.
-    let inRangeStates = if inRangeStates->Array.length > availableConcurrency {
+    // those partitions up front skips pointless candidate generation. A pure
+    // generation bound: sizing still divides by the full inRangeCount, so each
+    // probe keeps its honest per-partition share of the budget.
+    let inRangeStates = if inRangeCount > availableConcurrency {
       inRangeStates->Array.sort((a, b) => Int.compare(a.cursor, b.cursor))
       inRangeStates->Array.slice(~start=0, ~end=availableConcurrency)
     } else {
@@ -2103,6 +2107,7 @@ let getNextQuery = (
 
     candidates->pushForwardCandidates(
       ~inRangeStates,
+      ~inRangeCount,
       ~chainTargetBlock,
       ~freshBudget,
       ~chunkItemsMultiplier,
