@@ -48,6 +48,13 @@ export type EffectCaller = <I, O>(
   input: I extends undefined ? undefined : I
 ) => Promise<O>;
 
+/** The chain an Effect was called on. Available only on chain-scoped effects
+ * (`crossChain: false`). */
+export type EffectChain = {
+  /** The chain id the effect handler was called on. */
+  readonly id: number;
+};
+
 /** Context passed to an Effect's handler function. */
 export type EffectContext = {
   /** Access the logger instance with the event as context. */
@@ -57,6 +64,9 @@ export type EffectContext = {
   /** Whether to cache this call's result. Defaults to the effect's `cache`
    * option; set to `false` to skip caching for this specific invocation. */
   cache: boolean;
+  /** The chain the effect was called on. Only available on effects created with
+   * `crossChain: false`; accessing it on a cross-chain effect throws. */
+  readonly chain: EffectChain;
 };
 
 /** Rate-limit window for an {@link Effect}. Strings resolve to common
@@ -82,6 +92,11 @@ export type EffectOptions<Input, Output> = {
   readonly rateLimit: RateLimit;
   /** Whether the effect should be cached. */
   readonly cache?: boolean;
+  /** Whether the effect's cache is shared across all chains. Defaults to
+   * `true`. Set to `false` to isolate the cache and rate limiting per chain and
+   * enable `context.chain.id` inside the handler. Changing this changes the
+   * effect's cache identity. */
+  readonly crossChain?: boolean;
 };
 
 /** Arguments passed to the handler function of an {@link Effect}. */
@@ -209,6 +224,10 @@ export function createEffect<
     readonly rateLimit: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
+    /** Whether the effect's cache is shared across all chains. Defaults to
+     * `true`. Set to `false` to isolate the cache and rate limiting per chain
+     * and enable `context.chain.id` inside the handler. */
+    readonly crossChain?: boolean;
   },
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;
