@@ -157,7 +157,14 @@ impl EvmHypersyncClient {
                 to_block: Some(to_block_exclusive),
                 include_all_blocks: Some(true),
                 field_selection: query::FieldSelection {
-                    block: Some(vec![BlockField::Number, BlockField::Hash]),
+                    // ParentHash lets the response store validate the chain
+                    // linkage of the contiguous range (the EVM analogue of the
+                    // SVM parent-slot check).
+                    block: Some(vec![
+                        BlockField::Number,
+                        BlockField::Hash,
+                        BlockField::ParentHash,
+                    ]),
                     ..Default::default()
                 },
                 ..Default::default()

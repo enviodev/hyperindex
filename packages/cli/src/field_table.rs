@@ -86,7 +86,9 @@ impl FixedCol {
     pub(crate) fn push(&mut self, v: Option<&[u8]>) {
         match v {
             Some(b) => {
-                debug_assert_eq!(b.len(), self.width);
+                // A hard check: a wrong-width cell would silently shift every
+                // subsequent row's offset in release builds.
+                assert_eq!(b.len(), self.width, "fixed column cell width mismatch");
                 self.data.extend_from_slice(b);
             }
             None => self.data.resize(self.data.len() + self.width, 0),
@@ -400,7 +402,7 @@ impl StoreCol {
             (StoreCol::Bool(v), AnyCol::Bool(s)) => v[slot] = s.get(row).unwrap(),
             (StoreCol::Fixed { width, data }, AnyCol::Fixed(s)) => {
                 let b = s.get(row).unwrap();
-                debug_assert_eq!(b.len(), *width);
+                assert_eq!(b.len(), *width, "fixed column cell width mismatch");
                 data[slot * *width..(slot + 1) * *width].copy_from_slice(b);
             }
             (StoreCol::Var(v), AnyCol::Var(s)) => {
@@ -499,6 +501,9 @@ pub(crate) struct Table<K> {
 
 impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     pub(crate) fn new(n_fields: usize) -> Self {
+        // Field masks are single u64 bitsets; a 65th field would silently
+        // corrupt them in release builds.
+        assert!(n_fields <= 64, "Table supports at most 64 fields");
         Self {
             by_key: HashMap::new(),
             order: BTreeMap::new(),
@@ -694,6 +699,11 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                 self.free_slot(slot);
             }
         }
+    }
+
+    /// Every stored key, ascending.
+    pub(crate) fn keys(&self) -> Vec<K> {
+        self.order.keys().cloned().collect()
     }
 
     /// Keys in `[from, below)` whose row carries `field`, ascending.

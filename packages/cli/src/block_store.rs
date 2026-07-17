@@ -743,11 +743,19 @@ impl BlockStore {
         if let Some(conflict) = conflict {
             record_conflict(&mut dst.response_conflict, conflict);
         }
+        // The appended keys seed the EVM parent-link check below, which needs
+        // them after the rows have moved into `dst`.
+        let src_keys = matches!(self.ecosystem, Ecosystem::Evm { .. })
+            .then(|| src.table.keys())
+            .unwrap_or_default();
         dst.table.append_from(&mut src.table);
         for range in src.svm_covered_ranges.drain(..) {
             add_svm_covered_range(&mut dst.svm_covered_ranges, range);
         }
         if let Some(conflict) = self.svm_parent_link_conflict(&dst) {
+            record_conflict(&mut dst.response_conflict, conflict);
+        }
+        if let Some(conflict) = self.evm_parent_link_conflict(&dst, &src_keys) {
             record_conflict(&mut dst.response_conflict, conflict);
         }
     }
@@ -958,6 +966,55 @@ impl BlockStore {
         Ok(())
     }
 
+    /// Return the lowest inconsistent EVM parent link touched by `keys`: block
+    /// N's `parentHash` must equal block N-1's `hash` whenever both are stored.
+    /// EVM block numbers are dense, so unlike SVM no cursor coverage is needed
+    /// to know which block is the parent; a neighbour that simply isn't in the
+    /// response is not checked. Fuel has no parent-id field in its header
+    /// (`prev_root` is a merkle root over all ancestors), so this check is
+    /// EVM-only.
+    fn evm_parent_link_conflict(&self, inner: &Inner, keys: &[u64]) -> Option<HashMismatch> {
+        if !matches!(self.ecosystem, Ecosystem::Evm { .. }) {
+            return None;
+        }
+        let hash_field = EvmBlockField::Hash as usize;
+        let parent_field = EvmBlockField::ParentHash as usize;
+        let mut lowest = None;
+        for &key in keys {
+            // This block's parentHash against the previous block's hash.
+            if key > 0 {
+                if let (Some(parent), Some(prev_hash)) = (
+                    inner.table.field_bytes(&key, parent_field),
+                    inner.table.field_bytes(&(key - 1), hash_field),
+                ) {
+                    if parent != prev_hash {
+                        let conflict = HashMismatch {
+                            block_number: (key - 1) as i64,
+                            stored_hash: self.hash_display(prev_hash),
+                            received_hash: self.hash_display(parent),
+                        };
+                        lowest = lowest_conflict(lowest, Some(conflict));
+                    }
+                }
+            }
+            // The next block's parentHash against this block's hash.
+            if let (Some(next_parent), Some(hash)) = (
+                inner.table.field_bytes(&(key + 1), parent_field),
+                inner.table.field_bytes(&key, hash_field),
+            ) {
+                if next_parent != hash {
+                    let conflict = HashMismatch {
+                        block_number: key as i64,
+                        stored_hash: self.hash_display(hash),
+                        received_hash: self.hash_display(next_parent),
+                    };
+                    lowest = lowest_conflict(lowest, Some(conflict));
+                }
+            }
+        }
+        lowest
+    }
+
     /// Return the lowest inconsistent SVM parent link inside cursor-covered
     /// ranges. A parent outside coverage is unknown and therefore not checked.
     fn svm_parent_link_conflict(&self, inner: &Inner) -> Option<HashMismatch> {
@@ -1129,6 +1186,9 @@ impl BlockStore {
         let conflict = inner
             .table
             .detect_field_conflict(&keys, cols[field].as_ref(), field);
+        let batch_keys = matches!(self.ecosystem, Ecosystem::Evm { .. })
+            .then(|| keys.clone())
+            .unwrap_or_default();
         inner.table.merge_batch(keys, cols);
         if let Some((key, stored, received)) = conflict {
             record_conflict(
@@ -1139,6 +1199,9 @@ impl BlockStore {
                     received_hash: self.hash_display(&received),
                 },
             );
+        }
+        if let Some(conflict) = self.evm_parent_link_conflict(&inner, &batch_keys) {
+            record_conflict(&mut inner.response_conflict, conflict);
         }
     }
 
@@ -1802,6 +1865,55 @@ mod tests {
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         page.insert_evm_blocks(vec![hashed_evm_block(11, 0x11)]);
         assert!(page.response_conflict().is_none());
+    }
+
+    fn linked_evm_block(number: u64, byte: u8, parent_byte: u8) -> simple_types::Block {
+        let mut b = hashed_evm_block(number, byte);
+        b.parent_hash = Some(Hash::from([parent_byte; 32]));
+        b
+    }
+
+    #[test]
+    fn evm_parent_link_conflict_is_a_response_conflict() {
+        // Consistent links: no conflict.
+        let page = evm_page(vec![
+            linked_evm_block(10, 0x10, 0x09),
+            linked_evm_block(11, 0x11, 0x10),
+        ]);
+        assert!(page.response_conflict().is_none());
+
+        // Block 11 names a parent that disagrees with block 10's hash.
+        let page = evm_page(vec![
+            linked_evm_block(10, 0x10, 0x09),
+            linked_evm_block(11, 0x11, 0xaa),
+        ]);
+        let mismatch = page.response_conflict().expect("broken parent link");
+        assert_eq!(
+            (
+                mismatch.block_number,
+                mismatch.stored_hash,
+                mismatch.received_hash
+            ),
+            (
+                10,
+                format!("0x{}", "10".repeat(32)),
+                format!("0x{}", "aa".repeat(32))
+            )
+        );
+
+        // A missing neighbour is not checked (sparse event pages).
+        let page = evm_page(vec![
+            linked_evm_block(10, 0x10, 0x09),
+            linked_evm_block(12, 0x12, 0xbb),
+        ]);
+        assert!(page.response_conflict().is_none());
+
+        // The seam between two backend pages is checked on append.
+        let aggregate = evm_page(vec![linked_evm_block(20, 0x20, 0x19)]);
+        let next = evm_page(vec![linked_evm_block(21, 0x21, 0xcc)]);
+        aggregate.append_page(&next);
+        let mismatch = aggregate.response_conflict().expect("cross-page link");
+        assert_eq!(mismatch.block_number, 20);
     }
 
     #[test]

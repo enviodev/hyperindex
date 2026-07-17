@@ -134,6 +134,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
       ~maxReorgDepth=200,
+      ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
@@ -315,13 +316,17 @@ describe("IndexerState", () => {
           ->Array.forEach(
             chainConfig => {
               let mockSource = MockIndexer.Source.make([], ~chain=#1)
-              let (fetchState, indexingAddresses) = makeFetchState(~chainId=chainConfig.id, ~eventBlocks)
+              let (fetchState, indexingAddresses) = makeFetchState(
+                ~chainId=chainConfig.id,
+                ~eventBlocks,
+              )
               let chainState = ChainState.make(
                 ~chainConfig,
                 ~fetchState,
                 ~indexingAddresses,
                 ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
                 ~maxReorgDepth=200,
+                ~shouldRollbackOnReorg=false,
                 ~committedProgressBlockNumber=-1,
                 ~logger=Logging.getLogger(),
               )

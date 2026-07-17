@@ -87,8 +87,8 @@ let make = (
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
   ~safeCheckpointTracking=None,
-  ~shouldRollbackOnReorg=false,
-  ~maxReorgDepth=0,
+  ~shouldRollbackOnReorg,
+  ~maxReorgDepth,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -369,6 +369,7 @@ let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
+let shouldRollbackOnReorg = (cs: t) => cs.shouldRollbackOnReorg
 // Reorg-scan reads over the block store, for the rollback flow: the scanned
 // block numbers still inside the reorg threshold, and the highest of them whose
 // re-fetched hash still matches.
@@ -378,16 +379,9 @@ let getReorgThresholdBlockNumbersBelow = (cs: t, ~blockNumber) =>
     ~belowBlock=blockNumber,
   )
 
-let getLatestValidScannedBlock = (
-  cs: t,
-  ~blockStore: BlockStore.t,
-  ~blockNumbers: array<int>,
-) =>
+let getLatestValidScannedBlock = (cs: t, ~blockStore: BlockStore.t, ~blockNumbers: array<int>) =>
   cs.blockStore
-  ->BlockStore.latestValidBlockFromStore(
-    blockStore,
-    blockNumbers,
-  )
+  ->BlockStore.latestValidBlockFromStore(blockStore, blockNumbers)
   ->Null.toOption
 let safeCheckpointTracking = (cs: t) => cs.safeCheckpointTracking
 let isProgressAtHead = (cs: t) => cs.isProgressAtHead
@@ -461,7 +455,7 @@ let hasProcessedToEndblock = (cs: t) => {
 }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
-  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.chainConfig.maxReorgDepth
+  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
@@ -768,6 +762,7 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
   sourceBlockNumber: cs.fetchState.knownHeight,
   blockStore: cs.blockStore,
   shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
+  maxReorgDepth: cs.maxReorgDepth,
   chainConfig: cs.chainConfig,
 }
 
