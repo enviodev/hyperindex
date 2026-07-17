@@ -97,13 +97,15 @@ let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpointId) 
   for idx in 0 to entities->Array.length - 1 {
     let entityConfig: Internal.entityConfig = entities->Array.getUnsafe(idx)
     let timeRef = Performance.now()
+    // Recorded for failures too, so a failing prune retries on the same
+    // interval instead of on every write.
+    state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
     switch await persistence.storage.pruneStaleEntityHistory(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
       ~safeCheckpointId,
     ) {
     | () =>
-      state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
       Prometheus.RollbackHistoryPrune.increment(
         ~timeSeconds=Performance.secondsSince(timeRef),
         ~entityName=entityConfig.name,
@@ -120,29 +122,35 @@ let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpointId) 
   }
 }
 
+let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpointId) => {
+  switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpointId) {
+  | () => ()
+  | exception exn =>
+    Logging.createChild(~params={"safeCheckpointId": safeCheckpointId})->Logging.childErrorWithExn(
+      exn->Utils.prettifyExn,
+      `Failed to prune stale checkpoints`,
+    )
+  }
+}
+
 let runConcurrent = async (state: IndexerState.t, ~targets) => {
   switch targets {
-  | Some({safeCheckpointId, concurrent, forced}) =>
-    if concurrent->Utils.Array.notEmpty || forced->Utils.Array.notEmpty {
-      switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(
-        ~safeCheckpointId,
-      ) {
-      | () => ()
-      | exception exn =>
-        Logging.createChild(
-          ~params={"safeCheckpointId": safeCheckpointId},
-        )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale checkpoints`)
-      }
-    }
+  | Some({safeCheckpointId, concurrent}) if concurrent->Utils.Array.notEmpty =>
+    await pruneCheckpoints(state, ~safeCheckpointId)
     await pruneEntities(state, ~entities=concurrent, ~safeCheckpointId)
-  | None => ()
+  | Some(_) | None => ()
   }
 }
 
 let runForced = async (state: IndexerState.t, ~targets) => {
   switch targets {
-  | Some({safeCheckpointId, forced}) =>
+  | Some({safeCheckpointId, concurrent, forced}) if forced->Utils.Array.notEmpty =>
+    // When nothing ran concurrently (eg a rollback write), checkpoint pruning
+    // lands here, after the write, so it never overlaps a rollback transaction.
+    if concurrent->Utils.Array.isEmpty {
+      await pruneCheckpoints(state, ~safeCheckpointId)
+    }
     await pruneEntities(state, ~entities=forced, ~safeCheckpointId)
-  | None => ()
+  | Some(_) | None => ()
   }
 }
