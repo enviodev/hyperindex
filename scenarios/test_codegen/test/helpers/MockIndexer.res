@@ -377,6 +377,7 @@ module Indexer = {
     chain: chainId,
     sourceConfig: Config.sourceConfig,
     startBlock?: int,
+    maxReorgDepth?: int,
     blockLag?: int,
   }
 
@@ -426,6 +427,9 @@ module Indexer = {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+              maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
+                originalChainConfig.maxReorgDepth,
+              ),
               blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
             },
           )
@@ -1000,6 +1004,20 @@ module Source = {
 }
 
 module Helper = {
+  // Wait until the source has a pending getItemsOrThrow call. Queries are
+  // serialized by the cross-chain budget waterfall, so a chain's query only
+  // appears after the more-behind chains' responses release the budget.
+  let waitItemsQuery = async (sourceMock: Source.t) => {
+    let attempts = ref(0)
+    while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
+      attempts := attempts.contents + 1
+      await Utils.delay(0)
+    }
+    if sourceMock.getItemsOrThrowCalls->Array.length === 0 {
+      JsError.throwWithMessage("Timed out waiting for a getItemsOrThrow call")
+    }
+  }
+
   let initialEnterReorgThreshold = async (
     ~t: Vitest.testContext,
     ~indexerMock: Indexer.t,

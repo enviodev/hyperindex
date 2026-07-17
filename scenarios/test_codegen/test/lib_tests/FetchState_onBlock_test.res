@@ -2,17 +2,15 @@ open Vitest
 
 let chainId = 0
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so the common fields don't have to be repeated;
+// every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
+  itemsTarget: 0,
+  itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -94,9 +92,9 @@ describe("FetchState onBlock functionality", () => {
     // Simulate getting first batch of events by calling handleQueryResult
     // This should trigger the onBlock logic and add block items to the queue
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
+      itemsTarget: 0,
+      itemsEst: 0,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -142,9 +140,9 @@ describe("FetchState onBlock functionality", () => {
 
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
+      itemsTarget: 0,
+      itemsEst: 0,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -191,9 +189,9 @@ describe("FetchState onBlock functionality", () => {
 
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
+      itemsTarget: 0,
+      itemsEst: 0,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -244,9 +242,9 @@ describe("FetchState onBlock functionality", () => {
 
     // Process a batch
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
+      itemsTarget: 0,
+      itemsEst: 0,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -300,9 +298,9 @@ describe("FetchState onBlock functionality", () => {
 
     // Process a batch
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 0.,
+      itemsTarget: 0,
+      itemsEst: 0,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,

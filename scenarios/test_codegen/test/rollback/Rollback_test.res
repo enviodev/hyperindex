@@ -14,6 +14,7 @@ describe("E2E rollback tests", () => {
     ~sourceMock: MockIndexer.Source.t,
     ~indexerMock: MockIndexer.Indexer.t,
     ~firstHistoryCheckpointId=2n,
+    ~chainId=1337,
   ) => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -113,14 +114,14 @@ describe("E2E rollback tests", () => {
           id: firstHistoryCheckpointId,
           blockHash: Null.null,
           blockNumber: 101,
-          chainId: 1337,
+          chainId,
           eventsProcessed: 2,
         },
         {
           id: firstHistoryCheckpointId->BigInt.add(1n),
           blockHash: Js.Null.Value("0x102"),
           blockNumber: 102,
-          chainId: 1337,
+          chainId,
           eventsProcessed: 1,
         },
       ],
@@ -268,7 +269,7 @@ describe("E2E rollback tests", () => {
           id: firstHistoryCheckpointId->BigInt.add(3n),
           blockHash: Js.Null.Value("0x101"),
           blockNumber: 101,
-          chainId: 1337,
+          chainId,
           eventsProcessed: 1,
         },
       ],
@@ -330,9 +331,26 @@ describe("E2E rollback tests", () => {
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
+    // Only the most-behind chain (100 — the progress tie breaks by ascending
+    // chain id) holds the post-threshold query; drive it to head first so the
+    // budget releases and chain 1337 gets its own follow-up.
+    t.expect(
+      sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
+      ~message="Should enter reorg threshold and request now to the latest block",
+    ).toEqual(
+      Some({
+        "fromBlock": 101,
+        "toBlock": None,
+        "retry": 0,
+        "p": "0",
+      }),
+    )
+    sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    await indexerMock.getBatchWritePromise()
+
     t.expect(
       sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-      ~message="Should enter reorg threshold and request now to the latest block",
+      ~message="Chain 1337 follows once the leader's budget releases",
     ).toEqual(
       Some({
         "fromBlock": 101,
@@ -820,11 +838,15 @@ describe("E2E rollback tests", () => {
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
 
+      // The most-behind chain (100 — the progress tie breaks by ascending
+      // chain id) holds the only post-threshold query, so the rollback runs on
+      // it while chain 1337 sits without budget — genuinely stale.
       await testSingleChainRollback(
         ~t,
-        ~sourceMock=sourceMock1,
+        ~sourceMock=sourceMock2,
         ~indexerMock,
         ~firstHistoryCheckpointId=3n,
+        ~chainId=100,
       )
     },
   )
@@ -1129,13 +1151,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       })
     }
 
-    sourceMock1337.resolveGetItemsOrThrow(
+    // The most-behind chain (100 — the progress tie breaks by ascending chain
+    // id) holds the only post-threshold query; chain 1337's appears once the
+    // leader's response releases the budget.
+    sourceMock100.resolveGetItemsOrThrow(
       [
-        {
-          blockNumber: 103,
-          logIndex: 1,
-          handler,
-        },
         {
           blockNumber: 103,
           logIndex: 2,
@@ -1145,8 +1165,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~latestFetchedBlockNumber=103,
       ~resolveAt=#first,
     )
-    sourceMock100.resolveGetItemsOrThrow(
+    await MockIndexer.Helper.waitItemsQuery(sourceMock1337)
+    sourceMock1337.resolveGetItemsOrThrow(
       [
+        {
+          blockNumber: 103,
+          logIndex: 1,
+          handler,
+        },
         {
           blockNumber: 103,
           logIndex: 2,
@@ -1401,7 +1427,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual((
       // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
       // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 up to
-      // the per-partition cap of 10 chunks.
+      // the per-partition cap of 12 chunks.
       [
         {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
         {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
@@ -1413,6 +1439,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
         {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
         {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
+        {"fromBlock": 166, "toBlock": Some(171), "retry": 0, "p": "0"},
+        {"fromBlock": 172, "toBlock": Some(177), "retry": 0, "p": "0"},
       ],
       // Chain 1337: partition DELETED (lfb > target), recreated fresh
       [
@@ -1581,13 +1609,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
         })
       }
 
-      sourceMock1337.resolveGetItemsOrThrow(
+      // The most-behind chain (100 — the progress tie breaks by ascending
+      // chain id) holds the only post-threshold query; chain 1337's appears
+      // once the leader's response releases the budget.
+      sourceMock100.resolveGetItemsOrThrow(
         [
-          {
-            blockNumber: 103,
-            logIndex: 1,
-            handler,
-          },
           {
             blockNumber: 103,
             logIndex: 2,
@@ -1597,8 +1623,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      sourceMock100.resolveGetItemsOrThrow(
+      await MockIndexer.Helper.waitItemsQuery(sourceMock1337)
+      sourceMock1337.resolveGetItemsOrThrow(
         [
+          {
+            blockNumber: 103,
+            logIndex: 1,
+            handler,
+          },
           {
             blockNumber: 103,
             logIndex: 2,
@@ -2164,6 +2196,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
+      // Chain 1337's query appears once the leader's (chain 100) response
+      // releases the budget.
+      await MockIndexer.Helper.waitItemsQuery(sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -2245,6 +2280,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
       await Utils.delay(0)
 
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
       sourceMock1337.resolveGetItemsOrThrow(
         [],
         ~prevRangeLastBlock={
@@ -2253,9 +2292,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
         },
         ~resolveAt=#first,
       )
-
-      // Clean up any pending calls for chain 100
-      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
       // Allow microtask queue to process the fetch response callbacks,
       // which dispatch ValidatePartitionQueryResponse and transition
@@ -2332,7 +2368,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock137),
     ))
 
-    // Each chain processes events at blocks 102-103
+    // Queries are serialized by the budget waterfall in ascending-chain-id
+    // order on the progress tie (100, then 137, then 1337): a chain keeps the
+    // budget until it reaches head, so drive each to head before the next
+    // one's turn. Each chain processes events at blocks 102-103.
     sourceMock100.resolveGetItemsOrThrow(
       [
         {
@@ -2353,6 +2392,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~latestFetchedBlockNumber=103,
       ~resolveAt=#first,
     )
+    await MockIndexer.Helper.waitItemsQuery(sourceMock100)
+    sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~resolveAt=#first)
+    await MockIndexer.Helper.waitItemsQuery(sourceMock137)
     sourceMock137.resolveGetItemsOrThrow(
       [
         {
@@ -2373,6 +2415,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~latestFetchedBlockNumber=103,
       ~resolveAt=#first,
     )
+    await MockIndexer.Helper.waitItemsQuery(sourceMock137)
+    sourceMock137.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~resolveAt=#first)
+    await MockIndexer.Helper.waitItemsQuery(sourceMock1337)
     sourceMock1337.resolveGetItemsOrThrow(
       [
         {
@@ -2391,6 +2436,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       {
         let metrics = await indexerMock.metric("envio_progress_events")
+        // Chain 137's counter also includes its pinned onBlock handlers firing
+        // on the way to head; their processing races batch writes, so only the
+        // event-driven chains are asserted.
+        let metrics = metrics->Array.filter(m => m.labels->Dict.get("chainId") != Some("137"))
         metrics->Array.toSorted(
           (a, b) =>
             Int.compare(
@@ -2399,11 +2448,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
             ),
         )
       },
-      ~message="Events count before rollback: chain 1337=1, chain 100=2, chain 137=2",
+      ~message="Events count before rollback: chain 1337=1, chain 100=2",
     ).toEqual([
       {value: "1", labels: Dict.fromArray([("chainId", "1337")])},
       {value: "2", labels: Dict.fromArray([("chainId", "100")])},
-      {value: "2", labels: Dict.fromArray([("chainId", "137")])},
     ])
 
     // === FIRST REORG on chain 1337 at block 103 ===
@@ -2422,15 +2470,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
       {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
     ])
 
-    // Clean up pending calls from before rollback
-    sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
-    sourceMock137.resolveGetItemsOrThrow([], ~resolveAt=#all)
-
     await indexerMock.getRollbackReadyPromise()
 
     t.expect(
       {
         let metrics = await indexerMock.metric("envio_progress_events")
+        // Chain 137's counter also includes its pinned onBlock handlers firing
+        // on the way to head; their processing races batch writes, so only the
+        // event-driven chains are asserted.
+        let metrics = metrics->Array.filter(m => m.labels->Dict.get("chainId") != Some("137"))
         metrics->Array.toSorted(
           (a, b) =>
             Int.compare(
@@ -2439,15 +2487,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
             ),
         )
       },
-      ~message="After first rollback: all chains' counters should be 0",
+      ~message="After first rollback: counters restored to the pre-reorg state",
     ).toEqual([
       {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-      {value: "0", labels: Dict.fromArray([("chainId", "137")])},
       {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
     ])
 
     // === SECOND REORG on chain 1337 at block 100 ===
-    await Utils.delay(0)
+    // After the rollback the reorg chain's refetch query goes out directly.
+    await MockIndexer.Helper.waitItemsQuery(sourceMock1337)
 
     sourceMock1337.resolveGetItemsOrThrow(
       [],
@@ -2457,9 +2505,6 @@ This might be wrong after we start exposing a block hash for progress block.`,
       },
       ~resolveAt=#first,
     )
-
-    sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
-    sourceMock137.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
     await Utils.delay(0)
     await Utils.delay(0)
@@ -2471,6 +2516,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       {
         let metrics = await indexerMock.metric("envio_progress_events")
+        // Chain 137's counter also includes its pinned onBlock handlers firing
+        // on the way to head; their processing races batch writes, so only the
+        // event-driven chains are asserted.
+        let metrics = metrics->Array.filter(m => m.labels->Dict.get("chainId") != Some("137"))
         metrics->Array.toSorted(
           (a, b) =>
             Int.compare(
@@ -2479,10 +2528,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
             ),
         )
       },
-      ~message="After second rollback: non-reorg chains (100, 137) must NOT go negative",
+      ~message="After second rollback: non-reorg chain 100 must NOT go negative",
     ).toEqual([
       {value: "0", labels: Dict.fromArray([("chainId", "100")])},
-      {value: "0", labels: Dict.fromArray([("chainId", "137")])},
       {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
     ])
   })
@@ -2506,18 +2554,18 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
     // 3. Process 2 queries to build chunk history (3+ block ranges each)
-    // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+    // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
     switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+    | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
     | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
     }
     await indexerMock.getBatchWritePromise()
 
-    // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+    // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
     // After this, chunking will be enabled with chunkRange=min(3,3)=3
     // A new query batch should be created with chunks
     switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+    | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
     | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
     }
     await indexerMock.getBatchWritePromise()
@@ -2610,17 +2658,17 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
 
-      // Query 1: 101-103 (range=3) -> enables prevQueryRange=3
+      // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
       switch sourceMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([], ~latestFetchedBlockNumber=103)
+      | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
       | _ => JsError.throwWithMessage("Should have a single pending call for query 1")
       }
       await indexerMock.getBatchWritePromise()
 
-      // Query 2: 104-106 (range=3) -> enables prevPrevQueryRange=3
+      // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
       switch sourceMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([], ~latestFetchedBlockNumber=106)
+      | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
       | _ => JsError.throwWithMessage("Should have a single pending call for query 2")
       }
       await indexerMock.getBatchWritePromise()
@@ -2753,10 +2801,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
         MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock2),
       ))
 
-      // Chain 1337 fetches block 101 with 0 events.
-      // registerReorgGuard stores block hash "0x101" for block 101.
-      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101, ~resolveAt=#first)
-
+      // The most-behind chain (100 — the progress tie breaks by ascending
+      // chain id) holds the only post-threshold query; chain 1337's appears
+      // once the leader's response releases the budget.
       // Chain 100 fetches block 101 with 1 event.
       sourceMock2.resolveGetItemsOrThrow(
         [
@@ -2774,6 +2821,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~latestFetchedBlockNumber=101,
         ~resolveAt=#first,
       )
+      await MockIndexer.Helper.waitItemsQuery(sourceMock1)
+
+      // Chain 1337 fetches block 101 with 0 events.
+      // registerReorgGuard stores block hash "0x101" for block 101.
+      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101, ~resolveAt=#first)
 
       // Fetch response processing uses multiple layers of setTimeout(0):
       // 1. ValidatePartitionQueryResponse → dispatches ProcessPartitionQueryResponse task
@@ -2784,14 +2836,21 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await Utils.delay(0)
       await Utils.delay(0)
       // After this delay:
-      // - NextQuery started fetches for both chains from block 102
+      // - NextQuery started a fetch for block 102 — but both chains are
+      //   equally behind now, so only the leader (chain 100, tie broken by
+      //   ascending chain id) holds it; chain 1337's follow-up appears once
+      //   chain 100's response releases the budget.
       // - ProcessEventBatch created batch: with batchSize=1, chain 100's
       //   1 event fills the batch. Chain 1337 is SKIPPED — no checkpoint.
       //   The batch write is async and still in-flight.
       await Utils.delay(0)
 
-      // Chain 1337 now has a pending fetch from block 102 (started by NextQuery).
-      // Resolve it with prevRangeLastBlock having a DIFFERENT hash for block 101.
+      sourceMock2.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102, ~resolveAt=#first)
+      await MockIndexer.Helper.waitItemsQuery(sourceMock1)
+
+      // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
+      // once chain 100's budget released). Resolve it with prevRangeLastBlock
+      // having a DIFFERENT hash for block 101.
       // registerReorgGuard compares stored "0x101" vs received "0x101-reorged" → MISMATCH.
       // Reorg is detected while the batch write is still in-flight,
       // so chain 1337 never gets a checkpoint at block 101.
@@ -2817,6 +2876,16 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ])
 
       await indexerMock.getRollbackReadyPromise()
+
+      // The rollback resets every chain's fetch frontier to a consistent
+      // checkpoint, so chain 100 also has a fresh (and a stale pre-rollback)
+      // pending query competing for budget — clean those up so chain 1337
+      // gets its own.
+      // Clean up chain 100's dangling pre-rollback query; its known density
+      // caps the refetch reservation, so the budget reaches chain 1337 right
+      // after.
+      sourceMock2.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      await MockIndexer.Helper.waitItemsQuery(sourceMock1)
 
       let actualPayloads = sourceMock1.getItemsOrThrowCalls->Array.map(c => c.payload)
       t.expect(
@@ -3069,7 +3138,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
         // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 up to the
-        // per-partition cap of 10 chunks.
+        // per-partition cap of 12 chunks.
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
@@ -3081,6 +3150,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
           {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
           {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
+          {"fromBlock": 166, "toBlock": Some(171), "retry": 0, "p": "0"},
+          {"fromBlock": 172, "toBlock": Some(177), "retry": 0, "p": "0"},
         ],
         // Chain 1337: partition deleted (lfb > target), recreated fresh
         [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "0"}],
