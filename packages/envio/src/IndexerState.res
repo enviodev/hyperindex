@@ -6,23 +6,6 @@ type rollbackState =
   | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
-module WriteThrottlers = {
-  type t = {pruneStaleEntityHistory: Throttler.t}
-  let make = (): t => {
-    let pruneStaleEntityHistory = {
-      let intervalMillis = Env.ThrottleWrites.pruneStaleDataIntervalMillis
-      let logger = Logging.createChild(
-        ~params={
-          "context": "Throttler for pruning stale entity history data",
-          "intervalMillis": intervalMillis,
-        },
-      )
-      Throttler.make(~intervalMillis, ~logger)
-    }
-    {pruneStaleEntityHistory: pruneStaleEntityHistory}
-  }
-}
-
 module EntityTables = {
   type t = dict<InMemoryTable.Entity.t>
   exception UndefinedEntity({entityName: string})
@@ -124,7 +107,9 @@ type t = {
   crossChainState: CrossChainState.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
-  writeThrottlers: WriteThrottlers.t,
+  // When an entity's history was last pruned. No key = never pruned yet,
+  // which counts as overdue.
+  lastPrunedAtMillis: dict<float>,
   loadManager: LoadManager.t,
   keepProcessAlive: bool,
   exitAfterFirstEventBlock: bool,
@@ -204,7 +189,7 @@ let make = (
     ),
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
-    writeThrottlers: WriteThrottlers.make(),
+    lastPrunedAtMillis: Dict.make(),
     loadManager: LoadManager.make(),
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
@@ -432,7 +417,7 @@ let keepProcessAlive = (state: t) => state.keepProcessAlive
 let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
 let isStopped = (state: t) => state.isStopped
 let epoch = (state: t) => state.epoch
-let pruneStaleEntityHistoryThrottler = (state: t) => state.writeThrottlers.pruneStaleEntityHistory
+let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis
 let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
 
 // Read-only snapshot of every metric; the single window into the mutable

@@ -180,13 +180,6 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
           )
         } else {
           ChainMetadata.stage(state)
-          if (
-            state
-            ->IndexerState.config
-            ->Config.shouldPruneHistory(~isInReorgThreshold=state->IndexerState.isInReorgThreshold)
-          ) {
-            state->PruneStaleHistory.schedule
-          }
         }
       }
     }

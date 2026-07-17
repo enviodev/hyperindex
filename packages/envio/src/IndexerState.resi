@@ -98,7 +98,7 @@ let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
 let isStopped: t => bool
 let epoch: t => int
-let pruneStaleEntityHistoryThrottler: t => Throttler.t
+let lastPrunedAtMillis: t => dict<float>
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
 
 // Read-only snapshot of every metric; the single window into the mutable

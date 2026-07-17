@@ -125,18 +125,37 @@ let runOneWrite = async (state: IndexerState.t) => {
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
 
-    await persistence.storage.writeBatch(
-      ~batch,
-      ~rollback,
-      ~isInReorgThreshold=batch.isInReorgThreshold,
-      ~config,
-      ~allEntities=persistence.allEntities,
-      ~updatedEntities,
-      ~updatedEffectsCache,
-      ~chainMetaData,
-      ~onWrite=(~storage, ~timeSeconds) =>
-        state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+    let writtenEntityNames = Utils.Set.make()
+    updatedEntities->Array.forEach(({entityConfig}) =>
+      writtenEntityNames->Utils.Set.add(entityConfig.name)->ignore
     )
+    let pruneTargets = PruneStaleHistory.select(
+      state,
+      ~writtenEntityNames,
+      ~isRollback=rollback->Option.isSome,
+    )
+
+    // The prune runs concurrently with the batch write, but only for entities
+    // absent from it, so they never touch the same history table. Both must be
+    // awaited before the next write starts, otherwise a still-running prune
+    // could overlap the next batch's history writes and lose an anchor (which
+    // breaks a later rollback). Rollback writes touch every history table, so
+    // they get no concurrent prune at all.
+    let _ = await Promise.all2((
+      persistence.storage.writeBatch(
+        ~batch,
+        ~rollback,
+        ~isInReorgThreshold=batch.isInReorgThreshold,
+        ~config,
+        ~allEntities=persistence.allEntities,
+        ~updatedEntities,
+        ~updatedEffectsCache,
+        ~chainMetaData,
+        ~onWrite=(~storage, ~timeSeconds) =>
+          state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+      ),
+      PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
+    ))
 
     state->IndexerState.markCommitted(~upToCheckpointId)
 
@@ -145,6 +164,10 @@ let runOneWrite = async (state: IndexerState.t) => {
       await RollbackCommit.fire(~progressBlockNumberByChainId)
     | _ => ()
     }
+
+    // Entities starved of the concurrent prune (eg written in every batch) are
+    // pruned here with no other pg writer running.
+    await PruneStaleHistory.runForced(state, ~targets=pruneTargets)
   }
 }
 
