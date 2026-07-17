@@ -152,19 +152,22 @@ impl EvmHypersyncClient {
         let mut request_stats = Vec::new();
         let mut cursor = from_block;
         loop {
+            // Follow-up pages re-request the last block of the previous page:
+            // one HyperSync response is internally consistent, so a fork
+            // switch between paginated requests is the only seam — and it
+            // surfaces as a hash collision on the overlapping block when the
+            // page is appended.
+            let request_from = if cursor > from_block {
+                cursor - 1
+            } else {
+                cursor
+            };
             let query = Query {
-                from_block: cursor,
+                from_block: request_from,
                 to_block: Some(to_block_exclusive),
                 include_all_blocks: Some(true),
                 field_selection: query::FieldSelection {
-                    // ParentHash lets the response store validate the chain
-                    // linkage of the contiguous range (the EVM analogue of the
-                    // SVM parent-slot check).
-                    block: Some(vec![
-                        BlockField::Number,
-                        BlockField::Hash,
-                        BlockField::ParentHash,
-                    ]),
+                    block: Some(vec![BlockField::Number, BlockField::Hash]),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -192,11 +195,6 @@ impl EvmHypersyncClient {
                 ));
                 return Err(error_with_request_stats(error, &request_stats));
             }
-            page_store
-                .validate_evm_dense_range(cursor, next_block.min(to_block_exclusive))
-                .context("validate block-hash page")
-                .map_err(map_err)
-                .map_err(|error| error_with_request_stats(error, &request_stats))?;
             aggregate.append_page(&page_store);
             if next_block > to_block {
                 return Ok((aggregate, request_stats));
