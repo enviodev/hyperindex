@@ -4,13 +4,9 @@ export default defineConfig({
   test: {
     include: ["test/**/*_test.res.mjs", "test/**/*.test.ts"],
     exclude: ["test/helpers/**"],
-    // Run tests sequentially - both file-wide and test-wide
-    fileParallelism: false,
-    sequence: {
-      concurrent: false,
-    },
+    // No shared database or other cross-file state, so files can run in
+    // parallel (each fork gets its own process-level globals).
     pool: "forks",
-    maxWorkers: 1,
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
@@ -19,7 +15,7 @@ export default defineConfig({
       deps: {
         // Externalize non-test files so they load via native Node.js ESM,
         // preventing dual module cache between vite and native import()
-        external: [/^(?!.*\.(test|spec)\.)(?!.*_test\.)(?!.*\/test\/).*$/i],
+        external: [/^(?!.*\.test\.)(?!.*_test\.)(?!.*\/test\/).*$/i],
       },
     },
   },
