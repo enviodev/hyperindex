@@ -16,6 +16,9 @@ type chainBeforeBatch = {
   // for reorg detection.
   blockStore: BlockStore.t,
   shouldRollbackOnReorg: bool,
+  // The resumed-from-DB reorg depth (may differ from the config value after a
+  // restart) — the same authority the store used when retaining hashes.
+  maxReorgDepth: int,
   progressBlockNumber: int,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
@@ -139,7 +142,10 @@ let addReorgCheckpoints = (
 ) => {
   if shouldRollbackOnReorg {
     let prevCheckpointId = ref(prevCheckpointId)
-    for blockNumber in Pervasives.max(fromBlockExclusive + 1, thresholdBlockNumber) to toBlockExclusive - 1 {
+    for blockNumber in Pervasives.max(
+      fromBlockExclusive + 1,
+      thresholdBlockNumber,
+    ) to toBlockExclusive - 1 {
       switch blockStore->BlockStore.getHash(blockNumber) {
       | Null.Value(hash) =>
         let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
@@ -206,7 +212,7 @@ let prepareBatch = (
     // threshold; below it checkpoints stay hashless (matching what the store
     // retains after pruning).
     let chainThresholdBlockNumber =
-      chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.maxReorgDepth
+      chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.maxReorgDepth
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
         let item = fetchState.buffer->Array.getUnsafe(idx)

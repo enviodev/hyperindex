@@ -1,9 +1,4 @@
-// Reorg detection lives in the Rust `BlockStore`. A validated response is
-// compared with the persistent store and only that cross-store mismatch is a
-// reorg signal; response-internal conflicts are retried by SourceManager.
-
 type blockData = {
-  // Block hash is used for actual comparison to test for reorg
   blockHash: string,
   blockNumber: int,
 }

@@ -179,7 +179,7 @@ let rec onQueryResponse = async (
         ->ChainState.logger
         ->Logging.childInfo(
           reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
+            ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
           ),
         )
         Prometheus.ReorgCount.increment(~chain)
@@ -187,7 +187,11 @@ let rec onQueryResponse = async (
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
           ~chain,
         )
-        if (state->IndexerState.config).shouldRollbackOnReorg {
+
+        // Must agree with the `reportOnly` flag registerReorgGuard passed to
+        // the merge: a discarded page (rollback mode) needs the rollback to
+        // actually happen, or the stale stored hash re-reports forever.
+        if chainState->ChainState.shouldRollbackOnReorg {
           Some(reorgDetected.scannedBlock.blockNumber)
         } else {
           None

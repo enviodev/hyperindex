@@ -2,19 +2,16 @@ open Vitest
 
 let baseChainConfig = Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
-let mockEvent = (~blockNumber): Internal.item =>
-  Internal.Event({
-    chain: ChainMap.Chain.makeUnsafe(~chainId=1),
-    blockNumber,
-    // Carries an `index` so the buffer's dedup key resolves; the rest of the
-    // registration is unused by these tests.
-    onEventRegistration: {"index": 0}->(
-      Utils.magic: {"index": int} => Internal.onEventRegistration
-    ),
-    logIndex: 0,
-    transactionIndex: 0,
-    payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
-  })
+let mockEvent = (~blockNumber): Internal.item => Internal.Event({
+  chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+  blockNumber,
+  // Carries an `index` so the buffer's dedup key resolves; the rest of the
+  // registration is unused by these tests.
+  onEventRegistration: {"index": 0}->(Utils.magic: {"index": int} => Internal.onEventRegistration),
+  logIndex: 0,
+  transactionIndex: 0,
+  payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
+})
 
 // A chain state with no partitions, so bufferBlockNumber is latestOnBlockBlockNumber
 // (the fetch frontier) and every derived value used by the scheduler is set directly.
@@ -44,7 +41,9 @@ let makeChainState = (
         startBlock: None,
         endBlock: None,
         interval: 1,
-        handler: "mock onBlock handler"->(Utils.magic: string => Internal.onBlockArgs => promise<unit>),
+        handler: "mock onBlock handler"->(
+          Utils.magic: string => Internal.onBlockArgs => promise<unit>
+        ),
       },
     ],
     ~startBlock=0,
@@ -69,6 +68,7 @@ let makeChainState = (
     ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~maxReorgDepth=200,
+    ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
     ~logger=Logging.getLogger(),
@@ -109,7 +109,14 @@ let makeFetchingChainState = (
     Dict.fromArray([
       (
         address->Address.toString,
-        ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
+        (
+          {
+            contractName: "MockContract",
+            address,
+            registrationBlock: -1,
+            effectiveStartBlock: 0,
+          }: Internal.indexingContract
+        ),
       ),
     ])->(Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t)
   let fetchState: FetchState.t = {
@@ -139,6 +146,7 @@ let makeFetchingChainState = (
     ~indexingAddresses,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~maxReorgDepth=200,
+    ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
@@ -174,14 +182,15 @@ let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
 
 describe("ChainState event registration ownership", () => {
   it("rejects a registration whose index differs from its ChainState position", t => {
-    t.expect(() =>
-      makeChainState(
-        ~chainId=1,
-        ~knownHeight=10,
-        ~frontier=10,
-        ~firstEventBlock=0,
-        ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
-      )->ignore
+    t.expect(
+      () =>
+        makeChainState(
+          ~chainId=1,
+          ~knownHeight=10,
+          ~frontier=10,
+          ~firstEventBlock=0,
+          ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
+        )->ignore,
     ).toThrowError(
       "Invalid onEvent registration index for chain 1: ContractA.EventWithoutFields has index 4, but its ChainState position is 0.",
     )
@@ -190,9 +199,27 @@ describe("ChainState event registration ownership", () => {
 
 describe("CrossChainState fetch control", () => {
   it("priorityOrder visits the furthest-behind chain first", t => {
-    let a = makeChainState(~chainId=1, ~knownHeight=1000, ~frontier=100, ~firstEventBlock=0, ~bufferBlocks=[100])
-    let b = makeChainState(~chainId=2, ~knownHeight=1000, ~frontier=500, ~firstEventBlock=0, ~bufferBlocks=[500])
-    let cHead = makeChainState(~chainId=3, ~knownHeight=1000, ~frontier=1000, ~firstEventBlock=0, ~bufferBlocks=[950])
+    let a = makeChainState(
+      ~chainId=1,
+      ~knownHeight=1000,
+      ~frontier=100,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[100],
+    )
+    let b = makeChainState(
+      ~chainId=2,
+      ~knownHeight=1000,
+      ~frontier=500,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[500],
+    )
+    let cHead = makeChainState(
+      ~chainId=3,
+      ~knownHeight=1000,
+      ~frontier=1000,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[950],
+    )
 
     let cm = makeCrossChainState(~chainStatesList=[cHead, a, b])
 
@@ -232,10 +259,12 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
-      dispatched->Array.push((chain->ChainMap.Chain.toChainId, action))->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chain, ~action) => {
+        dispatched->Array.push((chain->ChainMap.Chain.toChainId, action))->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(
       dispatched->Array.map(((chainId, action)) => (chainId, action === WaitingForNewBlock)),
@@ -262,10 +291,12 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=100)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action as _) => {
-      dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chain, ~action as _) => {
+        dispatched->Array.push(chain->ChainMap.Chain.toChainId)->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(dispatched).toEqual([])
   })
@@ -278,18 +309,20 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
-      dispatched
-      ->Array.push((
-        chain->ChainMap.Chain.toChainId,
-        switch action {
-        | Ready(queries) => queries->Array.length
-        | _ => 0
-        },
-      ))
-      ->ignore
-      Promise.resolve()
-    })
+    await cm->CrossChainState.checkAndFetch(
+      ~dispatchChain=(~chain, ~action) => {
+        dispatched
+        ->Array.push((
+          chain->ChainMap.Chain.toChainId,
+          switch action {
+          | Ready(queries) => queries->Array.length
+          | _ => 0
+          },
+        ))
+        ->ignore
+        Promise.resolve()
+      },
+    )
 
     t.expect(dispatched).toEqual([(1, 1)])
   })

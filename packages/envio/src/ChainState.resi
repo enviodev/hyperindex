@@ -13,8 +13,8 @@ let make: (
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
-  ~shouldRollbackOnReorg: bool=?,
-  ~maxReorgDepth: int=?,
+  ~shouldRollbackOnReorg: bool,
+  ~maxReorgDepth: int,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -47,6 +47,7 @@ let logger: t => Pino.t
 let blockStore: t => BlockStore.t
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
+let shouldRollbackOnReorg: t => bool
 // Reorg-scan reads over the chain's block store, for the rollback flow.
 let getReorgThresholdBlockNumbersBelow: (t, ~blockNumber: int) => array<int>
 let getLatestValidScannedBlock: (

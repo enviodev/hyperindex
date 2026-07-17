@@ -209,20 +209,21 @@ impl SvmHypersyncClient {
             .map_err(map_err)?;
 
         let fields = query::FieldSelection {
-            block: Some(vec![
-                "slot".to_string(),
-                "blockhash".to_string(),
-                "parent_slot".to_string(),
-                "parent_blockhash".to_string(),
-            ]),
+            block: Some(vec!["slot".to_string(), "blockhash".to_string()]),
             ..Default::default()
         };
         let aggregate = BlockStore::new_svm();
         let mut request_stats = Vec::new();
         let mut cursor = from_slot;
+        // Follow-up pages re-request the last returned block: one HyperSync
+        // response is internally consistent, so a fork switch between
+        // paginated requests is the only seam — and it surfaces as a hash
+        // collision on the overlapping slot when the page is appended.
+        let mut overlap_slot = None;
         loop {
+            let request_from = overlap_slot.unwrap_or(cursor);
             let query = SvmQuery {
-                from_slot: cursor,
+                from_slot: request_from,
                 to_slot: Some(to_slot_exclusive),
                 include_all_blocks: Some(true),
                 fields: Some(fields.clone()),
@@ -236,34 +237,46 @@ impl SvmHypersyncClient {
             });
             let response =
                 response.map_err(|error| error_with_request_stats(error, &request_stats))?;
-            let (next_slot, page_store) = block_hash_page(response)
+            let (next_slot, last_slot, page_store) = block_hash_page(response)
                 .map_err(map_err)
                 .map_err(|error| error_with_request_stats(error, &request_stats))?;
             if next_slot <= cursor {
                 let error = map_err(anyhow::anyhow!(
-                    "SVM block hash query made no progress: cursor={cursor}, next_slot={next_slot}"
+                    "Slot #{cursor} is not yet available on the queried HyperSync replica. \
+                     Replicas may briefly trail the chain head - this is expected, and indexing \
+                     continues after an automatic retry."
                 ));
                 return Err(error_with_request_stats(error, &request_stats));
             }
             aggregate.append_page(&page_store);
             aggregate
-                .mark_svm_coverage(cursor, next_slot.min(to_slot_exclusive))
+                .mark_svm_coverage(request_from, next_slot.min(to_slot_exclusive))
                 .map_err(map_err)
                 .map_err(|error| error_with_request_stats(error, &request_stats))?;
             if next_slot >= to_slot_exclusive {
                 return Ok((aggregate, request_stats));
             }
             cursor = next_slot;
+            overlap_slot = last_slot.or(overlap_slot);
         }
     }
 }
 
-/// Convert only the cursor and raw blocks needed for rollback-depth checks.
-fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, BlockStore)> {
+/// Convert only the values needed by the block-hash paginator: the advancing
+/// cursor, the highest returned slot (the next page's overlap anchor), and the
+/// page store.
+fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<i64>, BlockStore)> {
     let next_slot = i64::try_from(response.next_slot).context("convert next_slot")?;
+    let last_slot = response
+        .blocks
+        .iter()
+        .map(|b| i64::try_from(b.slot).context("convert slot"))
+        .try_fold(None, |acc: Option<i64>, slot| {
+            slot.map(|s| Some(acc.map_or(s, |a: i64| a.max(s))))
+        })?;
     let block_store = BlockStore::new_svm();
     block_store.insert_svm_blocks(std::mem::take(&mut response.blocks));
-    Ok((next_slot, block_store))
+    Ok((next_slot, last_slot, block_store))
 }
 
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {

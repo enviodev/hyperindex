@@ -97,8 +97,8 @@ let make = (
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
   ~safeCheckpointTracking=None,
-  ~shouldRollbackOnReorg=false,
-  ~maxReorgDepth=0,
+  ~shouldRollbackOnReorg,
+  ~maxReorgDepth,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -182,8 +182,11 @@ let makeInternal = (
     ~knownHeight,
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
+    // The resumed depth, not the config one: the pre-threshold lag must match
+    // the window reorg detection compares, or a reduced config depth would let
+    // fetching enter the stored rollback window without history.
     ~blockLag=Pervasives.max(
-      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
+      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : maxReorgDepth,
       chainConfig.blockLag,
     ),
     ~onBlockRegistrations,
@@ -391,6 +394,7 @@ let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
+let shouldRollbackOnReorg = (cs: t) => cs.shouldRollbackOnReorg
 // Reorg-scan reads over the block store, for the rollback flow: the scanned
 // block numbers still inside the reorg threshold, and the highest of them whose
 // re-fetched hash still matches.
@@ -617,7 +621,7 @@ let hasProcessedToEndblock = (cs: t) => {
 }
 
 let getHighestBlockBelowThreshold = (cs: t): int => {
-  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.chainConfig.maxReorgDepth
+  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
@@ -922,6 +926,7 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
   sourceBlockNumber: cs.fetchState.knownHeight,
   blockStore: cs.blockStore,
   shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
+  maxReorgDepth: cs.maxReorgDepth,
   chainConfig: cs.chainConfig,
 }
 

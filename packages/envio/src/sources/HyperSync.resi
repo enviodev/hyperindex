@@ -9,6 +9,7 @@ type logsQueryPage = {
 }
 
 let reraiseIfRateLimited: exn => unit
+let mapRateLimitedFailure: Source.nativeRequestFailure => exn
 let mapRateLimitedExn: exn => exn
 
 module GetLogs: {

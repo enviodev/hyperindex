@@ -86,7 +86,9 @@ impl FixedCol {
     pub(crate) fn push(&mut self, v: Option<&[u8]>) {
         match v {
             Some(b) => {
-                debug_assert_eq!(b.len(), self.width);
+                // A hard check: a wrong-width cell would silently shift every
+                // subsequent row's offset in release builds.
+                assert_eq!(b.len(), self.width, "fixed column cell width mismatch");
                 self.data.extend_from_slice(b);
             }
             None => self.data.resize(self.data.len() + self.width, 0),
@@ -400,7 +402,7 @@ impl StoreCol {
             (StoreCol::Bool(v), AnyCol::Bool(s)) => v[slot] = s.get(row).unwrap(),
             (StoreCol::Fixed { width, data }, AnyCol::Fixed(s)) => {
                 let b = s.get(row).unwrap();
-                debug_assert_eq!(b.len(), *width);
+                assert_eq!(b.len(), *width, "fixed column cell width mismatch");
                 data[slot * *width..(slot + 1) * *width].copy_from_slice(b);
             }
             (StoreCol::Var(v), AnyCol::Var(s)) => {
@@ -473,14 +475,6 @@ impl StoreCol {
         }
     }
 
-    /// Raw unsigned integer cell. The caller must have checked the row's mask
-    /// bit, because primitive store columns do not carry per-slot validity.
-    fn cell_u64(&self, slot: usize) -> u64 {
-        match self {
-            StoreCol::U64(v) => v[slot],
-            _ => panic!("expected a u64 column"),
-        }
-    }
 }
 
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
@@ -499,6 +493,9 @@ pub(crate) struct Table<K> {
 
 impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     pub(crate) fn new(n_fields: usize) -> Self {
+        // Field masks are single u64 bitsets; a 65th field would silently
+        // corrupt them in release builds.
+        assert!(n_fields <= 64, "Table supports at most 64 fields");
         Self {
             by_key: HashMap::new(),
             order: BTreeMap::new(),
@@ -612,14 +609,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             .and_then(|c| c.cell_bytes(slot as usize))
     }
 
-    /// Unsigned integer value of `field` for `key`, if the row carries it.
-    pub(crate) fn field_u64(&self, key: &K, field: usize) -> Option<u64> {
-        let &slot = self.by_key.get(key)?;
-        if self.masks[slot as usize] & (1u64 << field) == 0 {
-            return None;
-        }
-        self.cols[field].as_ref().map(|c| c.cell_u64(slot as usize))
-    }
 
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ.
     pub(crate) fn first_field_mismatch(

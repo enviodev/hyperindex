@@ -747,9 +747,6 @@ impl BlockStore {
         for range in src.svm_covered_ranges.drain(..) {
             add_svm_covered_range(&mut dst.svm_covered_ranges, range);
         }
-        if let Some(conflict) = self.svm_parent_link_conflict(&dst) {
-            record_conflict(&mut dst.response_conflict, conflict);
-        }
     }
 
     /// Return the response-internal conflict, if one was recorded while this
@@ -932,8 +929,7 @@ impl BlockStore {
 
 impl BlockStore {
     /// Mark a half-open SVM range as completely processed by HyperSync. Missing
-    /// rows inside it are verified skipped slots. Parent links are validated
-    /// independently so cursor coverage cannot hide an omitted or mixed parent.
+    /// rows inside it are verified skipped slots.
     pub(crate) fn mark_svm_coverage(&self, from_slot: i64, to_slot_exclusive: i64) -> Result<()> {
         if !matches!(self.ecosystem, Ecosystem::Svm) {
             anyhow::bail!("SVM coverage can only be recorded on an SVM block store");
@@ -952,109 +948,7 @@ impl BlockStore {
             &mut inner.svm_covered_ranges,
             SvmCoveredRange { from, to_exclusive },
         );
-        if let Some(conflict) = self.svm_parent_link_conflict(&inner) {
-            record_conflict(&mut inner.response_conflict, conflict);
-        }
         Ok(())
-    }
-
-    /// Return the lowest inconsistent SVM parent link inside cursor-covered
-    /// ranges. A parent outside coverage is unknown and therefore not checked.
-    fn svm_parent_link_conflict(&self, inner: &Inner) -> Option<HashMismatch> {
-        if !matches!(self.ecosystem, Ecosystem::Svm) {
-            return None;
-        }
-        let hash_field = SvmBlockField::Hash as usize;
-        let parent_slot_field = SvmBlockField::ParentSlot as usize;
-        let parent_hash_field = SvmBlockField::ParentHash as usize;
-
-        let mut lowest = None;
-        for range in &inner.svm_covered_ranges {
-            let mut previous_child_slot = None;
-            for child_slot in
-                inner
-                    .table
-                    .keys_with_field(range.from, range.to_exclusive, hash_field)
-            {
-                // Genesis has no parent link.
-                if child_slot == 0 {
-                    continue;
-                }
-                let child_hash = inner.table.field_bytes(&child_slot, hash_field).unwrap();
-                let Some(parent_slot) = inner.table.field_u64(&child_slot, parent_slot_field)
-                else {
-                    let conflict = HashMismatch {
-                        block_number: child_slot as i64,
-                        stored_hash: "<missing parent_slot>".to_string(),
-                        received_hash: self.hash_display(child_hash),
-                    };
-                    lowest = lowest_conflict(lowest, Some(conflict));
-                    previous_child_slot = Some(child_slot);
-                    continue;
-                };
-                let Some(parent_hash) = inner.table.field_bytes(&child_slot, parent_hash_field)
-                else {
-                    let conflict = HashMismatch {
-                        block_number: child_slot as i64,
-                        stored_hash: "<missing parent_blockhash>".to_string(),
-                        received_hash: self.hash_display(child_hash),
-                    };
-                    lowest = lowest_conflict(lowest, Some(conflict));
-                    previous_child_slot = Some(child_slot);
-                    continue;
-                };
-
-                if parent_slot >= child_slot {
-                    let conflict = HashMismatch {
-                        block_number: child_slot as i64,
-                        stored_hash: "<parent slot below child>".to_string(),
-                        received_hash: format!("<parent slot {parent_slot}>"),
-                    };
-                    lowest = lowest_conflict(lowest, Some(conflict));
-                    previous_child_slot = Some(child_slot);
-                    continue;
-                }
-
-                let conflict = if let Some(previous_slot) = previous_child_slot {
-                    if parent_slot != previous_slot {
-                        Some(HashMismatch {
-                            block_number: child_slot as i64,
-                            stored_hash: format!("<expected parent slot {previous_slot}>"),
-                            received_hash: format!("<parent slot {parent_slot}>"),
-                        })
-                    } else {
-                        let previous_hash = inner
-                            .table
-                            .field_bytes(&previous_slot, hash_field)
-                            .expect("previous SVM child carries a block hash");
-                        (previous_hash != parent_hash).then(|| HashMismatch {
-                            block_number: previous_slot as i64,
-                            stored_hash: self.hash_display(previous_hash),
-                            received_hash: self.hash_display(parent_hash),
-                        })
-                    }
-                } else if svm_slot_is_covered(&inner.svm_covered_ranges, parent_slot) {
-                    match inner.table.field_bytes(&parent_slot, hash_field) {
-                        Some(hash) if hash != parent_hash => Some(HashMismatch {
-                            block_number: parent_slot as i64,
-                            stored_hash: self.hash_display(hash),
-                            received_hash: self.hash_display(parent_hash),
-                        }),
-                        None => Some(HashMismatch {
-                            block_number: parent_slot as i64,
-                            stored_hash: "<missing block>".to_string(),
-                            received_hash: self.hash_display(parent_hash),
-                        }),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                lowest = lowest_conflict(lowest, conflict);
-                previous_child_slot = Some(child_slot);
-            }
-        }
-        lowest
     }
 
     fn with_ecosystem(ecosystem: Ecosystem) -> Self {
@@ -1296,21 +1190,6 @@ mod tests {
             slot,
             blockhash: "hash".to_string(),
             block_time: Some(123),
-            ..Default::default()
-        }
-    }
-
-    fn linked_svm_block(
-        slot: u64,
-        hash: &str,
-        parent_slot: u64,
-        parent_hash: &str,
-    ) -> solana_simple::Block {
-        solana_simple::Block {
-            slot,
-            blockhash: hash.to_string(),
-            parent_slot: Some(parent_slot),
-            parent_blockhash: Some(parent_hash.to_string()),
             ..Default::default()
         }
     }
@@ -1827,14 +1706,11 @@ mod tests {
     }
 
     #[test]
-    fn svm_cursor_coverage_accepts_skipped_slots_and_validates_parent_links() {
+    fn svm_cursor_coverage_accepts_skipped_slots() {
         // Cursor coverage proves every slot in [10, 15) was processed, so the
         // missing interior slots and the missing upper slot are valid skips.
         let response = BlockStore::new_svm();
-        response.insert_svm_blocks(vec![
-            linked_svm_block(10, "h10", 9, "h9"),
-            linked_svm_block(13, "h13", 10, "h10"),
-        ]);
+        response.insert_svm_blocks(vec![raw_svm_block(10), raw_svm_block(13)]);
         assert_eq!(
             response.missing_hashes(vec![10, 11, 12, 13, 14]),
             vec![11, 12, 14]
@@ -1842,90 +1718,6 @@ mod tests {
         response.mark_svm_coverage(10, 15).unwrap();
         assert!(response.missing_hashes(vec![10, 11, 12, 13, 14]).is_empty());
         assert!(response.response_conflict().is_none());
-
-        // A parent outside the cursor-covered range is unknown, not missing.
-        let boundary_response = BlockStore::new_svm();
-        boundary_response.insert_svm_blocks(vec![linked_svm_block(13, "h13", 10, "h10")]);
-        boundary_response.mark_svm_coverage(11, 14).unwrap();
-        assert!(boundary_response
-            .missing_hashes(vec![11, 12, 13])
-            .is_empty());
-        assert!(boundary_response.response_conflict().is_none());
-
-        // A child naming an in-range parent that was not returned proves the
-        // response is incomplete even though cursor coverage closes the gap.
-        let omitted_parent = BlockStore::new_svm();
-        omitted_parent.insert_svm_blocks(vec![linked_svm_block(13, "h13", 11, "h11")]);
-        omitted_parent.mark_svm_coverage(11, 14).unwrap();
-        assert!(omitted_parent.missing_hashes(vec![11, 12, 13]).is_empty());
-        let mismatch = omitted_parent.response_conflict().expect("missing parent");
-        assert_eq!(
-            (
-                mismatch.block_number,
-                mismatch.stored_hash,
-                mismatch.received_hash
-            ),
-            (11, "<missing block>".to_string(), "h11".to_string())
-        );
-
-        // If the named parent is in the response, both parts of the link must
-        // agree; mixing blocks from two forks must remain inconsistent.
-        let mixed_fork = BlockStore::new_svm();
-        mixed_fork.insert_svm_blocks(vec![
-            linked_svm_block(10, "other-h10", 9, "h9"),
-            linked_svm_block(13, "h13", 10, "h10"),
-        ]);
-        mixed_fork.mark_svm_coverage(10, 14).unwrap();
-        let mismatch = mixed_fork.response_conflict().expect("mixed fork");
-        assert_eq!(
-            (
-                mismatch.block_number,
-                mismatch.stored_hash,
-                mismatch.received_hash
-            ),
-            (10, "other-h10".to_string(), "h10".to_string())
-        );
-
-        // Parent fields are required for every non-genesis block in coverage.
-        let missing_link = BlockStore::new_svm();
-        missing_link.insert_svm_blocks(vec![raw_svm_block(13)]);
-        missing_link.mark_svm_coverage(10, 14).unwrap();
-        let mismatch = missing_link.response_conflict().expect("missing link");
-        assert_eq!(mismatch.block_number, 13);
-        assert_eq!(mismatch.stored_hash, "<missing parent_slot>");
-
-        // Only the first returned block may name a parent below coverage. A
-        // later block doing so belongs to a disconnected fork.
-        let disconnected_fork = BlockStore::new_svm();
-        disconnected_fork.insert_svm_blocks(vec![
-            linked_svm_block(10, "h10", 9, "h9"),
-            linked_svm_block(13, "h13", 9, "h9"),
-        ]);
-        disconnected_fork.mark_svm_coverage(10, 14).unwrap();
-        let mismatch = disconnected_fork
-            .response_conflict()
-            .expect("disconnected fork");
-        assert_eq!(mismatch.block_number, 13);
-        assert_eq!(mismatch.stored_hash, "<expected parent slot 10>");
-        assert_eq!(mismatch.received_hash, "<parent slot 9>");
-
-        for (name, invalid_parent_slot) in [("self parent", 10), ("forward parent", 11)] {
-            let invalid_order = BlockStore::new_svm();
-            invalid_order.insert_svm_blocks(vec![linked_svm_block(
-                10,
-                "h10",
-                invalid_parent_slot,
-                "parent-hash",
-            )]);
-            invalid_order.mark_svm_coverage(10, 12).unwrap();
-            let mismatch = invalid_order.response_conflict().expect(name);
-            assert_eq!(mismatch.block_number, 10);
-            assert_eq!(mismatch.stored_hash, "<parent slot below child>");
-            assert_eq!(
-                mismatch.received_hash,
-                format!("<parent slot {invalid_parent_slot}>")
-            );
-        }
     }
 
     #[test]

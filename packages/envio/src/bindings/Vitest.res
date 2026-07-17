@@ -99,7 +99,7 @@ external afterEach: (unit => unit) => unit = "afterEach"
 // Async Module
 // ============================================================================
 
-type options = {retry?: int}
+type options = {retry?: int, timeout?: int}
 
 module Async = {
   @module("vitest")

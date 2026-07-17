@@ -306,8 +306,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           dependsOnAddresses: true,
         },
         ~itemsTarget=5000,
-      ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
@@ -367,21 +367,15 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           dependsOnAddresses: true,
         },
         ~itemsTarget=5000,
-      ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
       )
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
       let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
-      let expectedTokenBalance: option<array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>> = Some([
-        Slot,
-        TransactionIndex,
-        Account,
-        Mint,
-        Owner,
-        PreAmount,
-        PostAmount,
-      ])
+      let expectedTokenBalance: option<
+        array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>,
+      > = Some([Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount])
       t.expect({
         "tokenBalance": fields.tokenBalance,
         "transaction": fields.transaction,

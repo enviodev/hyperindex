@@ -17,6 +17,7 @@ let make: (
   ~reducedPollingInterval: int=?,
   ~recoveryTimeout: float=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
+  ~maxRetries: option<int>=?,
 ) => t
 
 let getActiveSource: t => Source.t
@@ -63,11 +64,7 @@ let makeGetHeightRetryInterval: (
   ~maxRetryInterval: int,
 ) => (~retry: int) => int
 
-let getBlockHashes: (
-  t,
-  ~blockNumbers: array<int>,
-  ~isRealtime: bool,
-) => promise<BlockStore.t>
+let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise<BlockStore.t>
 
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.
