@@ -63,7 +63,6 @@ type StaticTopicFilter = Option<Vec<[u8; 32]>>;
 struct EventVariant {
     on_event_registration_index: i64,
     params: Vec<ParamMeta>,
-    start_block: Option<i64>,
     /// The registration's resolved `where` in DNF (outer Vec is OR); a log
     /// matches when any selection's four positions all match. Empty means the
     /// registration puts no static topic constraint on its logs.
@@ -144,7 +143,6 @@ impl DecoderCore {
             event.variants.push(EventVariant {
                 on_event_registration_index: ep.index,
                 params: ep.params.clone(),
-                start_block: ep.start_block,
                 topic_filters: parse_topic_filters(&ep.topic_selections)
                     .with_context(|| format!("parse topic filters for {}", ep.event_name))?,
             });
@@ -178,13 +176,7 @@ impl DecoderCore {
             .context("decode topics")?;
         let data = log.data.as_ref().context("get log.data")?;
         let data = Data::decode_hex(data).context("decode data")?;
-        self.route_and_decode(
-            &topics,
-            &data,
-            contract_name,
-            log.block_number,
-            active_registrations,
-        )
+        self.route_and_decode(&topics, &data, contract_name, active_registrations)
     }
 
     pub(crate) fn route_and_decode_simple(
@@ -194,35 +186,25 @@ impl DecoderCore {
         active_registrations: &HashSet<i64>,
     ) -> Result<Vec<RoutedEvent>> {
         let data = log.data.as_ref().context("get log.data")?;
-        let block_number = log
-            .block_number
-            .map(|n| i64::try_from(u64::from(n)).context("log.blockNumber overflow"))
-            .transpose()?;
-        self.route_and_decode(
-            &log.topics,
-            data,
-            contract_name,
-            block_number,
-            active_registrations,
-        )
+        self.route_and_decode(&log.topics, data, contract_name, active_registrations)
     }
 
     /// Fans a log out to every matching registration and decodes once, applying
     /// each registration's own param names. `contract_name` is the log
     /// address's owning contract per the partition's address index: wildcard
     /// registrations always match, contract-bound registrations match iff the
-    /// address is owned — there is no fallback tier. Only registrations in the
-    /// query's `active_registrations` selection participate, and each match
-    /// re-applies the registration's static topic filters and `startBlock`
-    /// gate, since another registration's broader selection may have fetched
-    /// the log. An empty result means the log routes nowhere and is dropped by
-    /// the caller.
+    /// address is owned — there is no fallback tier. A log only routes to
+    /// registrations whose selection fetched it: registrations outside the
+    /// query's `active_registrations` never participate, and each match
+    /// re-applies the registration's static topic filters, since another
+    /// registration's broader selection in the same query may have fetched
+    /// the log. An empty result means the log routes nowhere and is dropped
+    /// by the caller.
     fn route_and_decode(
         &self,
         topics: &[Option<LogArgument>],
         data: &Data,
         contract_name: Option<&str>,
-        block_number: Option<i64>,
         active_registrations: &HashSet<i64>,
     ) -> Result<Vec<RoutedEvent>> {
         let event = match self.events.get(&MetaKey::from_topics(topics)?) {
@@ -242,10 +224,6 @@ impl DecoderCore {
             .filter(|&idx| {
                 let variant = &event.variants[idx];
                 active_registrations.contains(&variant.on_event_registration_index)
-                    && match (variant.start_block, block_number) {
-                        (Some(start), Some(number)) => number >= start,
-                        _ => true,
-                    }
                     && matches_topic_filters(&variant.topic_filters, topics)
             })
             .collect();
@@ -464,7 +442,6 @@ mod tests {
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
                 depends_on_addresses: false,
-                start_block: None,
                 topic_selections: vec![],
                 block_fields: vec![],
                 transaction_fields: vec![],
@@ -545,7 +522,6 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses: false,
-            start_block: None,
             topic_selections: vec![],
             block_fields: vec![],
             transaction_fields: vec![],
@@ -613,20 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn start_block_gates_each_registration_independently() {
-        let mut early = transfer_reg(0, "W1", true, VALID_SIGHASH);
-        early.start_block = Some(5);
-        let mut late = transfer_reg(1, "W2", true, VALID_SIGHASH);
-        late.start_block = Some(100);
-        let core = DecoderCore::from_registrations(&[early, late], false).unwrap();
-        let active = HashSet::from([0, 1]);
-        let mut log = value_log(VALID_SIGHASH);
-        log.block_number = Some(50);
-        let routed = core.route_and_decode_napi(&log, None, &active).unwrap();
-        assert_eq!(routed_indexes(&routed), vec![0]);
-    }
-
-    #[test]
     fn static_topic_filters_reapplied_per_registration() {
         const TOPIC1_A: &str = "0x00000000000000000000000000000000000000000000000000000000000000aa";
         const TOPIC1_B: &str = "0x00000000000000000000000000000000000000000000000000000000000000bb";
@@ -678,7 +640,6 @@ mod tests {
             contract_name: contract.to_string(),
             is_wildcard: false,
             depends_on_addresses: false,
-            start_block: None,
             topic_selections: vec![],
             block_fields: vec![],
             transaction_fields: vec![],
@@ -718,7 +679,6 @@ mod tests {
             contract_name: contract.to_string(),
             is_wildcard: false,
             depends_on_addresses: false,
-            start_block: None,
             topic_selections: vec![],
             block_fields: vec![],
             transaction_fields: vec![],

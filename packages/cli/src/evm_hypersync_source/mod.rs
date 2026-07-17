@@ -698,7 +698,6 @@ mod tests {
                 contract_name: "Zero".to_string(),
                 is_wildcard: true,
                 depends_on_addresses: false,
-                start_block: None,
                 topic_selections: vec![],
                 block_fields: vec![],
                 transaction_fields: vec![],

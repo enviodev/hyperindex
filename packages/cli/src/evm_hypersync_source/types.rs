@@ -306,10 +306,6 @@ pub struct OnEventRegistration {
     /// Whether the query for this event must be scoped to (or derived from)
     /// the contract's registered addresses.
     pub depends_on_addresses: bool,
-    /// Final start block (contract/chain config, overridden by a
-    /// `where.block.number._gte`); routing drops this registration's logs
-    /// below it.
-    pub start_block: Option<i64>,
     pub params: Vec<ParamMeta>,
     /// The registration's resolved `where` in disjunctive normal form (outer
     /// array is OR). Empty means the event is never fetched.

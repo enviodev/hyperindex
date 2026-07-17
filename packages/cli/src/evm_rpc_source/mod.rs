@@ -107,11 +107,6 @@ impl RawLog {
         DecoderLog {
             data: Some(self.data.clone()),
             topics: self.topics.iter().map(|t| Some(t.clone())).collect(),
-            // Routing's startBlock gate reads this; a malformed quantity is
-            // left unset here and surfaces as an error in `into_rpc_log`.
-            block_number: parse_hex_u64(&self.block_number)
-                .ok()
-                .and_then(|v| i64::try_from(v).ok()),
             ..Default::default()
         }
     }
