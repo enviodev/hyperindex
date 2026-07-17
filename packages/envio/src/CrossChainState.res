@@ -195,6 +195,20 @@ let totalReservedSize = (crossChainState: t) => {
   total.contents
 }
 
+// Action for a chain that gets no query this tick. A chain is genuinely idle —
+// and correctly left undispatched — when it is caught up to its head/endblock,
+// still draining in-flight queries, or holding ready items that batch
+// processing will drain and re-schedule from. Any other chain must keep
+// polling for new blocks instead of going silent: NothingToQuery isn't
+// dispatched, so such a chain would never be re-scheduled and its head
+// tracking would freeze.
+let idleOrWaitAction = (cs: ChainState.t) =>
+  cs->ChainState.isFetchingAtHead ||
+  cs->ChainState.pendingBudget > 0. ||
+  cs->ChainState.bufferReadyCount > 0
+    ? FetchState.NothingToQuery
+    : FetchState.WaitingForNewBlock
+
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events, as a waterfall: visit chains furthest-behind
 // first, hand each the budget remaining at that point (plus its own
@@ -262,17 +276,21 @@ let checkAndFetch = async (
   let actionByChain = Dict.make()
   prioritizedChainStates->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
-    if remaining.contents < minimumAdmissionBudget {
-      // More than 90% of the target pool is ready or reserved. Do not attempt
-      // any chain action until a full admission unit becomes free.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
-    } else if cs->ChainState.knownHeight == 0 {
+    if cs->ChainState.knownHeight == 0 {
       // Let getNextQuery own the waiting decision without trying to size work
-      // against an unknown height.
+      // against an unknown height. Checked before the admission floor so a
+      // chain that hasn't found its first block yet starts height tracking
+      // even while other chains hold the whole pool.
       actionByChain->Utils.Dict.setByInt(
         chainId,
         cs->ChainState.getNextQuery(~chainTargetItems=0., ~chunkItemsMultiplier),
       )
+    } else if remaining.contents < minimumAdmissionBudget {
+      // More than 90% of the target pool is ready or reserved. Don't admit new
+      // queries until a full admission unit becomes free — but an idle chain
+      // below its head still polls for new blocks, same as the NothingToQuery
+      // fallback below, so pool pressure can't freeze its head tracking.
+      actionByChain->Utils.Dict.setByInt(chainId, idleOrWaitAction(cs))
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =
@@ -293,22 +311,10 @@ let checkAndFetch = async (
       ) {
       | WaitingForNewBlock as action => actionByChain->Utils.Dict.setByInt(chainId, action)
       | NothingToQuery =>
-        // A chain below its head that emitted no query this tick — its budget
-        // went to more-behind chains, or the cross-chain alignment clamped its
-        // range to nothing — and has nothing else to wake it must keep polling
-        // for new blocks instead of going silent. NothingToQuery isn't
-        // dispatched, so such a chain would never be re-scheduled and its head
-        // tracking would freeze. A chain is genuinely idle — and correctly left
-        // undispatched — when it is caught up to its head/endblock, still
-        // draining in-flight queries, or holding ready items that batch
-        // processing will drain and re-schedule from.
-        let action =
-          cs->ChainState.isFetchingAtHead ||
-          cs->ChainState.pendingBudget > 0. ||
-          cs->ChainState.bufferReadyCount > 0
-            ? FetchState.NothingToQuery
-            : FetchState.WaitingForNewBlock
-        actionByChain->Utils.Dict.setByInt(chainId, action)
+        // A chain below its head can emit no query when its budget went to
+        // more-behind chains or the cross-chain alignment clamped its range to
+        // nothing — idleOrWaitAction keeps it polling for new blocks.
+        actionByChain->Utils.Dict.setByInt(chainId, idleOrWaitAction(cs))
       | Ready(queries) => {
           let consumed =
             queries->Array.reduce(0., (acc, query: FetchState.query) =>

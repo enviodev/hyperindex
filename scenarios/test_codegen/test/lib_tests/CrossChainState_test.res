@@ -339,7 +339,7 @@ describe("CrossChainState fetch control", () => {
     ).toEqual(([], [(2, 10)]))
   })
 
-  Async.it("doesn't dispatch any chain below the query admission floor", async t => {
+  Async.it("starts no queries below the admission floor, but idle chains keep polling", async t => {
     let atHead = makeChainState(
       ~chainId=1,
       ~knownHeight=1000,
@@ -362,8 +362,8 @@ describe("CrossChainState fetch control", () => {
 
     t.expect(
       dispatched,
-      ~message="At 9% free, no chain starts an action, including one without a known height",
-    ).toEqual([])
+      ~message="At 9% free, no chain starts a query. The chain holding ready items stays undispatched, while a behind chain with nothing in flight and one without a known height keep polling for new blocks — pool pressure must not freeze their head tracking",
+    ).toEqual([(2, FetchState.WaitingForNewBlock), (3, FetchState.WaitingForNewBlock)])
   })
 
   Async.it("waits below the admission unit and retries after a response releases budget", async t => {

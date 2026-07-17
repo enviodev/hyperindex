@@ -4813,10 +4813,113 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
       "freshOnly": makeFetchState(~partitionsCount=120, ~inFlightCount=0)->countQueries,
       "withInFlight": makeFetchState(~partitionsCount=120, ~inFlightCount=30)->countQueries,
       "underCap": makeFetchState(~partitionsCount=50, ~inFlightCount=0)->countQueries,
+      "atCap": makeFetchState(~partitionsCount=120, ~inFlightCount=100)->countQueries,
     }).toEqual({
       "freshOnly": 100,
       "withInFlight": 70,
       "underCap": 50,
+      "atCap": 0,
     })
+  })
+
+  it("sizes probes by the full in-range count while admitting only up to the cap", t => {
+    let queries = switch makeFetchState(
+      ~partitionsCount=120,
+      ~inFlightCount=0,
+    )->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1_000_000.) {
+    | Ready(queries) => queries
+    | _ => []
+    }
+    // 10 items/block budget density over the 100k-block range, split across all
+    // 120 in-range partitions — an honest per-partition share for budget
+    // control — even though the concurrency cap admits only 100 queries.
+    t.expect({
+      "count": queries->Array.length,
+      "firstItemsTarget": (queries->Array.getUnsafe(0)).itemsTarget,
+    }).toEqual({
+      "count": 100,
+      "firstItemsTarget": 8333,
+    })
+  })
+
+  it("doesn't count fetched chunks against the partition pipeline cap", t => {
+    // A full 12-chunk pipeline where only the head chunk is still being
+    // fetched: the 11 fetched chunks parked behind it hold no slots, so the
+    // partition can still generate a query past the pipeline.
+    let mutPendingQueries: array<FetchState.pendingQuery> = Array.fromInitializer(~length=12, idx => {
+      FetchState.fromBlock: idx * 10 + 1,
+      toBlock: Some((idx + 1) * 10),
+      isChunk: true,
+      itemsTarget: 1,
+      itemsEst: 1,
+      fetchedBlock: idx === 0 ? None : Some({blockNumber: (idx + 1) * 10, blockTimestamp: 0}),
+    })
+    let fetchState = {
+      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[{...makePartition(~idx=0, ~inFlight=false), mutPendingQueries}],
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1000.),
+    ).toEqual(
+      FetchState.Ready([
+        {
+          partitionId: "0",
+          fromBlock: 121,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          itemsTarget: 999,
+          itemsEst: 999,
+          addressesByContractName,
+        },
+      ]),
+    )
+  })
+
+  it("re-sorts partitions when a response overtakes another partition", t => {
+    // Exercises the handleQueryResult fast path (no dynamic contracts): the
+    // responding partition jumps from block 0 to 100, past the partition
+    // sitting at 50, so idsInAscOrder must be reordered without a full remake.
+    let fetchState = {
+      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          makePartition(~idx=0, ~inFlight=false),
+          {
+            ...makePartition(~idx=1, ~inFlight=false),
+            latestFetchedBlock: {blockNumber: 50, blockTimestamp: 0},
+          },
+        ],
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=2,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    let query: FetchState.query = {
+      partitionId: "0",
+      fromBlock: 1,
+      toBlock: None,
+      isChunk: false,
+      selection: normalSelection,
+      itemsTarget: 10,
+      itemsEst: 10,
+      addressesByContractName,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: 100, blockTimestamp: 0},
+        ~newItems=[],
+      )
+    t.expect(
+      updated.optimizedPartitions.idsInAscOrder,
+      ~message="partition 1 (still at block 50) must sort before partition 0 (now at 100)",
+    ).toEqual(["1", "0"])
   })
 })
