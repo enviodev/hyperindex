@@ -69,7 +69,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
 }
 
 describe("HyperSync client getEventItems (live)", () => {
-  Async.it("returns decoded event items for a real block range", async t => {
+  Async.itWithOptions("returns decoded event items for a real block range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let res = await runQuery(~client)
 
@@ -107,14 +107,14 @@ describe("HyperSync client getEventItems (live)", () => {
       })
   })
 
-  Async.it("getHeight returns a height past the queried range", async t => {
+  Async.itWithOptions("getHeight returns a height past the queried range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let height = await client.getHeight()
 
     t.expect(height > toBlock).toEqual(true)
   })
 
-  Async.it("drops items whose topic0 doesn't match any registered sig", async t => {
+  Async.itWithOptions("drops items whose topic0 doesn't match any registered sig", {retry: 3}, async t => {
     // A wildcard registration whose topic0 is the Transfer sighash, so the
     // query fetches Transfer logs, but the decoder is only registered for an
     // unrelated 1-topic signature — every fetched log routes nowhere.
@@ -149,8 +149,9 @@ describe("HyperSync client getHeight with corrupted token", () => {
   // A corrupted token makes the server reply 401, so getHeight throws. The error
   // must keep matching HyperSyncSource.isUnauthorizedError, otherwise
   // getHeightOrThrow's block-forever guard silently stops working.
-  Async.it(
+  Async.itWithOptions(
     "is detected by HyperSyncSource.isUnauthorizedError",
+    {retry: 3, timeout: 60000},
     async t => {
       let client = HyperSyncClient.make(
         ~url="https://eth.hypersync.xyz",
@@ -170,7 +171,6 @@ describe("HyperSync client getHeight with corrupted token", () => {
 
       t.expect(detected).toEqual(true)
     },
-    ~timeout=60000,
   )
 })
 

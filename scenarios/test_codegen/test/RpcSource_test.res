@@ -36,7 +36,7 @@ describe("RpcSource - name", () => {
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
-  Async.it("Returns the current height of the chain", async t => {
+  Async.itWithOptions("Returns the current height of the chain", {retry: 3}, async t => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
