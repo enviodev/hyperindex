@@ -182,23 +182,13 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
   }, config.timeouts.codegen + 30_000);
 
   it.skipIf(!hasTests)("runs tests successfully", async () => {
-    let result = await runCommand("pnpm", ["test"], {
+    const result = await runCommand("pnpm", ["test"], {
       cwd: projectDir,
       timeout: config.timeouts.test,
     });
 
-    // Template smoke tests index a couple of real blocks through live
-    // HyperSync; a single hung connection on the runner shouldn't fail the
-    // job, so give the whole suite one more attempt.
-    if (result.exitCode !== 0) {
-      result = await runCommand("pnpm", ["test"], {
-        cwd: projectDir,
-        timeout: config.timeouts.test,
-      });
-    }
-
     expect(result.exitCode, `[${name}] test failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
-  }, config.timeouts.test * 2 + 30_000);
+  }, config.timeouts.test);
 }
 
 for (const template of TEMPLATES) {
