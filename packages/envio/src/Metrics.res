@@ -492,12 +492,32 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~entries=effects,
     ~value=s => s.hasCache ? Some(s.cacheCount->Int.toFloat) : None,
   )
+  // Unlike the rest of the effect metrics, invalidations and queue waits keep
+  // the effect-only label set, aggregated across scopes.
+  let effectTotals = {
+    let byEffect = Dict.make()
+    effects->Array.forEach(((_, s)) => {
+      switch byEffect->Utils.Dict.dangerouslyGetNonOption(s.effectName) {
+      | Some((invalidations, queueWaitSeconds)) =>
+        byEffect->Dict.set(
+          s.effectName,
+          (invalidations + s.invalidationsCount, queueWaitSeconds +. s.queueWaitSeconds),
+        )
+      | None => byEffect->Dict.set(s.effectName, (s.invalidationsCount, s.queueWaitSeconds))
+      }
+    })
+    let entries = []
+    byEffect->Utils.Dict.forEachWithKey((totals, effectName) =>
+      entries->Array.push((`{effect="${effectName->escapeLabelValue}"}`, totals))
+    )
+    entries
+  }
   b->seriesOpt(
     ~name="envio_effect_cache_invalidations",
     ~help="The number of effect cache invalidations.",
     ~kind="counter",
-    ~entries=effects,
-    ~value=s => s.invalidationsCount > 0 ? Some(s.invalidationsCount->Int.toFloat) : None,
+    ~entries=effectTotals,
+    ~value=((invalidations, _)) => invalidations > 0 ? Some(invalidations->Int.toFloat) : None,
   )
   b->seriesOpt(
     ~name="envio_effect_queue",
@@ -511,8 +531,8 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~name="envio_effect_queue_wait_seconds",
     ~help="The time spent waiting in the rate limit queue.",
     ~kind="counter",
-    ~entries=effects,
-    ~value=s => s.queueWaitSeconds !== 0. ? Some(s.queueWaitSeconds) : None,
+    ~entries=effectTotals,
+    ~value=((_, queueWaitSeconds)) => queueWaitSeconds !== 0. ? Some(queueWaitSeconds) : None,
   )
   b->series(
     ~name="envio_storage_load_seconds",
