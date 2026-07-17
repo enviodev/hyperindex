@@ -167,7 +167,7 @@ pub(crate) struct SelectionBuilder {
 
 impl SelectionBuilder {
     pub(crate) fn from_registrations(
-        registrations: &[super::types::OnEventRegistration],
+        registrations: &[super::types::OnEventRegistrationInput],
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for reg in registrations {
@@ -316,7 +316,7 @@ impl SelectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evm_hypersync_source::types::OnEventRegistration;
+    use crate::evm_hypersync_source::types::OnEventRegistrationInput;
 
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -330,8 +330,8 @@ mod tests {
         is_wildcard: bool,
         depends_on_addresses: bool,
         topic1: Option<Vec<String>>,
-    ) -> OnEventRegistration {
-        OnEventRegistration {
+    ) -> OnEventRegistrationInput {
+        OnEventRegistrationInput {
             index: id,
             sighash: sighash.to_string(),
             topic_count: 1,

@@ -21,7 +21,8 @@ use decode::{DecoderCore, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
-    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue, RollbackGuard,
+    encode_address, map_hex_string, map_i64, Block, OnEventRegistrationInput, ParamValue,
+    RollbackGuard,
 };
 
 static LOGGER_INIT: Once = Once::new();
@@ -55,7 +56,7 @@ impl EvmHypersyncClient {
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
-        event_registrations: Vec<OnEventRegistration>,
+        event_registrations: Vec<OnEventRegistrationInput>,
     ) -> napi::Result<EvmHypersyncClient> {
         init_logger(cfg.log_level.as_deref());
 
@@ -692,19 +693,21 @@ mod tests {
     // unrouted logs are dropped.
     fn zero_event_decoder() -> SelectionDecoder {
         DecoderCore::from_registrations(
-            &[crate::evm_hypersync_source::types::OnEventRegistration {
-                index: 0,
-                sighash: format!("0x{}", "00".repeat(32)),
-                topic_count: 1,
-                event_name: "Zero".to_string(),
-                contract_name: "Zero".to_string(),
-                is_wildcard: true,
-                depends_on_addresses: false,
-                topic_selections: vec![],
-                block_fields: vec![],
-                transaction_fields: vec![],
-                params: vec![],
-            }],
+            &[
+                crate::evm_hypersync_source::types::OnEventRegistrationInput {
+                    index: 0,
+                    sighash: format!("0x{}", "00".repeat(32)),
+                    topic_count: 1,
+                    event_name: "Zero".to_string(),
+                    contract_name: "Zero".to_string(),
+                    is_wildcard: true,
+                    depends_on_addresses: false,
+                    topic_selections: vec![],
+                    block_fields: vec![],
+                    transaction_fields: vec![],
+                    params: vec![],
+                },
+            ],
             false,
         )
         .unwrap()

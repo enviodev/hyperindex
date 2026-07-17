@@ -9,35 +9,88 @@ use hypersync_client::simple_types;
 
 use crate::evm_hypersync_source::selection::TopicSelectionInput;
 use crate::evm_hypersync_source::types::{
-    sol_value_to_param, Log, OnEventRegistration, ParamMeta, ParamValue,
+    sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
 };
 
-/// One topic position's static constraint: `None` matches any value — either
-/// the position is unfiltered, or it carries a `ContractAddresses` marker
-/// whose temporal check stays on the JS `clientAddressFilter`.
-type StaticTopicFilter = Option<Vec<[u8; 32]>>;
+/// A registration's static topic constraints — its resolved `where` in DNF:
+/// the outer Vec is an OR of alternatives, each alternative constrains the
+/// four topic positions. Per position, `None` matches any value: the position
+/// is either unfiltered or carries a `ContractAddresses` marker whose
+/// temporal check stays on the JS `clientAddressFilter`. An empty DNF puts no
+/// constraint on the registration's logs.
+struct TopicFilters(Vec<[Option<Vec<[u8; 32]>>; 4]>);
+
+impl TopicFilters {
+    fn parse(topic_selections: &[TopicSelectionInput]) -> Result<Self> {
+        let parse_values = |values: &[String]| -> Result<Vec<[u8; 32]>> {
+            values
+                .iter()
+                .map(|v| {
+                    LogArgument::decode_hex(v)
+                        .map(|arg| **arg)
+                        .with_context(|| format!("decode topic filter value {v}"))
+                })
+                .collect()
+        };
+        // An empty value list means match-any (mirroring query semantics),
+        // same as a `ContractAddresses` marker (`None` input).
+        let parse_position = |values: Option<&Vec<String>>| -> Result<Option<Vec<[u8; 32]>>> {
+            match values {
+                Some(values) if !values.is_empty() => Ok(Some(parse_values(values)?)),
+                _ => Ok(None),
+            }
+        };
+        let alternatives = topic_selections
+            .iter()
+            .map(|ts| {
+                Ok([
+                    parse_position(Some(&ts.topic0))?,
+                    parse_position(ts.topic1.as_ref())?,
+                    parse_position(ts.topic2.as_ref())?,
+                    parse_position(ts.topic3.as_ref())?,
+                ])
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self(alternatives))
+    }
+
+    fn matches(&self, topics: &[Option<LogArgument>]) -> bool {
+        if self.0.is_empty() {
+            return true;
+        }
+        self.0.iter().any(|alternative| {
+            alternative
+                .iter()
+                .enumerate()
+                .all(|(position, filter)| match filter {
+                    None => true,
+                    Some(values) => topics
+                        .get(position)
+                        .and_then(Option::as_ref)
+                        .is_some_and(|topic| values.iter().any(|v| v == &***topic)),
+                })
+        })
+    }
+}
 
 /// Everything needed to match a log against one registration and decode it
 /// under that registration's own ABI declaration. Registrations sharing an
 /// event signature stay fully independent — each carries its own decoder, so
 /// they may name params differently and even split indexed/body params
 /// differently.
-struct EventRegistration {
+struct OnEventRegistration {
     index: i64,
     sighash: [u8; 32],
     topic_count: u8,
     contract_name: String,
     is_wildcard: bool,
-    /// The registration's resolved `where` in DNF (outer Vec is OR); a log
-    /// matches when any selection's four positions all match. Empty means the
-    /// registration puts no static topic constraint on its logs.
-    topic_filters: Vec<[StaticTopicFilter; 4]>,
+    topic_filters: TopicFilters,
     params: Vec<ParamMeta>,
     decoder: DynSolEvent,
 }
 
-impl EventRegistration {
-    fn parse(ep: &OnEventRegistration) -> Result<Self> {
+impl OnEventRegistration {
+    fn parse(ep: &OnEventRegistrationInput) -> Result<Self> {
         let sighash = LogArgument::decode_hex(&ep.sighash).context("decode sighash hex")?;
         let topic_count: u8 =
             u8::try_from(ep.topic_count).context("topic_count out of u8 range")?;
@@ -51,7 +104,7 @@ impl EventRegistration {
             topic_count,
             contract_name: ep.contract_name.clone(),
             is_wildcard: ep.is_wildcard,
-            topic_filters: parse_topic_filters(&ep.topic_selections)
+            topic_filters: TopicFilters::parse(&ep.topic_selections)
                 .context("parse topic filters")?,
             params: ep.params.clone(),
             decoder: build_event_decoder(**sighash, &ep.params).context("build decoder")?,
@@ -73,7 +126,7 @@ impl EventRegistration {
         self.sighash == *topic0
             && self.topic_count == topic_count
             && (self.is_wildcard || contract_name == Some(self.contract_name.as_str()))
-            && matches_topic_filters(&self.topic_filters, topics)
+            && self.topic_filters.matches(topics)
     }
 }
 
@@ -82,18 +135,18 @@ impl EventRegistration {
 /// own selection into a `SelectionDecoder` via `selection`.
 #[derive(Clone)]
 pub(crate) struct DecoderCore {
-    registrations: Arc<HashMap<i64, Arc<EventRegistration>>>,
+    registrations: Arc<HashMap<i64, Arc<OnEventRegistration>>>,
     checksummed_addresses: bool,
 }
 
 impl DecoderCore {
     pub(crate) fn from_registrations(
-        registrations: &[OnEventRegistration],
+        registrations: &[OnEventRegistrationInput],
         checksum_addresses: bool,
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for ep in registrations {
-            let parsed = EventRegistration::parse(ep)
+            let parsed = OnEventRegistration::parse(ep)
                 .with_context(|| format!("parse registration for {}", ep.event_name))?;
             anyhow::ensure!(
                 map.insert(ep.index, Arc::new(parsed)).is_none(),
@@ -135,7 +188,7 @@ impl DecoderCore {
 /// straight scan over them — a selection is small (one partition's events),
 /// which also keeps the scan cheaper than a keyed lookup.
 pub(crate) struct SelectionDecoder {
-    registrations: Vec<Arc<EventRegistration>>,
+    registrations: Vec<Arc<OnEventRegistration>>,
     checksummed_addresses: bool,
 }
 
@@ -174,7 +227,7 @@ impl SelectionDecoder {
     }
 
     /// Fans a log out to every registration of the selection it matches
-    /// (see `EventRegistration::matches`), decoding it under each match's own
+    /// (see `OnEventRegistration::matches`), decoding it under each match's own
     /// ABI declaration. `contract_name` is the log address's owning contract
     /// per the partition's address index.
     ///
@@ -238,66 +291,6 @@ impl SelectionDecoder {
             _ => Ok(routed),
         }
     }
-}
-
-fn parse_topic_filters(
-    topic_selections: &[TopicSelectionInput],
-) -> Result<Vec<[StaticTopicFilter; 4]>> {
-    let parse_values = |values: &[String]| -> Result<Vec<[u8; 32]>> {
-        values
-            .iter()
-            .map(|v| {
-                LogArgument::decode_hex(v)
-                    .map(|arg| **arg)
-                    .with_context(|| format!("decode topic filter value {v}"))
-            })
-            .collect()
-    };
-    // An empty value list means match-any (mirroring query semantics), same as
-    // a `ContractAddresses` marker (`None` input) — the marker's check stays on
-    // the JS `clientAddressFilter`.
-    let parse_position = |input: &Option<Vec<String>>| -> Result<StaticTopicFilter> {
-        match input {
-            Some(values) if !values.is_empty() => Ok(Some(parse_values(values)?)),
-            _ => Ok(None),
-        }
-    };
-    topic_selections
-        .iter()
-        .map(|ts| {
-            Ok([
-                if ts.topic0.is_empty() {
-                    None
-                } else {
-                    Some(parse_values(&ts.topic0)?)
-                },
-                parse_position(&ts.topic1)?,
-                parse_position(&ts.topic2)?,
-                parse_position(&ts.topic3)?,
-            ])
-        })
-        .collect()
-}
-
-fn matches_topic_filters(
-    filters: &[[StaticTopicFilter; 4]],
-    topics: &[Option<LogArgument>],
-) -> bool {
-    if filters.is_empty() {
-        return true;
-    }
-    filters.iter().any(|selection| {
-        selection
-            .iter()
-            .enumerate()
-            .all(|(i, filter)| match filter {
-                None => true,
-                Some(values) => topics
-                    .get(i)
-                    .and_then(Option::as_ref)
-                    .is_some_and(|topic| values.iter().any(|v| v == &***topic)),
-            })
-    })
 }
 
 pub(crate) struct RoutedEvent {
@@ -374,8 +367,8 @@ mod tests {
         contract_name: &str,
         is_wildcard: bool,
         sighash: &str,
-    ) -> OnEventRegistration {
-        OnEventRegistration {
+    ) -> OnEventRegistrationInput {
+        OnEventRegistrationInput {
             index,
             sighash: sighash.to_string(),
             topic_count: 1,
@@ -409,7 +402,9 @@ mod tests {
     fn registration_rejects_zero_topics() {
         let mut reg = value_reg(0, "C", false, VALID_SIGHASH);
         reg.topic_count = 0;
-        let err = DecoderCore::from_registrations(&[reg], false).err().unwrap();
+        let err = DecoderCore::from_registrations(&[reg], false)
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("topic_count must be 1..=4"));
     }
 
@@ -417,7 +412,9 @@ mod tests {
     fn registration_rejects_five_topics() {
         let mut reg = value_reg(0, "C", false, VALID_SIGHASH);
         reg.topic_count = 5;
-        let err = DecoderCore::from_registrations(&[reg], false).err().unwrap();
+        let err = DecoderCore::from_registrations(&[reg], false)
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("topic_count must be 1..=4"));
     }
 
@@ -465,7 +462,7 @@ mod tests {
             .to_string();
 
         let core = DecoderCore::from_registrations(
-            &[OnEventRegistration {
+            &[OnEventRegistrationInput {
                 index: 7,
                 sighash: real_sighash.clone(),
                 topic_count: 1,
