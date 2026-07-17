@@ -452,7 +452,8 @@ let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
 }
 
 let getHandlerStat = (state: t, ~contract, ~event) => {
-  let key = contract ++ ":" ++ event
+  // Length-prefixed so names containing the separator can't collide.
+  let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
   switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(stat) => stat
   | None =>
