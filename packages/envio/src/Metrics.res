@@ -134,35 +134,44 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     )
     entries
   }
+  // Two sources can share a name (e.g. primary and fallback RPC urls on the
+  // same host), so aggregate by label set — duplicate samples would make
+  // Prometheus reject the scrape.
   let sourceRequests = {
-    let entries = []
+    let byLabels: dict<SourceManager.requestStatSample> = Dict.make()
     chainStates->Utils.Dict.forEach(cs =>
       cs
       ->ChainState.sourceManager
       ->SourceManager.getRequestStatSamples
-      ->Array.forEach((s: SourceManager.requestStatSample) =>
-        entries->Array.push((
-          `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`,
-          s,
-        ))
-      )
+      ->Array.forEach((s: SourceManager.requestStatSample) => {
+        let labels = `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`
+        switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
+        | Some(existing) =>
+          byLabels->Dict.set(
+            labels,
+            {...existing, count: existing.count + s.count, seconds: existing.seconds +. s.seconds},
+          )
+        | None => byLabels->Dict.set(labels, s)
+        }
+      })
     )
-    entries
+    byLabels->Dict.toArray
   }
   let sources = {
-    let entries = []
+    let byLabels: dict<int> = Dict.make()
     chainStates->Utils.Dict.forEach(cs =>
       cs
       ->ChainState.sourceManager
       ->SourceManager.getSourceHeightSamples
-      ->Array.forEach((s: SourceManager.sourceHeightSample) =>
-        entries->Array.push((
-          `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`,
-          s,
-        ))
-      )
+      ->Array.forEach((s: SourceManager.sourceHeightSample) => {
+        let labels = `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`
+        switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
+        | Some(existing) if existing >= s.height => ()
+        | _ => byLabels->Dict.set(labels, s.height)
+        }
+      })
     )
-    entries
+    byLabels->Dict.toArray
   }
 
   b->single(
@@ -357,7 +366,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.",
     ~kind="gauge",
     ~entries=sources,
-    ~value=s => s.height->Int.toFloat,
+    ~value=height => height->Int.toFloat,
   )
   b->seriesOpt(
     ~name="envio_reorg_detected_total",
