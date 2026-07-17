@@ -195,13 +195,15 @@ let totalReservedSize = (crossChainState: t) => {
   total.contents
 }
 
-// Action for a chain that gets no query this tick. A chain is genuinely idle —
-// and correctly left undispatched — when it is caught up to its head/endblock,
-// still draining in-flight queries, or holding ready items that batch
-// processing will drain and re-schedule from. Any other chain must keep
-// polling for new blocks instead of going silent: NothingToQuery isn't
-// dispatched, so such a chain would never be re-scheduled and its head
-// tracking would freeze.
+// Action for a chain that was handed budget but emitted no query (its budget
+// went to more-behind chains, or the alignment clamp cut its range to
+// nothing). A chain is genuinely idle — and correctly left undispatched —
+// when it is caught up to its head/endblock, still draining in-flight
+// queries, or holding ready items that batch processing will drain and
+// re-schedule from. Any other chain must keep polling for new blocks instead
+// of going silent: NothingToQuery isn't dispatched, and with the pool
+// unsaturated nothing else guarantees a tick that would revisit it, so its
+// head tracking would freeze.
 let idleOrWaitAction = (cs: ChainState.t) =>
   cs->ChainState.isFetchingAtHead ||
   cs->ChainState.pendingBudget > 0. ||
@@ -277,20 +279,20 @@ let checkAndFetch = async (
   prioritizedChainStates->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     if cs->ChainState.knownHeight == 0 {
-      // Let getNextQuery own the waiting decision without trying to size work
-      // against an unknown height. Checked before the admission floor so a
-      // chain that hasn't found its first block yet starts height tracking
-      // even while other chains hold the whole pool.
-      actionByChain->Utils.Dict.setByInt(
-        chainId,
-        cs->ChainState.getNextQuery(~chainTargetItems=0., ~chunkItemsMultiplier),
-      )
+      // No height yet — there's nothing to size a query against, only height
+      // tracking to start. Checked before the admission floor so a chain that
+      // hasn't found its first block yet keeps polling even while other chains
+      // hold the whole pool. (The general can't-fetch-yet rule, including
+      // blockLag, lives in FetchState.getNextQuery — this branch only
+      // short-circuits the unambiguous no-height case.)
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
     } else if remaining.contents < minimumAdmissionBudget {
       // More than 90% of the target pool is ready or reserved. Don't admit new
-      // queries until a full admission unit becomes free — but an idle chain
-      // below its head still polls for new blocks, same as the NothingToQuery
-      // fallback below, so pool pressure can't freeze its head tracking.
-      actionByChain->Utils.Dict.setByInt(chainId, idleOrWaitAction(cs))
+      // queries until a full admission unit becomes free. No wake-up poll is
+      // needed: a saturated pool means some chain holds ready items or
+      // in-flight reservations, so a batch completion or landing response is
+      // guaranteed to schedule another tick that revisits this chain.
+      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =

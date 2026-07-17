@@ -1578,7 +1578,7 @@ let pushGapFillQueries = (
   ~partitionId: string,
   ~rangeFromBlock: int,
   ~rangeEndBlock: option<int>,
-  ~knownHeight: int,
+  ~headBlockNumber: int,
   ~chainTargetBlock: int,
   ~maybeChunkRange: option<int>,
   ~maxChunks: int,
@@ -1589,8 +1589,10 @@ let pushGapFillQueries = (
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
   // Gaps past the chain's target block wait: they regenerate from the
-  // pending-walk each tick and fill once the target reaches them.
-  if rangeFromBlock <= Pervasives.min(knownHeight, chainTargetBlock) && maxChunks > 0 {
+  // pending-walk each tick and fill once the target reaches them. The lagged
+  // head is the fetchable ceiling — blocks past knownHeight - blockLag can't
+  // be queried yet.
+  if rangeFromBlock <= Pervasives.min(headBlockNumber, chainTargetBlock) && maxChunks > 0 {
     switch rangeEndBlock {
     | Some(endBlock) if rangeFromBlock > endBlock => ()
     | _ =>
@@ -1676,7 +1678,7 @@ let walkPartitionPending = (
   ~partitionId: string,
   ~inFlightCount: int,
   ~candidates: array<query>,
-  ~knownHeight: int,
+  ~headBlockNumber: int,
   ~chainTargetBlock: int,
   ~chunkItemsMultiplier: float,
   ~partitionBudget: float,
@@ -1699,7 +1701,7 @@ let walkPartitionPending = (
         ~partitionId,
         ~rangeFromBlock=cursor.contents,
         ~rangeEndBlock=Utils.Math.minOptInt(Some(pq.fromBlock - 1), queryEndBlock),
-        ~knownHeight,
+        ~headBlockNumber,
         ~chainTargetBlock,
         ~maybeChunkRange,
         ~maxChunks=maxInFlightChunksPerPartition - inFlightCount - chunksUsedThisCall.contents,
@@ -2064,7 +2066,7 @@ let getNextQuery = (
         ~partitionId,
         ~inFlightCount=inFlightCounts->Array.getUnsafe(idx),
         ~candidates,
-        ~knownHeight,
+        ~headBlockNumber,
         ~chainTargetBlock,
         ~chunkItemsMultiplier,
         ~partitionBudget,
