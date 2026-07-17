@@ -1,24 +1,10 @@
-type hyperSyncPage<'item> = {
-  items: array<'item>,
+type logsQueryPage = {
+  items: array<HyperFuelClient.EventItems.item>,
+  // Blocks referenced by `items`, one per height.
+  blocks: array<HyperFuelClient.EventItems.block>,
   nextBlock: int,
   archiveHeight: int,
 }
-
-type block = {
-  id: string,
-  time: int,
-  height: int,
-}
-
-type item = {
-  transactionId: string,
-  contractId: Address.t,
-  receipt: FuelSDK.Receipt.t,
-  receiptIndex: int,
-  block: block,
-}
-
-type logsQueryPage = hyperSyncPage<item>
 
 module GetLogs = {
   type error =
@@ -52,117 +38,21 @@ module GetLogs = {
     }
   }
 
-  let makeRequestBody = (
-    ~fromBlock,
-    ~toBlockInclusive,
-    ~recieptsSelection,
-  ): HyperFuelClient.QueryTypes.query => {
-    {
-      fromBlock,
-      toBlockExclusive: ?switch toBlockInclusive {
-      | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
-      | None => None
-      },
-      receipts: recieptsSelection,
-      fieldSelection: {
-        receipt: [
-          TxId,
-          BlockHeight,
-          RootContractId,
-          Data,
-          ReceiptIndex,
-          ReceiptType,
-          Rb,
-          // TODO: Include them only when there's a mint/burn/transferOut receipt selection
-          SubId,
-          Val,
-          Amount,
-          ToAddress,
-          AssetId,
-          To,
-        ],
-        block: [Id, Height, Time],
-      },
-    }
-  }
-
-  let getParam = (param, name) => {
-    switch param {
-    | Some(v) => v
-    | None =>
-      throw(
-        Error(
-          UnexpectedMissingParams({
-            missingParams: [name],
-          }),
-        ),
-      )
-    }
-  }
-
-  //Note this function can throw an error
-  let decodeLogQueryPageItems = (response_data: HyperFuelClient.queryResponseDataTyped): array<
-    item,
-  > => {
-    let {receipts, blocks} = response_data
-
-    let blocksDict = Dict.make()
-    blocks->Array.forEach(block => {
-      blocksDict->Dict.set(block.height->(Utils.magic: int => string), block)
-    })
-
-    let items = []
-
-    receipts->Array.forEach(receipt => {
-      switch receipt.rootContractId {
-      | None => ()
-      | Some(contractId) => {
-          let block =
-            blocksDict
-            ->Utils.Dict.dangerouslyGetNonOption(receipt.blockHeight->(Utils.magic: int => string))
-            ->getParam("Failed to find block associated to receipt")
-          items
-          ->Array.push({
-            transactionId: receipt.txId,
-            block: {
-              height: block.height,
-              id: block.id,
-              time: block.time,
-            },
-            contractId,
-            receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => FuelSDK.Receipt.t),
-            receiptIndex: receipt.receiptIndex,
-          })
-          ->ignore
-        }
-      }
-    })
-    items
-  }
-
-  let convertResponse = (res: HyperFuelClient.queryResponseTyped): logsQueryPage => {
-    let {nextBlock, ?archiveHeight} = res
-    let page: logsQueryPage = {
-      items: res.data->decodeLogQueryPageItems,
-      nextBlock,
-      archiveHeight: archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
-    }
-    page
-  }
-
   let query = async (
     ~client: HyperFuelClient.t,
     ~fromBlock,
     ~toBlock,
-    ~recieptsSelection,
+    ~registrationIndexes,
+    ~addressesByContractName,
   ): logsQueryPage => {
-    let query: HyperFuelClient.QueryTypes.query = makeRequestBody(
-      ~fromBlock,
-      ~toBlockInclusive=toBlock,
-      ~recieptsSelection,
-    )
+    let query: HyperFuelClient.EventItems.query = {
+      fromBlock,
+      toBlock,
+      registrationIndexes,
+      addressesByContractName,
+    }
 
-    let res = switch await client->HyperFuelClient.getSelectedData(query) {
+    let res = switch await client->HyperFuelClient.getEventItems(query) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {
@@ -174,6 +64,11 @@ module GetLogs = {
       // Might happen when /height response was from another instance of HyperFuel
       throw(Error(WrongInstance))
     }
-    res->convertResponse
+    {
+      items: res.items,
+      blocks: res.blocks,
+      nextBlock: res.nextBlock,
+      archiveHeight: res.archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
+    }
   }
 }

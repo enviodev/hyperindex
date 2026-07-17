@@ -1,219 +1,16 @@
 open Source
 
-exception EventRoutingFailed
-
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
-
-let mintEventTag = "mint"
-let burnEventTag = "burn"
-let transferEventTag = "transfer"
-let callEventTag = "call"
-
-type selectionConfig = {
-  getRecieptsSelection: (
-    ~addressesByContractName: dict<array<Address.t>>,
-  ) => array<HyperFuelClient.QueryTypes.receiptSelection>,
-  eventRouter: EventRouter.t<Internal.fuelOnEventRegistration>,
-}
-
-let logDataReceiptTypeSelection: array<FuelSDK.receiptType> = [LogData]
-
-// only transactions with status 1 (success)
-let txStatusSelection = [1]
-
-let makeGetNormalRecieptsSelection = (
-  ~nonWildcardLogDataRbsByContract,
-  ~nonLogDataReceiptTypesByContract,
-  ~contractNames,
-) => {
-  (~addressesByContractName) => {
-    let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
-
-    //Instantiate each time to add new registered contract addresses
-    contractNames->Utils.Set.forEach(contractName => {
-      switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | None
-      | Some([]) => ()
-      | Some(addresses) => {
-          switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(
-            contractName,
-          ) {
-          | Some(receiptTypes) =>
-            selection
-            ->Array.push({
-              rootContractId: addresses,
-              receiptType: receiptTypes,
-              txStatus: txStatusSelection,
-            })
-            ->ignore
-          | None => ()
-          }
-          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | None
-          | Some([]) => ()
-          | Some(nonWildcardLogDataRbs) =>
-            selection
-            ->Array.push({
-              rootContractId: addresses,
-              receiptType: logDataReceiptTypeSelection,
-              txStatus: txStatusSelection,
-              rb: nonWildcardLogDataRbs,
-            })
-            ->ignore
-          }
-        }
-      }
-    })
-
-    selection
-  }
-}
-
-let makeWildcardRecieptsSelection = (~wildcardLogDataRbs, ~nonLogDataWildcardReceiptTypes) => {
-  let selection: array<HyperFuelClient.QueryTypes.receiptSelection> = []
-
-  switch nonLogDataWildcardReceiptTypes {
-  | [] => ()
-  | nonLogDataWildcardReceiptTypes =>
-    selection
-    ->Array.push(
-      (
-        {
-          receiptType: nonLogDataWildcardReceiptTypes,
-          txStatus: txStatusSelection,
-        }: HyperFuelClient.QueryTypes.receiptSelection
-      ),
-    )
-    ->ignore
-  }
-
-  switch wildcardLogDataRbs {
-  | [] => ()
-  | wildcardLogDataRbs =>
-    selection
-    ->Array.push(
-      (
-        {
-          receiptType: logDataReceiptTypeSelection,
-          txStatus: txStatusSelection,
-          rb: wildcardLogDataRbs,
-        }: HyperFuelClient.QueryTypes.receiptSelection
-      ),
-    )
-    ->ignore
-  }
-
-  selection
-}
-
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let eventRouter = EventRouter.empty()
-  let nonWildcardLogDataRbsByContract = Dict.make()
-  let wildcardLogDataRbs = []
-
-  // This is for non-LogData events, since they don't have rb filter and can be grouped
-  let nonLogDataReceiptTypesByContract = Dict.make()
-  let nonLogDataWildcardReceiptTypes = []
-
-  let addNonLogDataWildcardReceiptTypes = (receiptType: FuelSDK.receiptType) => {
-    nonLogDataWildcardReceiptTypes->Array.push(receiptType)->ignore
-  }
-  let addNonLogDataReceiptType = (contractName, receiptType: FuelSDK.receiptType) => {
-    switch nonLogDataReceiptTypesByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-    | None => nonLogDataReceiptTypesByContract->Dict.set(contractName, [receiptType])
-    | Some(receiptTypes) => receiptTypes->Array.push(receiptType)->ignore // Duplication prevented by EventRouter
-    }
-  }
-
-  let contractNames = Utils.Set.make()
-
-  selection.onEventRegistrations->Array.forEach(reg => {
-    let eventConfig =
-      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
-    let contractName = eventConfig.contractName
-    let isWildcard = reg.isWildcard
-    if !isWildcard {
-      let _ = contractNames->Utils.Set.add(contractName)
-    }
-    eventRouter->EventRouter.addOrThrow(
-      eventConfig.id,
-      reg,
-      ~contractName,
-      ~eventName=eventConfig.name,
-      ~chain,
-      ~isWildcard,
-    )
-
-    switch (eventConfig.kind, isWildcard) {
-    | (Mint, true) => addNonLogDataWildcardReceiptTypes(Mint)
-    | (Mint, false) => addNonLogDataReceiptType(contractName, Mint)
-    | (Burn, true) => addNonLogDataWildcardReceiptTypes(Burn)
-    | (Burn, false) => addNonLogDataReceiptType(contractName, Burn)
-    | (Transfer, true) => {
-        addNonLogDataWildcardReceiptTypes(Transfer)
-        addNonLogDataWildcardReceiptTypes(TransferOut)
-      }
-    | (Transfer, false) => {
-        addNonLogDataReceiptType(contractName, Transfer)
-        addNonLogDataReceiptType(contractName, TransferOut)
-      }
-    | (Call, true) => addNonLogDataWildcardReceiptTypes(Call)
-    | (Call, false) =>
-      JsError.throwWithMessage("Call receipt indexing currently supported only in wildcard mode")
-    | (LogData({logId}), _) => {
-        let rb = logId->BigInt.fromStringOrThrow
-        if isWildcard {
-          wildcardLogDataRbs->Array.push(rb)->ignore
-        } else {
-          switch nonWildcardLogDataRbsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(arr) => arr->Array.push(rb)
-          | None => nonWildcardLogDataRbsByContract->Dict.set(contractName, [rb])
-          }
-        }
-      }
-    }
-  })
-
-  {
-    getRecieptsSelection: switch selection.dependsOnAddresses {
-    | false => {
-        let recieptsSelection = makeWildcardRecieptsSelection(
-          ~wildcardLogDataRbs,
-          ~nonLogDataWildcardReceiptTypes,
-        )
-        (~addressesByContractName as _) => recieptsSelection
-      }
-    | true =>
-      makeGetNormalRecieptsSelection(
-        ~nonWildcardLogDataRbsByContract,
-        ~nonLogDataReceiptTypesByContract,
-        ~contractNames,
-      )
-    },
-    eventRouter,
-  }
-}
-
-let memoGetSelectionConfig = (~chain) => {
-  let cache = Utils.WeakMap.make()
-  selection =>
-    switch cache->Utils.WeakMap.get(selection) {
-    | Some(c) => c
-    | None => {
-        let c = selection->getSelectionConfig(~chain)
-        let _ = cache->Utils.WeakMap.set(selection, c)
-        c
-      }
-    }
-}
 
 type options = {
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   apiToken: option<string>,
+  // The chain's registrations, indexed by their sequential `index`.
+  onEventRegistrations: array<Internal.fuelOnEventRegistration>,
 }
 
-let make = ({chain, endpointUrl, apiToken}: options): t => {
+let make = ({chain, endpointUrl, apiToken, onEventRegistrations}: options): t => {
   let name = "HyperFuel"
 
   let apiToken = switch apiToken {
@@ -224,19 +21,20 @@ Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   }
 
-  let client = switch HyperFuelClient.make({url: endpointUrl, apiToken}) {
+  let client = switch HyperFuelClient.make(
+    {url: endpointUrl, apiToken},
+    ~eventRegistrations=HyperFuelClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+  ) {
   | client => client
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(~msg="Failed to instantiate the HyperFuel client")
   }
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
     ~addressesByContractName,
-    ~contractNameByAddress,
+    ~contractNameByAddress as _,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -246,9 +44,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   ) => {
     let totalTimeRef = Performance.now()
 
-    let selectionConfig = getSelectionConfig(selection)
-    let recieptsSelection = selectionConfig.getRecieptsSelection(~addressesByContractName)
-
     let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
@@ -256,7 +51,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~client,
       ~fromBlock,
       ~toBlock,
-      ~recieptsSelection,
+      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
+      ~addressesByContractName,
     ) catch {
     | HyperFuel.GetLogs.Error(error) =>
       throw(
@@ -315,56 +111,36 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeRef = Performance.now()
 
+    // Blocks are returned once per height; items reference them by blockHeight.
+    let blocksByHeight = Utils.Map.make()
+    pageUnsafe.blocks->Array.forEach(block => {
+      blocksByHeight->Utils.Map.set(block.height, block)->ignore
+    })
+
+    let chainId = chain->ChainMap.Chain.toChainId
+
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
-      let {contractId: contractAddress, receipt, block, receiptIndex} = item
-
-      let chainId = chain->ChainMap.Chain.toChainId
-      let eventId = switch receipt {
-      | LogData({rb}) => BigInt.toString(rb)
-      | Mint(_) => mintEventTag
-      | Burn(_) => burnEventTag
-      | Transfer(_)
-      | TransferOut(_) => transferEventTag
-      | Call(_) => callEventTag
-      }
-
-      let onEventRegistration = switch selectionConfig.eventRouter->EventRouter.get(
-        ~tag=eventId,
-        ~contractNameByAddress,
-        ~contractAddress,
-      ) {
-      | None => {
-          let logger = Logging.createChildFrom(
-            ~logger,
-            ~params={
-              "chainId": chainId,
-              "blockNumber": block.height,
-              "logIndex": receiptIndex,
-              "contractAddress": contractAddress,
-              "eventId": eventId,
-            },
-          )
-          EventRoutingFailed->ErrorHandling.mkLogAndRaise(
-            ~msg="Failed to route registered event",
-            ~logger,
-          )
-        }
-      | Some(onEventRegistration) => onEventRegistration
-      }
-
+      // Routing happened in Rust; the item references its registration by
+      // chain-scoped index.
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       let eventConfig =
         onEventRegistration.eventConfig->(
           Utils.magic: Internal.eventConfig => Internal.fuelEventConfig
         )
+      // Presence of every routed item's block is validated in Rust.
+      let block = blocksByHeight->Utils.Map.unsafeGet(item.blockHeight)
 
-      let params = switch (eventConfig, receipt) {
-      | ({kind: LogData({decode})}, LogData({data})) =>
+      let params = switch eventConfig.kind {
+      | LogData({decode}) =>
+        // Kind-required columns are validated present in Rust before the item
+        // crosses the boundary.
+        let data = item.data->Option.getOr("")
         try decode(data) catch {
         | exn => {
             let params = {
               "chainId": chainId,
-              "blockNumber": block.height,
-              "logIndex": receiptIndex,
+              "blockNumber": item.blockHeight,
+              "logIndex": item.receiptIndex,
             }
             let logger = Logging.createChildFrom(~logger, ~params)
             exn->ErrorHandling.mkLogAndRaise(
@@ -373,47 +149,28 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
             )
           }
         }
-      | (_, Mint({val, subId}))
-      | (_, Burn({val, subId})) =>
+      | Mint | Burn =>
         (
           {
-            subId,
-            amount: val,
+            subId: item.subId->Option.getOr(""),
+            amount: item.val->Option.getOr(0n),
           }: Internal.fuelSupplyParams
         )->Obj.magic
-      | (_, Transfer({amount, assetId, to})) =>
+      | Transfer | Call =>
         (
           {
-            to: to->Address.unsafeFromString,
-            assetId,
-            amount,
+            to: item.to->Option.getOr("")->Address.unsafeFromString,
+            assetId: item.assetId->Option.getOr(""),
+            amount: item.amount->Option.getOr(0n),
           }: Internal.fuelTransferParams
         )->Obj.magic
-      | (_, TransferOut({amount, assetId, toAddress})) =>
-        (
-          {
-            to: toAddress->Address.unsafeFromString,
-            assetId,
-            amount,
-          }: Internal.fuelTransferParams
-        )->Obj.magic
-      | (_, Call({amount, assetId, to})) =>
-        (
-          {
-            to: to->Address.unsafeFromString,
-            assetId,
-            amount,
-          }: Internal.fuelTransferParams
-        )->Obj.magic
-      // This should never happen unless there's a bug in the routing logic
-      | _ => JsError.throwWithMessage("Unexpected bug in the event routing logic")
       }
 
       Internal.Event({
-        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+        onEventRegistration,
         chain,
-        blockNumber: block.height,
-        logIndex: receiptIndex,
+        blockNumber: item.blockHeight,
+        logIndex: item.receiptIndex,
         // Fuel carries the transaction inline on the payload; the store key is
         // unused (Fuel identifies transactions by hash, kept on the payload).
         transactionIndex: 0,
@@ -423,11 +180,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
           chainId,
           params,
           transaction: {
-            "id": item.transactionId,
+            "id": item.txId,
           }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
           block: block->Obj.magic,
-          srcAddress: contractAddress,
-          logIndex: receiptIndex,
+          srcAddress: item.srcAddress,
+          logIndex: item.receiptIndex,
         }->Fuel.fromPayload,
       })
     })
@@ -436,16 +193,14 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     // Fuel never rolls back on reorg, so block hashes here are purely informational
     // for detect-only logging via ReorgDetection.
-    let blockHashes = pageUnsafe.items->Array.map(({block}) => {
+    let blockHashes = pageUnsafe.blocks->Array.map(block => {
       ReorgDetection.blockNumber: block.height,
       blockHash: block.id,
     })
 
-    let latestFetchedBlockTimestamp = switch pageUnsafe.items->Array.get(
-      pageUnsafe.items->Array.length - 1,
-    ) {
-    | Some({block}) if block.height == heighestBlockQueried => block.time
-    | _ => 0
+    let latestFetchedBlockTimestamp = switch blocksByHeight->Utils.Map.get(heighestBlockQueried) {
+    | Some(block) => block.time
+    | None => 0
     }
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince

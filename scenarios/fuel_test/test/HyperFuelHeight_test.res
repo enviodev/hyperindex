@@ -54,6 +54,7 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
         chain,
         endpointUrl,
         apiToken: Some(apiToken),
+        onEventRegistrations: [],
       })
       let {height} = await source.getHeightOrThrow()
 
@@ -79,6 +80,7 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
         chain,
         endpointUrl,
         apiToken: Some(apiToken),
+        onEventRegistrations: [],
       })
       let result = await Promise.race([
         source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),

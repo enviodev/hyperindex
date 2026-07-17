@@ -4,85 +4,81 @@ type cfg = {
   url: string,
   apiToken: string,
 }
-module QueryTypes = {
-  type blockFieldOptions =
-    | @as("id") Id
-    | @as("height") Height
-    | @as("time") Time
 
-  type blockFieldSelection = array<blockFieldOptions>
+module Registration = {
+  type kind =
+    | @as("LogData") LogData
+    | @as("Mint") Mint
+    | @as("Burn") Burn
+    | @as("Transfer") Transfer
+    | @as("Call") Call
 
-  type receiptFieldOptions =
-    | @as("tx_id") TxId
-    | @as("block_height") BlockHeight
-    | @as("to_address") ToAddress
-    | @as("amount") Amount
-    | @as("asset_id") AssetId
-    | @as("val") Val
-    | @as("rb") Rb
-    | @as("receipt_type") ReceiptType
-    | @as("receipt_index") ReceiptIndex
-    | @as("data") Data
-    | @as("root_contract_id") RootContractId
-    | @as("sub_id") SubId
-    | @as("to") To
-
-  type receiptFieldSelection = array<receiptFieldOptions>
-
-  type fieldSelection = {
-    block?: blockFieldSelection,
-    receipt?: receiptFieldSelection,
+  // The full per-(event, chain) registration passed to the Rust client at
+  // construction: routing identity plus the receipt-selection state queries
+  // are built from.
+  type input = {
+    // Chain-scoped sequential registration index, echoed back on routed items.
+    index: int,
+    eventName: string,
+    contractName: string,
+    isWildcard: bool,
+    kind: kind,
+    // The LogData `rb` value as a decimal string; absent for other kinds.
+    logId?: string,
   }
 
-  type receiptSelection = {
-    rootContractId?: array<Address.t>,
-    receiptType?: array<FuelSDK.receiptType>,
-    rb?: array<bigint>,
-    txStatus?: array<int>,
-  }
-
-  type query = {
-    /** The block to start the query from */
-    fromBlock: int,
-    /**
-   * The block to end the query at. If not specified, the query will go until the
-   *  end of data. Exclusive, the returned range will be [from_block..to_block).
-   *
-   * The query will return before it reaches this target block if it hits the time limit
-   *  configured on the server. The user should continue their query by putting the
-   *  next_block field in the response into from_block field of their next query. This implements
-   *  pagination.
-   */
-    @as("toBlock")
-    toBlockExclusive?: int,
-    /**
-   * List of receipt selections, the query will return receipts that match any of these selections and
-   *  it will return receipts that are related to the returned objects.
-   */
-    receipts?: array<receiptSelection>,
-    /**
-   * Field selection. The user can select which fields they are interested in, requesting less fields will improve
-   *  query execution time and reduce the payload size so the user should always use a minimal number of fields.
-   */
-    fieldSelection: fieldSelection,
-  }
+  let fromOnEventRegistrations = (
+    onEventRegistrations: array<Internal.fuelOnEventRegistration>,
+  ): array<input> =>
+    onEventRegistrations->Array.map(reg => {
+      let eventConfig =
+        reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)
+      let (kind, logId) = switch eventConfig.kind {
+      | LogData({logId}) => (LogData, Some(logId))
+      | Mint => (Mint, None)
+      | Burn => (Burn, None)
+      | Transfer => (Transfer, None)
+      | Call => (Call, None)
+      }
+      {
+        index: reg.index,
+        eventName: eventConfig.name,
+        contractName: eventConfig.contractName,
+        isWildcard: reg.isWildcard,
+        kind,
+        ?logId,
+      }
+    })
 }
 
-module FuelTypes = {
-  type receipt = {
+module EventItems = {
+  // The whole per-query input: block range, the partition's registration
+  // selection (by index), and its current addresses. Receipt selections,
+  // field selection, and routing are derived on the Rust side.
+  type query = {
+    fromBlock: int,
+    // Inclusive; None queries to the end of available data.
+    toBlock: option<int>,
+    registrationIndexes: array<int>,
+    addressesByContractName: dict<array<Address.t>>,
+  }
+
+  // One routed receipt with its kind-specific columns flattened: LogData
+  // carries `data` (decoded here in JS), Mint/Burn carry `val`/`subId`,
+  // Transfer/TransferOut/Call carry `amount`/`assetId`/`to` (TransferOut's
+  // wallet recipient normalised into `to`).
+  type item = {
+    onEventRegistrationIndex: int,
     receiptIndex: int,
-    rootContractId?: Address.t,
     txId: string,
     blockHeight: int,
-    receiptType: FuelSDK.receiptType,
+    srcAddress: Address.t,
     data?: string,
-    rb?: bigint,
-    val?: bigint,
     subId?: string,
+    val?: bigint,
     amount?: bigint,
     assetId?: string,
     to?: string,
-    toAddress?: string,
   }
 
   type block = {
@@ -90,38 +86,35 @@ module FuelTypes = {
     height: int,
     time: int,
   }
-}
 
-type queryResponseDataTyped = {
-  receipts: array<FuelTypes.receipt>,
-  blocks: array<FuelTypes.block>,
-}
-
-type queryResponseTyped = {
-  /** Current height of the source HyperFuel instance */
-  archiveHeight?: int,
-  /**
-   * Next block to query for, the responses are paginated so
-   * the caller should continue the query from this block if they
-   * didn't get responses up to the to_block they specified in the Query.
-   */
-  nextBlock: int,
-  /** Total time it took the HyperFuel instance to execute the query. */
-  totalExecutionTime: int,
-  /** Response data */
-  data: queryResponseDataTyped,
+  type response = {
+    archiveHeight: option<int>,
+    nextBlock: int,
+    // One block per height; items reference them by `blockHeight`.
+    blocks: array<block>,
+    items: array<item>,
+  }
 }
 
 @send
-external classNew: (Core.hyperfuelClientCtor, cfg, ~userAgent: string) => t = "new"
+external classNew: (
+  Core.hyperfuelClientCtor,
+  cfg,
+  ~userAgent: string,
+  array<Registration.input>,
+) => t = "new"
 
-let make = (cfg: cfg) => {
+let make = (cfg: cfg, ~eventRegistrations) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  Core.getAddon().hyperfuelClient->classNew(cfg, ~userAgent=`hyperindex/${envioVersion}`)
+  Core.getAddon().hyperfuelClient->classNew(
+    cfg,
+    ~userAgent=`hyperindex/${envioVersion}`,
+    eventRegistrations,
+  )
 }
 
 @send
-external getSelectedData: (t, QueryTypes.query) => promise<queryResponseTyped> = "getSelectedData"
+external getEventItems: (t, EventItems.query) => promise<EventItems.response> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

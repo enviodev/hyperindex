@@ -1,24 +1,9 @@
-type hyperSyncPage<'item> = {
-  items: array<'item>,
+type logsQueryPage = {
+  items: array<HyperFuelClient.EventItems.item>,
+  blocks: array<HyperFuelClient.EventItems.block>,
   nextBlock: int,
   archiveHeight: int,
 }
-
-type block = {
-  id: string,
-  time: int,
-  height: int,
-}
-
-type item = {
-  transactionId: string,
-  contractId: Address.t,
-  receipt: FuelSDK.Receipt.t,
-  receiptIndex: int,
-  block: block,
-}
-
-type logsQueryPage = hyperSyncPage<item>
 
 module GetLogs: {
   type error =
@@ -31,6 +16,7 @@ module GetLogs: {
     ~client: HyperFuelClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~recieptsSelection: array<HyperFuelClient.QueryTypes.receiptSelection>,
+    ~registrationIndexes: array<int>,
+    ~addressesByContractName: dict<array<Address.t>>,
   ) => promise<logsQueryPage>
 }

@@ -206,7 +206,12 @@ let makeInternal = (
       ~lowercaseAddresses,
     )
   | Config.FuelSourceConfig({hypersync}) => [
-      HyperFuelSource.make({chain, endpointUrl: hypersync, apiToken: Env.envioApiToken}),
+      HyperFuelSource.make({
+        chain,
+        endpointUrl: hypersync,
+        apiToken: Env.envioApiToken,
+        onEventRegistrations,
+      }),
     ]
   | Config.SvmSourceConfig({hypersync, rpc}) =>
     switch (hypersync, rpc) {

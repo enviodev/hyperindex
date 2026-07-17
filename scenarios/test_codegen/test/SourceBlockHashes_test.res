@@ -13,7 +13,7 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
 let pairCreatedTopic0 = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
 let pairCreatedEventId = pairCreatedTopic0 ++ "_3"
 
-// Lowercase address so EventRouter lookup matches regardless of whether the
+// Lowercase address so routing lookups match regardless of whether the
 // source returns checksummed or lowercase addresses.
 let uniswapV2FactoryAddress =
   "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
