@@ -169,8 +169,11 @@ let makeInternal = (
     ~knownHeight,
     ~chainId=chainConfig.id,
     // FIXME: Shouldn't set with full history
+    // The resumed depth, not the config one: the pre-threshold lag must match
+    // the window reorg detection compares, or a reduced config depth would let
+    // fetching enter the stored rollback window without history.
     ~blockLag=Pervasives.max(
-      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : chainConfig.maxReorgDepth,
+      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : maxReorgDepth,
       chainConfig.blockLag,
     ),
     ~onBlockRegistrations,
