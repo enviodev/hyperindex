@@ -110,7 +110,7 @@ let callEffect = (
       Performance.secondsBetween(~from=stats.prevCallStartTimerRef, ~to=newTimer)
     stats.prevCallStartTimerRef = newTimer
 
-    stats.callCount = stats.callCount + 1
+    stats.callCount = stats.callCount +. 1.
     stats.callSecondsTotal = stats.callSecondsTotal +. timerRef->Performance.secondsSince
   })
 }

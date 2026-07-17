@@ -22,7 +22,7 @@ type effectStats = {
   mutable callSeconds: float,
   // Cumulative per-call time; exceeds callSeconds under parallel execution.
   mutable callSecondsTotal: float,
-  mutable callCount: int,
+  mutable callCount: float,
   mutable activeCallsCount: int,
   mutable prevCallStartTimerRef: Performance.timeRef,
   mutable queueCount: int,
@@ -79,7 +79,7 @@ let getStats = (self: t, ~tableName, ~effectName, ~scope) =>
       scope,
       callSeconds: 0.,
       callSecondsTotal: 0.,
-      callCount: 0,
+      callCount: 0.,
       activeCallsCount: 0,
       prevCallStartTimerRef: %raw(`null`),
       queueCount: 0,

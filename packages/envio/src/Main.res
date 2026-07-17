@@ -25,6 +25,25 @@ let chainDataSchema = S.schema((s): chainData => {
   startBlock: s.matches(S.int),
   endBlock: s.matches(S.option(S.int)),
   numAddresses: s.matches(S.int),
+  isReady: s.matches(S.bool),
+  sourceBlockNumber: s.matches(S.int),
+  progressBlockNumber: s.matches(S.int),
+  progressLatencyMs: s.matches(S.option(S.int)),
+  concurrency: s.matches(S.int),
+  partitionsCount: s.matches(S.int),
+  bufferSize: s.matches(S.int),
+  bufferBlockNumber: s.matches(S.int),
+  idleSeconds: s.matches(S.float),
+  waitingForNewBlockSeconds: s.matches(S.float),
+  queryingSeconds: s.matches(S.float),
+  blockRangeFetchSeconds: s.matches(S.float),
+  blockRangeParseSeconds: s.matches(S.float),
+  blockRangeFetchCount: s.matches(S.float),
+  blockRangeFetchedEvents: s.matches(S.float),
+  blockRangeFetchedBlocks: s.matches(S.float),
+  reorgCount: s.matches(S.int),
+  reorgDetectedBlock: s.matches(S.option(S.int)),
+  rollbackTargetBlock: s.matches(S.option(S.int)),
 })
 let stateSchema = S.union([
   S.literal(Disabled({})),
@@ -634,7 +653,7 @@ let start = async (
       | None => Initializing({})
       | Some(state) => {
           let chains =
-            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toChainData)
+            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toData)
           Active({
             envioVersion,
             chains,

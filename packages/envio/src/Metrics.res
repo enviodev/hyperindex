@@ -84,7 +84,10 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
   let chains =
     chainStates
     ->Dict.valuesToArray
-    ->Array.map(cs => (`{chainId="${(cs->ChainState.chainConfig).id->Int.toString}"}`, cs))
+    ->Array.map(cs => {
+      let m = cs->ChainState.toData
+      (`{chainId="${m.chainId->Float.toString}"}`, m)
+    })
   let handlers =
     state
     ->IndexerState.handlerStats
@@ -118,7 +121,10 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     state
     ->IndexerState.storageWriteStats
     ->Dict.valuesToArray
-    ->Array.map((s: IndexerState.storageWriteStat) => (`{storage="${s.storage->escapeLabelValue}"}`, s))
+    ->Array.map((s: IndexerState.storageWriteStat) => (
+      `{storage="${s.storage->escapeLabelValue}"}`,
+      s,
+    ))
   let historyPrunes = {
     let entries = []
     state
@@ -150,7 +156,10 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
       ->ChainState.sourceManager
       ->SourceManager.getSourceHeightSamples
       ->Array.forEach((s: SourceManager.sourceHeightSample) =>
-        entries->Array.push((`{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`, s))
+        entries->Array.push((
+          `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`,
+          s,
+        ))
       )
     )
     entries
@@ -173,16 +182,14 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Whether the chain is fully synced to the head.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.isReady ? 1. : 0.,
+    ~value=m => m.isReady ? 1. : 0.,
   )
   // Keep legacy metric name for backward compatibility
   b->single(
     ~name="hyperindex_synced_to_head",
     ~help="All chains fully synced",
     ~kind="gauge",
-    ~value=chains->Utils.Array.notEmpty && chains->Array.every(((_, cs)) => cs->ChainState.isReady)
-      ? 1.
-      : 0.,
+    ~value=chains->Utils.Array.notEmpty && chains->Array.every(((_, m)) => m.isReady) ? 1. : 0.,
   )
   b->series(
     ~name="envio_processing_handler_seconds",
@@ -196,7 +203,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Total number of individual event handler executions.",
     ~kind="counter",
     ~entries=handlers,
-    ~value=s => s.processingCount->Int.toFloat,
+    ~value=s => s.processingCount,
   )
   b->series(
     ~name="envio_preload_handler_seconds",
@@ -210,7 +217,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Total number of individual preload handler executions.",
     ~kind="counter",
     ~entries=handlers,
-    ~value=s => s.preloadCount->Int.toFloat,
+    ~value=s => s.preloadCount,
   )
   b->series(
     ~name="envio_preload_handler_seconds_total",
@@ -224,42 +231,42 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Cumulative time spent fetching block ranges.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.blockRangeFetchSeconds,
+    ~value=m => m.blockRangeFetchSeconds,
   )
   b->series(
     ~name="envio_fetching_block_range_parse_seconds",
     ~help="Cumulative time spent parsing block range fetch responses.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.blockRangeParseSeconds,
+    ~value=m => m.blockRangeParseSeconds,
   )
   b->series(
     ~name="envio_fetching_block_range_total",
     ~help="Total number of block range fetch operations.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.blockRangeFetchCount->Int.toFloat,
+    ~value=m => m.blockRangeFetchCount,
   )
   b->series(
     ~name="envio_fetching_block_range_events_total",
     ~help="Cumulative number of events fetched across all block range operations.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.blockRangeFetchedEvents->Int.toFloat,
+    ~value=m => m.blockRangeFetchedEvents,
   )
   b->series(
     ~name="envio_fetching_block_range_size",
     ~help="Cumulative number of blocks covered across all block range fetch operations.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.blockRangeFetchedBlocks->Int.toFloat,
+    ~value=m => m.blockRangeFetchedBlocks,
   )
   b->series(
     ~name="envio_indexing_known_height",
     ~help="The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.knownHeight->Int.toFloat,
+    ~value=m => m.sourceBlockNumber->Int.toFloat,
   )
   b->single(
     ~name="envio_process_start_time_seconds",
@@ -272,42 +279,42 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The number of executing concurrent queries to the chain data-source.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.sourceManager->SourceManager.inFlightCount->Int.toFloat,
+    ~value=m => m.concurrency->Int.toFloat,
   )
   b->series(
     ~name="envio_indexing_partitions",
     ~help="The number of partitions used to split fetching logic by addresses and block ranges.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.partitionsCount->Int.toFloat,
+    ~value=m => m.partitionsCount->Int.toFloat,
   )
   b->series(
     ~name="envio_indexing_idle_seconds",
     ~help="The time the indexer source syncing has been idle. A high value may indicate the source sync is a bottleneck.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.sourceManager->SourceManager.idleSeconds,
+    ~value=m => m.idleSeconds,
   )
   b->series(
     ~name="envio_indexing_source_waiting_seconds",
     ~help="The time the indexer has been waiting for new blocks.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.sourceManager->SourceManager.waitingForNewBlockSeconds,
+    ~value=m => m.waitingForNewBlockSeconds,
   )
   b->series(
     ~name="envio_indexing_source_querying_seconds",
     ~help="The time spent performing queries to the chain data-source.",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => cs->ChainState.sourceManager->SourceManager.queryingSeconds,
+    ~value=m => m.queryingSeconds,
   )
   b->series(
     ~name="envio_indexing_buffer_size",
     ~help="The current number of items in the indexing buffer.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.bufferSize->Int.toFloat,
+    ~value=m => m.bufferSize->Int.toFloat,
   )
   b->single(
     ~name="envio_indexing_target_buffer_size",
@@ -320,14 +327,14 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The highest block number that has been fully fetched by the indexer.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.bufferBlockNumber->Int.toFloat,
+    ~value=m => m.bufferBlockNumber->Int.toFloat,
   )
   b->seriesOpt(
     ~name="envio_indexing_end_block",
     ~help="The block number to stop indexing at. (inclusive)",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.endBlock->Option.map(Int.toFloat),
+    ~value=m => m.endBlock->Option.map(Int.toFloat),
   )
   b->series(
     ~name="envio_source_request_total",
@@ -357,17 +364,14 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Total number of reorgs detected",
     ~kind="counter",
     ~entries=chains,
-    ~value=cs => {
-      let count = cs->ChainState.reorgCount
-      count > 0 ? Some(count->Int.toFloat) : None
-    },
+    ~value=m => m.reorgCount > 0 ? Some(m.reorgCount->Int.toFloat) : None,
   )
   b->seriesOpt(
     ~name="envio_reorg_detected_block",
     ~help="The block number where reorg was detected the last time. This doesn't mean that the block was reorged, this is simply where we found block hash to be different.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.reorgDetectedBlock->Option.map(Int.toFloat),
+    ~value=m => m.reorgDetectedBlock->Option.map(Int.toFloat),
   )
   b->single(
     ~name="envio_reorg_threshold",
@@ -418,7 +422,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The block number reorg was rollbacked to the last time.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.rollbackTargetBlock->Option.map(Int.toFloat),
+    ~value=m => m.rollbackTargetBlock->Option.map(Int.toFloat),
   )
   b->single(
     ~name="envio_processing_max_batch_size",
@@ -431,26 +435,26 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The block number of the latest block processed and stored in the database.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.committedProgressBlockNumber->Int.toFloat,
+    ~value=m => m.progressBlockNumber->Int.toFloat,
   )
   b->series(
     ~name="envio_progress_events",
     ~help="The number of events processed and reflected in the database.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.numEventsProcessed,
+    ~value=m => m.numEventsProcessed,
   )
   b->seriesOpt(
     ~name="envio_progress_latency",
     ~help="The latency in milliseconds between the latest processed event creation and the time it was written to storage.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.progressLatencyMs->Option.map(Int.toFloat),
+    ~value=m => m.progressLatencyMs->Option.map(Int.toFloat),
   )
   // Effects that were never called (e.g. seeded from the persisted cache only)
   // get no call samples.
   let ifCalled = (s: EffectState.effectStats, value) =>
-    s.callCount > 0 || s.activeCallsCount > 0 ? Some(value) : None
+    s.callCount > 0. || s.activeCallsCount > 0 ? Some(value) : None
   b->seriesOpt(
     ~name="envio_effect_call_seconds",
     ~help="Processing time taken to call the Effect function.",
@@ -470,7 +474,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Cumulative number of resolved Effect function calls during the indexing process.",
     ~kind="counter",
     ~entries=effects,
-    ~value=s => s->ifCalled(s.callCount->Int.toFloat),
+    ~value=s => s->ifCalled(s.callCount),
   )
   b->seriesOpt(
     ~name="envio_effect_active_calls",
@@ -529,21 +533,21 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="Cumulative number of successful storage load operations during the indexing process.",
     ~kind="counter",
     ~entries=storageLoads,
-    ~value=s => s.count->Int.toFloat,
+    ~value=s => s.count,
   )
   b->series(
     ~name="envio_storage_load_where_size",
     ~help="Cumulative number of filter conditions ('where' items) used in storage load operations during the indexing process.",
     ~kind="counter",
     ~entries=storageLoads,
-    ~value=s => s.whereSize->Int.toFloat,
+    ~value=s => s.whereSize,
   )
   b->series(
     ~name="envio_storage_load_size",
     ~help="Cumulative number of records loaded from storage during the indexing process.",
     ~kind="counter",
     ~entries=storageLoads,
-    ~value=s => s.size->Int.toFloat,
+    ~value=s => s.size,
   )
   b->series(
     ~name="envio_storage_write_seconds",
@@ -564,7 +568,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~help="The number of addresses indexed on chain. Includes both static and dynamic addresses.",
     ~kind="gauge",
     ~entries=chains,
-    ~value=cs => cs->ChainState.numAddresses->Int.toFloat,
+    ~value=m => m.numAddresses->Int.toFloat,
   )
 }
 

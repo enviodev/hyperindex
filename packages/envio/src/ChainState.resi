@@ -63,19 +63,6 @@ let recordBlockRangeFetch: (
 ) => unit
 let recordReorgDetected: (t, ~blockNumber: int) => unit
 let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
-let blockRangeFetchSeconds: t => float
-let blockRangeParseSeconds: t => float
-let blockRangeFetchCount: t => int
-let blockRangeFetchedEvents: t => int
-let blockRangeFetchedBlocks: t => int
-let reorgCount: t => int
-let reorgDetectedBlock: t => option<int>
-let rollbackTargetBlock: t => option<int>
-let progressLatencyMs: t => option<int>
-let partitionsCount: t => int
-let bufferBlockNumber: t => int
-let endBlock: t => option<int>
-let numAddresses: t => int
 
 // Fetch-frontier reads.
 let knownHeight: t => int
@@ -99,6 +86,8 @@ let dispatch: (
 ) => promise<unit>
 
 // Views.
+// Per-chain view snapshot shared by the status API, the TUI and the metrics
+// renderer.
 type chainData = {
   chainId: float,
   poweredByHyperSync: bool,
@@ -113,8 +102,30 @@ type chainData = {
   startBlock: int,
   endBlock: option<int>,
   numAddresses: int,
+  isReady: bool,
+  // Raw source height, unlike knownHeight which is clamped to endBlock.
+  sourceBlockNumber: int,
+  // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
+  progressBlockNumber: int,
+  progressLatencyMs: option<int>,
+  concurrency: int,
+  partitionsCount: int,
+  bufferSize: int,
+  // Raw buffer block (may be -1), unlike the clamped latestFetchedBlockNumber.
+  bufferBlockNumber: int,
+  idleSeconds: float,
+  waitingForNewBlockSeconds: float,
+  queryingSeconds: float,
+  blockRangeFetchSeconds: float,
+  blockRangeParseSeconds: float,
+  blockRangeFetchCount: float,
+  blockRangeFetchedEvents: float,
+  blockRangeFetchedBlocks: float,
+  reorgCount: int,
+  reorgDetectedBlock: option<int>,
+  rollbackTargetBlock: option<int>,
 }
-let toChainData: t => chainData
+let toData: t => chainData
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: t => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool

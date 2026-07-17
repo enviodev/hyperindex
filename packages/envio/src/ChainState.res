@@ -29,19 +29,21 @@ type t = {
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
   // prune / rollback lifecycle as the transaction store.
   blockStore: BlockStore.t,
-  // --- Per-chain metric counters, rendered by Metrics at scrape time. ---
+  // --- Per-chain metric counters, rendered by Metrics at scrape time.
+  // Floats: cumulative counters outgrow int32. ---
   mutable blockRangeFetchSeconds: float,
   mutable blockRangeParseSeconds: float,
-  mutable blockRangeFetchCount: int,
-  mutable blockRangeFetchedEvents: int,
-  mutable blockRangeFetchedBlocks: int,
+  mutable blockRangeFetchCount: float,
+  mutable blockRangeFetchedEvents: float,
+  mutable blockRangeFetchedBlocks: float,
   mutable reorgCount: int,
   mutable reorgDetectedBlock: option<int>,
   mutable rollbackTargetBlock: option<int>,
   mutable progressLatencyMs: option<int>,
 }
 
-// Per-chain shape returned by the status API.
+// Per-chain view snapshot shared by the status API, the TUI and the metrics
+// renderer.
 type chainData = {
   chainId: float,
   poweredByHyperSync: bool,
@@ -57,6 +59,28 @@ type chainData = {
   startBlock: int,
   endBlock: option<int>,
   numAddresses: int,
+  isReady: bool,
+  // Raw source height, unlike knownHeight which is clamped to endBlock.
+  sourceBlockNumber: int,
+  // Raw committed progress (may be -1), unlike the optional latestProcessedBlock.
+  progressBlockNumber: int,
+  progressLatencyMs: option<int>,
+  concurrency: int,
+  partitionsCount: int,
+  bufferSize: int,
+  // Raw buffer block (may be -1), unlike the clamped latestFetchedBlockNumber.
+  bufferBlockNumber: int,
+  idleSeconds: float,
+  waitingForNewBlockSeconds: float,
+  queryingSeconds: float,
+  blockRangeFetchSeconds: float,
+  blockRangeParseSeconds: float,
+  blockRangeFetchCount: float,
+  blockRangeFetchedEvents: float,
+  blockRangeFetchedBlocks: float,
+  reorgCount: int,
+  reorgDetectedBlock: option<int>,
+  rollbackTargetBlock: option<int>,
 }
 
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
@@ -120,9 +144,9 @@ let make = (
     blockStore,
     blockRangeFetchSeconds: 0.,
     blockRangeParseSeconds: 0.,
-    blockRangeFetchCount: 0,
-    blockRangeFetchedEvents: 0,
-    blockRangeFetchedBlocks: 0,
+    blockRangeFetchCount: 0.,
+    blockRangeFetchedEvents: 0.,
+    blockRangeFetchedBlocks: 0.,
     reorgCount: 0,
     reorgDetectedBlock: None,
     rollbackTargetBlock: None,
@@ -379,9 +403,9 @@ let recordBlockRangeFetch = (
 ) => {
   cs.blockRangeFetchSeconds = cs.blockRangeFetchSeconds +. totalTimeElapsed
   cs.blockRangeParseSeconds = cs.blockRangeParseSeconds +. parsingTimeElapsed
-  cs.blockRangeFetchCount = cs.blockRangeFetchCount + 1
-  cs.blockRangeFetchedEvents = cs.blockRangeFetchedEvents + numEvents
-  cs.blockRangeFetchedBlocks = cs.blockRangeFetchedBlocks + blockRangeSize
+  cs.blockRangeFetchCount = cs.blockRangeFetchCount +. 1.
+  cs.blockRangeFetchedEvents = cs.blockRangeFetchedEvents +. numEvents->Int.toFloat
+  cs.blockRangeFetchedBlocks = cs.blockRangeFetchedBlocks +. blockRangeSize->Int.toFloat
 }
 
 let recordReorgDetected = (cs: t, ~blockNumber) => {
@@ -391,19 +415,6 @@ let recordReorgDetected = (cs: t, ~blockNumber) => {
 
 let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = Some(blockNumber)
 
-let blockRangeFetchSeconds = (cs: t) => cs.blockRangeFetchSeconds
-let blockRangeParseSeconds = (cs: t) => cs.blockRangeParseSeconds
-let blockRangeFetchCount = (cs: t) => cs.blockRangeFetchCount
-let blockRangeFetchedEvents = (cs: t) => cs.blockRangeFetchedEvents
-let blockRangeFetchedBlocks = (cs: t) => cs.blockRangeFetchedBlocks
-let reorgCount = (cs: t) => cs.reorgCount
-let reorgDetectedBlock = (cs: t) => cs.reorgDetectedBlock
-let rollbackTargetBlock = (cs: t) => cs.rollbackTargetBlock
-let progressLatencyMs = (cs: t) => cs.progressLatencyMs
-let partitionsCount = (cs: t) => cs.fetchState->FetchState.partitionsCount
-let bufferBlockNumber = (cs: t) => cs.fetchState->FetchState.bufferBlockNumber
-let endBlock = (cs: t) => cs.fetchState.endBlock
-let numAddresses = (cs: t) => cs.indexingAddresses->IndexingAddresses.size
 
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
@@ -761,8 +772,8 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
   timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
 }
 
-// Snapshot the chain's view for the status API.
-let toChainData = (cs: t): chainData => {
+// Snapshot the chain's view for the status API, TUI and metrics renderer.
+let toData = (cs: t): chainData => {
   chainId: cs.chainConfig.id->Int.toFloat,
   poweredByHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
   firstEventBlockNumber: cs.fetchState.firstEventBlock,
@@ -779,6 +790,25 @@ let toChainData = (cs: t): chainData => {
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
   numAddresses: cs.indexingAddresses->IndexingAddresses.size,
+  isReady: cs->isReady,
+  sourceBlockNumber: cs.fetchState.knownHeight,
+  progressBlockNumber: cs.committedProgressBlockNumber,
+  progressLatencyMs: cs.progressLatencyMs,
+  concurrency: cs.sourceManager->SourceManager.inFlightCount,
+  partitionsCount: cs.fetchState->FetchState.partitionsCount,
+  bufferSize: cs.fetchState->FetchState.bufferSize,
+  bufferBlockNumber: cs.fetchState->FetchState.bufferBlockNumber,
+  idleSeconds: cs.sourceManager->SourceManager.idleSeconds,
+  waitingForNewBlockSeconds: cs.sourceManager->SourceManager.waitingForNewBlockSeconds,
+  queryingSeconds: cs.sourceManager->SourceManager.queryingSeconds,
+  blockRangeFetchSeconds: cs.blockRangeFetchSeconds,
+  blockRangeParseSeconds: cs.blockRangeParseSeconds,
+  blockRangeFetchCount: cs.blockRangeFetchCount,
+  blockRangeFetchedEvents: cs.blockRangeFetchedEvents,
+  blockRangeFetchedBlocks: cs.blockRangeFetchedBlocks,
+  reorgCount: cs.reorgCount,
+  reorgDetectedBlock: cs.reorgDetectedBlock,
+  rollbackTargetBlock: cs.rollbackTargetBlock,
 }
 
 // Snapshot the inputs a batch build needs from this chain.

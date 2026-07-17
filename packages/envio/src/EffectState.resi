@@ -12,7 +12,7 @@ type effectStats = {
   scope: Internal.chainScope,
   mutable callSeconds: float,
   mutable callSecondsTotal: float,
-  mutable callCount: int,
+  mutable callCount: float,
   mutable activeCallsCount: int,
   mutable prevCallStartTimerRef: Performance.timeRef,
   mutable queueCount: int,

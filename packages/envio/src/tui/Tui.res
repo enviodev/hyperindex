@@ -157,7 +157,7 @@ module App = {
       ->IndexerState.chainStates
       ->Dict.valuesToArray
       ->Array.map(cs => {
-        let data = cs->ChainState.toChainData
+        let data = cs->ChainState.toData
         let numEventsProcessed = data.numEventsProcessed
         let committedProgressBlockNumber = cs->ChainState.committedProgressBlockNumber
         let timestampCaughtUpToHeadOrEndblock = data.timestampCaughtUpToHeadOrEndblock

@@ -51,10 +51,11 @@ type handlerStat = {
   contract: string,
   event: string,
   mutable processingSeconds: float,
-  mutable processingCount: int,
+  // Floats: cumulative counters outgrow int32.
+  mutable processingCount: float,
   // Wall-clock preload time: overlapping preloads of the same handler count once.
   mutable preloadSeconds: float,
-  mutable preloadCount: int,
+  mutable preloadCount: float,
   // Cumulative per-call preload time; exceeds preloadSeconds under parallel execution.
   mutable preloadSecondsTotal: float,
   mutable preloadPendingCount: int,
@@ -69,9 +70,9 @@ type storageLoadStat = {
   // Wall-clock load time: overlapping loads of the same operation count once.
   mutable seconds: float,
   mutable secondsTotal: float,
-  mutable count: int,
-  mutable whereSize: int,
-  mutable size: int,
+  mutable count: float,
+  mutable whereSize: float,
+  mutable size: float,
   mutable pendingCount: int,
   mutable pendingTimerRef: Performance.timeRef,
 }
@@ -459,9 +460,9 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
       contract,
       event,
       processingSeconds: 0.,
-      processingCount: 0,
+      processingCount: 0.,
       preloadSeconds: 0.,
-      preloadCount: 0,
+      preloadCount: 0.,
       preloadSecondsTotal: 0.,
       preloadPendingCount: 0,
       preloadPendingTimerRef: %raw(`null`),
@@ -474,7 +475,7 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
 let recordHandlerDuration = (state: t, ~contract, ~event, ~duration) => {
   let stat = state->getHandlerStat(~contract, ~event)
   stat.processingSeconds = stat.processingSeconds +. duration
-  stat.processingCount = stat.processingCount + 1
+  stat.processingCount = stat.processingCount +. 1.
 }
 
 let startPreloadHandler = (state: t, ~contract, ~event) => {
@@ -494,7 +495,7 @@ let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
       stat.preloadSeconds +. stat.preloadPendingTimerRef->Performance.secondsSince
   }
   stat.preloadSecondsTotal = stat.preloadSecondsTotal +. timerRef->Performance.secondsSince
-  stat.preloadCount = stat.preloadCount + 1
+  stat.preloadCount = stat.preloadCount +. 1.
 }
 
 let getStorageLoadStat = (state: t, ~storage, ~operation) => {
@@ -507,9 +508,9 @@ let getStorageLoadStat = (state: t, ~storage, ~operation) => {
       storage,
       seconds: 0.,
       secondsTotal: 0.,
-      count: 0,
-      whereSize: 0,
-      size: 0,
+      count: 0.,
+      whereSize: 0.,
+      size: 0.,
       pendingCount: 0,
       pendingTimerRef: %raw(`null`),
     }
@@ -534,9 +535,9 @@ let endStorageLoad = (state: t, timerRef, ~storage, ~operation, ~whereSize, ~siz
     stat.seconds = stat.seconds +. stat.pendingTimerRef->Performance.secondsSince
   }
   stat.secondsTotal = stat.secondsTotal +. timerRef->Performance.secondsSince
-  stat.count = stat.count + 1
-  stat.whereSize = stat.whereSize + whereSize
-  stat.size = stat.size + size
+  stat.count = stat.count +. 1.
+  stat.whereSize = stat.whereSize +. whereSize->Int.toFloat
+  stat.size = stat.size +. size->Int.toFloat
 }
 
 let recordStorageWrite = (state: t, ~storage, ~timeSeconds) => {
