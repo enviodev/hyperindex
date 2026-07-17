@@ -179,10 +179,12 @@ module Storage = {
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
-        pruneStaleCheckpoints: (~safeCheckpointId as _) =>
-          JsError.throwWithMessage("Not implemented"),
-        pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          JsError.throwWithMessage("Not implemented"),
+        pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+        pruneStaleEntityHistory: async (
+          ~entityName as _,
+          ~entityIndex as _,
+          ~safeCheckpointId as _,
+        ) => (),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
           JsError.throwWithMessage("Not implemented"),
         getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
@@ -362,7 +364,10 @@ module Indexer = {
     queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
-    queryEffectCache: string => promise<array<{"id": string, "output": JSON.t}>>,
+    queryEffectCache: 'input 'output. (
+      Envio.effect<'input, 'output>,
+      ~scope: Internal.chainScope,
+    ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
@@ -372,6 +377,7 @@ module Indexer = {
     chain: chainId,
     sourceConfig: Config.sourceConfig,
     startBlock?: int,
+    maxReorgDepth?: int,
     blockLag?: int,
   }
 
@@ -421,6 +427,9 @@ module Indexer = {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+              maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
+                originalChainConfig.maxReorgDepth,
+              ),
               blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
             },
           )
@@ -614,11 +623,11 @@ module Indexer = {
           ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         )
       },
-      queryEffectCache: (effectName: string) => {
+      queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
+        let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
+        let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=Internal.cacheTablePrefix ++ effectName),
-        )
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
@@ -995,6 +1004,20 @@ module Source = {
 }
 
 module Helper = {
+  // Wait until the source has a pending getItemsOrThrow call. Queries are
+  // serialized by the cross-chain budget waterfall, so a chain's query only
+  // appears after the more-behind chains' responses release the budget.
+  let waitItemsQuery = async (sourceMock: Source.t) => {
+    let attempts = ref(0)
+    while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
+      attempts := attempts.contents + 1
+      await Utils.delay(0)
+    }
+    if sourceMock.getItemsOrThrowCalls->Array.length === 0 {
+      JsError.throwWithMessage("Timed out waiting for a getItemsOrThrow call")
+    }
+  }
+
   let initialEnterReorgThreshold = async (
     ~t: Vitest.testContext,
     ~indexerMock: Indexer.t,

@@ -16,14 +16,6 @@ module EntityTables: {
   let get: (t, ~entityName: string) => InMemoryTable.Entity.t
 }
 
-type effectCacheInMemTable = {
-  mutable idsToStore: array<string>,
-  mutable invalidationsCount: int,
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
-  mutable changesCount: float,
-  effect: Internal.effect,
-}
-
 type t
 
 let make: (
@@ -86,7 +78,7 @@ let config: t => Config.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
-let effects: t => dict<effectCacheInMemTable>
+let effectState: t => EffectState.t
 let committedCheckpointId: t => Internal.checkpointId
 let processedCheckpointId: t => Internal.checkpointId
 let processedBatches: t => array<Batch.t>
@@ -106,7 +98,7 @@ let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
 let isStopped: t => bool
 let epoch: t => int
-let pruneStaleEntityHistoryThrottler: t => Throttler.t
+let lastPrunedAtMillis: t => dict<float>
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
 
 // Store domain operations.
