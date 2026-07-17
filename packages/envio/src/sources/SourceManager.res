@@ -465,13 +465,22 @@ let getSourceNewHeight = async (
           "chainId": source.chain->ChainMap.Chain.toChainId,
         })
         let h = ref(initialHeight)
+        let fallbackRetry = ref(0)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
           try {
             let res = await source.getHeightOrThrow()
             sourceState->recordRequestStats(res.requestStats)
             h := res.height
+            fallbackRetry := 0
           } catch {
-          | _ => ()
+          | exn =>
+            sourceManager->raiseIfRetriesExhausted(
+              ~retry=fallbackRetry.contents,
+              ~logger,
+              ~err=exn,
+              ~msg=`Failed to fetch the chain height from the ${source.name} source. Make sure the endpoint is reachable.`,
+            )
+            fallbackRetry := fallbackRetry.contents + 1
           }
           if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
             await Utils.delay(source.pollingInterval)
@@ -479,6 +488,10 @@ let getSourceNewHeight = async (
         }
         h.contents
       })
+      // With a retry cap the fallback can reject after losing the race;
+      // observe that rejection so it doesn't surface as unhandled. The race
+      // still rejects normally when the fallback fails first.
+      pollingFallback->Promise.catch(_ => Promise.resolve(initialHeight))->ignore
       let height = await Promise.race([subscriptionPromise, pollingFallback])
 
       // Only accept heights greater than initialHeight
