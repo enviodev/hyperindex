@@ -741,6 +741,10 @@ let getRuntimeCollectors = () =>
     collectors
   }
 
+// Called at server startup so GC pauses and event-loop delays are covered
+// from the beginning of the run, not from the first scrape.
+let startRuntimeCollectors = () => getRuntimeCollectors()->ignore
+
 let collectRuntime = () => {
   let b = {out: ""}
   let memory = NodeJs.Process.memoryUsage()

@@ -523,6 +523,8 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
     }
   })
 
+  Metrics.startRuntimeCollectors()
+
   app->get("/metrics", (_req, res) => {
     res->set("Content-Type", Metrics.contentType)
     let _ =
