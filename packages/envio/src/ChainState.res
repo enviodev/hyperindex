@@ -732,8 +732,6 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
   timestampCaughtUpToHeadOrEndblock: cs.timestampCaughtUpToHeadOrEndblock->Null.fromOption,
 }
 
-// Snapshot the chain's view for the metrics renderer; also feeds the TUI and
-// the status API.
 let toMetrics = (cs: t): Metrics.chainMetrics => {
   chainId: cs.chainConfig.id->Int.toFloat,
   poweredByHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
@@ -808,10 +806,10 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
   }
 
 // Commit a processed batch's progress for this chain (progress block, events
-// processed, head/safe-checkpoint tracking, first event block). Emits the
-// per-chain progress metrics. Readiness is decided by CrossChainState once every
-// chain is caught up (see markReady). `blockTimestampName` is the ecosystem's
-// block-timestamp field, read off the payload block for the latency metric.
+// processed, head/safe-checkpoint tracking, first event block). Readiness is
+// decided by CrossChainState once every chain is caught up (see markReady).
+// `blockTimestampName` is the ecosystem's block-timestamp field, read off the
+// payload block for the latency metric.
 let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainId = cs.chainConfig.id
 

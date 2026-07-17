@@ -34,16 +34,16 @@ let forEach: (t, effectCacheInMemTable => unit) => unit
 // Drop the cache tables but keep the rate-limit windows across a rollback.
 let resetForRollback: t => unit
 
-// Metric mutations.
 let startCall: (effectStats, ~timerRef: Performance.timeRef) => unit
 let endCall: (effectStats, ~startTimerRef: Performance.timeRef) => unit
 let queueEnqueued: (effectStats, ~count: int) => unit
 let queueDequeued: (effectStats, ~count: int) => unit
 let addQueueWaitSeconds: (effectStats, ~seconds: float) => unit
+// Bumps both the per-write invalidation count (consumed by the cache
+// persistence math) and the monotonic metric counter.
 let recordInvalidation: effectCacheInMemTable => unit
 let commitCacheCount: (effectCacheInMemTable, ~count: int) => unit
 // Seed the persisted-rows count from the db on restart.
 let setCacheCount: (t, ~effectName: string, ~scope: Internal.chainScope, ~count: int) => unit
 
-// Metric reads.
 let toMetrics: t => array<Metrics.effectMetrics>

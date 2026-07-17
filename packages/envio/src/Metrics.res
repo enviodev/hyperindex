@@ -1,9 +1,3 @@
-// Structured snapshot of every metric the indexer exposes, plus the hand-rolled
-// prometheus text rendering for it. The snapshot is produced by
-// IndexerState.toMetrics from live state at scrape time — no prom-client
-// involved — and is also the read-only view the TUI and the console API
-// consume, so the mutable counters never leak outside the state modules.
-
 type chainMetrics = {
   chainId: float,
   poweredByHyperSync: bool,
@@ -191,7 +185,6 @@ let seriesOpt = (
   }
 }
 
-// An unlabeled metric with its single sample.
 let single = (b: builder, ~name, ~help, ~kind, ~value) => {
   b->block(~name, ~help, ~kind)
   b->sample(~name, ~value)
