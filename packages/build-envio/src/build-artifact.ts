@@ -157,6 +157,25 @@ export function copyPublishFiles(envioDir: string, outDir: string): void {
     }
     copyRecursive(src, dest);
   }
+  stripTestSources(path.join(outDir, "rescript.json"));
+}
+
+/**
+ * The test dir isn't shipped (it can't be a ReScript "dev" source because
+ * those never emit in-source JS), so the published rescript.json must not
+ * reference it.
+ */
+export function stripTestSources(rescriptJsonPath: string): void {
+  const config = JSON.parse(fs.readFileSync(rescriptJsonPath, "utf-8"));
+  if (Array.isArray(config.sources)) {
+    config.sources = config.sources.filter(
+      (source: { dir?: string }) => source?.dir !== "test"
+    );
+  }
+  fs.writeFileSync(
+    rescriptJsonPath,
+    JSON.stringify(config, null, 2) + "\n"
+  );
 }
 
 /**

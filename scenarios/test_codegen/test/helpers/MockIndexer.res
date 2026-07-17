@@ -1,22 +1,34 @@
 type chainId = Indexer.chainId
 
+// The generated project config. Cheap: Config.load() memoizes the pure parse.
 let config = Config.load()
 
+let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
+  config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
+
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
-  config.userEntitiesByName
-  ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
-  ->Option.getOrThrow
+  config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<_> => string))
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
-let defaultPersistence = PgStorage.makePersistenceFromConfig(
-  ~config,
-  ~storage=PgStorage.makeStorageFromEnv(
-    ~config,
-    ~sql=PgStorage.makeClient(),
-    ~pgSchema=Env.Db.publicSchema,
-    ~isHasuraEnabled=false,
-  ),
-)
+// Lazy so importing the helper doesn't open a pg client for tests that never use it.
+let defaultPersistenceRef = ref(None)
+let defaultPersistence = () =>
+  switch defaultPersistenceRef.contents {
+  | Some(persistence) => persistence
+  | None =>
+    let config = Config.load()
+    let persistence = PgStorage.makePersistenceFromConfig(
+      ~config,
+      ~storage=PgStorage.makeStorageFromEnv(
+        ~config,
+        ~sql=PgStorage.makeClient(),
+        ~pgSchema=Env.Db.publicSchema,
+        ~isHasuraEnabled=false,
+      ),
+    )
+    defaultPersistenceRef := Some(persistence)
+    persistence
+  }
 
 module InMemoryStore = {
   let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
@@ -32,10 +44,14 @@ module InMemoryStore = {
     )
   }
 
-  let make = (~entities=[]) => {
+  let make = (~config=?, ~entities=[]) => {
+    let config = switch config {
+    | Some(config) => config
+    | None => Config.load()
+    }
     let indexerState = IndexerState.make(
       ~config,
-      ~persistence=defaultPersistence,
+      ~persistence=defaultPersistence(),
       // A trivial chain state map for store-only tests that never run the loop.
       ~chainStates=Dict.make(),
       ~isInReorgThreshold=false,
@@ -204,12 +220,13 @@ module Storage = {
     }
   }
 
-  let toPersistence = (storageMock: t) => {
+  let toPersistence = (storageMock: t, ~config=?) => {
+    let config = switch config {
+    | Some(config) => config
+    | None => Config.load()
+    }
     {
-      ...PgStorage.makePersistenceFromConfig(
-        ~config=Config.load(),
-        ~storage=storageMock.storage,
-      ),
+      ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
       storageStatus: Ready({
         cleanRun: false,
         cache: Dict.make(),
@@ -246,7 +263,7 @@ type mockSourceEvent = {
 // MockSource items choose their callback at response time, after ChainState has
 // already been created. Install one stable registration up front and dispatch
 // through callback metadata carried only by the test payload.
-let makeMockSourceRegistration = (~index): Internal.onEventRegistration => {
+let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
     let args = args->(
       Utils.magic: Internal.handlerArgs => Internal.genericHandlerArgs<
@@ -282,9 +299,9 @@ let makeMockSourceRegistration = (~index): Internal.onEventRegistration => {
     eventConfig: ({
       id: "MockEvent",
       // Keep the synthetic registration in the same address-dependent fetch
-      // partition as the generated test registrations. MockSource ignores the
+      // partition as the config's registrations. MockSource ignores the
       // query selection, while ChainState still owns and resolves this slot.
-      contractName: "Gravatar",
+      contractName,
       name: "MockEvent",
       paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
       simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
@@ -341,6 +358,12 @@ let installMockSourceRegistrations = (
       }
       let mockRegistration = makeMockSourceRegistration(
         ~index=registrations.onEventRegistrations->Array.length,
+        // Any contract from the chain keeps the synthetic registration in the
+        // address-dependent partition of a real contract.
+        ~contractName=switch chainConfig.contracts->Array.get(0) {
+        | Some(contract) => contract.name
+        | None => "MockContract"
+        },
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
       sourceStates->Array.forEach(state =>
@@ -380,6 +403,9 @@ module Indexer = {
 
   let rec make = async (
     ~chains: array<chainConfig>,
+    // A config parsed through the user-facing pipeline (MockIndexerConfig.parseYaml).
+    // Defaults to the generated project config.
+    ~config as customConfig: option<Config.t>=?,
     ~saveFullHistory=false,
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
@@ -411,7 +437,10 @@ module Indexer = {
     // from the config it's given, so registration must see the resolved
     // config rather than the raw generated one.
     let config = {
-      let config = Config.load()
+      let config = switch customConfig {
+      | Some(config) => config
+      | None => Config.load()
+      }
 
       let chainMap =
         chains
@@ -440,7 +469,14 @@ module Indexer = {
       }
     }
 
-    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
+    let registrationsByChainId = switch customConfig {
+    | None => await HandlerLoader.registerAllHandlers(~config)
+    | Some(_) =>
+      // A supplied config has no handler files on disk; register inline
+      // handlers (if any) through the same public registry lifecycle.
+      HandlerRegister.startRegistration(~config)
+      HandlerRegister.finishRegistration(~config)
+    }
     installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let sql = PgStorage.makeClient()
@@ -540,7 +576,8 @@ module Indexer = {
         })
       },
       query: (type entity, name: Indexer.Entities.name<entity>) => {
-        let ec = entityConfig(name)
+        let ec =
+          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity> => string))
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
@@ -549,7 +586,8 @@ module Indexer = {
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
-        let ec = entityConfig(name)
+        let ec =
+          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity> => string))
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
@@ -648,6 +686,7 @@ module Indexer = {
         }
         await make(
           ~chains,
+          ~config=?customConfig,
           ~enableHasura,
           ~enableRawEvents,
           ~saveFullHistory,
@@ -933,8 +972,8 @@ module Source = {
                             ~message="MockSource on-event registration was not installed before resolving items",
                           )
                         let payload: Evm.payload = {
-                          contractName: "Gravatar",
-                          eventName: "MockEvent",
+                          contractName: onEventRegistration.eventConfig.contractName,
+                          eventName: onEventRegistration.eventConfig.name,
                           params: %raw(`{}`),
                           chainId: chain->ChainMap.Chain.toChainId,
                           srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,

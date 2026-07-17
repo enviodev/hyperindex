@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "rescript",
-    "watch": "rescript watch"
+    "watch": "rescript watch",
+    "test": "rescript && vitest run"
   },
   "author": "envio contributors <about@envio.dev>",
   "license": "SEE LICENSE IN licenses/README.md",
