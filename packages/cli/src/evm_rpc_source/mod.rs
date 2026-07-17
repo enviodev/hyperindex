@@ -9,7 +9,7 @@ mod classify;
 mod client;
 mod interval;
 
-use crate::evm_hypersync_source::decode::DecoderCore;
+use crate::evm_hypersync_source::decode::{DecoderCore, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistration, ParamValue,
@@ -262,8 +262,11 @@ impl EvmRpcClient {
             .map_err(map_err)?;
         let log_selections = built.log_selections;
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
-        let active_registrations: std::sync::Arc<HashSet<i64>> =
-            std::sync::Arc::new(params.registration_indexes.iter().copied().collect());
+        let selection_decoder = std::sync::Arc::new(
+            self.decoder
+                .selection(&params.registration_indexes)
+                .map_err(map_err)?,
+        );
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
         let page_result = tokio::time::timeout(
             timeout,
@@ -272,7 +275,7 @@ impl EvmRpcClient {
                 to_block,
                 &log_selections,
                 &contract_name_by_address,
-                &active_registrations,
+                &selection_decoder,
             ),
         )
         .await;
@@ -394,7 +397,7 @@ impl EvmRpcClient {
         to_block: u64,
         selections: &[BuiltLogSelection],
         contract_name_by_address: &std::sync::Arc<HashMap<String, String>>,
-        active_registrations: &std::sync::Arc<HashSet<i64>>,
+        selection_decoder: &std::sync::Arc<SelectionDecoder>,
     ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
         if selections.is_empty() {
             return Ok((Vec::new(), Vec::new()));
@@ -408,7 +411,7 @@ impl EvmRpcClient {
                     to_block as i64,
                     selection,
                     contract_name_by_address.clone(),
-                    active_registrations.clone(),
+                    selection_decoder.clone(),
                 )
                 .await;
             (result, started.elapsed().as_secs_f64())
@@ -455,7 +458,7 @@ impl EvmRpcClient {
         to_block: i64,
         selection: &BuiltLogSelection,
         contract_name_by_address: std::sync::Arc<HashMap<String, String>>,
-        active_registrations: std::sync::Arc<HashSet<i64>>,
+        decoder: std::sync::Arc<SelectionDecoder>,
     ) -> Result<Vec<RpcEventItem>, RpcError> {
         // eth_getLogs topic filters: `null` matches any value at a position;
         // trailing match-any positions are trimmed entirely.
@@ -484,7 +487,6 @@ impl EvmRpcClient {
 
         let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;
 
-        let decoder = self.decoder.clone();
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
             let should_checksum = decoder.checksummed_addresses();
@@ -498,7 +500,6 @@ impl EvmRpcClient {
                     .route_and_decode_napi(
                         &raw.to_decoder_log(),
                         contract_name_by_address.get(&address).map(String::as_str),
-                        &active_registrations,
                     )
                     .unwrap_or_default();
                 if routed.is_empty() {

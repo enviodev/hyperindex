@@ -17,7 +17,7 @@ pub(crate) mod types;
 use std::collections::HashMap;
 
 use config::ClientConfig;
-use decode::DecoderCore;
+use decode::{DecoderCore, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
@@ -126,6 +126,10 @@ impl EvmHypersyncClient {
                 &params.addresses_by_contract_name,
             )
             .map_err(map_err)?;
+        let selection_decoder = self
+            .decoder
+            .selection(&params.registration_indexes)
+            .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
@@ -202,21 +206,18 @@ impl EvmHypersyncClient {
 
         let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
         let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
-        let active_registrations: HashSet<i64> =
-            params.registration_indexes.iter().copied().collect();
         let (items, blocks) = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
                 response.data.logs,
-                &self.decoder,
+                &selection_decoder,
                 self.enable_checksum_addresses,
                 &validated_block_fields,
                 &requested_transaction_fields,
                 &transaction_store,
                 &block_store,
                 &contract_name_by_address,
-                &active_registrations,
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -376,14 +377,13 @@ fn process_response(
     blocks: Vec<Vec<simple_types::Block>>,
     transactions: Vec<Vec<simple_types::Transaction>>,
     logs: Vec<Vec<simple_types::Log>>,
-    decoder: &DecoderCore,
+    decoder: &SelectionDecoder,
     should_checksum: bool,
     validated_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
     contract_name_by_address: &std::collections::HashMap<String, String>,
-    active_registrations: &HashSet<i64>,
 ) -> std::result::Result<(Vec<EventItem>, Vec<BlockHeader>), ConvertError> {
     // The server returns one block per number; items reference them by number,
     // so keep them owned and track which numbers are present for coverage.
@@ -494,7 +494,6 @@ fn process_response(
                 contract_name_by_address
                     .get(&src_address)
                     .map(String::as_str),
-                active_registrations,
             )
             .context("decode event params")?;
         for routed in routed {
@@ -681,14 +680,17 @@ mod tests {
     use super::*;
     use hypersync_client::simple_types;
 
-    fn empty_decoder() -> DecoderCore {
-        DecoderCore::from_registrations(&[], false).unwrap()
+    fn empty_decoder() -> SelectionDecoder {
+        DecoderCore::from_registrations(&[], false)
+            .unwrap()
+            .selection(&[])
+            .unwrap()
     }
 
     // Routes `full_log` (zero topic0, one topic, empty data) to a wildcard
     // registration so success-path tests still produce an item now that
     // unrouted logs are dropped.
-    fn zero_event_decoder() -> DecoderCore {
+    fn zero_event_decoder() -> SelectionDecoder {
         DecoderCore::from_registrations(
             &[crate::evm_hypersync_source::types::OnEventRegistration {
                 index: 0,
@@ -705,6 +707,8 @@ mod tests {
             }],
             false,
         )
+        .unwrap()
+        .selection(&[0])
         .unwrap()
     }
 
@@ -735,7 +739,6 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -764,7 +767,6 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -798,7 +800,6 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -836,7 +837,6 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -864,7 +864,6 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -896,7 +895,6 @@ mod tests {
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .err()
         .expect("expected MissingFields error");
@@ -935,7 +933,6 @@ mod tests {
             &store,
             &BlockStore::new_evm(false),
             &Default::default(),
-            &HashSet::from([0]),
         )
         .expect("expected success when block and transaction join");
 
