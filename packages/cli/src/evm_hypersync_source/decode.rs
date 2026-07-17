@@ -63,17 +63,22 @@ type StaticTopicFilter = Option<Vec<[u8; 32]>>;
 struct EventVariant {
     on_event_registration_index: i64,
     params: Vec<ParamMeta>,
+    /// Index into the group's `decoders`; variants with the same positional
+    /// layout share a decoder so a log is decoded once per layout, not per
+    /// registration.
+    decoder_idx: usize,
     /// The registration's resolved `where` in DNF (outer Vec is OR); a log
     /// matches when any selection's four positions all match. Empty means the
     /// registration puts no static topic constraint on its logs.
     topic_filters: Vec<[StaticTopicFilter; 4]>,
 }
 
-/// One positional decoder plus the per-registration namings layered over it.
-/// Two events sharing a `MetaKey` but indexing different params (same type
-/// list, same indexed count, different positions) can't be told apart by
-/// (topic0, topic count), so the first variant's layout backs the shared
-/// `decoder` and `apply_names` keys names off each variant.
+/// The registrations colliding on one `MetaKey`, with the per-registration
+/// namings layered over the positional decoders. Registrations sharing a key
+/// may still split indexed/body params differently (same type list, same
+/// indexed count, different positions) — such layouts can't be told apart by
+/// (topic0, topic count), so each distinct layout gets its own decoder and
+/// every matched variant decodes under its registration's own layout.
 ///
 /// `wildcard_variant_idxs`/`variant_idxs_by_contract_name` index into
 /// `variants` and fan a log out to its registrations: wildcard registrations
@@ -81,7 +86,7 @@ struct EventVariant {
 /// owned by that contract (via the partition's address index) — there is no
 /// fallback tier between them.
 struct RegisteredEvent {
-    decoder: DynSolEvent,
+    decoders: Vec<DynSolEvent>,
     variants: Vec<EventVariant>,
     wildcard_variant_idxs: Vec<usize>,
     variant_idxs_by_contract_name: HashMap<String, Vec<usize>>,
@@ -104,32 +109,29 @@ impl DecoderCore {
                 .with_context(|| format!("parse meta key for {}", ep.event_name))?;
             let event = match events.entry(key) {
                 Entry::Occupied(e) => e.into_mut(),
-                Entry::Vacant(e) => {
+                Entry::Vacant(e) => e.insert(RegisteredEvent {
+                    decoders: Vec::new(),
+                    variants: Vec::new(),
+                    wildcard_variant_idxs: Vec::new(),
+                    variant_idxs_by_contract_name: HashMap::new(),
+                }),
+            };
+            // Reuse an earlier same-layout variant's decoder; differing param
+            // *names* don't matter (`apply_names` applies each variant's own),
+            // only the indexed/body split and types do.
+            let decoder_idx = match event
+                .variants
+                .iter()
+                .find(|v| same_decode_layout(&v.params, &ep.params))
+            {
+                Some(v) => v.decoder_idx,
+                None => {
                     let decoder = build_event_decoder(&key, &ep.params)
                         .with_context(|| format!("build decoder for {}", ep.event_name))?;
-                    e.insert(RegisteredEvent {
-                        decoder,
-                        variants: Vec::new(),
-                        wildcard_variant_idxs: Vec::new(),
-                        variant_idxs_by_contract_name: HashMap::new(),
-                    })
+                    event.decoders.push(decoder);
+                    event.decoders.len() - 1
                 }
             };
-            // The shared decoder is built from the first variant's layout. A
-            // later variant colliding on this MetaKey but splitting indexed/body
-            // differently would be silently mis-typed, so reject it. Config
-            // parsing should already prevent this; this is the decoder-side
-            // backstop. Differing param *names* are fine — `apply_names` applies
-            // each variant's own.
-            if let Some(first) = event.variants.first() {
-                anyhow::ensure!(
-                    same_decode_layout(&first.params, &ep.params),
-                    "ABI layout mismatch for {}: another event with the same topic0 and topic \
-                     count but a different indexed/type layout is already registered; they can't \
-                     share a positional decoder",
-                    ep.event_name,
-                );
-            }
             let variant_idx = event.variants.len();
             if ep.is_wildcard {
                 event.wildcard_variant_idxs.push(variant_idx);
@@ -143,6 +145,7 @@ impl DecoderCore {
             event.variants.push(EventVariant {
                 on_event_registration_index: ep.index,
                 params: ep.params.clone(),
+                decoder_idx,
                 topic_filters: parse_topic_filters(&ep.topic_selections)
                     .with_context(|| format!("parse topic filters for {}", ep.event_name))?,
             });
@@ -233,31 +236,52 @@ impl DecoderCore {
         // Deterministic item order per log, independent of wildcard/owned split.
         variant_idxs.sort_unstable_by_key(|&idx| event.variants[idx].on_event_registration_index);
 
-        let decoded = event
-            .decoder
-            .decode_log_parts(
-                topics
-                    .iter()
-                    .take_while(|t| t.is_some())
-                    .map(|t| t.as_ref().unwrap().into()),
-                data,
-            )
-            .context("decode log")?;
-
-        variant_idxs
-            .iter()
-            .map(|&idx| {
-                let variant = &event.variants[idx];
-                Ok(RoutedEvent {
-                    index: variant.on_event_registration_index,
-                    params: ParamValue::Obj(apply_names(
-                        decoded.clone(),
-                        &variant.params,
-                        self.checksummed_addresses,
-                    )?),
-                })
-            })
-            .collect()
+        // Decode lazily, once per distinct layout among the matched variants.
+        // Same-key registrations may split indexed/body differently, and the
+        // log's bytes need not be valid under every layout — a layout that
+        // fails to decode just contributes no items. Only when NO matched
+        // layout decodes is the failure surfaced as an error: the log was
+        // fetched for these registrations, so silently dropping it would hide
+        // genuinely malformed data or a wrong ABI.
+        let mut decoded_by_idx: Vec<Option<DecodedEvent>> = Vec::new();
+        decoded_by_idx.resize_with(event.decoders.len(), || None);
+        let mut first_decode_err = None;
+        let mut routed = Vec::new();
+        for &idx in &variant_idxs {
+            let variant = &event.variants[idx];
+            if decoded_by_idx[variant.decoder_idx].is_none() {
+                match event.decoders[variant.decoder_idx].decode_log_parts(
+                    topics
+                        .iter()
+                        .take_while(|t| t.is_some())
+                        .map(|t| t.as_ref().unwrap().into()),
+                    data,
+                ) {
+                    Ok(decoded) => decoded_by_idx[variant.decoder_idx] = Some(decoded),
+                    Err(e) => {
+                        if first_decode_err.is_none() {
+                            first_decode_err = Some(anyhow::Error::new(e).context("decode log"));
+                        }
+                        continue;
+                    }
+                }
+            }
+            let decoded = decoded_by_idx[variant.decoder_idx]
+                .clone()
+                .expect("decoded layout just checked/inserted");
+            routed.push(RoutedEvent {
+                index: variant.on_event_registration_index,
+                params: ParamValue::Obj(apply_names(
+                    decoded,
+                    &variant.params,
+                    self.checksummed_addresses,
+                )?),
+            });
+        }
+        match (routed.is_empty(), first_decode_err) {
+            (true, Some(err)) => Err(err),
+            _ => Ok(routed),
+        }
     }
 }
 
@@ -376,10 +400,10 @@ fn build_event_decoder(key: &MetaKey, params: &[ParamMeta]) -> Result<DynSolEven
     .context("construct event decoder")
 }
 
-/// Whether two param lists decode under the same positional layout. Names are
-/// irrelevant to decoding (each variant applies its own), but the indexed/body
-/// split and the ABI types must match or the shared decoder would mis-type a
-/// later variant. Events colliding on a MetaKey already share topic0 — hence the
+/// Whether two param lists decode under the same positional layout, deciding
+/// when two variants can share one decoder. Names are irrelevant to decoding
+/// (each variant applies its own); the indexed/body split and the ABI types
+/// must match. Events colliding on a MetaKey already share topic0 — hence the
 /// ordered type list — so in practice only the indexed flags can diverge; the
 /// types and nested components are compared defensively all the same.
 fn same_decode_layout(a: &[ParamMeta], b: &[ParamMeta]) -> bool {
@@ -627,41 +651,137 @@ mod tests {
     }
 
     #[test]
-    fn rejects_metakey_collision_with_different_indexed_layout() {
+    fn metakey_collision_with_different_indexed_layout_decodes_per_layout() {
+        use alloy_dyn_abi::DynSolValue;
+        use alloy_primitives::{hex, U256};
+
         let sighash = alloy_json_abi::Event::parse("Foo(uint256 a, uint256 b)")
             .unwrap()
             .selector()
             .to_string();
-        let variant = |contract: &str, params| OnEventRegistration {
-            index: 0,
+        let variant = |index, contract: &str, params| OnEventRegistration {
+            index,
             sighash: sighash.clone(),
             topic_count: 2,
             event_name: "Foo".to_string(),
             contract_name: contract.to_string(),
-            is_wildcard: false,
+            is_wildcard: true,
             depends_on_addresses: false,
             topic_selections: vec![],
             block_fields: vec![],
             transaction_fields: vec![],
             params,
         };
-
-        let err = DecoderCore::from_registrations(
+        let core = DecoderCore::from_registrations(
             &[
                 variant(
+                    0,
                     "C1",
                     vec![pm("a", "uint256", true), pm("b", "uint256", false)],
                 ),
                 variant(
+                    1,
                     "C2",
                     vec![pm("a", "uint256", false), pm("b", "uint256", true)],
                 ),
             ],
             false,
         )
-        .err()
-        .expect("expected an ABI layout mismatch error");
-        assert!(format!("{err}").contains("ABI layout mismatch"));
+        .expect("different indexed layouts on one key must register");
+
+        // A log emitted with `a` indexed: topic1 = 7, data = (8,).
+        let data = DynSolValue::Tuple(vec![DynSolValue::Uint(U256::from(8u64), 256)]).abi_encode();
+        let log = Log {
+            topics: vec![Some(sighash.clone()), Some(format!("0x{:064x}", 7))],
+            data: Some(format!("0x{}", hex::encode(data))),
+            ..Default::default()
+        };
+        let routed = core
+            .route_and_decode_napi(&log, None, &HashSet::from([0, 1]))
+            .unwrap();
+        // Both layouts decode this log (same word-sized types either way), each
+        // reading the topic/body split its own registration declared.
+        let values: Vec<(i64, Vec<String>)> = routed
+            .iter()
+            .map(|r| {
+                let fields = match &r.params {
+                    ParamValue::Obj(fields) => {
+                        fields.iter().map(|(name, _)| name.clone()).collect()
+                    }
+                    _ => panic!("expected an object of params"),
+                };
+                (r.index, fields)
+            })
+            .collect();
+        assert_eq!(
+            values,
+            vec![
+                (0, vec!["a".to_string(), "b".to_string()]),
+                (1, vec!["a".to_string(), "b".to_string()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn layout_that_fails_to_decode_drops_only_its_own_registration() {
+        use alloy_dyn_abi::DynSolValue;
+        use alloy_primitives::{hex, U256};
+
+        let sighash = alloy_json_abi::Event::parse("Foo(string a, uint256 b)")
+            .unwrap()
+            .selector()
+            .to_string();
+        let variant = |index, contract: &str, params| OnEventRegistration {
+            index,
+            sighash: sighash.clone(),
+            topic_count: 2,
+            event_name: "Foo".to_string(),
+            contract_name: contract.to_string(),
+            is_wildcard: true,
+            depends_on_addresses: false,
+            topic_selections: vec![],
+            block_fields: vec![],
+            transaction_fields: vec![],
+            params,
+        };
+        let core = DecoderCore::from_registrations(
+            &[
+                variant(
+                    0,
+                    "C1",
+                    vec![pm("a", "string", true), pm("b", "uint256", false)],
+                ),
+                variant(
+                    1,
+                    "C2",
+                    vec![pm("a", "string", false), pm("b", "uint256", true)],
+                ),
+            ],
+            false,
+        )
+        .unwrap();
+
+        // Emitted under C1's layout: topic1 = keccak(a), body = (8,). C2's
+        // layout reads the body as a string tuple — word 8 as an offset past
+        // the data — which fails to decode; only C1's item survives.
+        let data = DynSolValue::Tuple(vec![DynSolValue::Uint(U256::from(8u64), 256)]).abi_encode();
+        let log = Log {
+            topics: vec![Some(sighash.clone()), Some(format!("0x{:064x}", 7))],
+            data: Some(format!("0x{}", hex::encode(data))),
+            ..Default::default()
+        };
+        let routed = core
+            .route_and_decode_napi(&log, None, &HashSet::from([0, 1]))
+            .unwrap();
+        assert_eq!(routed_indexes(&routed), vec![0]);
+
+        // With only the failing layout matched, the decode error surfaces
+        // instead of the log silently disappearing.
+        let err = core
+            .route_and_decode_napi(&log, None, &HashSet::from([1]))
+            .err()
+            .expect("expected a decode error when no matched layout decodes");
+        assert!(format!("{err:#}").contains("decode log"));
     }
 
     #[test]
