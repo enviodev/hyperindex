@@ -405,6 +405,9 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Tempo = 4217,
 
+    #[subenum(HypersyncChain)]
+    Tron = 728126428,
+
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Unichain = 130,
 
@@ -607,6 +610,7 @@ impl Network {
             | Network::SeiTestnet
             | Network::StatusSepolia
             | Network::Tempo
+            | Network::Tron
             | Network::Robinhood => None,
         }
     }

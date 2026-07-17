@@ -72,28 +72,29 @@ let loadById = (
 let callEffect = (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
-  ~inMemTable: IndexerState.effectCacheInMemTable,
+  ~inMemTable: EffectState.effectCacheInMemTable,
   ~timerRef,
   ~onError,
 ) => {
   let effectName = effect.name
-  let hadActiveCalls = effect.activeCallsCount > 0
-  effect.activeCallsCount = effect.activeCallsCount + 1
+  let scopeLabel = inMemTable.scope->Internal.EffectCache.scopeToString
+  let hadActiveCalls = inMemTable.activeCallsCount > 0
+  inMemTable.activeCallsCount = inMemTable.activeCallsCount + 1
   Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-    ~labels=effectName,
-    ~value=effect.activeCallsCount,
+    ~labels={"effect": effectName, "scope": scopeLabel},
+    ~value=inMemTable.activeCallsCount,
   )
 
   if hadActiveCalls {
-    let elapsed = Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
+    let elapsed = Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=timerRef)
     if elapsed > 0. {
       Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-        ~labels=effectName,
+        ~labels={"effect": effectName, "scope": scopeLabel},
         ~value=elapsed,
       )
     }
   }
-  effect.prevCallStartTimerRef = timerRef
+  inMemTable.prevCallStartTimerRef = timerRef
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
@@ -108,21 +109,23 @@ let callEffect = (
     onError(~inputKey=arg.cacheKey, ~exn)
   })
   ->Promise.finally(() => {
-    effect.activeCallsCount = effect.activeCallsCount - 1
+    inMemTable.activeCallsCount = inMemTable.activeCallsCount - 1
     Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-      ~labels=effectName,
-      ~value=effect.activeCallsCount,
+      ~labels={"effect": effectName, "scope": scopeLabel},
+      ~value=inMemTable.activeCallsCount,
     )
     let newTimer = Performance.now()
     Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
-      ~value=Performance.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
+      ~labels={"effect": effectName, "scope": scopeLabel},
+      ~value=Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=newTimer),
     )
-    effect.prevCallStartTimerRef = newTimer
+    inMemTable.prevCallStartTimerRef = newTimer
 
-    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
+    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(
+      ~labels={"effect": effectName, "scope": scopeLabel},
+    )
     Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
+      ~labels={"effect": effectName, "scope": scopeLabel},
       ~value=timerRef->Performance.secondsSince,
     )
   })
@@ -131,7 +134,7 @@ let callEffect = (
 let rec executeWithRateLimit = (
   ~effect: Internal.effect,
   ~effectArgs: array<Internal.effectArgs>,
-  ~inMemTable,
+  ~inMemTable: EffectState.effectCacheInMemTable,
   ~onError,
   ~isFromQueue: bool,
 ) => {
@@ -140,7 +143,7 @@ let rec executeWithRateLimit = (
   let timerRef = Performance.now()
   let promises = []
 
-  switch effect.rateLimit {
+  switch inMemTable.rateLimitState {
   | None =>
     // No rate limiting - execute all immediately
     for idx in 0 to effectArgs->Array.length - 1 {
@@ -193,7 +196,11 @@ let rec executeWithRateLimit = (
     if immediateCount > 0 && isFromQueue {
       // Update queue count metric
       state.queueCount = state.queueCount - immediateCount
-      Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+      Prometheus.EffectQueueCount.set(
+        ~count=state.queueCount,
+        ~effectName,
+        ~scope=inMemTable.scope->Internal.EffectCache.scopeToString,
+      )
     }
 
     // Handle queued items
@@ -201,7 +208,11 @@ let rec executeWithRateLimit = (
       if !isFromQueue {
         // Update queue count metric
         state.queueCount = state.queueCount + queuedArgs->Array.length
-        Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+        Prometheus.EffectQueueCount.set(
+          ~count=state.queueCount,
+          ~effectName,
+          ~scope=inMemTable.scope->Internal.EffectCache.scopeToString,
+        )
       }
 
       let millisUntilReset = ref(0)
@@ -249,14 +260,23 @@ let loadEffect = (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
+  ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
   ~item,
   ~ecosystem,
 ) => {
   let effectName = effect.name
-  let key = `${effectName}.effect`
-  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect)
+  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
+  let table = inMemTable.table
+  let tableName = table.tableName
+  // The operation key must differ per scope so chain-scoped calls with the same
+  // input never dedup across chains. Cross-chain keeps the bare effect name so
+  // the storage-load metric stays stable.
+  let key = switch scope {
+  | CrossChain => `${effectName}.effect`
+  | Chain(chainId) => `${effectName}.effect.${chainId->Int.toString}`
+  }
 
   let load = async (args, ~onError) => {
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
@@ -264,13 +284,13 @@ let loadEffect = (
 
     if (
       switch persistence.storageStatus {
-      | Ready({cache}) => cache->Dict.has(effectName)
+      | Ready({cache}) => cache->Dict.has(tableName)
       | _ => false
       }
     ) {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
       let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
-      let {table, outputSchema} = effect.storageMeta
+      let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {
         (
