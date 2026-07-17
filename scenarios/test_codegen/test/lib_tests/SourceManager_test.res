@@ -1504,6 +1504,39 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
+  Async.it("Gives up with the source error once maxRetries is exhausted", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(
+      ~isRealtime=false,
+      ~sources=[sourceMock.source],
+      ~maxRetries=Some(1),
+    )
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query=mockQuery(),
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+    let failure = Source.GetItemsError(
+      FailedGettingItems({
+        exn: JsError.make("Connection refused")->(Utils.magic: JsError.t => exn),
+        attemptedToBlock: 100,
+        retry: WithBackoff({message: "Failed to fetch", backoffMillis: 0}),
+      }),
+    )
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(failure)
+    await Utils.delay(50)
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.reject(failure)
+    | _ => JsError.throwWithMessage("Expected a retry call after the first failure")
+    }
+    try {
+      let _ = await p
+      JsError.throwWithMessage("Should not have resolved")
+    } catch {
+    | JsExn(e) => t.expect(e->JsExn.message).toEqual(Some("Connection refused"))
+    }
+  })
+
   Async.it("Rethrows unknown errors", async t => {
     let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])

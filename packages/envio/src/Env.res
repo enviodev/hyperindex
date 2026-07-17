@@ -7,6 +7,11 @@
 let updateSyncTimeOnRestart =
   envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
+// Caps consecutive failed retries of one source operation before the run fails
+// with the underlying error. Unset means retry indefinitely (production
+// default); the test indexer sets a small cap so an unreachable source fails
+// the test with a real error instead of hanging until the test timeout.
+let maxSourceRetries = envSafe->EnvSafe.get("ENVIO_MAX_SOURCE_RETRIES", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 
 // Target number of in-memory objects (uncommitted entity/effect changes plus

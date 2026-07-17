@@ -1,16 +1,17 @@
-let mapRateLimitedExn = exn => {
-  let failure = exn->Source.unpackNativeRequestFailure
+let mapRateLimitedFailure = (failure: Source.nativeRequestFailure) => {
   switch failure.message {
   | Some(msg) if msg->String.startsWith("RATE_LIMITED:") =>
-      let resetMs =
-        msg
-        ->String.slice(~start=13, ~end=msg->String.length)
-        ->Int.fromString
-        ->Option.getOr(1000)
+    let resetMs =
+      msg
+      ->String.slice(~start=13, ~end=msg->String.length)
+      ->Int.fromString
+      ->Option.getOr(1000)
     Source.RateLimited({resetMs: resetMs})
   | _ => failure.cause
   }
 }
+
+let mapRateLimitedExn = exn => exn->Source.unpackNativeRequestFailure->mapRateLimitedFailure
 
 let reraiseIfRateLimited = exn =>
   switch exn->mapRateLimitedExn {
