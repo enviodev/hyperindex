@@ -12,11 +12,9 @@ type blockRangeFetchStats = {
 // per (source, method) into the envio_source_request_* metrics.
 type requestStat = {method: string, seconds: float}
 
-// Native clients use this structured error when one logical operation owns
-// multiple backend requests. It lets the source return timings even when the
-// operation ultimately fails and SourceManager retries it.
-exception NativeRequestFailed(string)
-
+// Native clients wrap a failure of a multi-request operation in a structured
+// payload, so the source can still return timings when SourceManager retries
+// it. `cause` carries the inner message as a plain error, ready for logging.
 type nativeRequestFailure = {
   cause: exn,
   message: option<string>,
@@ -59,7 +57,7 @@ let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   }
   switch decoded {
   | Some((message, requestStats)) => {
-      cause: NativeRequestFailed(message),
+      cause: JsError.make(message)->(Utils.magic: JsError.t => exn),
       message: Some(message),
       requestStats,
     }

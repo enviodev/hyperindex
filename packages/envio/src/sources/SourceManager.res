@@ -944,7 +944,6 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let logger = Logging.createChild(
       ~params={
         "chainId": source.chain->ChainMap.Chain.toChainId,
-        "logType": "Block Hash Query",
         "source": source.name,
         "retry": retry,
       },
@@ -985,18 +984,27 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
 
     | exn =>
       // A short first retry covers the common transient case (e.g. a request
-      // routed to a HyperSync replica slightly behind the head).
-      let backoffMillis = switch retry {
-      | 0 => 100
-      | _ => 1000 * retry
-      }
+      // routed to a HyperSync replica slightly behind the head), doubling from
+      // there.
+      let backoffMillis = Pervasives.min(100. *. 2. ** retry->Int.toFloat, 60_000.)->Float.toInt
       let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
-      logger->log({
-        "msg": "Failed to fetch block hashes. Retrying.",
-        "retry": retry,
-        "backOffMilliseconds": backoffMillis,
-        "err": exn->Utils.prettifyExn,
-      })
+      // A native failure's message is self-explanatory, so it becomes the log
+      // message itself; anything else keeps the generic message with details.
+      switch exn->JsExn.anyToExnInternal {
+      | JsExn(e) =>
+        logger->log({
+          "msg": e->JsExn.message->Option.getOr("Failed to fetch block hashes. Retrying."),
+          "retry": retry,
+          "backOffMilliseconds": backoffMillis,
+        })
+      | exn =>
+        logger->log({
+          "msg": "Failed to fetch block hashes. Retrying.",
+          "retry": retry,
+          "backOffMilliseconds": backoffMillis,
+          "err": exn->Utils.prettifyExn,
+        })
+      }
 
       let shouldSwitch = switch retry {
       | 0 | 1 => false
@@ -1006,7 +1014,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       if shouldSwitch {
         sourceState.lastFailedAt = Some(Date.now())
       }
-      await Utils.delay(Pervasives.min(backoffMillis, 60_000))
+      await Utils.delay(backoffMillis)
       retryRef := retryRef.contents + 1
     }
   }

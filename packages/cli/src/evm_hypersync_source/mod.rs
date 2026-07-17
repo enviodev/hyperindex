@@ -186,9 +186,10 @@ impl EvmHypersyncClient {
             // in-process loop could do.
             if next_block <= cursor {
                 let error = map_err(anyhow::anyhow!(
-                    "Block #{cursor} is not found in HyperSync yet. This happens when the request \
-                     is routed to a HyperSync replica that is slightly behind the head. Everything \
-                     is fine - indexing should continue correctly after a retry."
+                    "Block #{cursor} is not yet available on the queried HyperSync replica. \
+                     Requests are load-balanced across replicas, which may briefly trail the \
+                     chain head. This is expected behavior and resolves on its own - indexing \
+                     will continue after an automatic retry."
                 ));
                 return Err(error_with_request_stats(error, &request_stats));
             }
