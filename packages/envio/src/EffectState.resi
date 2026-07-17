@@ -19,6 +19,7 @@ type effectStats = {
   mutable queueWaitSeconds: float,
   mutable invalidationsCount: int,
   mutable cacheCount: int,
+  mutable hasCache: bool,
 }
 
 type effectCacheInMemTable = {

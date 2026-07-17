@@ -7,6 +7,19 @@
 @inline
 let formatValue = (value: float) => (Math.round(value *. 1000.) /. 1000.)->Float.toString
 
+// Prometheus exposition-format escaping for label values: a raw `"`, `\` or
+// newline in a user-supplied name (contract, event, effect, ...) would
+// otherwise break the scrape.
+let escapeLabelValue = (value: string) =>
+  if value->String.includes("\\") || value->String.includes("\"") || value->String.includes("\n") {
+    value
+    ->String.replaceAll("\\", "\\\\")
+    ->String.replaceAll("\"", "\\\"")
+    ->String.replaceAll("\n", "\\n")
+  } else {
+    value
+  }
+
 // Accumulate into one string rather than building a lines array to join: `++`
 // compiles to JS `+=`, which V8 grows as a ConsString instead of recopying.
 type builder = {mutable out: string}
@@ -77,7 +90,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ->IndexerState.handlerStats
     ->Dict.valuesToArray
     ->Array.map((s: IndexerState.handlerStat) => (
-      `{contract="${s.contract}",event="${s.event}"}`,
+      `{contract="${s.contract->escapeLabelValue}",event="${s.event->escapeLabelValue}"}`,
       s,
     ))
   let effects = {
@@ -87,7 +100,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ->EffectState.stats
     ->Utils.Dict.forEach((s: EffectState.effectStats) =>
       entries->Array.push((
-        `{effect="${s.effectName}",scope="${s.scope->Internal.EffectCache.scopeToString}"}`,
+        `{effect="${s.effectName->escapeLabelValue}",scope="${s.scope->Internal.EffectCache.scopeToString}"}`,
         s,
       ))
     )
@@ -98,20 +111,20 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ->IndexerState.storageLoadStats
     ->Dict.valuesToArray
     ->Array.map((s: IndexerState.storageLoadStat) => (
-      `{operation="${s.operation}",storage="${s.storage}"}`,
+      `{operation="${s.operation->escapeLabelValue}",storage="${s.storage->escapeLabelValue}"}`,
       s,
     ))
   let storageWrites =
     state
     ->IndexerState.storageWriteStats
     ->Dict.valuesToArray
-    ->Array.map((s: IndexerState.storageWriteStat) => (`{storage="${s.storage}"}`, s))
+    ->Array.map((s: IndexerState.storageWriteStat) => (`{storage="${s.storage->escapeLabelValue}"}`, s))
   let historyPrunes = {
     let entries = []
     state
     ->IndexerState.historyPruneStats
     ->Utils.Dict.forEachWithKey((s, entityName) =>
-      entries->Array.push((`{entity="${entityName}"}`, s))
+      entries->Array.push((`{entity="${entityName->escapeLabelValue}"}`, s))
     )
     entries
   }
@@ -123,7 +136,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
       ->SourceManager.getRequestStatSamples
       ->Array.forEach((s: SourceManager.requestStatSample) =>
         entries->Array.push((
-          `{source="${s.sourceName}",chainId="${s.chainId->Int.toString}",method="${s.method}"}`,
+          `{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`,
           s,
         ))
       )
@@ -137,7 +150,7 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
       ->ChainState.sourceManager
       ->SourceManager.getSourceHeightSamples
       ->Array.forEach((s: SourceManager.sourceHeightSample) =>
-        entries->Array.push((`{source="${s.sourceName}",chainId="${s.chainId->Int.toString}"}`, s))
+        entries->Array.push((`{source="${s.sourceName->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`, s))
       )
     )
     entries
@@ -466,14 +479,14 @@ let renderIndexerState = (b: builder, state: IndexerState.t) => {
     ~entries=effects,
     ~value=s => s->ifCalled(s.activeCallsCount->Int.toFloat),
   )
-  // Only effects that persist their cache get a sample; a plain effect keeps
-  // the count at zero forever.
+  // Only effects that persist their cache get a sample (including a zero for
+  // an existing but empty persisted table); a plain effect gets none.
   b->seriesOpt(
     ~name="envio_effect_cache",
     ~help="The number of items in the effect cache.",
     ~kind="gauge",
     ~entries=effects,
-    ~value=s => s.cacheCount > 0 ? Some(s.cacheCount->Int.toFloat) : None,
+    ~value=s => s.hasCache ? Some(s.cacheCount->Int.toFloat) : None,
   )
   b->seriesOpt(
     ~name="envio_effect_cache_invalidations",
@@ -561,7 +574,7 @@ let collect = (~state: option<IndexerState.t>) => {
     ~name="envio_info",
     ~help="Information about the indexer",
     ~kind="gauge",
-    ~entries=[(`{version="${Utils.EnvioPackage.value.version}"}`, ())],
+    ~entries=[(`{version="${Utils.EnvioPackage.value.version->escapeLabelValue}"}`, ())],
     ~value=() => 1.,
   )
   switch state {

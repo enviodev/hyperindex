@@ -123,9 +123,28 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
   samples
 }
 
-let idleSeconds = (sourceManager: t) => sourceManager.idleSeconds
-let waitingForNewBlockSeconds = (sourceManager: t) => sourceManager.waitingForNewBlockSeconds
-let queryingSeconds = (sourceManager: t) => sourceManager.queryingSeconds
+// Each accessor adds the in-progress interval of the current status, so a
+// scrape during a long idle/wait/query isn't stale until the next transition.
+let idleSeconds = (sourceManager: t) =>
+  sourceManager.idleSeconds +.
+  switch sourceManager.status {
+  | Idle => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+let waitingForNewBlockSeconds = (sourceManager: t) =>
+  sourceManager.waitingForNewBlockSeconds +.
+  switch sourceManager.status {
+  | WaitingForNewBlock => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+let queryingSeconds = (sourceManager: t) =>
+  sourceManager.queryingSeconds +.
+  switch sourceManager.status {
+  | Querieng => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
 
 // Partition queries currently in flight on this chain's sources. Summed across
 // chains by CrossChainState to enforce the indexer-wide concurrency budget.

@@ -62,6 +62,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
       inMemTable.stats.cacheCount = effectCacheRecord.count
+      inMemTable.stats.hasCache = true
       acc
       ->Array.push(
         (
@@ -125,7 +126,6 @@ let runOneWrite = async (state: IndexerState.t) => {
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
 
-    let timerRef = Performance.now()
     await persistence.storage.writeBatch(
       ~batch,
       ~rollback,
@@ -135,10 +135,8 @@ let runOneWrite = async (state: IndexerState.t) => {
       ~updatedEntities,
       ~updatedEffectsCache,
       ~chainMetaData,
-    )
-    state->IndexerState.recordStorageWrite(
-      ~storage=persistence.storage.name,
-      ~timeSeconds=timerRef->Performance.secondsSince,
+      ~onWrite=(~storage, ~timeSeconds) =>
+        state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
     )
 
     state->IndexerState.markCommitted(~upToCheckpointId)

@@ -27,6 +27,11 @@ envio_indexing_addresses{chainId="1"} 3
 envio_indexing_addresses{chainId="137"} 0`)
   })
 
+  it("Escapes quotes, backslashes and newlines in label values", t => {
+    t.expect(`weird "name" \\ with
+newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\" \\\\ with\\nnewline`)
+  })
+
   it("Renders only the header for a series without entries and skips seriesOpt None samples", t => {
     let b: Metrics.builder = {out: ""}
     b->Metrics.series(

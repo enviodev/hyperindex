@@ -28,8 +28,11 @@ type effectStats = {
   mutable queueCount: int,
   mutable queueWaitSeconds: float,
   mutable invalidationsCount: int,
-  // Number of persisted cache rows; seeded from the db on restart.
+  // Number of persisted cache rows; seeded from the db on restart. hasCache
+  // marks that the effect persists at all, so an empty table still gets a
+  // zero-valued gauge sample.
   mutable cacheCount: int,
+  mutable hasCache: bool,
 }
 
 type effectCacheInMemTable = {
@@ -83,6 +86,7 @@ let getStats = (self: t, ~tableName, ~effectName, ~scope) =>
       queueWaitSeconds: 0.,
       invalidationsCount: 0,
       cacheCount: 0,
+      hasCache: false,
     }
     self.stats->Dict.set(tableName, created)
     created
@@ -94,7 +98,9 @@ let stats = (self: t) => self.stats
 // is lazily created.
 let setCacheCount = (self: t, ~effectName, ~scope, ~count) => {
   let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
-  (self->getStats(~tableName, ~effectName, ~scope)).cacheCount = count
+  let stats = self->getStats(~tableName, ~effectName, ~scope)
+  stats.cacheCount = count
+  stats.hasCache = true
 }
 
 let getRateLimitState = (self: t, ~tableName, ~effect: Internal.effect) =>

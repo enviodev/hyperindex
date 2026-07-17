@@ -198,6 +198,7 @@ module Storage = {
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
           ~chainMetaData as _,
+          ~onWrite as _,
         ) => JsError.throwWithMessage("Not implemented"),
         close: () => Promise.resolve(),
       },
@@ -630,23 +631,33 @@ module Indexer = {
             let rest = line->String.slice(~start=name->String.length)
             let (labelsPart, value) = switch rest->String.lastIndexOf(" ") {
             | -1 => ("", rest)
-            | i => (
-                rest->String.slice(~start=0, ~end=i),
-                rest->String.slice(~start=i + 1),
-              )
+            | i => (rest->String.slice(~start=0, ~end=i), rest->String.slice(~start=i + 1))
             }
             let labels = Dict.make()
-            if labelsPart->String.startsWith("{") {
-              labelsPart
-              ->String.slice(~start=1, ~end=labelsPart->String.length - 1)
-              ->String.split(",")
-              ->Array.forEach(pair =>
-                switch pair->String.split("=") {
-                | [key, quoted] =>
-                  labels->Dict.set(key, quoted->String.slice(~start=1, ~end=quoted->String.length - 1))
+            // Quoted values may contain escaped `\"`, `\\` and `\n`, so match
+            // label pairs instead of splitting on commas/equals.
+            let labelRe = RegExp.fromString(
+              `([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\\]|\\\\.)*)"`,
+              ~flags="g",
+            )
+            let break = ref(false)
+            while !break.contents {
+              switch labelRe->RegExp.exec(labelsPart) {
+              | Some(result) =>
+                let matches = result->RegExp.Result.matches
+                switch (matches->Array.get(0), matches->Array.get(1)) {
+                | (Some(Some(key)), Some(Some(escaped))) =>
+                  labels->Dict.set(
+                    key,
+                    escaped
+                    ->String.replaceAll("\\n", "\n")
+                    ->String.replaceAll("\\\"", "\"")
+                    ->String.replaceAll("\\\\", "\\"),
+                  )
                 | _ => ()
                 }
-              )
+              | None => break := true
+              }
             }
             Some({value, labels})
           } else {
