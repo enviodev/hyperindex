@@ -1529,6 +1529,15 @@ let chunkRangeGrowthFactor = 1.8
 // density estimate the chain's budget is reserved in; itemsTarget is the
 // server-side cap with chunkItemsMultiplier headroom so a denser-than-expected
 // range doesn't truncate the response.
+//
+// A bounded query (toBlock set) additionally floors its cap at
+// itemsTargetFloor: its range is already the hard bound on the response, so a
+// low density estimate shrinking the cap only buys self-truncated responses —
+// each one a wasted roundtrip that opens a gap and pollutes nothing but our
+// own pipeline. The floor is the indexer target split across the chain's
+// concurrency slots, so even every in-flight bounded query hitting its floored
+// cap at once overshoots the pool by at most ~one buffer target. Open-ended
+// queries keep the pure density cap — there it's the only bound at all.
 let pushDensityPricedQuery = (
   queries: array<query>,
   ~partitionId,
@@ -1538,10 +1547,17 @@ let pushDensityPricedQuery = (
   ~density,
   ~chunkItemsMultiplier,
   ~chainTargetBlock,
+  ~itemsTargetFloor,
   ~selection,
   ~addressesByContractName,
 ) => {
   let itemsEst = densityItemsTarget(~density, ~fromBlock, ~toBlock, ~chainTargetBlock)
+  let itemsTarget = densityItemsTarget(
+    ~density=density *. chunkItemsMultiplier,
+    ~fromBlock,
+    ~toBlock,
+    ~chainTargetBlock,
+  )
   queries
   ->Array.push({
     partitionId,
@@ -1549,12 +1565,10 @@ let pushDensityPricedQuery = (
     toBlock,
     selection,
     isChunk,
-    itemsTarget: densityItemsTarget(
-      ~density=density *. chunkItemsMultiplier,
-      ~fromBlock,
-      ~toBlock,
-      ~chainTargetBlock,
-    ),
+    itemsTarget: switch toBlock {
+    | Some(_) => Pervasives.max(itemsTarget, itemsTargetFloor)
+    | None => itemsTarget
+    },
     itemsEst,
     addressesByContractName,
   })
@@ -1585,6 +1599,7 @@ let pushGapFillQueries = (
   ~partition: partition,
   ~partitionBudget: float,
   ~chunkItemsMultiplier: float,
+  ~itemsTargetFloor: int,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1610,6 +1625,7 @@ let pushGapFillQueries = (
           ~density,
           ~chunkItemsMultiplier,
           ~chainTargetBlock,
+          ~itemsTargetFloor,
           ~selection,
           ~addressesByContractName,
         )
@@ -1633,6 +1649,7 @@ let pushGapFillQueries = (
               ~density,
               ~chunkItemsMultiplier,
               ~chainTargetBlock,
+              ~itemsTargetFloor,
               ~selection,
               ~addressesByContractName,
             )
@@ -1681,6 +1698,7 @@ let walkPartitionPending = (
   ~headBlockNumber: int,
   ~chainTargetBlock: int,
   ~chunkItemsMultiplier: float,
+  ~itemsTargetFloor: int,
   ~partitionBudget: float,
   ~queryEndBlock: option<int>,
 ): option<partitionFillState> => {
@@ -1708,6 +1726,7 @@ let walkPartitionPending = (
         ~partition=p,
         ~partitionBudget,
         ~chunkItemsMultiplier,
+        ~itemsTargetFloor,
         ~selection=p.selection,
         ~addressesByContractName=p.addressesByContractName,
       )
@@ -1758,6 +1777,7 @@ let pushForwardCandidates = (
   ~chainTargetBlock: int,
   ~freshBudget: float,
   ~chunkItemsMultiplier: float,
+  ~itemsTargetFloor: int,
 ) => {
   // Even share of the fresh budget across the partitions actually fetching
   // this tick (not every partition — so budget isn't stranded on ones below
@@ -1813,6 +1833,7 @@ let pushForwardCandidates = (
             ~density,
             ~chunkItemsMultiplier,
             ~chainTargetBlock,
+            ~itemsTargetFloor,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
@@ -1951,6 +1972,9 @@ let getNextQuery = (
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
   ~chunkItemsMultiplier: float=1.,
+  // Floor for bounded queries' server cap (see pushDensityPricedQuery) —
+  // targetBufferSize / maxChainConcurrency from the cross-chain scheduler.
+  ~itemsTargetFloor: int=0,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -2069,6 +2093,7 @@ let getNextQuery = (
         ~headBlockNumber,
         ~chainTargetBlock,
         ~chunkItemsMultiplier,
+        ~itemsTargetFloor,
         ~partitionBudget,
         ~queryEndBlock=computeQueryEndBlock(p),
       ) {
@@ -2113,6 +2138,7 @@ let getNextQuery = (
       ~chainTargetBlock,
       ~freshBudget,
       ~chunkItemsMultiplier,
+      ~itemsTargetFloor,
     )
 
     acceptCandidates(

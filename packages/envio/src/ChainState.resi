@@ -73,6 +73,7 @@ let getNextQuery: (
   t,
   ~chainTargetItems: float,
   ~chunkItemsMultiplier: float=?,
+  ~itemsTargetFloor: int=?,
   ~maxTargetBlock: int=?,
 ) => FetchState.nextQuery
 let dispatch: (

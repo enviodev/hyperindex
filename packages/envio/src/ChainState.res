@@ -514,6 +514,7 @@ let getNextQuery = (
   cs: t,
   ~chainTargetItems: float,
   ~chunkItemsMultiplier=1.,
+  ~itemsTargetFloor=0,
   ~maxTargetBlock=?,
 ) => {
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
@@ -544,6 +545,7 @@ let getNextQuery = (
     ~chainTargetBlock,
     ~chainTargetItems,
     ~chunkItemsMultiplier,
+    ~itemsTargetFloor,
   )
 }
 

@@ -4534,7 +4534,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
   // 1, 270 at the 1.5x backfill headroom, 540 at the 3x realtime headroom.
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
 
-  let makeFetchState = (): FetchState.t => {
+  let makeFetchState = (~eventDensity=Some(10.)): FetchState.t => {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
       ~partitions=[
         {
@@ -4547,7 +4547,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
           mutPendingQueries: [],
           sourceRangeCapacity: 10,
           prevSourceRangeCapacity: 10,
-          eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
+          eventDensity, // density = 100 / 10 = 10 items/block by default
           latestSourceRangeCapacityUpdateBlock: 0,
         },
       ],
@@ -4603,6 +4603,31 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
       "budget400": [(1, 180), (19, 180), (37, 180)],
       // The first chunk emits full-size regardless of budget (overshoot allowed).
       "budget50": [(1, 180)],
+    })
+  })
+
+  it("floors bounded chunk caps at itemsTargetFloor, leaving open-ended probes untouched", t => {
+    let getQueries = (fetchState: FetchState.t, ~chainTargetItems) =>
+      switch fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=100000,
+        ~chainTargetItems,
+        ~itemsTargetFloor=1000,
+      ) {
+      | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.itemsTarget))
+      | _ => []
+      }
+    t.expect({
+      "boundedChunks": makeFetchState()->getQueries(~chainTargetItems=400.),
+      "openProbe": makeFetchState(~eventDensity=None)->getQueries(~chainTargetItems=50.),
+    }).toEqual({
+      // A chunk's range is already the hard bound on its response, so the
+      // floor lifts the 180-item density cap to 1000 — a low density estimate
+      // must not shrink caps into self-truncated responses. itemsEst stays at
+      // the honest 180, so budget acceptance still emits the same 3 chunks.
+      "boundedChunks": [(1, 1000), (19, 1000), (37, 1000)],
+      // The open-ended probe's cap is its only response bound, so it keeps its
+      // budget-share size instead of being floored.
+      "openProbe": [(1, 50)],
     })
   })
 })
