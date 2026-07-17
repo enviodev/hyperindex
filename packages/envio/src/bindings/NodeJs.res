@@ -62,6 +62,19 @@ module Process = {
 
   @module("process") external uptime: unit => float = "uptime"
   @module("process") external version: string = "version"
+  @module("process")
+  external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
+}
+
+module V8 = {
+  type heapSpaceStatistics = {
+    @as("space_name") spaceName: string,
+    @as("space_size") spaceSize: float,
+    @as("space_used_size") spaceUsedSize: float,
+    @as("space_available_size") spaceAvailableSize: float,
+  }
+  @module("v8")
+  external getHeapSpaceStatistics: unit => array<heapSpaceStatistics> = "getHeapSpaceStatistics"
 }
 
 module PerfHooks = {
@@ -69,6 +82,34 @@ module PerfHooks = {
   type performance
   @module("perf_hooks") external performance: performance = "performance"
   @send external eventLoopUtilization: performance => eventLoopUtilization = "eventLoopUtilization"
+
+  // Sampled event-loop delay histogram; values are nanoseconds.
+  type intervalHistogram = {
+    mean: float,
+    min: float,
+    max: float,
+    stddev: float,
+  }
+  type monitorOptions = {resolution?: int}
+  @module("perf_hooks")
+  external monitorEventLoopDelay: (~options: monitorOptions=?) => intervalHistogram =
+    "monitorEventLoopDelay"
+  @send external enable: intervalHistogram => bool = "enable"
+  @send external reset: intervalHistogram => unit = "reset"
+  @send external percentile: (intervalHistogram, int) => float = "percentile"
+
+  type performanceEntry = {
+    duration: float, // milliseconds
+    detail: {"kind": int},
+  }
+  type observerList
+  @send external getEntries: observerList => array<performanceEntry> = "getEntries"
+  type performanceObserver
+  type observeOptions = {entryTypes: array<string>}
+  @new @module("perf_hooks")
+  external makePerformanceObserver: (observerList => unit) => performanceObserver =
+    "PerformanceObserver"
+  @send external observe: (performanceObserver, observeOptions) => unit = "observe"
 }
 
 module ChildProcess = {

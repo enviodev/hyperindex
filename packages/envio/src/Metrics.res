@@ -691,11 +691,62 @@ let collect = (~metrics: option<t>) => {
 // Node.js runtime metrics for /metrics/runtime, read from process/perf_hooks
 // at scrape time. Uses the same metric names prom-client's default collectors
 // exposed here before, so existing dashboards keep working.
+
+type gcStat = {mutable count: float, mutable seconds: float}
+type runtimeCollectors = {
+  eventLoopDelay: NodeJs.PerfHooks.intervalHistogram,
+  // Cumulative GC pause count/time per kind, fed by a "gc" PerformanceObserver.
+  gcStats: dict<gcStat>,
+}
+
+let gcKindName = kind =>
+  switch kind {
+  | 1 => "minor"
+  | 2 => "major"
+  | 4 => "incremental"
+  | 8 => "weakcb"
+  | _ => "unknown"
+  }
+
+// Started on the first scrape rather than at module load, so importing envio
+// (e.g. from the CLI) never spins up samplers.
+let runtimeCollectors = ref(None)
+
+let getRuntimeCollectors = () =>
+  switch runtimeCollectors.contents {
+  | Some(collectors) => collectors
+  | None =>
+    let eventLoopDelay = NodeJs.PerfHooks.monitorEventLoopDelay(~options={resolution: 10})
+    let _ = eventLoopDelay->NodeJs.PerfHooks.enable
+    let gcStats = Dict.make()
+    let observer = NodeJs.PerfHooks.makePerformanceObserver(list =>
+      list
+      ->NodeJs.PerfHooks.getEntries
+      ->Array.forEach(entry => {
+        let kind = gcKindName(entry.detail["kind"])
+        let stat = switch gcStats->Utils.Dict.dangerouslyGetNonOption(kind) {
+        | Some(stat) => stat
+        | None =>
+          let stat = {count: 0., seconds: 0.}
+          gcStats->Dict.set(kind, stat)
+          stat
+        }
+        stat.count = stat.count +. 1.
+        stat.seconds = stat.seconds +. entry.duration /. 1000.
+      })
+    )
+    observer->NodeJs.PerfHooks.observe({entryTypes: ["gc"]})
+    let collectors = {eventLoopDelay, gcStats}
+    runtimeCollectors := Some(collectors)
+    collectors
+  }
+
 let collectRuntime = () => {
   let b = {out: ""}
   let memory = NodeJs.Process.memoryUsage()
   let cpu = NodeJs.Process.cpuUsage()
   let elu = NodeJs.PerfHooks.performance->NodeJs.PerfHooks.eventLoopUtilization
+  let {eventLoopDelay, gcStats} = getRuntimeCollectors()
   b->single(
     ~name="process_cpu_user_seconds_total",
     ~help="Total user CPU time spent in seconds.",
@@ -749,6 +800,124 @@ let collectRuntime = () => {
     ~help="Ratio of time the event loop is active, since process start.",
     ~kind="gauge",
     ~value=elu.utilization,
+  )
+  // Nanoseconds in the histogram; reset after rendering so each scrape reports
+  // the delay distribution since the previous one, matching prom-client. With
+  // no samples yet (e.g. the first scrape, which starts the sampler) the
+  // histogram reports NaN means and a sentinel min — render 0 instead.
+  let hasLagSamples = eventLoopDelay.max > 0.
+  let nsToSeconds = ns => hasLagSamples && !(ns->Float.isNaN) ? ns /. 1_000_000_000. : 0.
+  b->single(
+    ~name="nodejs_eventloop_lag_mean_seconds",
+    ~help="The mean of the recorded event loop delays.",
+    ~kind="gauge",
+    ~value=eventLoopDelay.mean->nsToSeconds,
+  )
+  b->single(
+    ~name="nodejs_eventloop_lag_min_seconds",
+    ~help="The minimum recorded event loop delay.",
+    ~kind="gauge",
+    ~value=eventLoopDelay.min->nsToSeconds,
+  )
+  b->single(
+    ~name="nodejs_eventloop_lag_max_seconds",
+    ~help="The maximum recorded event loop delay.",
+    ~kind="gauge",
+    ~value=eventLoopDelay.max->nsToSeconds,
+  )
+  b->single(
+    ~name="nodejs_eventloop_lag_stddev_seconds",
+    ~help="The standard deviation of the recorded event loop delays.",
+    ~kind="gauge",
+    ~value=eventLoopDelay.stddev->nsToSeconds,
+  )
+  b->single(
+    ~name="nodejs_eventloop_lag_p50_seconds",
+    ~help="The 50th percentile of the recorded event loop delays.",
+    ~kind="gauge",
+    ~value=eventLoopDelay->NodeJs.PerfHooks.percentile(50)->nsToSeconds,
+  )
+  b->single(
+    ~name="nodejs_eventloop_lag_p90_seconds",
+    ~help="The 90th percentile of the recorded event loop delays.",
+    ~kind="gauge",
+    ~value=eventLoopDelay->NodeJs.PerfHooks.percentile(90)->nsToSeconds,
+  )
+  b->single(
+    ~name="nodejs_eventloop_lag_p99_seconds",
+    ~help="The 99th percentile of the recorded event loop delays.",
+    ~kind="gauge",
+    ~value=eventLoopDelay->NodeJs.PerfHooks.percentile(99)->nsToSeconds,
+  )
+  eventLoopDelay->NodeJs.PerfHooks.reset
+  let heapSpaces =
+    NodeJs.V8.getHeapSpaceStatistics()->Array.map(s => (
+      `{space="${s.spaceName->String.replace("_space", "")}"}`,
+      s,
+    ))
+  b->series(
+    ~name="nodejs_heap_space_size_total_bytes",
+    ~help="Process heap space size total from Node.js in bytes.",
+    ~kind="gauge",
+    ~entries=heapSpaces,
+    ~value=s => s.spaceSize,
+  )
+  b->series(
+    ~name="nodejs_heap_space_size_used_bytes",
+    ~help="Process heap space size used from Node.js in bytes.",
+    ~kind="gauge",
+    ~entries=heapSpaces,
+    ~value=s => s.spaceUsedSize,
+  )
+  b->series(
+    ~name="nodejs_heap_space_size_available_bytes",
+    ~help="Process heap space size available from Node.js in bytes.",
+    ~kind="gauge",
+    ~entries=heapSpaces,
+    ~value=s => s.spaceAvailableSize,
+  )
+  let activeResources = {
+    let byType = Dict.make()
+    NodeJs.Process.getActiveResourcesInfo()->Array.forEach(resource =>
+      byType->Dict.set(
+        `{type="${resource->escapeLabelValue}"}`,
+        byType
+        ->Utils.Dict.dangerouslyGetNonOption(`{type="${resource->escapeLabelValue}"}`)
+        ->Option.getOr(0.) +. 1.,
+      )
+    )
+    byType->Dict.toArray
+  }
+  b->series(
+    ~name="nodejs_active_resources",
+    ~help="Number of active resources that are currently keeping the event loop alive, grouped by async resource type.",
+    ~kind="gauge",
+    ~entries=activeResources,
+    ~value=count => count,
+  )
+  b->single(
+    ~name="nodejs_active_resources_total",
+    ~help="Total number of active resources.",
+    ~kind="gauge",
+    ~value=activeResources->Array.reduce(0., (acc, (_, count)) => acc +. count),
+  )
+  let gcEntries = []
+  gcStats->Utils.Dict.forEachWithKey((stat, kind) =>
+    gcEntries->Array.push((`{kind="${kind}"}`, stat))
+  )
+  b->series(
+    ~name="nodejs_gc_duration_seconds_sum",
+    ~help="Cumulative garbage collection pause time by kind, one of major, minor, incremental or weakcb.",
+    ~kind="counter",
+    ~entries=gcEntries,
+    ~value=s => s.seconds,
+  )
+  b->series(
+    ~name="nodejs_gc_duration_seconds_count",
+    ~help="Number of garbage collection pauses by kind, one of major, minor, incremental or weakcb.",
+    ~kind="counter",
+    ~entries=gcEntries,
+    ~value=s => s.count,
   )
   b->series(
     ~name="nodejs_version_info",
