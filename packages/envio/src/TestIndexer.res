@@ -726,9 +726,16 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
                     // the worker observe the same environment as the test
                     // process (e.g. E2E_EXPECTED_END_BLOCK). A test run should
                     // fail with the source's error rather than retry until the
-                    // test-runner timeout, so cap source retries unless the
-                    // user overrides the cap.
-                    env: %raw(`{ENVIO_MAX_SOURCE_RETRIES: "1", ...process.env}`),
+                    // test-runner timeout, so unless the user overrides them,
+                    // cap source retries and shorten the HyperSync request
+                    // timeout (the production 120s default outlives any test
+                    // timeout, turning a hung connection into a context-free
+                    // test failure instead of a quick retry on a fresh one).
+                    env: %raw(`{
+                      ENVIO_MAX_SOURCE_RETRIES: "1",
+                      ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS: "10000",
+                      ...process.env,
+                    }`),
                   },
                 )
               } catch {
