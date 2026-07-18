@@ -390,7 +390,9 @@ let loadByFilter = (
 
     let size = ref(0)
 
-    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
+    filters->Array.forEach(filter =>
+      inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter, ~table=entityConfig.table)
+    )
 
     // Loading a superset of rows via a merged query is safe: every loaded
     // entity is matched against all registered indices, not only the
