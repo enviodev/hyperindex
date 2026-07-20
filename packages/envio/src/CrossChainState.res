@@ -307,11 +307,11 @@ let checkAndFetch = async (
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
       let maxTargetBlock = switch alignment {
-      // 5% margin past the anchor's line: chains whose progress tracks the
+      // 10% margin past the anchor's line: chains whose progress tracks the
       // anchor closely would otherwise flap in and out of the clamp on every
       // small frontier move, stalling their pipeline every other tick.
       | Some((anchorChainId, progress)) if anchorChainId !== chainId =>
-        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.05))
+        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.1))
       | _ => None
       }
       switch cs->ChainState.getNextQuery(

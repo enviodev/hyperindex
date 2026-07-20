@@ -633,8 +633,8 @@ describe("CrossChainState fetch control", () => {
 
       t.expect(
         estimatesByChain,
-        ~message="The follower fetches up to the anchor's 50% line (+5% margin = block 550), not to nothing",
-      ).toEqual(Dict.fromArray([("1", 500), ("2", 30)]))
+        ~message="The follower fetches up to the anchor's 50% line (+10% margin = block 600), not to nothing",
+      ).toEqual(Dict.fromArray([("1", 500), ("2", 80)]))
     },
   )
 
@@ -772,7 +772,7 @@ describe("ChainState cold start", () => {
     // Chain 1 is most behind but produces no new query this tick (its buffer
     // holds a ready item that batch processing will drain). Before frontier
     // anchoring, such a tick left the line unset and chain 2 ran unclamped to
-    // its head; now chain 2 stays held at chain 1's frontier (+5% margin).
+    // its head; now chain 2 stays held at chain 1's frontier (+10% margin).
     let a = makeChainState(
       ~chainId=1,
       ~knownHeight=1000,
@@ -807,7 +807,7 @@ describe("ChainState cold start", () => {
 
     t.expect(
       actionsByChain->Dict.get("2"),
-      ~message="Chain 2's frontier (500) is past chain 1's line (10% + 5% margin = block 150), so it waits instead of fetching to head",
+      ~message="Chain 2's frontier (500) is past chain 1's line (10% + 10% margin = block 200), so it waits instead of fetching to head",
     ).toEqual(Some("waitingForNewBlock"))
   })
 
