@@ -8,10 +8,6 @@ type requestStatAgg = {mutable count: int, mutable seconds: float}
 type sourceState = {
   source: Source.t,
   mutable knownHeight: int,
-  // Highest height observed for this source, rendered into
-  // envio_source_known_height. Kept apart from knownHeight, which drives the
-  // height-subscription wait logic.
-  mutable reportedHeight: int,
   mutable unsubscribe: option<unit => unit>,
   mutable pendingHeightResolvers: array<int => unit>,
   mutable disabled: bool,
@@ -101,7 +97,7 @@ let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
   samples
 }
 
-// Per-source observed heights for envio_source_known_height. Sources with no
+// Per-source known heights for envio_source_known_height. Sources with no
 // observed height yet are skipped.
 type sourceHeightSample = {
   sourceName: string,
@@ -112,11 +108,11 @@ type sourceHeightSample = {
 let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
   let samples = []
   sourceManager.sourcesState->Array.forEach(sourceState => {
-    if sourceState.reportedHeight > 0 {
+    if sourceState.knownHeight > 0 {
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chain->ChainMap.Chain.toChainId,
-        height: sourceState.reportedHeight,
+        height: sourceState.knownHeight,
       })
     }
   })
@@ -279,7 +275,6 @@ let make = (
     sourcesState: sources->Array.map(source => {
       source,
       knownHeight: 0,
-      reportedHeight: 0,
       unsubscribe: None,
       pendingHeightResolvers: [],
       disabled: false,
@@ -320,14 +315,6 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
-
-// Record a height observed for the active source outside the height-wait loop
-// (e.g. carried on a block-range fetch response).
-let reportActiveSourceHeight = (sourceManager: t, ~height) =>
-  switch sourceManager.sourcesState->Array.find(s => s.source === sourceManager.activeSource) {
-  | Some(sourceState) if height > sourceState.reportedHeight => sourceState.reportedHeight = height
-  | _ => ()
-  }
 
 // Carry out the fetch decision made by CrossChainState.checkAndFetch: either
 // dispatch the admitted queries or start waiting for a new block. Selection
@@ -517,8 +504,8 @@ let getSourceNewHeight = async (
     }
   }
 
-  if newHeight.contents > sourceState.reportedHeight {
-    sourceState.reportedHeight = newHeight.contents
+  if newHeight.contents > sourceState.knownHeight {
+    sourceState.knownHeight = newHeight.contents
   }
 
   newHeight.contents

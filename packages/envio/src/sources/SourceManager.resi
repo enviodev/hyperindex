@@ -39,8 +39,6 @@ type sourceHeightSample = {
 
 let getSourceHeightSamples: t => array<sourceHeightSample>
 
-let reportActiveSourceHeight: (t, ~height: int) => unit
-
 let idleSeconds: t => float
 let waitingForNewBlockSeconds: t => float
 let queryingSeconds: t => float

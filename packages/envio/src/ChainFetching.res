@@ -128,15 +128,6 @@ let rec onQueryResponse = async (
       fromBlockQueried,
     } = response
 
-    if knownHeight > chainState->ChainState.knownHeight {
-      // The knownHeight from response won't necessarily
-      // belong to the currently active source.
-      // But for simplicity, assume it does.
-      chainState
-      ->ChainState.sourceManager
-      ->SourceManager.reportActiveSourceHeight(~height=knownHeight)
-    }
-
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
