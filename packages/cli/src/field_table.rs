@@ -474,7 +474,6 @@ impl StoreCol {
             _ => panic!("expected a byte-backed column"),
         }
     }
-
 }
 
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
@@ -609,7 +608,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             .and_then(|c| c.cell_bytes(slot as usize))
     }
 
-
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ.
     pub(crate) fn first_field_mismatch(
         &self,
@@ -661,6 +659,25 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         best
     }
 
+    /// Strip every field but `field` from `slot`, leaving a hash-only row still
+    /// readable for reorg detection after the rest of the row is gone.
+    fn reduce_row_to_field(&mut self, slot: u32, field: usize) {
+        let mask = self.masks[slot as usize];
+        for f in 0..self.n_fields {
+            if f != field && mask & (1u64 << f) != 0 {
+                self.cols[f].as_mut().unwrap().clear(slot as usize);
+            }
+        }
+        self.masks[slot as usize] = 1u64 << field;
+    }
+
+    /// Remove a key's row entirely and release its slot.
+    fn drop_row(&mut self, key: &K, slot: u32) {
+        self.by_key.remove(key);
+        self.order.remove(key);
+        self.free_slot(slot);
+    }
+
     /// Drop rows with keys `<= up_to` (processed), except rows with keys
     /// `>= keep_from` that carry `field`: those are reduced to that one field,
     /// so it stays readable after the rest of the row is gone.
@@ -670,17 +687,9 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         for k in pruned {
             let slot = self.by_key[&k];
             if k >= keep_from && self.masks[slot as usize] & bit != 0 {
-                let mask = self.masks[slot as usize];
-                for f in 0..self.n_fields {
-                    if f != field && mask & (1u64 << f) != 0 {
-                        self.cols[f].as_mut().unwrap().clear(slot as usize);
-                    }
-                }
-                self.masks[slot as usize] = bit;
+                self.reduce_row_to_field(slot, field);
             } else {
-                self.by_key.remove(&k);
-                self.order.remove(&k);
-                self.free_slot(slot);
+                self.drop_row(&k, slot);
             }
         }
     }
@@ -722,17 +731,9 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         for k in affected {
             let slot = self.by_key[&k];
             if self.masks[slot as usize] & bit != 0 {
-                let mask = self.masks[slot as usize];
-                for f in 0..self.n_fields {
-                    if f != field && mask & (1u64 << f) != 0 {
-                        self.cols[f].as_mut().unwrap().clear(slot as usize);
-                    }
-                }
-                self.masks[slot as usize] = bit;
+                self.reduce_row_to_field(slot, field);
             } else {
-                self.by_key.remove(&k);
-                self.order.remove(&k);
-                self.free_slot(slot);
+                self.drop_row(&k, slot);
             }
         }
     }

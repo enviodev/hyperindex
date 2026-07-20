@@ -298,10 +298,11 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         ],
         // The observed (blockNumber, hash) pairs land in the block store, which
         // keys by block number — so the projection is deduplicated and ascending.
+        // The store reads hashes back left-padded to the fixed 32-byte width.
         "blockHashes": [
-          {ReorgDetection.blockNumber: 98, blockHash: "0x0b62"},
-          {ReorgDetection.blockNumber: 99, blockHash: "0x0b63"},
-          {ReorgDetection.blockNumber: 100, blockHash: "0x0b64"},
+          {ReorgDetection.blockNumber: 98, blockHash: MockIndexer.evmBlockHash("0x0b62")},
+          {ReorgDetection.blockNumber: 99, blockHash: MockIndexer.evmBlockHash("0x0b63")},
+          {ReorgDetection.blockNumber: 100, blockHash: MockIndexer.evmBlockHash("0x0b64")},
         ],
         "requestCounts": Dict.fromArray([
           ("eth_getLogs", 1),

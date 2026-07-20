@@ -9,10 +9,9 @@
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use hypersync_client::format::{Address, Data, Hash, Hex, Nonce, Quantity};
+use hypersync_client::format::{Hash, Hex, Quantity};
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
-use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -156,11 +155,9 @@ fn evm_block_col(field: EvmBlockField, blocks: &[simple_types::Block]) -> Option
         // The block number is the table key, not a column.
         Number => None,
         Timestamp => var_from(blocks, |b| b.timestamp.as_ref().map(bytes)),
-        // The hash is the reorg-detection comparison key. It's a variable-width
-        // byte column rather than fixed 32 so a `fromJsEvm` page (which
-        // hex-validates its input) can carry shorter hashes in tests; fetched
-        // blocks always store the full 32 bytes.
-        Hash => var_from(blocks, |b| b.hash.as_ref().map(bytes)),
+        // The hash is the reorg-detection comparison key: a fixed 32-byte block
+        // hash, whether fetched or supplied via `fromJsEvm`.
+        Hash => fixed_from(blocks, 32, |b| b.hash.as_ref().map(bytes)),
         ParentHash => fixed_from(blocks, 32, |b| b.parent_hash.as_ref().map(bytes)),
         Nonce => fixed_from(blocks, 8, |b| b.nonce.as_ref().map(bytes)),
         Sha3Uncles => fixed_from(blocks, 32, |b| b.sha3_uncles.as_ref().map(bytes)),
@@ -384,38 +381,14 @@ fn decode_fuel_block_columns(
     )
 }
 
-/// A sparse EVM block from JS for `fromJsEvm`: every field optional except the
-/// key. Field types mirror the materialised `Internal.eventBlock` shape, so a
-/// block round-trips through the store unchanged.
+/// A sparse EVM block from JS for `fromJsEvm`. Only the reorg-relevant fields
+/// the JS callers actually send (RPC/simulate observations, seeded checkpoints):
+/// the key, its hash, and the timestamp. `hash` is a full 32-byte block hash.
 #[napi(object)]
 pub struct EvmBlockInput {
     pub number: i64,
     pub timestamp: Option<i64>,
     pub hash: Option<String>,
-    pub parent_hash: Option<String>,
-    pub nonce: Option<BigInt>,
-    pub sha3_uncles: Option<String>,
-    pub logs_bloom: Option<String>,
-    pub transactions_root: Option<String>,
-    pub state_root: Option<String>,
-    pub receipts_root: Option<String>,
-    pub miner: Option<String>,
-    pub difficulty: Option<BigInt>,
-    pub total_difficulty: Option<BigInt>,
-    pub extra_data: Option<String>,
-    pub size: Option<BigInt>,
-    pub gas_limit: Option<BigInt>,
-    pub gas_used: Option<BigInt>,
-    pub uncles: Option<Vec<String>>,
-    pub base_fee_per_gas: Option<BigInt>,
-    pub blob_gas_used: Option<BigInt>,
-    pub excess_blob_gas: Option<BigInt>,
-    pub parent_beacon_block_root: Option<String>,
-    pub withdrawals_root: Option<String>,
-    pub l1_block_number: Option<i64>,
-    pub send_count: Option<String>,
-    pub send_root: Option<String>,
-    pub mix_hash: Option<String>,
 }
 
 /// A sparse SVM block from JS for `fromJsSvm`.
@@ -437,23 +410,6 @@ pub struct FuelBlockInput {
     pub time: Option<i64>,
 }
 
-/// A JS bigint's magnitude as minimal big-endian bytes (the `Quantity` wire
-/// shape). Sign is ignored — chain quantities are non-negative.
-fn bigint_be_bytes(b: &BigInt) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::with_capacity(b.words.len() * 8);
-    for w in b.words.iter().rev() {
-        out.extend_from_slice(&w.to_be_bytes());
-    }
-    match out.iter().position(|&x| x != 0) {
-        Some(idx) => out[idx..].to_vec(),
-        None => vec![0],
-    }
-}
-
-fn bigint_quantity(v: &Option<BigInt>) -> Option<Quantity> {
-    v.as_ref().map(|b| Quantity::from(bigint_be_bytes(b)))
-}
-
 /// Strictly decode a 0x-prefixed even-length hex string into bytes; anything
 /// else (e.g. an arbitrary marker string) is a validation error.
 pub(crate) fn decode_hex_bytes(s: &str, name: &str) -> Result<Vec<u8>> {
@@ -469,66 +425,32 @@ pub(crate) fn decode_hex_bytes(s: &str, name: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn decode_hex_opt<T: Hex>(v: &Option<String>, name: &str) -> Result<Option<T>> {
-    v.as_ref()
-        .map(|s| T::decode_hex(s).with_context(|| format!("decoding {name}")))
-        .transpose()
+/// Left-pad a `fromJsEvm` hash into the fixed 32-byte comparison key the store
+/// stores. Real observations (RPC blocks, seeded checkpoints) are already 32
+/// bytes, so this is a no-op for them; shorter values (test markers) are
+/// zero-extended to the canonical width. Anything wider than 32 bytes is a
+/// validation error.
+fn evm_input_hash(s: &str) -> Result<Hash> {
+    let bytes = decode_hex_bytes(s, "block.hash")?;
+    if bytes.len() > 32 {
+        anyhow::bail!("block.hash '{s}' exceeds 32 bytes");
+    }
+    let mut buf = [0u8; 32];
+    buf[32 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(Hash::from(buf))
 }
 
-/// Rebuild a `simple_types::Block` from JS field values, so `fromJsEvm` rows
+/// Rebuild a `simple_types::Block` from the JS observation, so `fromJsEvm` rows
 /// go through the same column fill as fetched blocks.
 fn evm_input_to_simple(b: EvmBlockInput) -> Result<simple_types::Block> {
     Ok(simple_types::Block {
         number: Some(u64::try_from(b.number).context("block.number negative")?),
-        // The hash column is hex-validated and filled separately (see
-        // `from_js_evm`) so it can be shorter than the 32 bytes `Hash` requires.
-        hash: None,
-        parent_hash: decode_hex_opt(&b.parent_hash, "block.parentHash")?,
-        nonce: b
-            .nonce
-            .as_ref()
-            .map(|n| Nonce::from(n.words.first().copied().unwrap_or(0).to_be_bytes())),
-        sha3_uncles: decode_hex_opt(&b.sha3_uncles, "block.sha3Uncles")?,
-        logs_bloom: decode_hex_opt(&b.logs_bloom, "block.logsBloom")?,
-        transactions_root: decode_hex_opt(&b.transactions_root, "block.transactionsRoot")?,
-        state_root: decode_hex_opt(&b.state_root, "block.stateRoot")?,
-        receipts_root: decode_hex_opt(&b.receipts_root, "block.receiptsRoot")?,
-        miner: decode_hex_opt::<Address>(&b.miner, "block.miner")?,
-        difficulty: bigint_quantity(&b.difficulty),
-        total_difficulty: bigint_quantity(&b.total_difficulty),
-        extra_data: decode_hex_opt::<Data>(&b.extra_data, "block.extraData")?,
-        size: bigint_quantity(&b.size),
-        gas_limit: bigint_quantity(&b.gas_limit),
-        gas_used: bigint_quantity(&b.gas_used),
+        hash: b.hash.as_deref().map(evm_input_hash).transpose()?,
         timestamp: b
             .timestamp
             .map(|t| Quantity::try_from(t).context("block.timestamp negative"))
             .transpose()?,
-        uncles: b
-            .uncles
-            .map(|v| {
-                v.iter()
-                    .map(|s| Hash::decode_hex(s).context("decoding block.uncles"))
-                    .collect::<Result<Vec<_>>>()
-            })
-            .transpose()?,
-        base_fee_per_gas: bigint_quantity(&b.base_fee_per_gas),
-        blob_gas_used: bigint_quantity(&b.blob_gas_used),
-        excess_blob_gas: bigint_quantity(&b.excess_blob_gas),
-        parent_beacon_block_root: decode_hex_opt(
-            &b.parent_beacon_block_root,
-            "block.parentBeaconBlockRoot",
-        )?,
-        withdrawals_root: decode_hex_opt(&b.withdrawals_root, "block.withdrawalsRoot")?,
-        withdrawals: None,
-        l1_block_number: b
-            .l1_block_number
-            .map(|v| u64::try_from(v).context("block.l1BlockNumber negative"))
-            .transpose()?
-            .map(Into::into),
-        send_count: decode_hex_opt(&b.send_count, "block.sendCount")?,
-        send_root: decode_hex_opt(&b.send_root, "block.sendRoot")?,
-        mix_hash: decode_hex_opt(&b.mix_hash, "block.mixHash")?,
+        ..Default::default()
     })
 }
 
@@ -561,13 +483,23 @@ fn svm_slot_is_covered(ranges: &[SvmCoveredRange], slot: u64) -> bool {
         .any(|range| range.from <= slot && slot < range.to_exclusive)
 }
 
-/// The store's lock-guarded state: the table plus response-only validation
-/// metadata. SVM coverage records the half-open ranges HyperSync's cursor has
-/// fully processed; it is never merged into the persistent chain store.
+/// The response-only state a page accumulates while it is built and validated:
+/// a within-response hash conflict, and (SVM) the cursor coverage proving which
+/// missing slots were legitimately skipped. It belongs to a fetch-response page
+/// and is never persisted — `merge` resets it so it can't outlive the queried
+/// fork once the page's rows join the chain store. A persistent store simply
+/// leaves it empty.
+#[derive(Default)]
+struct ResponsePage {
+    conflict: Option<HashMismatch>,
+    svm_covered_ranges: Vec<SvmCoveredRange>,
+}
+
+/// The store's lock-guarded state: the persistent table plus, for a
+/// fetch-response page, its response-only validation metadata.
 struct Inner {
     table: Table<u64>,
-    response_conflict: Option<HashMismatch>,
-    svm_covered_ranges: Vec<SvmCoveredRange>,
+    page: ResponsePage,
 }
 
 #[napi]
@@ -604,33 +536,12 @@ impl BlockStore {
     #[napi(factory)]
     pub fn from_js_evm(blocks: Vec<EvmBlockInput>, should_checksum: bool) -> napi::Result<Self> {
         let store = Self::with_ecosystem(Ecosystem::Evm { should_checksum });
-        let hashes: Vec<Option<Vec<u8>>> = blocks
-            .iter()
-            .map(|b| {
-                b.hash
-                    .as_deref()
-                    .map(|s| decode_hex_bytes(s, "block.hash"))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>>>()
-            .map_err(map_err)?;
         let simple = blocks
             .into_iter()
             .map(evm_input_to_simple)
             .collect::<Result<Vec<_>>>()
             .map_err(map_err)?;
-        let keys: Vec<u64> = simple.iter().map(|b| b.number.unwrap()).collect();
-        let cols: Vec<Option<AnyCol>> = EvmBlockField::VARIANTS
-            .iter()
-            .map(|&f| {
-                if f == EvmBlockField::Hash {
-                    var_from(&hashes, |h| h.as_deref())
-                } else {
-                    evm_block_col(f, &simple)
-                }
-            })
-            .collect();
-        store.insert_watching_hash(keys, cols);
+        store.insert_evm_blocks(simple);
         Ok(store)
     }
 
@@ -703,14 +614,15 @@ impl BlockStore {
                 received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
             });
         debug_assert!(
-            src.response_conflict.is_none(),
+            src.page.conflict.is_none(),
             "response stores must be validated before persistent merge"
         );
         if cross.is_none() || report_only {
             dst.table.append_from(&mut src.table);
-            // Cursor coverage validates this response only. It must not become
-            // persistent chain data, where it could outlive the queried fork.
-            src.svm_covered_ranges.clear();
+            // The page's response-only state validates this response only. It
+            // must not become persistent chain data, where the cursor coverage
+            // could outlive the queried fork.
+            src.page = ResponsePage::default();
         }
         cross
     }
@@ -739,13 +651,13 @@ impl BlockStore {
                 stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
                 received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
             });
-        let conflict = lowest_conflict(cross, src.response_conflict.take());
+        let conflict = lowest_conflict(cross, src.page.conflict.take());
         if let Some(conflict) = conflict {
-            record_conflict(&mut dst.response_conflict, conflict);
+            record_conflict(&mut dst.page.conflict, conflict);
         }
         dst.table.append_from(&mut src.table);
-        for range in src.svm_covered_ranges.drain(..) {
-            add_svm_covered_range(&mut dst.svm_covered_ranges, range);
+        for range in src.page.svm_covered_ranges.drain(..) {
+            add_svm_covered_range(&mut dst.page.svm_covered_ranges, range);
         }
     }
 
@@ -754,7 +666,7 @@ impl BlockStore {
     /// discarding the complete response.
     #[napi]
     pub fn response_conflict(&self) -> Option<HashMismatch> {
-        self.inner.lock().unwrap().response_conflict.clone()
+        self.inner.lock().unwrap().page.conflict.clone()
     }
 
     /// Return requested block numbers that are not covered by this response.
@@ -774,7 +686,7 @@ impl BlockStore {
                     return false;
                 }
                 match self.ecosystem {
-                    Ecosystem::Svm => !svm_slot_is_covered(&inner.svm_covered_ranges, key),
+                    Ecosystem::Svm => !svm_slot_is_covered(&inner.page.svm_covered_ranges, key),
                     _ => true,
                 }
             })
@@ -945,7 +857,7 @@ impl BlockStore {
 
         let mut inner = self.inner.lock().unwrap();
         add_svm_covered_range(
-            &mut inner.svm_covered_ranges,
+            &mut inner.page.svm_covered_ranges,
             SvmCoveredRange { from, to_exclusive },
         );
         Ok(())
@@ -960,8 +872,7 @@ impl BlockStore {
         Self {
             inner: Mutex::new(Inner {
                 table: Table::new(n_fields),
-                response_conflict: None,
-                svm_covered_ranges: Vec::new(),
+                page: ResponsePage::default(),
             }),
             ecosystem,
         }
@@ -1026,7 +937,7 @@ impl BlockStore {
         inner.table.merge_batch(keys, cols);
         if let Some((key, stored, received)) = conflict {
             record_conflict(
-                &mut inner.response_conflict,
+                &mut inner.page.conflict,
                 HashMismatch {
                     block_number: key as i64,
                     stored_hash: self.hash_display(&stored),
@@ -1840,60 +1751,12 @@ mod tests {
                     number: 7,
                     timestamp: Some(999),
                     hash: Some(format!("0x{}", "ab".repeat(32))),
-                    parent_hash: None,
-                    nonce: Some(BigInt::from(5u64)),
-                    sha3_uncles: None,
-                    logs_bloom: None,
-                    transactions_root: None,
-                    state_root: None,
-                    receipts_root: None,
-                    miner: None,
-                    difficulty: None,
-                    total_difficulty: None,
-                    extra_data: None,
-                    size: None,
-                    gas_limit: None,
-                    gas_used: Some(BigInt::from(555u64)),
-                    uncles: None,
-                    base_fee_per_gas: None,
-                    blob_gas_used: None,
-                    excess_blob_gas: None,
-                    parent_beacon_block_root: None,
-                    withdrawals_root: None,
-                    l1_block_number: None,
-                    send_count: None,
-                    send_root: None,
-                    mix_hash: None,
                 },
-                // A hash-only guard row.
+                // A hash-only guard row (no timestamp).
                 EvmBlockInput {
                     number: 8,
                     timestamp: None,
                     hash: Some(format!("0x{}", "cd".repeat(32))),
-                    parent_hash: None,
-                    nonce: None,
-                    sha3_uncles: None,
-                    logs_bloom: None,
-                    transactions_root: None,
-                    state_root: None,
-                    receipts_root: None,
-                    miner: None,
-                    difficulty: None,
-                    total_difficulty: None,
-                    extra_data: None,
-                    size: None,
-                    gas_limit: None,
-                    gas_used: None,
-                    uncles: None,
-                    base_fee_per_gas: None,
-                    blob_gas_used: None,
-                    excess_blob_gas: None,
-                    parent_beacon_block_root: None,
-                    withdrawals_root: None,
-                    l1_block_number: None,
-                    send_count: None,
-                    send_root: None,
-                    mix_hash: None,
                 },
             ],
             false,
@@ -1902,8 +1765,7 @@ mod tests {
 
         let mask = (bit(EvmBlockField::Number)
             | bit(EvmBlockField::Timestamp)
-            | bit(EvmBlockField::Hash)
-            | bit(EvmBlockField::GasUsed)) as f64;
+            | bit(EvmBlockField::Hash)) as f64;
         let cols = store
             .materialize(vec![7], vec![mask])
             .await
@@ -1917,13 +1779,6 @@ mod tests {
                 Some(Column::Str(v)) => v.clone(),
                 _ => panic!("expected hash column"),
             },
-            match column(&cols, "gasUsed") {
-                Some(Column::Big(v)) => v
-                    .iter()
-                    .map(|b| b.as_ref().map(|b| b.get_u64().1))
-                    .collect::<Vec<_>>(),
-                _ => panic!("expected gasUsed column"),
-            },
             store.get_hash(8),
         );
         assert_eq!(
@@ -1931,7 +1786,6 @@ mod tests {
             (
                 vec![Some(999)],
                 vec![Some(format!("0x{}", "ab".repeat(32)))],
-                vec![Some(555)],
                 Some(format!("0x{}", "cd".repeat(32)))
             )
         );
