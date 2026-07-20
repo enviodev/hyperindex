@@ -2,6 +2,15 @@ type chainId = Indexer.chainId
 
 let config = Config.load()
 
+// EVM block hashes are stored as the fixed 32-byte reorg comparison key; a
+// `fromJs` page zero-extends a shorter mock marker to that width, so a stored
+// hash reads back left-padded. Mirror that here for assertions that compare
+// against `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
+let evmBlockHash = hex => {
+  let digits = hex->String.slice(~start=2, ~end=hex->String.length)
+  "0x" ++ "0"->String.repeat(64 - digits->String.length) ++ digits
+}
+
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
   ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
