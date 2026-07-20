@@ -1,0 +1,63 @@
+name: Redeploy changelog on release
+
+# The envio.dev/changelog page is built from GitHub Releases at deploy time in
+# the ui repo. It only refreshes when that site rebuilds, so a new release does
+# not appear on its own. This pings the ui repo (via repository_dispatch) the
+# moment a stable release publishes, and ui redeploys to pick it up.
+
+on:
+  release:
+    types: [published]
+  # Manual re-send for a past tag, to test the pipeline without a real release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to send, for example v3.3.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.release.draft == false
+    steps:
+      # Refresh on every stable release, patches included, since the changelog
+      # lists them all. A release qualifies when the tag is a clean "X.Y.Z"
+      # (strip a leading "v") with no pre-release suffix. This skips release
+      # candidates such as v3.0.0-rc.1, which GitHub does not always flag as
+      # prereleases.
+      - name: Classify release
+        id: classify
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          version="${TAG#v}"
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            echo "$TAG is a prerelease; skipping"
+            echo "notify=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$TAG is a stable release; notifying ui"
+            echo "notify=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$TAG is not a clean stable tag; skipping"
+            echo "notify=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify ui to redeploy the changelog
+        if: steps.classify.outputs.notify == 'true'
+        env:
+          # A cross-repo dispatch needs a token that can write to enviodev/ui;
+          # the built-in GITHUB_TOKEN only reaches this repo. Store a
+          # fine-grained PAT (or GitHub App token) with "contents: write" on
+          # enviodev/ui as this secret.
+          GH_TOKEN: ${{ secrets.CHANGELOG_DISPATCH_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          # jq builds the JSON so the tag can never be read as shell.
+          jq -n --arg tag "$TAG" \
+            '{event_type: "hyperindex-release", client_payload: {tag: $tag}}' \
+            | gh api -X POST repos/enviodev/ui/dispatches --input -
+          echo "Dispatched hyperindex-release ($TAG) to enviodev/ui."
