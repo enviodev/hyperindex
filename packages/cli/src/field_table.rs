@@ -715,29 +715,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         }
     }
 
-    /// Reduce rows with keys `> target` to `field` only (a non-reorg chain's
-    /// rollback: buffered blocks will be refetched, but the scanned hashes are
-    /// still valid for reorg detection). Rows without the field are dropped.
-    pub(crate) fn rollback_keeping_field(&mut self, target: K, field: usize) {
-        let bit = 1u64 << field;
-        let affected: Vec<K> = self
-            .order
-            .range((
-                std::ops::Bound::Excluded(target),
-                std::ops::Bound::Unbounded,
-            ))
-            .map(|(k, _)| k.clone())
-            .collect();
-        for k in affected {
-            let slot = self.by_key[&k];
-            if self.masks[slot as usize] & bit != 0 {
-                self.reduce_row_to_field(slot, field);
-            } else {
-                self.drop_row(&k, slot);
-            }
-        }
-    }
-
     /// Drop rows with keys `> target` (rolled back).
     pub(crate) fn rollback(&mut self, target: K) {
         let dead: Vec<K> = self

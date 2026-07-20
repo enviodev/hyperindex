@@ -397,9 +397,6 @@ pub struct SvmBlockInput {
     pub slot: i64,
     pub time: Option<i64>,
     pub hash: Option<String>,
-    pub height: Option<i64>,
-    pub parent_slot: Option<i64>,
-    pub parent_hash: Option<String>,
 }
 
 /// A sparse Fuel block from JS for `fromJsFuel`.
@@ -822,17 +819,13 @@ impl BlockStore {
         }
     }
 
-    /// Drop blocks above `target_block` (rolled back). With `keep_hashes` set
-    /// (a chain rolled back alongside another chain's reorg), blocks above the
-    /// target are reduced to hash-only rows instead: their data is refetched,
-    /// but the scanned hashes are still valid for reorg detection.
+    /// Drop all blocks above `target_block` (rolled back), hashes included. The
+    /// rolled-back range is refetched, so its stale hashes must not linger for
+    /// reorg detection.
     #[napi]
-    pub fn rollback(&self, target_block: i64, keep_hashes: bool) {
+    pub fn rollback(&self, target_block: i64) {
         let mut inner = self.inner.lock().unwrap();
         match u64::try_from(target_block) {
-            Ok(target) if keep_hashes => inner
-                .table
-                .rollback_keeping_field(target, self.hash_field()),
             Ok(target) => inner.table.rollback(target),
             Err(_) => inner.table.clear(),
         }
@@ -1018,11 +1011,8 @@ impl BlockStore {
                     Slot => None,
                     Time => i64_from(&blocks, |b| b.time),
                     Hash => str_from(&blocks, |b| b.hash.as_deref()),
-                    Height => u64_from(&blocks, |b| b.height.and_then(|v| u64::try_from(v).ok())),
-                    ParentSlot => u64_from(&blocks, |b| {
-                        b.parent_slot.and_then(|v| u64::try_from(v).ok())
-                    }),
-                    ParentHash => str_from(&blocks, |b| b.parent_hash.as_deref()),
+                    // JS only observes slot/time/hash for reorg tracking.
+                    Height | ParentSlot | ParentHash => None,
                 }
             })
             .collect();
@@ -1324,7 +1314,7 @@ mod tests {
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
             .expect("materialize");
-        store.rollback(20, false);
+        store.rollback(20);
         let after_rollback = store
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
@@ -1797,9 +1787,6 @@ mod tests {
             slot: 42,
             time: Some(1),
             hash: Some("base58hash".to_string()),
-            height: None,
-            parent_slot: None,
-            parent_hash: None,
         }])
         .expect("fromJs");
         assert_eq!(store.get_hash(42), Some("base58hash".to_string()));

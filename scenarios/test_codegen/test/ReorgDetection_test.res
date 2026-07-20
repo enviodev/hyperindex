@@ -158,7 +158,7 @@ describe("Block store reorg detection", () => {
 
   it("rollback drops hashes above the valid block", t => {
     let store = mock(scannedHashesFixture)
-    store->BlockStore.rollback(499, ~keepHashes=false)
+    store->BlockStore.rollback(499)
     t.expect(store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000)).toEqual([
       1,
       50,
