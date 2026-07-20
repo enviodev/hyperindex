@@ -697,6 +697,9 @@ type runtimeCollectors = {
   eventLoopDelay: NodeJs.PerfHooks.intervalHistogram,
   // Cumulative GC pause count/time per kind, fed by a "gc" PerformanceObserver.
   gcStats: dict<gcStat>,
+  // Fixed at collector start; recomputing per scrape lets rounding/clock jitter
+  // move it and read as a phantom restart.
+  processStartTimeSeconds: float,
 }
 
 // perf_hooks GC kind constants: NODE_PERFORMANCE_GC_{MINOR,MAJOR,INCREMENTAL,WEAKCB}.
@@ -737,7 +740,11 @@ let getRuntimeCollectors = () =>
       })
     )
     observer->NodeJs.PerfHooks.observe({entryTypes: ["gc"]})
-    let collectors = {eventLoopDelay, gcStats}
+    let collectors = {
+      eventLoopDelay,
+      gcStats,
+      processStartTimeSeconds: Date.now() /. 1000. -. NodeJs.Process.uptime(),
+    }
     runtimeCollectors := Some(collectors)
     collectors
   }
@@ -751,7 +758,7 @@ let collectRuntime = () => {
   let memory = NodeJs.Process.memoryUsage()
   let cpu = NodeJs.Process.cpuUsage()
   let elu = NodeJs.PerfHooks.performance->NodeJs.PerfHooks.eventLoopUtilization
-  let {eventLoopDelay, gcStats} = getRuntimeCollectors()
+  let {eventLoopDelay, gcStats, processStartTimeSeconds} = getRuntimeCollectors()
   b->single(
     ~name="process_cpu_user_seconds_total",
     ~help="Total user CPU time spent in seconds.",
@@ -774,7 +781,7 @@ let collectRuntime = () => {
     ~name="process_start_time_seconds",
     ~help="Start time of the process since unix epoch in seconds.",
     ~kind="gauge",
-    ~value=Date.now() /. 1000. -. NodeJs.Process.uptime(),
+    ~value=processStartTimeSeconds,
   )
   b->single(
     ~name="process_resident_memory_bytes",
@@ -923,11 +930,21 @@ let collectRuntime = () => {
     ~entries=gcEntries,
     ~value=s => s.count,
   )
+  let version = NodeJs.Process.version
+  let versionParts = version->String.replace("v", "")->String.split(".")
+  let versionPart = i => versionParts->Array.get(i)->Option.getOr("0")
   b->series(
     ~name="nodejs_version_info",
     ~help="Node.js version info.",
     ~kind="gauge",
-    ~entries=[(`{version="${NodeJs.Process.version}"}`, ())],
+    ~entries=[
+      (
+        `{version="${version}",major="${versionPart(0)}",minor="${versionPart(
+            1,
+          )}",patch="${versionPart(2)}"}`,
+        (),
+      ),
+    ],
     ~value=() => 1.,
   )
   b.out ++ "\n"
