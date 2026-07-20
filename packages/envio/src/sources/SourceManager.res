@@ -316,6 +316,14 @@ let trackNewStatus = (sourceManager: t, ~newStatus) => {
   sourceManager.status = newStatus
 }
 
+// Advance the active source's known height from a block-range response, which
+// carries a fresher height than the wait loop observes during a long backfill.
+let reportActiveSourceHeight = (sourceManager: t, ~height) =>
+  switch sourceManager.sourcesState->Array.find(s => s.source === sourceManager.activeSource) {
+  | Some(sourceState) if height > sourceState.knownHeight => sourceState.knownHeight = height
+  | _ => ()
+  }
+
 // Carry out the fetch decision made by CrossChainState.checkAndFetch: either
 // dispatch the admitted queries or start waiting for a new block. Selection
 // (getNextQuery + cross-chain admission) happens upstream so the budget is split
