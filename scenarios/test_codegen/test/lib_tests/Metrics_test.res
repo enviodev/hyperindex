@@ -27,9 +27,9 @@ envio_indexing_addresses{chainId="1"} 3
 envio_indexing_addresses{chainId="137"} 0`)
   })
 
-  it("Escapes quotes, backslashes and newlines in label values", t => {
-    t.expect(`weird "name" \\ with
-newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\" \\\\ with\\nnewline`)
+  it("Escapes quotes/backslashes/newlines and passes commas and equals through", t => {
+    t.expect(`weird "name",a=b \\ with
+newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
   })
 
   it("Renders only the header for a series without entries and skips seriesOpt None samples", t => {
@@ -82,8 +82,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       handlers: [],
       effects: [
         {
-          effect: `a"b`,
-          scope: `c"d`,
+          effect: `a",b=c`,
+          scope: `d"e`,
           callSeconds: 0.,
           callSecondsTotal: 0.,
           callCount: 2.,
@@ -103,7 +103,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
     t.expect(
       Metrics.collect(~metrics=Some(metrics))->String.includes(
-        `envio_effect_call_total{effect="a\\"b",scope="c\\"d"} 2`,
+        `envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`,
       ),
     ).toBe(true)
   })
