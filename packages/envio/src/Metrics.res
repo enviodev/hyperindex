@@ -199,7 +199,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     ))
   let effects =
     metrics.effects->Array.map(s => (
-      `{effect="${s.effect->escapeLabelValue}",scope="${s.scope}"}`,
+      `{effect="${s.effect->escapeLabelValue}",scope="${s.scope->escapeLabelValue}"}`,
       s,
     ))
   let storageLoads =
@@ -883,14 +883,13 @@ let collectRuntime = () => {
   )
   let activeResources = {
     let byType = Dict.make()
-    NodeJs.Process.getActiveResourcesInfo()->Array.forEach(resource =>
+    NodeJs.Process.getActiveResourcesInfo()->Array.forEach(resource => {
+      let label = `{type="${resource->escapeLabelValue}"}`
       byType->Dict.set(
-        `{type="${resource->escapeLabelValue}"}`,
-        byType
-        ->Utils.Dict.dangerouslyGetNonOption(`{type="${resource->escapeLabelValue}"}`)
-        ->Option.getOr(0.) +. 1.,
+        label,
+        byType->Utils.Dict.dangerouslyGetNonOption(label)->Option.getOr(0.) +. 1.,
       )
-    )
+    })
     byType->Dict.toArray
   }
   b->series(

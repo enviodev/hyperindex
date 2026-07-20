@@ -561,7 +561,8 @@ let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
 }
 
 let getStorageLoadStat = (state: t, ~storage, ~operation) => {
-  let key = storage ++ ":" ++ operation
+  // Length-prefixed so names containing the separator can't collide.
+  let key = storage->String.length->Int.toString ++ ":" ++ storage ++ operation
   switch state.storageLoadStats->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(stat) => stat
   | None =>

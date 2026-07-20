@@ -65,4 +65,46 @@ describe("Metrics.collect", () => {
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 `)
   })
+
+  it("Escapes both the effect and the scope label values", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [
+        {
+          effect: `a"b`,
+          scope: `c"d`,
+          callSeconds: 0.,
+          callSecondsTotal: 0.,
+          callCount: 2.,
+          activeCallsCount: 0,
+          queueCount: 0,
+          queueWaitSeconds: 0.,
+          invalidationsCount: 0.,
+          cacheCount: None,
+        },
+      ],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))->String.includes(
+        `envio_effect_call_total{effect="a\\"b",scope="c\\"d"} 2`,
+      ),
+    ).toBe(true)
+  })
 })
