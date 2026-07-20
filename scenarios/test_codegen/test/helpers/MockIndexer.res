@@ -1071,6 +1071,11 @@ let evmOnEventRegistration = (
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
   ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
+  // Override the event's ABI when a test needs indexed params (so its logs
+  // carry the topics its `where` filters on). Defaults to a no-param,
+  // single-topic event.
+  ~paramsMetadata: array<Internal.paramMeta>=[],
+  ~topicCount=1,
 ): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
@@ -1080,8 +1085,8 @@ let evmOnEventRegistration = (
     id,
     contractName,
     name: "EventWithoutFields",
-    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
-    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema(paramsMetadata),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
@@ -1091,8 +1096,8 @@ let evmOnEventRegistration = (
       ),
     ),
     sighash: id,
-    topicCount: 1,
-    paramsMetadata: [],
+    topicCount,
+    paramsMetadata,
   }
   {
     index: -1,

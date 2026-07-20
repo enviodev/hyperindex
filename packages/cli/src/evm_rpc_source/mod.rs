@@ -264,7 +264,10 @@ impl EvmRpcClient {
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
         let selection_decoder = std::sync::Arc::new(
             self.decoder
-                .selection(&params.registration_indexes)
+                .selection(
+                    &params.registration_indexes,
+                    &params.addresses_by_contract_name,
+                )
                 .map_err(map_err)?,
         );
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);

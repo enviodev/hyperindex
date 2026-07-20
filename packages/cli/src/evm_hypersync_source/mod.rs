@@ -129,7 +129,10 @@ impl EvmHypersyncClient {
             .map_err(map_err)?;
         let selection_decoder = self
             .decoder
-            .selection(&params.registration_indexes)
+            .selection(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
@@ -684,7 +687,7 @@ mod tests {
     fn empty_decoder() -> SelectionDecoder {
         DecoderCore::from_registrations(&[], false)
             .unwrap()
-            .selection(&[])
+            .selection(&[], &HashMap::new())
             .unwrap()
     }
 
@@ -711,7 +714,7 @@ mod tests {
             false,
         )
         .unwrap()
-        .selection(&[0])
+        .selection(&[0], &HashMap::new())
         .unwrap()
     }
 

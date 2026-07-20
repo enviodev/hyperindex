@@ -12,13 +12,25 @@ use crate::evm_hypersync_source::types::{
     sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
 };
 
+/// One topic position's constraint, resolved from a registration's `where`.
+enum TopicConstraint {
+    /// Unfiltered — matches any value.
+    Any,
+    /// Matches when the log's topic is one of these values.
+    Values(Vec<[u8; 32]>),
+    /// A `ContractAddresses` marker: matches the padded topic of one of the
+    /// registration's contract's currently registered addresses. Resolved at
+    /// routing time from the partition's address index (see
+    /// `SelectionDecoder`); the temporal `effectiveStartBlock` check stays on
+    /// the JS `clientAddressFilter`.
+    ContractAddresses,
+}
+
 /// A registration's static topic constraints — its resolved `where` in DNF:
 /// the outer Vec is an OR of alternatives, each alternative constrains the
-/// four topic positions. Per position, `None` matches any value: the position
-/// is either unfiltered or carries a `ContractAddresses` marker whose
-/// temporal check stays on the JS `clientAddressFilter`. An empty DNF puts no
-/// constraint on the registration's logs.
-struct TopicFilters(Vec<[Option<Vec<[u8; 32]>>; 4]>);
+/// four topic positions. An empty DNF puts no constraint on the
+/// registration's logs.
+struct TopicFilters(Vec<[TopicConstraint; 4]>);
 
 impl TopicFilters {
     fn parse(topic_selections: &[TopicSelectionInput]) -> Result<Self> {
@@ -32,12 +44,14 @@ impl TopicFilters {
                 })
                 .collect()
         };
-        // An empty value list means match-any (mirroring query semantics),
-        // same as a `ContractAddresses` marker (`None` input).
-        let parse_position = |values: Option<&Vec<String>>| -> Result<Option<Vec<[u8; 32]>>> {
-            match values {
-                Some(values) if !values.is_empty() => Ok(Some(parse_values(values)?)),
-                _ => Ok(None),
+        // topic1..3 cross the boundary as `Option<Vec<String>>`: `None` is a
+        // `ContractAddresses` marker, `Some([])` is unfiltered, and a non-empty
+        // list is a static value set. topic0 is always a concrete value set.
+        let parse_position = |input: Option<&Vec<String>>| -> Result<TopicConstraint> {
+            match input {
+                None => Ok(TopicConstraint::ContractAddresses),
+                Some(values) if values.is_empty() => Ok(TopicConstraint::Any),
+                Some(values) => Ok(TopicConstraint::Values(parse_values(values)?)),
             }
         };
         let alternatives = topic_selections
@@ -54,7 +68,14 @@ impl TopicFilters {
         Ok(Self(alternatives))
     }
 
-    fn matches(&self, topics: &[Option<LogArgument>]) -> bool {
+    /// Whether a log's topics satisfy any DNF alternative. `contract_address_topics`
+    /// are the padded topics of the registration's contract's current addresses,
+    /// used to resolve `ContractAddresses` markers.
+    fn matches(
+        &self,
+        topics: &[Option<LogArgument>],
+        contract_address_topics: &[[u8; 32]],
+    ) -> bool {
         if self.0.is_empty() {
             return true;
         }
@@ -62,12 +83,16 @@ impl TopicFilters {
             alternative
                 .iter()
                 .enumerate()
-                .all(|(position, filter)| match filter {
-                    None => true,
-                    Some(values) => topics
+                .all(|(position, constraint)| {
+                    let allowed: &[[u8; 32]] = match constraint {
+                        TopicConstraint::Any => return true,
+                        TopicConstraint::Values(values) => values,
+                        TopicConstraint::ContractAddresses => contract_address_topics,
+                    };
+                    topics
                         .get(position)
                         .and_then(Option::as_ref)
-                        .is_some_and(|topic| values.iter().any(|v| v == &***topic)),
+                        .is_some_and(|topic| allowed.iter().any(|v| v == &***topic))
                 })
         })
     }
@@ -122,11 +147,12 @@ impl OnEventRegistration {
         topic_count: u8,
         contract_name: Option<&str>,
         topics: &[Option<LogArgument>],
+        contract_address_topics: &[[u8; 32]],
     ) -> bool {
         self.sighash == *topic0
             && self.topic_count == topic_count
             && (self.is_wildcard || contract_name == Some(self.contract_name.as_str()))
-            && self.topic_filters.matches(topics)
+            && self.topic_filters.matches(topics, contract_address_topics)
     }
 }
 
@@ -163,20 +189,39 @@ impl DecoderCore {
 
     /// Resolves a query's registration selection into the decoder its response
     /// logs route through, so a log can only ever route to a registration
-    /// belonging to the selection that fetched it.
-    pub(crate) fn selection(&self, registration_indexes: &[i64]) -> Result<SelectionDecoder> {
+    /// belonging to the selection that fetched it. Each registration's
+    /// `ContractAddresses` markers are materialized from `addresses_by_contract_name`
+    /// (the same per-query addresses the log selections were built from).
+    pub(crate) fn selection(
+        &self,
+        registration_indexes: &[i64],
+        addresses_by_contract_name: &HashMap<String, Vec<String>>,
+    ) -> Result<SelectionDecoder> {
         let mut registrations = registration_indexes
             .iter()
             .map(|id| {
-                self.registrations
-                    .get(id)
-                    .cloned()
-                    .with_context(|| format!("Unknown registration index {id} in query selection"))
+                let registration = self.registrations.get(id).cloned().with_context(|| {
+                    format!("Unknown registration index {id} in query selection")
+                })?;
+                let contract_address_topics = addresses_by_contract_name
+                    .get(&registration.contract_name)
+                    .map(|addresses| {
+                        addresses
+                            .iter()
+                            .map(|a| address_to_topic_bytes(a))
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(SelectedRegistration {
+                    registration,
+                    contract_address_topics,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         // Deterministic item order per log, independent of the selection's
         // index order.
-        registrations.sort_unstable_by_key(|reg| reg.index);
+        registrations.sort_unstable_by_key(|sel| sel.registration.index);
         Ok(SelectionDecoder {
             registrations,
             checksummed_addresses: self.checksummed_addresses,
@@ -184,11 +229,18 @@ impl DecoderCore {
     }
 }
 
+/// A selection's registration paired with the padded topics of its contract's
+/// current addresses, resolving the registration's `ContractAddresses` markers.
+struct SelectedRegistration {
+    registration: Arc<OnEventRegistration>,
+    contract_address_topics: Vec<[u8; 32]>,
+}
+
 /// One query selection's registrations, in registration order. Routing is a
 /// straight scan over them — a selection is small (one partition's events),
 /// which also keeps the scan cheaper than a keyed lookup.
 pub(crate) struct SelectionDecoder {
-    registrations: Vec<Arc<OnEventRegistration>>,
+    registrations: Vec<SelectedRegistration>,
     checksummed_addresses: bool,
 }
 
@@ -258,8 +310,15 @@ impl SelectionDecoder {
 
         let mut routed = Vec::new();
         let mut first_decode_err = None;
-        for reg in &self.registrations {
-            if !reg.matches(topic0, topic_count, contract_name, topics) {
+        for sel in &self.registrations {
+            let reg = &sel.registration;
+            if !reg.matches(
+                topic0,
+                topic_count,
+                contract_name,
+                topics,
+                &sel.contract_address_topics,
+            ) {
                 continue;
             }
             let decoded = match reg.decoder.decode_log_parts(
@@ -328,6 +387,16 @@ fn apply_names(
 /// from a signature string, so an event surfaced to handlers under a different
 /// `name:` (display name != on-chain name) still matches its real log (issue
 /// #1285). The event name plays no part in decoding — only the param types do.
+/// Left-pad a 20-byte address to its 32-byte indexed-topic form, so a decoded
+/// address param can be compared byte-for-byte against a log's topic.
+fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
+    let bytes = hypersync_client::format::Address::decode_hex(address)
+        .with_context(|| format!("decode address {address} for topic encoding"))?;
+    let mut topic = [0u8; 32];
+    topic[12..].copy_from_slice(bytes.as_slice());
+    Ok(topic)
+}
+
 fn build_event_decoder(sighash: [u8; 32], params: &[ParamMeta]) -> Result<DynSolEvent> {
     let mut indexed = Vec::new();
     let mut body = Vec::new();
@@ -444,7 +513,7 @@ mod tests {
     #[test]
     fn unknown_registration_index_errors() {
         let core = DecoderCore::from_registrations(&[], false).unwrap();
-        let err = core.selection(&[7]).err().unwrap();
+        let err = core.selection(&[7], &HashMap::new()).err().unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
 
@@ -491,7 +560,7 @@ mod tests {
         };
 
         let mut routed = core
-            .selection(&[7])
+            .selection(&[7], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, Some("TestContract"))
             .unwrap();
@@ -526,7 +595,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let decoder = core.selection(&[0, 1, 2, 3]).unwrap();
+        let decoder = core.selection(&[0, 1, 2, 3], &HashMap::new()).unwrap();
         let log = value_log(VALID_SIGHASH);
 
         // Owned address: the contract's registration plus every wildcard.
@@ -551,52 +620,126 @@ mod tests {
         .unwrap();
         let log = value_log(VALID_SIGHASH);
         let routed = core
-            .selection(&[0])
+            .selection(&[0], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, Some("Owned"))
             .unwrap();
         assert_eq!(routed_indexes(&routed), vec![0]);
     }
 
+    // One indexed address param + one body value, so a topic1-filtered log
+    // decodes cleanly (topic_count 2).
+    fn indexed_address_params() -> Vec<ParamMeta> {
+        vec![pm("who", "address", true), pm("value", "uint256", false)]
+    }
+
+    fn addr_topic(byte: &str) -> String {
+        format!("0x{}{}", "0".repeat(62), byte)
+    }
+
     #[test]
     fn static_topic_filters_reapplied_per_registration() {
-        const TOPIC1_A: &str = "0x00000000000000000000000000000000000000000000000000000000000000aa";
-        const TOPIC1_B: &str = "0x00000000000000000000000000000000000000000000000000000000000000bb";
+        let topic1_a = addr_topic("aa");
+        let topic1_b = addr_topic("bb");
         let selection = |topic1| TopicSelectionInput {
             topic0: vec![VALID_SIGHASH.to_string()],
             topic1,
             topic2: Some(vec![]),
             topic3: Some(vec![]),
         };
-        // Three same-signature wildcards: one filtering topic1 to A, one to B,
-        // and one with a ContractAddresses marker (None) that Rust must treat
-        // as match-any (the JS clientAddressFilter owns that check).
+        // Two same-signature wildcards filtering topic1 to A vs B; a topic1=A
+        // log matches only the A-filtered registration.
         let mut filtered_a = value_reg(0, "WA", true, VALID_SIGHASH);
         filtered_a.topic_count = 2;
-        filtered_a.params = vec![pm("who", "address", true), pm("value", "uint256", false)];
-        filtered_a.topic_selections = vec![selection(Some(vec![TOPIC1_A.to_string()]))];
+        filtered_a.params = indexed_address_params();
+        filtered_a.topic_selections = vec![selection(Some(vec![topic1_a.clone()]))];
         let mut filtered_b = value_reg(1, "WB", true, VALID_SIGHASH);
         filtered_b.topic_count = 2;
-        filtered_b.params = filtered_a.params.clone();
-        filtered_b.topic_selections = vec![selection(Some(vec![TOPIC1_B.to_string()]))];
-        let mut marker = value_reg(2, "WC", true, VALID_SIGHASH);
-        marker.topic_count = 2;
-        marker.params = filtered_a.params.clone();
-        marker.topic_selections = vec![selection(None)];
+        filtered_b.params = indexed_address_params();
+        filtered_b.topic_selections = vec![selection(Some(vec![topic1_b]))];
 
-        let core =
-            DecoderCore::from_registrations(&[filtered_a, filtered_b, marker], false).unwrap();
+        let core = DecoderCore::from_registrations(&[filtered_a, filtered_b], false).unwrap();
         let log = Log {
-            topics: vec![Some(VALID_SIGHASH.to_string()), Some(TOPIC1_A.to_string())],
+            topics: vec![Some(VALID_SIGHASH.to_string()), Some(topic1_a)],
             data: value_log(VALID_SIGHASH).data,
             ..Default::default()
         };
         let routed = core
-            .selection(&[0, 1, 2])
+            .selection(&[0, 1], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();
-        assert_eq!(routed_indexes(&routed), vec![0, 2]);
+        assert_eq!(routed_indexes(&routed), vec![0]);
+    }
+
+    // A wildcard registration whose topic1 filter is a `ContractAddresses`
+    // marker (`chain.C.addresses`, spelled `None` across the boundary).
+    fn marker_reg(index: i64, contract: &str) -> OnEventRegistrationInput {
+        let mut reg = value_reg(index, contract, true, VALID_SIGHASH);
+        reg.topic_count = 2;
+        reg.params = indexed_address_params();
+        reg.topic_selections = vec![TopicSelectionInput {
+            topic0: vec![VALID_SIGHASH.to_string()],
+            topic1: None,
+            topic2: Some(vec![]),
+            topic3: Some(vec![]),
+        }];
+        reg
+    }
+
+    fn address_param_log(topic1: &str) -> Log {
+        Log {
+            topics: vec![Some(VALID_SIGHASH.to_string()), Some(topic1.to_string())],
+            data: value_log(VALID_SIGHASH).data,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn contract_addresses_marker_materialized_from_query_addresses() {
+        let core = DecoderCore::from_registrations(&[marker_reg(0, "C")], false).unwrap();
+        let addresses = HashMap::from([(
+            "C".to_string(),
+            vec!["0x00000000000000000000000000000000000000aa".to_string()],
+        )]);
+        let decoder = core.selection(&[0], &addresses).unwrap();
+
+        // topic1 is C's registered address → the marker matches.
+        let owned = decoder
+            .route_and_decode_napi(&address_param_log(&addr_topic("aa")), None)
+            .unwrap();
+        assert_eq!(routed_indexes(&owned), vec![0]);
+
+        // topic1 is not one of C's addresses → the marker excludes it.
+        let foreign = decoder
+            .route_and_decode_napi(&address_param_log(&addr_topic("bb")), None)
+            .unwrap();
+        assert!(foreign.is_empty());
+    }
+
+    #[test]
+    fn marker_registration_excludes_sibling_fan_out_from_other_contracts() {
+        // The P1: a wildcard-by-address registration (contract C, topic1 =
+        // chain.C.addresses) shares a signature with a broad sibling that
+        // fetches the same logs. A sibling log carrying a different contract's
+        // address must not fan out to the marker registration — routing
+        // excludes it rather than relying on the JS filter's global check.
+        let mut sibling = value_reg(1, "S", true, VALID_SIGHASH);
+        sibling.topic_count = 2;
+        sibling.params = indexed_address_params();
+
+        let core = DecoderCore::from_registrations(&[marker_reg(0, "C"), sibling], false).unwrap();
+        let addresses = HashMap::from([(
+            "C".to_string(),
+            vec!["0x00000000000000000000000000000000000000aa".to_string()],
+        )]);
+        // Foreign address (0x..bb) in topic1: only the broad sibling matches.
+        let routed = core
+            .selection(&[0, 1], &addresses)
+            .unwrap()
+            .route_and_decode_napi(&address_param_log(&addr_topic("bb")), None)
+            .unwrap();
+        assert_eq!(routed_indexes(&routed), vec![1]);
     }
 
     #[test]
@@ -639,7 +782,7 @@ mod tests {
             ..Default::default()
         };
         let routed = core
-            .selection(&[0, 1])
+            .selection(&[0, 1], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();
@@ -710,7 +853,7 @@ mod tests {
             ..Default::default()
         };
         let routed = core
-            .selection(&[0, 1])
+            .selection(&[0, 1], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();
@@ -719,7 +862,7 @@ mod tests {
         // With only the failing declaration matched, the decode error surfaces
         // instead of the log silently disappearing.
         let err = core
-            .selection(&[1])
+            .selection(&[1], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .err()

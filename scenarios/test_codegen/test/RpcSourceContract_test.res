@@ -47,6 +47,8 @@ let makeRoutingRegistration = (
   ~contractName="ERC20",
   ~isWildcard=false,
   ~eventFilters=[topicSelection],
+  ~paramsMetadata: array<Internal.paramMeta>=[],
+  ~topicCount=1,
 ) => {
   MockIndexer.evmOnEventRegistration(
     ~id=sighash,
@@ -54,6 +56,8 @@ let makeRoutingRegistration = (
     ~blockFieldNames=[Number],
     ~isWildcard,
     ~eventFilters,
+    ~paramsMetadata,
+    ~topicCount,
   )->withPinIdentity(~index)
 }
 
@@ -473,20 +477,35 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         "0x0000000000000000000000000000000000000000000000000000000000000001"
       let filter2 =
         "0x0000000000000000000000000000000000000000000000000000000000000002"
-      let registration = makeRoutingRegistration(~eventFilters=[
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
-          topic2: Values([]),
-          topic3: Values([]),
-        },
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([]),
-          topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
-          topic3: Values([]),
-        },
-      ])
+      // Two indexed params so the log can carry topic1/topic2 the branches
+      // filter on and decode cleanly (topicCount 3).
+      let registration = makeRoutingRegistration(
+        ~topicCount=3,
+        ~paramsMetadata=[
+          {name: "a", abiType: "uint256", indexed: true},
+          {name: "b", abiType: "uint256", indexed: true},
+        ],
+        ~eventFilters=[
+          {
+            Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
+            topic2: Values([]),
+            topic3: Values([]),
+          },
+          {
+            Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: Values([]),
+            topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
+            topic3: Values([]),
+          },
+        ],
+      )
+      // Carries both filtered topics, so a real provider returns it for either
+      // branch's server-side filter; routing re-checks the registration's
+      // topic filters against these values and dedups to one item.
+      let orFanOutLog = JSON.parseOrThrow(
+        `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"0x2","removed":false}`,
+      )
       let page = await MockRpcServer.withScenario(
         ~name=`${name}: OR fan-out and dedup`,
         ~calls=[
@@ -496,7 +515,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filter1}"]],"address":["${normalizedContractAddress}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+            ~reply=RpcResult(JSON.Array([orFanOutLog])),
           ),
           MockRpcServer.expectCall(
             ~label="topic2 branch",
@@ -504,7 +523,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],null,["${filter2}"]],"address":["${normalizedContractAddress}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+            ~reply=RpcResult(JSON.Array([orFanOutLog])),
           ),
           MockRpcServer.expectCall(
             ~method="eth_getBlockByNumber",
@@ -607,18 +626,28 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           topic3: Values([]),
         },
       ]
+      // One indexed param so each contract's topic1-filtered log decodes.
+      let addressParam: array<Internal.paramMeta> = [
+        {name: "who", abiType: "address", indexed: true},
+      ]
       let eventA = makeRoutingRegistration(
         ~contractName="ContractA",
+        ~topicCount=2,
+        ~paramsMetadata=addressParam,
         ~eventFilters=selectionFor(filterA),
       )
       let eventB = makeRoutingRegistration(
         ~index=1,
         ~contractName="ContractB",
+        ~topicCount=2,
+        ~paramsMetadata=addressParam,
         ~eventFilters=selectionFor(filterB),
       )
-      let logFor = (~address, ~logIndex) =>
+      // A real provider's log for a topic1-filtered request carries that
+      // contract's filtered topic1 value; routing re-checks it per registration.
+      let logFor = (~address, ~topic1, ~logIndex) =>
         JSON.parseOrThrow(
-          `{"address":"${address}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"${logIndex}","removed":false}`,
+          `{"address":"${address}","topics":["${sighash}","${topic1}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"${logIndex}","removed":false}`,
         )
 
       let page = await MockRpcServer.withScenario(
@@ -630,7 +659,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterA}"]],"address":["${addressAString}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([logFor(~address=addressAString, ~logIndex="0x2")])),
+            ~reply=RpcResult(JSON.Array([logFor(~address=addressAString, ~topic1=filterA, ~logIndex="0x2")])),
           ),
           MockRpcServer.expectCall(
             ~label="ContractB logs",
@@ -638,7 +667,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterB}"]],"address":["${addressBString}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([logFor(~address=addressBString, ~logIndex="0x3")])),
+            ~reply=RpcResult(JSON.Array([logFor(~address=addressBString, ~topic1=filterB, ~logIndex="0x3")])),
           ),
           MockRpcServer.expectCall(
             ~method="eth_getBlockByNumber",
