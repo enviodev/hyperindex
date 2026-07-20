@@ -25,7 +25,6 @@ type logsQueryPage = {
   blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
-  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   // Page store owning this page's raw transactions.
   transactionStore: TransactionStore.t,
   // Page store owning this page's raw blocks.
@@ -99,7 +98,6 @@ module GetLogs = {
       blocks: res.blocks,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
-      rollbackGuard: res.rollbackGuard,
       transactionStore,
       blockStore,
     }
