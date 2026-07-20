@@ -11,4 +11,8 @@ describe("BlockStore field-code contract", () => {
   it("SVM blockFields match the Rust SvmBlockField order", t => {
     t.expect(Svm.blockFields).toEqual(Core.getAddon().svmBlockFieldNames())
   })
+
+  it("Fuel blockFields match the Rust FuelBlockField order", t => {
+    t.expect(Fuel.blockFields).toEqual(Core.getAddon().fuelBlockFieldNames())
+  })
 })

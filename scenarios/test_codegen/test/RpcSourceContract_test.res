@@ -106,16 +106,16 @@ let getLogsParams = (~toBlock="0x64") =>
 let blockParams = hex => JSON.parseOrThrow(`["${hex}",false]`)
 
 let block99 = JSON.parseOrThrow(
-  `{"number":"0x63","timestamp":"0x63","hash":"0xb63","parentHash":"0xb62","gasUsed":"0x1","miner":"${minerAddress}"}`,
+  `{"number":"0x63","timestamp":"0x63","hash":"0x0b63","parentHash":"0x0b62","gasUsed":"0x1","miner":"${minerAddress}"}`,
 )
 
 let block100 = JSON.parseOrThrow(
-  `{"number":"0x64","timestamp":"0x64","hash":"0xb64","parentHash":"0xb63","gasUsed":"0x5208","miner":"${minerAddress}"}`,
+  `{"number":"0x64","timestamp":"0x64","hash":"0x0b64","parentHash":"0x0b63","gasUsed":"0x5208","miner":"${minerAddress}"}`,
 )
 
 let log = (~logIndex) =>
   JSON.parseOrThrow(
-    `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"${logIndex}","removed":false}`,
+    `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"${logIndex}","removed":false}`,
   )
 
 let transaction = JSON.parseOrThrow(
@@ -255,8 +255,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             "block": {
               "number": 100,
               "timestamp": 100,
-              "hash": "0xb64",
-              "parentHash": "0xb63",
+              "hash": "0x0b64",
+              "parentHash": "0x0b63",
               "gasUsed": "21000",
               "miner": normalizedMinerAddress,
             },
@@ -281,8 +281,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             "block": {
               "number": 100,
               "timestamp": 100,
-              "hash": "0xb64",
-              "parentHash": "0xb63",
+              "hash": "0x0b64",
+              "parentHash": "0x0b63",
               "gasUsed": "21000",
               "miner": normalizedMinerAddress,
             },
@@ -296,13 +296,13 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             },
           },
         ],
+        // The observed (blockNumber, hash) pairs land in the block store, which
+        // keys by block number — so the projection is deduplicated and ascending.
+        // The store reads hashes back left-padded to the fixed 32-byte width.
         "blockHashes": [
-          {ReorgDetection.blockNumber: 100, blockHash: "0xb64"},
-          {ReorgDetection.blockNumber: 99, blockHash: "0xb63"},
-          {ReorgDetection.blockNumber: 99, blockHash: "0xb63"},
-          {ReorgDetection.blockNumber: 98, blockHash: "0xb62"},
-          {ReorgDetection.blockNumber: 100, blockHash: "0xb64"},
-          {ReorgDetection.blockNumber: 100, blockHash: "0xb64"},
+          {ReorgDetection.blockNumber: 98, blockHash: MockIndexer.evmBlockHash("0x0b62")},
+          {ReorgDetection.blockNumber: 99, blockHash: MockIndexer.evmBlockHash("0x0b63")},
+          {ReorgDetection.blockNumber: 100, blockHash: MockIndexer.evmBlockHash("0x0b64")},
         ],
         "requestCounts": Dict.fromArray([
           ("eth_getLogs", 1),
@@ -618,7 +618,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       )
       let logFor = (~address, ~logIndex) =>
         JSON.parseOrThrow(
-          `{"address":"${address}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"${logIndex}","removed":false}`,
+          `{"address":"${address}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"${logIndex}","removed":false}`,
         )
 
       let page = await MockRpcServer.withScenario(

@@ -86,7 +86,9 @@ impl FixedCol {
     pub(crate) fn push(&mut self, v: Option<&[u8]>) {
         match v {
             Some(b) => {
-                debug_assert_eq!(b.len(), self.width);
+                // A hard check: a wrong-width cell would silently shift every
+                // subsequent row's offset in release builds.
+                assert_eq!(b.len(), self.width, "fixed column cell width mismatch");
                 self.data.extend_from_slice(b);
             }
             None => self.data.resize(self.data.len() + self.width, 0),
@@ -269,6 +271,20 @@ impl AnyCol {
         }
     }
 
+    /// Raw bytes of a byte-backed cell (hash comparison); `None` when the row
+    /// is invalid. Panics on a non-byte-backed column.
+    pub(crate) fn cell_bytes(&self, row: usize) -> Option<&[u8]> {
+        if !self.is_valid(row) {
+            return None;
+        }
+        match self {
+            AnyCol::Fixed(c) => c.get(row),
+            AnyCol::Var(c) => c.get(row),
+            AnyCol::Str(c) => c.get(row).map(str::as_bytes),
+            _ => panic!("expected a byte-backed column"),
+        }
+    }
+
     pub(crate) fn push_missing(&mut self) {
         match self {
             AnyCol::U64(c) => c.push(None),
@@ -386,7 +402,7 @@ impl StoreCol {
             (StoreCol::Bool(v), AnyCol::Bool(s)) => v[slot] = s.get(row).unwrap(),
             (StoreCol::Fixed { width, data }, AnyCol::Fixed(s)) => {
                 let b = s.get(row).unwrap();
-                debug_assert_eq!(b.len(), *width);
+                assert_eq!(b.len(), *width, "fixed column cell width mismatch");
                 data[slot * *width..(slot + 1) * *width].copy_from_slice(b);
             }
             (StoreCol::Var(v), AnyCol::Var(s)) => {
@@ -447,6 +463,17 @@ impl StoreCol {
             _ => panic!("expected a var column"),
         }
     }
+
+    /// Raw bytes of a byte-backed cell (hash comparison). `Fixed` carries no
+    /// per-slot validity, so the caller must have checked the row's mask bit.
+    fn cell_bytes(&self, slot: usize) -> Option<&[u8]> {
+        match self {
+            StoreCol::Fixed { width, data } => Some(&data[slot * *width..(slot + 1) * *width]),
+            StoreCol::Var(v) => v[slot].as_deref(),
+            StoreCol::Str(v) => v[slot].as_deref().map(str::as_bytes),
+            _ => panic!("expected a byte-backed column"),
+        }
+    }
 }
 
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
@@ -465,6 +492,9 @@ pub(crate) struct Table<K> {
 
 impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     pub(crate) fn new(n_fields: usize) -> Self {
+        // Field masks are single u64 bitsets; a 65th field would silently
+        // corrupt them in release builds.
+        assert!(n_fields <= 64, "Table supports at most 64 fields");
         Self {
             by_key: HashMap::new(),
             order: BTreeMap::new(),
@@ -566,6 +596,114 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         other.clear();
     }
 
+    /// Bytes of `field`'s cell for `key`, if the row exists and carries the
+    /// field.
+    pub(crate) fn field_bytes(&self, key: &K, field: usize) -> Option<&[u8]> {
+        let &slot = self.by_key.get(key)?;
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field]
+            .as_ref()
+            .and_then(|c| c.cell_bytes(slot as usize))
+    }
+
+    /// Lowest key `>= from` carrying `field` in both tables whose cells differ.
+    pub(crate) fn first_field_mismatch(
+        &self,
+        other: &Table<K>,
+        field: usize,
+        from: K,
+    ) -> Option<K> {
+        for key in other.order.range(from..).map(|(k, _)| k) {
+            if let (Some(a), Some(b)) =
+                (self.field_bytes(key, field), other.field_bytes(key, field))
+            {
+                if a != b {
+                    return Some(key.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Lowest key whose incoming `field` cell conflicts with what's already
+    /// written — either the table's stored cell or an earlier row of the same
+    /// batch (a within-response duplicate with a different hash). Returns the
+    /// conflicting (key, stored, received) byte values. Run before
+    /// `merge_batch`, which would silently overwrite.
+    pub(crate) fn detect_field_conflict(
+        &self,
+        keys: &[K],
+        col: Option<&AnyCol>,
+        field: usize,
+    ) -> Option<(K, Vec<u8>, Vec<u8>)> {
+        let col = col?;
+        let mut best: Option<(K, Vec<u8>, Vec<u8>)> = None;
+        let mut batch_last_row: HashMap<K, usize> = HashMap::new();
+        for (row, key) in keys.iter().enumerate() {
+            let Some(new) = col.cell_bytes(row) else {
+                continue;
+            };
+            let old = match batch_last_row.get(key) {
+                Some(&prev_row) => col.cell_bytes(prev_row),
+                None => self.field_bytes(key, field),
+            };
+            if let Some(old) = old {
+                if old != new && best.as_ref().is_none_or(|(k, _, _)| key < k) {
+                    best = Some((key.clone(), old.to_vec(), new.to_vec()));
+                }
+            }
+            batch_last_row.insert(key.clone(), row);
+        }
+        best
+    }
+
+    /// Strip every field but `field` from `slot`, leaving a hash-only row still
+    /// readable for reorg detection after the rest of the row is gone.
+    fn reduce_row_to_field(&mut self, slot: u32, field: usize) {
+        let mask = self.masks[slot as usize];
+        for f in 0..self.n_fields {
+            if f != field && mask & (1u64 << f) != 0 {
+                self.cols[f].as_mut().unwrap().clear(slot as usize);
+            }
+        }
+        self.masks[slot as usize] = 1u64 << field;
+    }
+
+    /// Remove a key's row entirely and release its slot.
+    fn drop_row(&mut self, key: &K, slot: u32) {
+        self.by_key.remove(key);
+        self.order.remove(key);
+        self.free_slot(slot);
+    }
+
+    /// Drop rows with keys `<= up_to` (processed), except rows with keys
+    /// `>= keep_from` that carry `field`: those are reduced to that one field,
+    /// so it stays readable after the rest of the row is gone.
+    pub(crate) fn prune_keeping_field(&mut self, up_to: K, keep_from: K, field: usize) {
+        let bit = 1u64 << field;
+        let pruned: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
+        for k in pruned {
+            let slot = self.by_key[&k];
+            if k >= keep_from && self.masks[slot as usize] & bit != 0 {
+                self.reduce_row_to_field(slot, field);
+            } else {
+                self.drop_row(&k, slot);
+            }
+        }
+    }
+
+    /// Keys in `[from, below)` whose row carries `field`, ascending.
+    pub(crate) fn keys_with_field(&self, from: K, below: K, field: usize) -> Vec<K> {
+        let bit = 1u64 << field;
+        self.order
+            .range(from..below)
+            .filter(|(_, &slot)| self.masks[slot as usize] & bit != 0)
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
     /// Drop rows with keys `<= up_to` (processed).
     pub(crate) fn prune(&mut self, up_to: K) {
         let dead: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
@@ -573,6 +711,29 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             if let Some(slot) = self.by_key.remove(&k) {
                 self.order.remove(&k);
                 self.free_slot(slot);
+            }
+        }
+    }
+
+    /// Reduce rows with keys `> target` to `field` only (a non-reorg chain's
+    /// rollback: buffered blocks will be refetched, but the scanned hashes are
+    /// still valid for reorg detection). Rows without the field are dropped.
+    pub(crate) fn rollback_keeping_field(&mut self, target: K, field: usize) {
+        let bit = 1u64 << field;
+        let affected: Vec<K> = self
+            .order
+            .range((
+                std::ops::Bound::Excluded(target),
+                std::ops::Bound::Unbounded,
+            ))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in affected {
+            let slot = self.by_key[&k];
+            if self.masks[slot as usize] & bit != 0 {
+                self.reduce_row_to_field(slot, field);
+            } else {
+                self.drop_row(&k, slot);
             }
         }
     }

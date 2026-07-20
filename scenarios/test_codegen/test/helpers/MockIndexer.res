@@ -2,6 +2,15 @@ type chainId = Indexer.chainId
 
 let config = Config.load()
 
+// EVM block hashes are stored as the fixed 32-byte reorg comparison key; a
+// `fromJs` page zero-extends a shorter mock marker to that width, so a stored
+// hash reads back left-padded. Mirror that here for assertions that compare
+// against `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
+let evmBlockHash = hex => {
+  let digits = hex->String.slice(~start=2, ~end=hex->String.length)
+  "0x" ++ "0"->String.repeat(64 - digits->String.length) ++ digits
+}
+
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
   config.userEntitiesByName
   ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
@@ -720,6 +729,7 @@ module Source = {
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
     getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+    reorgCalls: array<int>,
     // TODO: Remove in favor of getItemsOrThrowCalls
     resolveGetItemsOrThrow: (
       array<itemMock>,
@@ -730,7 +740,7 @@ module Source = {
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
     getBlockHashesCalls: array<array<int>>,
-    resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+    resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
     // Height subscription mocking
     heightSubscriptionCalls: array<bool>,
     triggerHeightSubscription: int => unit,
@@ -751,6 +761,7 @@ module Source = {
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
     let getItemsOrThrowCalls = []
+    let reorgCalls = []
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
     // Height subscription state
@@ -797,6 +808,7 @@ module Source = {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getItemsOrThrowCalls,
+      reorgCalls,
       resolveGetItemsOrThrow: (
         items,
         ~resolveAt=#all,
@@ -830,8 +842,13 @@ module Source = {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
+        let blockStore = BlockStore.fromJs(
+          blockHashes,
+          ~ecosystem=Evm,
+          ~shouldChecksum=false,
+        )
         getBlockHashesResolveFns->Array.forEach(
-          resolve => resolve({Source.result: Ok(blockHashes), requestStats: []}),
+          resolve => resolve({Source.result: Ok(blockStore), requestStats: []}),
         )
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
@@ -897,28 +914,42 @@ module Source = {
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
+                  // The store hex-validates hashes, so pad the decimal marker
+                  // to an even number of hex digits.
+                  let mockBlockHash = blockNumber => {
+                    let s = blockNumber->Int.toString
+                    s->String.length->mod(2) == 1 ? `0x0${s}` : `0x${s}`
+                  }
                   let latestFetchedBlockHash = switch latestFetchedBlockHash {
                   | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                  | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                  | None => mockBlockHash(latestFetchedBlockNumber)
                   }
-                  let blockHashes = [
+                  let observedBlocks = [
                     (
                       {
                         blockNumber: latestFetchedBlockNumber,
                         blockHash: latestFetchedBlockHash,
-                      }: ReorgDetection.blockData
+                      }: BlockStore.inputBlock
                     ),
                   ]
                   let prevEntry = switch prevRangeLastBlock {
-                  | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                  | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
+                    Some(
+                      (
+                        {
+                          blockNumber: prevRangeLastBlock.blockNumber,
+                          blockHash: prevRangeLastBlock.blockHash,
+                        }: BlockStore.inputBlock
+                      ),
+                    )
                   | None =>
                     if fromBlock > 0 {
                       Some(
                         (
                           {
                             blockNumber: fromBlock - 1,
-                            blockHash: `0x${(fromBlock - 1)->Int.toString}`,
-                          }: ReorgDetection.blockData
+                            blockHash: mockBlockHash(fromBlock - 1),
+                          }: BlockStore.inputBlock
                         ),
                       )
                     } else {
@@ -926,12 +957,20 @@ module Source = {
                     }
                   }
                   switch prevEntry {
-                  | Some(prev) => blockHashes->Array.unshift(prev)->ignore
+                  | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
                   | None => ()
                   }
+                  let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                  observedBlocks->Array.forEach(block => {
+                    let page = BlockStore.fromJs(
+                      [block],
+                      ~ecosystem=Evm,
+                      ~shouldChecksum=false,
+                    )
+                    responseBlockStore->BlockStore.appendPage(page)
+                  })
                   resolve({
                     Source.knownHeight,
-                    blockHashes,
                     parsedQueueItems: items->Array.map(
                       item => {
                         let onEventRegistration =
@@ -966,7 +1005,7 @@ module Source = {
                       },
                     ),
                     transactionStore: None,
-                    blockStore: None,
+                    blockStore: responseBlockStore,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
                     latestFetchedBlockTimestamp: latestFetchedBlockNumber,
@@ -980,6 +1019,9 @@ module Source = {
               }
             })
           }),
+          onReorg: (~rollbackTargetBlock) => {
+            reorgCalls->Array.push(rollbackTargetBlock)->ignore
+          },
           createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
           | true =>
             Some(

@@ -430,7 +430,12 @@ let patchConfig = (
             ~chainConfig,
             ~onEventRegistrations=chainRegistrations.onEventRegistrations,
           )
-          let source = SimulateSource.make(~items, ~endBlock, ~chain)
+          let source = SimulateSource.make(
+            ~items,
+            ~endBlock,
+            ~chain,
+            ~ecosystem=config.ecosystem.name,
+          )
           {...chainConfig, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }

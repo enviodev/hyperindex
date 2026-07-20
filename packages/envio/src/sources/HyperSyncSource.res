@@ -1,6 +1,5 @@
 open Source
 
-
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
 // check so it can't silently drift away from what getHeightOrThrow guards on.
@@ -46,9 +45,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -180,37 +177,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
     pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration =
-        onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
       ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
       ->ignore
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    // Collect (blockNumber, blockHash) pairs we already have from the response —
-    // one per returned block plus, when present, the rollbackGuard's head block
-    // and the parent of the range's first block. Duplicates are allowed; reorg
-    // detection notices same-block-number-different-hash collisions itself.
-    let blockHashes = []
-    pageUnsafe.blocks->Array.forEach(block => {
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: block.number, blockHash: block.hash})
-      ->ignore
-    })
-    switch pageUnsafe.rollbackGuard {
-    | None => ()
-    | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
-        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash: hash})->ignore
-        blockHashes
-        ->Array.push({
-          ReorgDetection.blockNumber: firstBlockNumber - 1,
-          blockHash: firstParentHash,
-        })
-        ->ignore
-      }
-    }
 
     // Best-effort timestamp for the queried-range head: prefer the rollbackGuard
     // (set at the head for unconfirmed blocks), otherwise the last item if it
@@ -238,27 +211,29 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       latestFetchedBlockTimestamp,
       parsedQueueItems,
       transactionStore: Some(pageUnsafe.transactionStore),
-      blockStore: Some(pageUnsafe.blockStore),
+      // The page store also carries the rollbackGuard's blocks (head block and
+      // parent of the range's first block), inserted on the Rust side.
+      blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger) =>
-    HyperSync.queryBlockDataMulti(
-      ~client,
-      ~blockNumbers,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~logger,
-    )->Promise.thenResolve(((queryRes, requestStats)) => {
-      Source.result: queryRes->HyperSync.mapExn,
-      requestStats,
-    })
+  let getBlockHashes = async (~blockNumbers, ~logger as _) => {
+    let (result, requestStats) = try {
+      let (blockStore, requestStats) = await client.getBlockHashes(~blockNumbers)
+      (Ok(blockStore), requestStats)
+    } catch {
+    | exn => {
+        let failure = exn->Source.unpackNativeRequestFailure
+        (Error(failure->HyperSync.mapRateLimitedFailure), failure.requestStats)
+      }
+    }
+    {Source.result, requestStats}
+  }
 
   {
     name,

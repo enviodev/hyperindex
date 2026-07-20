@@ -569,11 +569,11 @@ let buildFuelEventConfig = (
     contractName,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    // Fuel keeps the transaction and block inline on the payload; nothing to
-    // materialise.
+    // Fuel keeps the transaction inline on the payload; the block is
+    // materialised from the store with the full always-queried trio.
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
-    blockFieldMask: 0.,
+    blockFieldMask: Fuel.fullBlockFieldMask,
     kind: fuelKind,
   }
 }

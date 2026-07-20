@@ -14,6 +14,7 @@ use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistration, ParamValue,
 };
+use crate::request_stats::RequestStat;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use hypersync_client::format::Hex;
@@ -109,12 +110,6 @@ impl RawLog {
             ..Default::default()
         }
     }
-}
-
-#[napi(object)]
-pub struct RequestStat {
-    pub method: String,
-    pub seconds: f64,
 }
 
 #[napi(object)]

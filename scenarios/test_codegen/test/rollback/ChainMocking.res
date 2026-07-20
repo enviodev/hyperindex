@@ -255,14 +255,19 @@ module Make = () => {
     let heighstBlock = unfilteredBlocks->getLast->Option.getOrThrow
     let knownHeight = self->getHeight
 
-    let blockHashes = unfilteredBlocks->Array.map(b => {
-      ReorgDetection.blockNumber: b.blockNumber,
+    let observedBlocks = unfilteredBlocks->Array.map((b): BlockStore.inputBlock => {
+      blockNumber: b.blockNumber,
       blockHash: b.blockHash,
+      blockTimestamp: b.blockTimestamp,
     })
     switch self->getBlock(~blockNumber=fromBlock - 1) {
     | Some(b) =>
-      blockHashes
-      ->Array.unshift({ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
+      observedBlocks
+      ->Array.unshift({
+        BlockStore.blockNumber: b.blockNumber,
+        blockHash: b.blockHash,
+        blockTimestamp: b.blockTimestamp,
+      })
       ->ignore
     | None => ()
     }
@@ -282,12 +287,11 @@ module Make = () => {
 
     {
       knownHeight,
-      blockHashes,
       parsedQueueItems,
-      // Mock events carry their transaction and block inline on the payload, so
-      // there's no page store to merge.
+      // Mock events carry their transaction and block inline on the payload;
+      // the block page carries only the observed hashes for reorg detection.
       transactionStore: None,
-      blockStore: None,
+      blockStore: BlockStore.fromJs(observedBlocks, ~ecosystem=Evm, ~shouldChecksum=false),
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
@@ -308,7 +312,7 @@ module Make = () => {
         blockTimestamp,
         blockHash,
         blockNumber,
-      }): ReorgDetection.blockDataWithTimestamp => {
+      }): BlockStore.inputBlock => {
         blockTimestamp,
         blockHash,
         blockNumber,

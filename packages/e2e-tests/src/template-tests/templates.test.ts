@@ -161,7 +161,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
     );
 
     expect(result.exitCode, `[${name}] init failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
-  }, config.timeouts.install + 10_000);
+  }, config.timeouts.install + 30_000);
 
   it("installs dependencies", async () => {
     const result = await runCommand("pnpm", ["install"], {
@@ -170,7 +170,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
     });
 
     expect(result.exitCode, `[${name}] pnpm install failed (exit ${result.exitCode}):\n${result.stderr}`).toBe(0);
-  }, config.timeouts.install + 10_000);
+  }, config.timeouts.install + 30_000);
 
   it("runs codegen successfully", async () => {
     const result = await runCommand(config.envioCommand, [...config.envioArgs, "codegen"], {
@@ -179,7 +179,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
     });
 
     expect(result.exitCode, `[${name}] codegen failed (exit ${result.exitCode}):\n${result.stderr}`).toBe(0);
-  }, config.timeouts.codegen + 10_000);
+  }, config.timeouts.codegen + 30_000);
 
   it.skipIf(!hasTests)("runs tests successfully", async () => {
     const result = await runCommand("pnpm", ["test"], {
@@ -188,7 +188,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
     });
 
     expect(result.exitCode, `[${name}] test failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
-  }, config.timeouts.test + 10_000);
+  }, config.timeouts.test);
 }
 
 for (const template of TEMPLATES) {

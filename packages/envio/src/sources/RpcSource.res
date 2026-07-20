@@ -97,7 +97,6 @@ let getErrorMessage = (exn: exn): option<string> =>
   | _ => None
   }
 
-
 // `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
 // payload describing the retry decision:
 // `{"kind":"Retry","attemptedToBlock":int,"errorMessage":string|null,
@@ -647,9 +646,7 @@ let make = (
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -768,6 +765,12 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
+  let resetCachedLoaders = () => {
+    blockLoader := makeBlockLoader()
+    transactionLoader := makeTransactionLoader()
+    receiptLoader := makeReceiptLoader()
+  }
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -879,63 +882,64 @@ let make = (
         onEventRegistration.eventConfig->(
           Utils.magic: Internal.eventConfig => Internal.evmEventConfig
         )
+
       (
         async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
-                  log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
-                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
-                    ),
-                  ),
-                )) catch {
-                | TransactionDataNotFound({message}) =>
-                  let backoffMillis = switch retry {
-                  | 0 => 100
-                  | _ => 500 * retry
-                  }
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn: %raw(`null`),
-                        attemptedToBlock: toBlock,
-                        retry: WithBackoff({
-                          message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                          backoffMillis,
-                        }),
-                      }),
-                    ),
-                  )
-                | exn =>
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber: log.blockNumber,
-                        logIndex: log.logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                Internal.Event({
-                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-                  blockNumber: block->getBlockNumber,
-                  chain,
+          let (block, transaction) = try await Promise.all2((
+            log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
+            log->getEventTransactionOrThrow(
+              ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+              ),
+            ),
+          )) catch {
+          | TransactionDataNotFound({message}) =>
+            let backoffMillis = switch retry {
+            | 0 => 100
+            | _ => 500 * retry
+            }
+            throw(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: toBlock,
+                  retry: WithBackoff({
+                    message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                    backoffMillis,
+                  }),
+                }),
+              ),
+            )
+          | exn =>
+            throw(
+              Source.GetItemsError(
+                FailedGettingFieldSelection({
+                  message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                  exn,
+                  blockNumber: log.blockNumber,
                   logIndex: log.logIndex,
-                  transactionIndex: log.transactionIndex,
-                  payload: {
-                    contractName: eventConfig.contractName,
-                    eventName: eventConfig.name,
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded,
-                    block,
-                    transaction,
-                    srcAddress: log.address,
-                    logIndex: log.logIndex,
-                  }->Evm.fromPayload,
-                })
+                }),
+              ),
+            )
+          }
+
+          Internal.Event({
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+            blockNumber: block->getBlockNumber,
+            chain,
+            logIndex: log.logIndex,
+            transactionIndex: log.transactionIndex,
+            payload: {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              chainId: chain->ChainMap.Chain.toChainId,
+              params: decoded,
+              block,
+              transaction,
+              srcAddress: log.address,
+              logIndex: log.logIndex,
+            }->Evm.fromPayload,
+          })
         }
       )()
     })
@@ -947,12 +951,20 @@ let make = (
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    let blockHashes = []
+    // They go into a hash-only page store merged into the chain store, where
+    // hash comparison happens. The block data itself stays inline on the payload.
+    let observedBlocks: array<BlockStore.inputBlock> = []
     let pushBlockInfo = (b: blockInfo) => {
-      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      observedBlocks
+      ->Array.push({
+        BlockStore.blockNumber: b.number,
+        blockHash: b.hash,
+        blockTimestamp: b.timestamp,
+      })
+      ->ignore
       if b.number > 0 {
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        observedBlocks
+        ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
         ->ignore
       }
     }
@@ -962,8 +974,8 @@ let make = (
     | None => ()
     }
     items->Array.forEach(({log}) =>
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      observedBlocks
+      ->Array.push({BlockStore.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore
     )
 
@@ -971,25 +983,27 @@ let make = (
       latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      // RPC keeps the transaction and block inline on the payload; no store pages.
+      // RPC keeps the transaction and block inline on the payload; no
+      // transaction page, and the block page carries only observed hashes.
       transactionStore: None,
-      blockStore: None,
+      blockStore: BlockStore.fromJs(
+        observedBlocks,
+        ~ecosystem=Evm,
+        ~shouldChecksum=!lowercaseAddresses,
+      ),
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats: drainRequestStats(),
     }
   }
 
   let onReorg = (~rollbackTargetBlock as _) => {
-    // Drop cached block/transaction/receipt data — after a reorg the cached
-    // entries may refer to orphaned-chain values.
-    blockLoader := makeBlockLoader()
-    transactionLoader := makeTransactionLoader()
-    receiptLoader := makeReceiptLoader()
+    // Drop cached block/transaction/receipt data — after a reorg or an
+    // internally inconsistent response these may refer to orphaned-chain values.
+    resetCachedLoaders()
   }
 
   let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
@@ -997,21 +1011,29 @@ let make = (
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      let result =
-        rawBlocks
-        ->Array.map(json => {
-          let b = parseBlockInfo(json)
-
-          (
-            {
-              blockNumber: b.number,
-              blockHash: b.hash,
-              blockTimestamp: b.timestamp,
-            }: ReorgDetection.blockDataWithTimestamp
-          )
+      // Each block is fetched in its own request, so responses can mix forks.
+      // The parent hash becomes a minimal extra row: when consecutive blocks
+      // are requested, the page's own hash-collision check cross-validates the
+      // separately fetched responses.
+      let observedBlocks: array<BlockStore.inputBlock> = []
+      rawBlocks->Array.forEach(json => {
+        let b = parseBlockInfo(json)
+        observedBlocks
+        ->Array.push({
+          BlockStore.blockNumber: b.number,
+          blockHash: b.hash,
+          blockTimestamp: b.timestamp,
         })
-        ->Ok
-      {Source.result, requestStats: drainRequestStats()}
+        ->ignore
+        if b.number > 0 {
+          observedBlocks
+          ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
+          ->ignore
+        }
+      })
+      let blockStore =
+        observedBlocks->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
+      {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
     })
     ->Promise.catch(exn =>
       {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve

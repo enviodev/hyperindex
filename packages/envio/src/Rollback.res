@@ -14,23 +14,19 @@ let getLastKnownValidBlock = async (
   // may have mismatching hashes at the head, so we always rollback
   // the block where we detected the reorg.
   let scannedBlockNumbers =
-    chainState
-    ->ChainState.reorgDetection
-    ->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-      ~blockNumber=reorgBlockNumber,
-      ~knownHeight=chainState->ChainState.knownHeight,
-    )
+    chainState->ChainState.getReorgThresholdBlockNumbersBelow(~blockNumber=reorgBlockNumber)
 
   switch scannedBlockNumbers {
   | [] => chainState->ChainState.getHighestBlockBelowThreshold
   | _ => {
-      let blockNumbersAndHashes = await chainState
-      ->ChainState.sourceManager
-      ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
+      let blockStore = await chainState
+        ->ChainState.sourceManager
+        ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
 
-      switch chainState
-      ->ChainState.reorgDetection
-      ->ReorgDetection.getLatestValidScannedBlock(~blockNumbersAndHashes) {
+      switch chainState->ChainState.getLatestValidScannedBlock(
+        ~blockStore,
+        ~blockNumbers=scannedBlockNumbers,
+      ) {
       | Some(blockNumber) => blockNumber
       | None => chainState->ChainState.getHighestBlockBelowThreshold
       }

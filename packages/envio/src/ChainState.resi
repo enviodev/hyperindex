@@ -11,9 +11,10 @@ let make: (
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
-  ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
+  ~shouldRollbackOnReorg: bool,
+  ~maxReorgDepth: int,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -43,9 +44,17 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Pino.t
+let blockStore: t => BlockStore.t
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
-let reorgDetection: t => ReorgDetection.t
+let shouldRollbackOnReorg: t => bool
+// Reorg-scan reads over the chain's block store, for the rollback flow.
+let getReorgThresholdBlockNumbersBelow: (t, ~blockNumber: int) => array<int>
+let getLatestValidScannedBlock: (
+  t,
+  ~blockStore: BlockStore.t,
+  ~blockNumbers: array<int>,
+) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
@@ -127,22 +136,16 @@ let handleQueryResult: (
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
 ) => unit
-let materializeBatchItems: (
-  t,
-  ~items: array<Internal.item>,
-  ~ecosystem: Ecosystem.name,
-) => promise<unit>
+let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
-  ~ecosystem: Ecosystem.name,
+  ~blockStore: BlockStore.t,
 ) => promise<unit>
 let registerReorgGuard: (
   t,
-  ~blockHashes: array<ReorgDetection.blockData>,
+  ~blockStore: BlockStore.t,
   ~knownHeight: int,
 ) => ReorgDetection.reorgResult
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit

@@ -5,6 +5,7 @@ mod config;
 mod query;
 mod types;
 
+use crate::block_store::{decode_hex_bytes, BlockStore, FuelBlockRow};
 use config::ClientConfig;
 use query::Query;
 use types::{convert_response, ConvertError, QueryResponse};
@@ -37,7 +38,10 @@ impl HyperfuelClient {
     }
 
     #[napi]
-    pub async fn get_selected_data(&self, query: Query) -> napi::Result<QueryResponse> {
+    pub async fn get_selected_data(
+        &self,
+        query: Query,
+    ) -> napi::Result<(QueryResponse, BlockStore)> {
         let query: hyperfuel_client::net_types::Query =
             query.try_into().context("parse query").map_err(map_err)?;
         let res = self
@@ -45,7 +49,27 @@ impl HyperfuelClient {
             .get_arrow(&query)
             .await
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
-        convert_response(res).map_err(convert_error_to_napi)
+        let response = convert_response(res).map_err(convert_error_to_napi)?;
+
+        // The page's raw blocks, keyed by height — merged into the per-chain
+        // store where their ids drive reorg detection and materialisation.
+        let block_store = BlockStore::new_fuel();
+        let rows = response
+            .data
+            .blocks
+            .iter()
+            .map(|b| {
+                Ok(FuelBlockRow {
+                    height: u64::try_from(b.height).context("block.height negative")?,
+                    id: Some(decode_hex_bytes(&b.id, "block.id")?),
+                    time: Some(b.time),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(map_err)?;
+        block_store.insert_fuel_block_rows(rows);
+
+        Ok((response, block_store))
     }
 }
 

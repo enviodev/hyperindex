@@ -141,13 +141,19 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
 
 let assertContainsBlockHash = (
   ~t: Vitest.testContext,
-  ~blockHashes: array<ReorgDetection.blockData>,
+  ~blockStore: BlockStore.t,
   ~blockNumber,
   ~message,
 ) => {
-  let found = blockHashes->Array.some(b => b.blockNumber === blockNumber)
+  let found = switch blockStore->BlockStore.getHash(blockNumber) {
+  | Null.Value(_) => true
+  | Null.Null => false
+  }
   t.expect(found, ~message).toBe(true)
 }
+
+let storedBlockNumbers = (blockStore: BlockStore.t) =>
+  blockStore->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)
 
 describe("Source.blockHashes integration - empty range", () => {
   // Uniswap V2 Factory was deployed at block 10000835. Anything well below that
@@ -156,7 +162,7 @@ describe("Source.blockHashes integration - empty range", () => {
   let toBlock = 110
 
   Async.itWithOptions(
-    "HyperSync: empty parsedQueueItems and empty blockHashes for confirmed empty range",
+    "HyperSync: empty parsedQueueItems and empty block page for confirmed empty range",
     {retry: 3},
     async t => {
       let source = makeHyperSyncSource()
@@ -164,19 +170,19 @@ describe("Source.blockHashes integration - empty range", () => {
 
       t.expect({
         "parsedQueueItems": response.parsedQueueItems->Array.length,
-        "blockHashes": response.blockHashes,
+        "blockNumbers": response.blockStore->storedBlockNumbers,
         "fromBlockQueried": response.fromBlockQueried,
       }).toEqual({
         "parsedQueueItems": 0,
         // No items, no rollbackGuard at historical depth → nothing to harvest.
-        "blockHashes": [],
+        "blockNumbers": [],
         "fromBlockQueried": fromBlock,
       })
     },
   )
 
   Async.itWithOptions(
-    "RpcSource: empty parsedQueueItems but blockHashes still contains toBlock + parent",
+    "RpcSource: empty parsedQueueItems but the block page still contains toBlock + parent",
     {retry: 3},
     async t => {
       let source = makeRpcSource()
@@ -188,15 +194,15 @@ describe("Source.blockHashes integration - empty range", () => {
       // parent hash are free.
       assertContainsBlockHash(
         ~t,
-        ~blockHashes=response.blockHashes,
+        ~blockStore=response.blockStore,
         ~blockNumber=toBlock,
-        ~message="blockHashes must contain the latest fetched block (toBlock)",
+        ~message="the block page must contain the latest fetched block (toBlock)",
       )
       assertContainsBlockHash(
         ~t,
-        ~blockHashes=response.blockHashes,
+        ~blockStore=response.blockStore,
         ~blockNumber=toBlock - 1,
-        ~message="blockHashes must contain the parent of the latest fetched block",
+        ~message="the block page must contain the parent of the latest fetched block",
       )
     },
   )
@@ -213,7 +219,7 @@ describe("Source.blockHashes integration - single-log range", () => {
     "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
 
   Async.itWithOptions(
-    "HyperSync: returns exactly one parsed item and a blockHashes entry for the matching block",
+    "HyperSync: returns exactly one parsed item and a block-page entry for the matching block",
     {retry: 3},
     async t => {
       let source = makeHyperSyncSource()
@@ -221,25 +227,20 @@ describe("Source.blockHashes integration - single-log range", () => {
 
       t.expect({
         "parsedQueueItems": response.parsedQueueItems->Array.length,
-        "blockHashes": response.blockHashes,
+        "blockNumbers": response.blockStore->storedBlockNumbers,
+        "blockHash": response.blockStore->BlockStore.getHash(fromBlock),
         "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
       }).toEqual({
         "parsedQueueItems": 1,
-        "blockHashes": [
-          (
-            {
-              ReorgDetection.blockNumber: fromBlock,
-              blockHash: expectedBlockHash,
-            }: ReorgDetection.blockData
-          ),
-        ],
+        "blockNumbers": [fromBlock],
+        "blockHash": Null.Value(expectedBlockHash),
         "latestFetchedBlockNumber": toBlock,
       })
     },
   )
 
   Async.itWithOptions(
-    "RpcSource: returns exactly one parsed item; blockHashes carries toBlock + parent + the log's block",
+    "RpcSource: returns exactly one parsed item; the block page carries toBlock + parent + the log's block",
     {retry: 3},
     async t => {
       let source = makeRpcSource()
@@ -249,17 +250,13 @@ describe("Source.blockHashes integration - single-log range", () => {
       t.expect(response.latestFetchedBlockNumber).toBe(toBlock)
 
       // toBlock entry comes from eth_getBlockByNumber; the log's block hash also
-      // ends up in the array (and equals toBlock here since the range is one block).
-      let toBlockEntry =
-        response.blockHashes->Array.find(b => b.blockNumber === toBlock)->Option.getOrThrow
-      let parentEntry =
-        response.blockHashes->Array.find(b => b.blockNumber === toBlock - 1)->Option.getOrThrow
+      // ends up in the page (and equals toBlock here since the range is one block).
       t.expect({
-        "toBlockHash": toBlockEntry.blockHash,
-        "parentHash": parentEntry.blockHash,
+        "toBlockHash": response.blockStore->BlockStore.getHash(toBlock),
+        "parentHash": response.blockStore->BlockStore.getHash(toBlock - 1),
       }).toEqual({
-        "toBlockHash": expectedBlockHash,
-        "parentHash": expectedParentHash,
+        "toBlockHash": Null.Value(expectedBlockHash),
+        "parentHash": Null.Value(expectedParentHash),
       })
     },
   )

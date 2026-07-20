@@ -97,9 +97,17 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
 }
 
 let capturedQueries: array<SvmHyperSyncClient.query> = []
+let capturedBlockHashRequests: array<array<int>> = []
 
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
+  getBlockHashes: (~blockNumbers) => {
+    capturedBlockHashRequests->Array.push(blockNumbers)->ignore
+    Promise.resolve((
+      BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+      [{Source.method: "getBlockHashes", seconds: 0.25}],
+    ))
+  },
   get: (~query) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the stores from raw transactions/blocks; the
@@ -188,6 +196,19 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
 let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
+  Async.it("delegates block-hash range handling to the Rust client", async t => {
+    let source = makeSource()
+    let blockNumbers = [slot - 2, slot, slot + 3]
+
+    let response = await source.getBlockHashes(
+      ~blockNumbers,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource block hashes"}),
+    )
+
+    t.expect(capturedBlockHashRequests->Utils.Array.lastUnsafe).toEqual(blockNumbers)
+    t.expect(response.requestStats).toEqual([{Source.method: "getBlockHashes", seconds: 0.25}])
+  })
+
   Async.it("omits block on the item and requests opted-in table columns", async t => {
     let reg = makeReg()
     let source = makeSource(~onEventRegistrations=[reg])
@@ -352,15 +373,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
       let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
-      let expectedTokenBalance: option<array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>> = Some([
-        Slot,
-        TransactionIndex,
-        Account,
-        Mint,
-        Owner,
-        PreAmount,
-        PostAmount,
-      ])
+      let expectedTokenBalance: option<
+        array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>,
+      > = Some([Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount])
       t.expect({
         "tokenBalance": fields.tokenBalance,
         "transaction": fields.transaction,

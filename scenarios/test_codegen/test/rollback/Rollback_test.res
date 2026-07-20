@@ -119,7 +119,7 @@ describe("E2E rollback tests", () => {
         },
         {
           id: firstHistoryCheckpointId->BigInt.add(1n),
-          blockHash: Js.Null.Value("0x102"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0102")),
           blockNumber: 102,
           chainId,
           eventsProcessed: 1,
@@ -206,7 +206,7 @@ describe("E2E rollback tests", () => {
       ],
       ~prevRangeLastBlock={
         blockNumber: 102,
-        blockHash: "0x102-reorged",
+        blockHash: "0x102a",
       },
     )
     await Utils.delay(0)
@@ -218,7 +218,7 @@ describe("E2E rollback tests", () => {
     ).toEqual([[100]])
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -267,7 +267,7 @@ describe("E2E rollback tests", () => {
       [
         {
           id: firstHistoryCheckpointId->BigInt.add(3n),
-          blockHash: Js.Null.Value("0x101"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
           eventsProcessed: 1,
@@ -561,7 +561,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow(
       [],
       ~latestFetchedBlockNumber=104,
-      ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x103-reorged"},
+      ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x0103ee"},
     )
     await Utils.delay(0)
     await Utils.delay(0)
@@ -571,8 +571,8 @@ describe("E2E rollback tests", () => {
       ~message="Should query the scanned blocks below the reorg",
     ).toEqual([[100, 102]])
     sourceMock.resolveGetBlockHashes([
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
     ])
 
     switch await Promise.race([
@@ -587,7 +587,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow(
       [],
       ~latestFetchedBlockNumber=103,
-      ~latestFetchedBlockHash="0x103-reorged",
+      ~latestFetchedBlockHash="0x0103ee",
     )
     await indexerMock.getBatchWritePromise()
 
@@ -630,7 +630,7 @@ describe("E2E rollback tests", () => {
         },
       ],
       ~latestFetchedBlockNumber=101,
-      ~latestFetchedBlockHash="0x101",
+      ~latestFetchedBlockHash="0x0101",
     )
 
     // Wait until the processing loop has launched the next fetch — the batch is now
@@ -643,7 +643,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow(
       [],
       ~latestFetchedBlockNumber=102,
-      ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101-reorged"},
+      ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
     )
     await Utils.delay(0)
     await Utils.delay(0)
@@ -653,7 +653,7 @@ describe("E2E rollback tests", () => {
       sourceMock.getBlockHashesCalls,
       ~message="a reorg detected mid-batch should start finding the rollback depth",
     ).toEqual([[100]])
-    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}])
 
     // Releasing the handler lets the batch finish; its progress is applied and the
     // parked rollback then executes and re-requests from the rolled-back block.
@@ -727,7 +727,7 @@ describe("E2E rollback tests", () => {
           eventsProcessed: 0,
           chainId: 1337,
           blockNumber: 102,
-          blockHash: Js.Null.Value("0x102"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0102")),
         },
       ])
     },
@@ -758,7 +758,7 @@ describe("E2E rollback tests", () => {
       ~latestFetchedBlockNumber=103,
       ~prevRangeLastBlock={
         blockNumber: 102,
-        blockHash: "0x102-reorged",
+        blockHash: "0x102a",
       },
     )
     await Utils.delay(0)
@@ -770,7 +770,7 @@ describe("E2E rollback tests", () => {
     ).toEqual([[100]])
     sourceMock.resolveGetBlockHashes([
       // The block 100 is untouched so we can rollback to it
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -790,7 +790,7 @@ describe("E2E rollback tests", () => {
     sourceMock.resolveGetItemsOrThrow(
       [],
       ~latestFetchedBlockNumber=102,
-      ~latestFetchedBlockHash="0x102-reorged",
+      ~latestFetchedBlockHash="0x102a",
     )
     await indexerMock.getBatchWritePromise()
 
@@ -803,7 +803,7 @@ describe("E2E rollback tests", () => {
         eventsProcessed: 0,
         chainId: 1337,
         blockNumber: 102,
-        blockHash: Js.Null.Value("0x102-reorged"),
+        blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x102a")),
       },
     ])
   })
@@ -1014,7 +1014,7 @@ describe("E2E rollback tests", () => {
       ~resolveAt=#first,
       ~prevRangeLastBlock={
         blockNumber: 103,
-        blockHash: "0x103-reorged",
+        blockHash: "0x103a",
       },
     )
     await Utils.delay(0)
@@ -1026,9 +1026,9 @@ describe("E2E rollback tests", () => {
     ).toEqual([[100, 101, 102]])
     sourceMock.resolveGetBlockHashes([
       // The block 102 is untouched so we can rollback to it
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-      {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+      {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
     ])
 
     sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
@@ -1234,28 +1234,28 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 1,
           chainId: 100,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         {
           id: 4n,
           eventsProcessed: 2,
           chainId: 1337,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         {
           id: 5n,
           eventsProcessed: 1,
           chainId: 1337,
           blockNumber: 106,
-          blockHash: Js.Null.Value("0x106"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
         },
         {
           id: 6n,
           eventsProcessed: 1,
           chainId: 100,
           blockNumber: 106,
-          blockHash: Js.Null.Value("0x106"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
         },
         {
           id: 7n,
@@ -1271,7 +1271,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 0,
           chainId: 1337,
           blockNumber: 109,
-          blockHash: Js.Null.Value("0x109"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0109")),
         },
       ],
       [
@@ -1372,7 +1372,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [],
       ~prevRangeLastBlock={
         blockNumber: 106,
-        blockHash: "0x106-reorged",
+        blockHash: "0x106a",
       },
       ~resolveAt=#first,
     )
@@ -1385,8 +1385,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     ).toEqual([[100, 103]])
     sourceMock1337.resolveGetBlockHashes([
       // The block 103 is untouched so we can rollback to it
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
     ])
 
     // Clean up pending calls from before rollback
@@ -1495,14 +1495,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 1,
           chainId: 100,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         {
           id: 4n,
           eventsProcessed: 2,
           chainId: 1337,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         // Reorg checkpoint id was checkpoint id 5
         // for chain 1337. After rollback it was removed
@@ -1512,14 +1512,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 2,
           chainId: 100,
           blockNumber: 106,
-          blockHash: Js.Null.Value("0x106"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
         },
         {
           id: 11n,
           eventsProcessed: 0,
           chainId: 100,
           blockNumber: 111,
-          blockHash: Js.Null.Value("0x111"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0111")),
         },
       ],
       [
@@ -1702,28 +1702,28 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 1,
             chainId: 100,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           {
             id: 4n,
             eventsProcessed: 2,
             chainId: 1337,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           {
             id: 5n,
             eventsProcessed: 1,
             chainId: 1337,
             blockNumber: 106,
-            blockHash: Js.Null.Value("0x106"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
           },
           {
             id: 6n,
             eventsProcessed: 2,
             chainId: 100,
             blockNumber: 106,
-            blockHash: Js.Null.Value("0x106"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
           },
           {
             id: 7n,
@@ -1739,7 +1739,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 0,
             chainId: 1337,
             blockNumber: 109,
-            blockHash: Js.Null.Value("0x109"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0109")),
           },
         ],
         [
@@ -1821,7 +1821,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [],
         ~prevRangeLastBlock={
           blockNumber: 106,
-          blockHash: "0x106-reorged",
+          blockHash: "0x106a",
         },
         ~resolveAt=#first,
       )
@@ -1834,8 +1834,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual([[100, 103]])
       sourceMock1337.resolveGetBlockHashes([
         // The block 103 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
       ])
 
       // Clean up pending calls from before rollback
@@ -1910,14 +1910,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 1,
             chainId: 100,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           {
             id: 4n,
             eventsProcessed: 2,
             chainId: 1337,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           // Reorg checkpoint id was checkpoint id 5
           // for chain 1337. After rollback it was removed
@@ -1927,14 +1927,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 2,
             chainId: 100,
             blockNumber: 106,
-            blockHash: Js.Null.Value("0x106"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
           },
           {
             id: 11n,
             eventsProcessed: 0,
             chainId: 100,
             blockNumber: 111,
-            blockHash: Js.Null.Value("0x111"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0111")),
           },
         ],
         [
@@ -2043,7 +2043,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [],
       ~prevRangeLastBlock={
         blockNumber: 102,
-        blockHash: "0x102-reorged",
+        blockHash: "0x102a",
       },
     )
     await Utils.delay(0)
@@ -2056,8 +2056,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     // Rollback to block 100 - blocks 101-103 are reorged
     sourceMock.resolveGetBlockHashes([
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -2073,7 +2073,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [],
       ~prevRangeLastBlock={
         blockNumber: 101,
-        blockHash: "0x101-reorged",
+        blockHash: "0x101a",
       },
     )
 
@@ -2085,7 +2085,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ~message="Should have called getBlockHashes for second reorg",
     ).toEqual([[100, 101], [100]])
     // Rollback to block 100 - blocks 101-103 are reorged
-    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}])
+    sourceMock.resolveGetBlockHashes([{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}])
     await indexerMock.getRollbackReadyPromise()
 
     // Check metrics after processing - should have 2 events
@@ -2236,7 +2236,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [],
         ~prevRangeLastBlock={
           blockNumber: 103,
-          blockHash: "0x103-reorged",
+          blockHash: "0x103a",
         },
         ~resolveAt=#first,
       )
@@ -2246,7 +2246,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // getBlockHashes called with [100] (only stored block in threshold below 103)
       // Block 100 hash matches → rollback target = 100
       sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
 
       // Clean up pending calls from before rollback
@@ -2272,8 +2272,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ])
 
       // === SECOND REORG on chain 1337 at block 100 ===
-      // After first rollback, stored blocks: {0: "0x0", 100: "0x100"}
-      // Chain 1337 re-fetches from block 101, prevRangeLastBlock auto = {100, "0x100"}
+      // After first rollback, stored blocks: {0: "0x00", 100: "0x0100"}
+      // Chain 1337 re-fetches from block 101, prevRangeLastBlock auto = {100, "0x0100"}
       // We override to trigger reorg: block 100 hash changed
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
@@ -2288,7 +2288,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [],
         ~prevRangeLastBlock={
           blockNumber: 100,
-          blockHash: "0x100-reorged",
+          blockHash: "0x100a",
         },
         ~resolveAt=#first,
       )
@@ -2459,7 +2459,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [],
       ~prevRangeLastBlock={
         blockNumber: 103,
-        blockHash: "0x103-reorged",
+        blockHash: "0x103a",
       },
       ~resolveAt=#first,
     )
@@ -2467,7 +2467,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await Utils.delay(0)
 
     sourceMock1337.resolveGetBlockHashes([
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -2501,7 +2501,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [],
       ~prevRangeLastBlock={
         blockNumber: 100,
-        blockHash: "0x100-reorged",
+        blockHash: "0x100a",
       },
       ~resolveAt=#first,
     )
@@ -2599,7 +2599,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [],
       ~prevRangeLastBlock={
         blockNumber: 115,
-        blockHash: "0x115-reorged",
+        blockHash: "0x115a",
       },
       ~resolveAt=#first,
     )
@@ -2613,10 +2613,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
     // Rollback to block 112
     sourceMock.resolveGetBlockHashes([
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
-      {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
-      {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+      {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+      {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
     ])
 
     // Clean up pending calls from before rollback
@@ -2723,7 +2723,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [],
         ~prevRangeLastBlock={
           blockNumber: 118,
-          blockHash: "0x118-reorged",
+          blockHash: "0x118a",
         },
       )
       await Utils.delay(0)
@@ -2737,11 +2737,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       // All searched blocks are valid, so the reorg is shallow (only block 118).
       sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
-        {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
-        {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
-        {blockNumber: 115, blockHash: "0x115", blockTimestamp: 100},
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+        {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+        {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
+        {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
       ])
 
       // Clean up pending calls from before rollback
@@ -2824,7 +2824,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       await MockIndexer.Helper.waitItemsQuery(sourceMock1)
 
       // Chain 1337 fetches block 101 with 0 events.
-      // registerReorgGuard stores block hash "0x101" for block 101.
+      // registerReorgGuard stores block hash "0x0101" for block 101.
       sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101, ~resolveAt=#first)
 
       // Fetch response processing uses multiple layers of setTimeout(0):
@@ -2851,7 +2851,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
       // once chain 100's budget released). Resolve it with prevRangeLastBlock
       // having a DIFFERENT hash for block 101.
-      // registerReorgGuard compares stored "0x101" vs received "0x101-reorged" → MISMATCH.
+      // registerReorgGuard compares stored "0x0101" vs received "0x101a" → MISMATCH.
       // Reorg is detected while the batch write is still in-flight,
       // so chain 1337 never gets a checkpoint at block 101.
       // getRollbackProgressDiff won't return an entry for chain 1337 (None branch).
@@ -2860,7 +2860,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~latestFetchedBlockNumber=102,
         ~prevRangeLastBlock={
           blockNumber: 101,
-          blockHash: "0x101-reorged",
+          blockHash: "0x101a",
         },
         ~resolveAt=#first,
       )
@@ -2872,7 +2872,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~message="Should have called getBlockHashes to find rollback depth",
       ).toEqual([[100]])
       sourceMock1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
 
       await indexerMock.getRollbackReadyPromise()
@@ -2904,13 +2904,13 @@ This might be wrong after we start exposing a block hash for progress block.`,
       sourceMock1.getBlockHashesCalls->Utils.Array.clearInPlace
 
       // Resolve the re-fetch with the new (reorged) block hash.
-      // With the fix: stale "0x101" was removed by rollbackToValidBlockNumber(100),
-      // so "0x101-reorged" is stored fresh — no mismatch.
-      // Without the fix: stored "0x101" vs received "0x101-reorged" → another reorg!
+      // With the fix: stale "0x0101" was removed by rollbackToValidBlockNumber(100),
+      // so "0x101a" is stored fresh — no mismatch.
+      // Without the fix: stored "0x0101" vs received "0x101a" → another reorg!
       sourceMock1.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x101-reorged",
+        ~latestFetchedBlockHash="0x101a",
         ~resolveAt=#first,
       )
       await indexerMock.getBatchWritePromise()
@@ -3093,7 +3093,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [],
         ~prevRangeLastBlock={
           blockNumber: 106,
-          blockHash: "0x106-reorged",
+          blockHash: "0x106a",
         },
         ~resolveAt=#first,
       )
@@ -3105,8 +3105,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
         ~message="Should have called getBlockHashes to find rollback depth",
       ).toEqual([[100, 103]])
       sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
       ])
 
       // Let the rollback proceed to the flush of the stalled write, then

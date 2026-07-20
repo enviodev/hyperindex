@@ -10,9 +10,20 @@ type chainAfterBatch = {
   isProgressAtHeadWhenBatchCreated: bool,
 }
 
+// A per-chain snapshot of the scanned block hashes still inside the reorg
+// threshold, taken when the batch is assembled. Immutable for the batch's
+// lifetime, unlike the live block store it is read from — so checkpoint hashes
+// can't shift under a concurrent store mutation. `blockNumbers` is ascending;
+// `hashByBlockNumber` is keyed by block number.
+type reorgHashSnapshot = {
+  blockNumbers: array<int>,
+  hashByBlockNumber: dict<string>,
+}
+
 type chainBeforeBatch = {
   fetchState: FetchState.t,
-  reorgDetection: ReorgDetection.t,
+  scannedHashes: reorgHashSnapshot,
+  shouldRollbackOnReorg: bool,
   progressBlockNumber: int,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
@@ -122,7 +133,8 @@ let getProgressedChainsById = {
 @inline
 let addReorgCheckpoints = (
   ~prevCheckpointId,
-  ~reorgDetection: ReorgDetection.t,
+  ~scannedHashes: reorgHashSnapshot,
+  ~shouldRollbackOnReorg,
   ~fromBlockExclusive,
   ~toBlockExclusive,
   ~chainId,
@@ -132,13 +144,19 @@ let addReorgCheckpoints = (
   ~mutCheckpointBlockHashes,
   ~mutCheckpointEventsProcessed,
 ) => {
-  if (
-    reorgDetection.shouldRollbackOnReorg && !(reorgDetection.dataByBlockNumber->Utils.Dict.isEmpty)
-  ) {
+  if shouldRollbackOnReorg {
     let prevCheckpointId = ref(prevCheckpointId)
-    for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
-      switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
-      | Null.Value(hash) =>
+    // The snapshot already holds only in-threshold scanned hashes, ascending,
+    // so a straight range filter over it gives the gap checkpoints without
+    // re-reading the store per block.
+    let blockNumbers = scannedHashes.blockNumbers
+    for idx in 0 to blockNumbers->Array.length - 1 {
+      let blockNumber = blockNumbers->Array.getUnsafe(idx)
+      if blockNumber > fromBlockExclusive && blockNumber < toBlockExclusive {
+        let hash =
+          scannedHashes.hashByBlockNumber
+          ->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber)
+          ->Option.getUnsafe
         let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
         prevCheckpointId := checkpointId
 
@@ -147,7 +165,6 @@ let addReorgCheckpoints = (
         mutCheckpointBlockNumbers->Array.push(blockNumber)
         mutCheckpointBlockHashes->Array.push(Null.Value(hash))
         mutCheckpointEventsProcessed->Array.push(0)
-      | Null.Null => ()
       }
     }
     prevCheckpointId.contents
@@ -209,7 +226,8 @@ let prepareBatch = (
           prevCheckpointId :=
             addReorgCheckpoints(
               ~chainId=fetchState.chainId,
-              ~reorgDetection=chainBeforeBatch.reorgDetection,
+              ~scannedHashes=chainBeforeBatch.scannedHashes,
+              ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
               ~prevCheckpointId=prevCheckpointId.contents,
               ~fromBlockExclusive=prevBlockNumber.contents,
               ~toBlockExclusive=blockNumber,
@@ -227,7 +245,12 @@ let prepareBatch = (
           checkpointBlockNumbers->Array.push(blockNumber)->ignore
           checkpointBlockHashes
           ->Array.push(
-            chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
+            switch chainBeforeBatch.scannedHashes.hashByBlockNumber->Utils.Dict.dangerouslyGetByIntNonOption(
+              blockNumber,
+            ) {
+            | Some(hash) => Null.Value(hash)
+            | None => Null.Null
+            },
           )
           ->ignore
           checkpointEventsProcessed->Array.push(1)->ignore
@@ -254,7 +277,8 @@ let prepareBatch = (
     prevCheckpointId :=
       addReorgCheckpoints(
         ~chainId=fetchState.chainId,
-        ~reorgDetection=chainBeforeBatch.reorgDetection,
+        ~scannedHashes=chainBeforeBatch.scannedHashes,
+        ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
         ~prevCheckpointId=prevCheckpointId.contents,
         ~fromBlockExclusive=prevBlockNumber.contents,
         ~toBlockExclusive=progressBlockNumberAfterBatch + 1, // Make it inclusive
