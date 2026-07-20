@@ -699,12 +699,13 @@ type runtimeCollectors = {
   gcStats: dict<gcStat>,
 }
 
+// perf_hooks GC kind constants: NODE_PERFORMANCE_GC_{MINOR,MAJOR,INCREMENTAL,WEAKCB}.
 let gcKindName = kind =>
   switch kind {
   | 1 => "minor"
-  | 2 => "major"
-  | 4 => "incremental"
-  | 8 => "weakcb"
+  | 4 => "major"
+  | 8 => "incremental"
+  | 16 => "weakcb"
   | _ => "unknown"
   }
 
