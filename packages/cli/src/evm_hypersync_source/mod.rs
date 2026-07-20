@@ -705,7 +705,16 @@ mod tests {
                     contract_name: "Zero".to_string(),
                     is_wildcard: true,
                     depends_on_addresses: false,
-                    topic_selections: vec![],
+                    // One no-filter selection pinning topic0 (an empty list would
+                    // be `where: false` and match nothing).
+                    topic_selections: vec![
+                        crate::evm_hypersync_source::selection::TopicSelectionInput {
+                            topic0: vec![format!("0x{}", "00".repeat(32))],
+                            topic1: Some(vec![]),
+                            topic2: Some(vec![]),
+                            topic3: Some(vec![]),
+                        },
+                    ],
                     block_fields: vec![],
                     transaction_fields: vec![],
                     params: vec![],

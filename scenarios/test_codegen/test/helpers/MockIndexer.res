@@ -1073,9 +1073,11 @@ let evmOnEventRegistration = (
   ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
   // Override the event's ABI when a test needs indexed params (so its logs
   // carry the topics its `where` filters on). Defaults to a no-param,
-  // single-topic event.
+  // single-topic event. `topicCount` is derived from the indexed params the
+  // same way production's `EventConfigBuilder.buildEvmEventConfig` does, so the
+  // two can't drift.
   ~paramsMetadata: array<Internal.paramMeta>=[],
-  ~topicCount=1,
+  ~topicCount=paramsMetadata->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc),
 ): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(

@@ -47,8 +47,8 @@ let makeRoutingRegistration = (
   ~contractName="ERC20",
   ~isWildcard=false,
   ~eventFilters=[topicSelection],
+  // topicCount is derived from paramsMetadata inside evmOnEventRegistration.
   ~paramsMetadata: array<Internal.paramMeta>=[],
-  ~topicCount=1,
 ) => {
   MockIndexer.evmOnEventRegistration(
     ~id=sighash,
@@ -57,7 +57,6 @@ let makeRoutingRegistration = (
     ~isWildcard,
     ~eventFilters,
     ~paramsMetadata,
-    ~topicCount,
   )->withPinIdentity(~index)
 }
 
@@ -478,9 +477,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       let filter2 =
         "0x0000000000000000000000000000000000000000000000000000000000000002"
       // Two indexed params so the log can carry topic1/topic2 the branches
-      // filter on and decode cleanly (topicCount 3).
+      // filter on and decode cleanly (derived topicCount 3).
       let registration = makeRoutingRegistration(
-        ~topicCount=3,
         ~paramsMetadata=[
           {name: "a", abiType: "uint256", indexed: true},
           {name: "b", abiType: "uint256", indexed: true},
@@ -632,14 +630,12 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       ]
       let eventA = makeRoutingRegistration(
         ~contractName="ContractA",
-        ~topicCount=2,
         ~paramsMetadata=addressParam,
         ~eventFilters=selectionFor(filterA),
       )
       let eventB = makeRoutingRegistration(
         ~index=1,
         ~contractName="ContractB",
-        ~topicCount=2,
         ~paramsMetadata=addressParam,
         ~eventFilters=selectionFor(filterB),
       )

@@ -28,8 +28,9 @@ enum TopicConstraint {
 
 /// A registration's static topic constraints — its resolved `where` in DNF:
 /// the outer Vec is an OR of alternatives, each alternative constrains the
-/// four topic positions. An empty DNF puts no constraint on the
-/// registration's logs.
+/// four topic positions. An empty DNF is `where: false` (the registration
+/// selects no events) and so matches nothing; a registration with no `where`
+/// carries one all-`Any` alternative instead.
 struct TopicFilters(Vec<[TopicConstraint; 4]>);
 
 impl TopicFilters {
@@ -76,9 +77,8 @@ impl TopicFilters {
         topics: &[Option<LogArgument>],
         contract_address_topics: &[[u8; 32]],
     ) -> bool {
-        if self.0.is_empty() {
-            return true;
-        }
+        // An empty DNF (`where: false`) matches nothing — `any` over no
+        // alternatives is already `false`, which is the intended semantics.
         self.0.iter().any(|alternative| {
             alternative
                 .iter()
@@ -285,11 +285,11 @@ impl SelectionDecoder {
     ///
     /// Same-signature registrations may declare different indexed/body
     /// splits, and the log's bytes need not be valid under every declaration
-    /// — a match that fails to decode just contributes no item. Only when no
-    /// match decodes is the failure surfaced as an error: the log was fetched
-    /// for these registrations, so silently dropping it would hide genuinely
-    /// malformed data or a wrong ABI. An empty result means the log routes
-    /// nowhere and is dropped by the caller.
+    /// — a match that fails to decode (or to name its params) just contributes
+    /// no item. Only when no match yields an item is the failure surfaced as
+    /// an error: the log was fetched for these registrations, so silently
+    /// dropping it would hide genuinely malformed data or a wrong ABI. An
+    /// empty result means the log routes nowhere and is dropped by the caller.
     fn route_and_decode(
         &self,
         topics: &[Option<LogArgument>],
@@ -309,7 +309,10 @@ impl SelectionDecoder {
             .context("topic_count overflow")?;
 
         let mut routed = Vec::new();
-        let mut first_decode_err = None;
+        // Both decoding and param-naming failures are per-registration: capture
+        // the first, skip that registration, and surface it only if the log
+        // yields no item at all (see the contract above).
+        let mut first_error: Option<anyhow::Error> = None;
         for sel in &self.registrations {
             let reg = &sel.registration;
             if !reg.matches(
@@ -321,31 +324,33 @@ impl SelectionDecoder {
             ) {
                 continue;
             }
-            let decoded = match reg.decoder.decode_log_parts(
-                topics
-                    .iter()
-                    .take_while(|t| t.is_some())
-                    .map(|t| t.as_ref().unwrap().into()),
-                data,
-            ) {
-                Ok(decoded) => decoded,
+            let result = reg
+                .decoder
+                .decode_log_parts(
+                    topics
+                        .iter()
+                        .take_while(|t| t.is_some())
+                        .map(|t| t.as_ref().unwrap().into()),
+                    data,
+                )
+                .context("decode log")
+                .and_then(|decoded| {
+                    apply_names(decoded, &reg.params, self.checksummed_addresses)
+                        .context("apply param names")
+                });
+            match result {
+                Ok(fields) => routed.push(RoutedEvent {
+                    index: reg.index,
+                    params: ParamValue::Obj(fields),
+                }),
                 Err(e) => {
-                    if first_decode_err.is_none() {
-                        first_decode_err = Some(anyhow::Error::new(e).context("decode log"));
+                    if first_error.is_none() {
+                        first_error = Some(e);
                     }
-                    continue;
                 }
-            };
-            routed.push(RoutedEvent {
-                index: reg.index,
-                params: ParamValue::Obj(apply_names(
-                    decoded,
-                    &reg.params,
-                    self.checksummed_addresses,
-                )?),
-            });
+            }
         }
-        match (routed.is_empty(), first_decode_err) {
+        match (routed.is_empty(), first_error) {
             (true, Some(err)) => Err(err),
             _ => Ok(routed),
         }
@@ -429,6 +434,19 @@ mod tests {
         }
     }
 
+    // A no-`where` selection for `sighash`: one alternative that pins topic0
+    // and leaves the rest unconstrained (the shape `LogSelection` builds for a
+    // registration without a `where`). An empty `topic_selections` would mean
+    // `where: false` (match nothing), so tests that expect a match use this.
+    fn no_filter_selection(sighash: &str) -> Vec<TopicSelectionInput> {
+        vec![TopicSelectionInput {
+            topic0: vec![sighash.to_string()],
+            topic1: Some(vec![]),
+            topic2: Some(vec![]),
+            topic3: Some(vec![]),
+        }]
+    }
+
     // A one-body-param registration with an arbitrary sighash and topic count 1,
     // so logs are easy to fabricate.
     fn value_reg(
@@ -445,7 +463,7 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses: false,
-            topic_selections: vec![],
+            topic_selections: no_filter_selection(sighash),
             block_fields: vec![],
             transaction_fields: vec![],
             params: vec![pm("value", "uint256", false)],
@@ -539,7 +557,7 @@ mod tests {
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
                 depends_on_addresses: false,
-                topic_selections: vec![],
+                topic_selections: no_filter_selection(&real_sighash),
                 block_fields: vec![],
                 transaction_fields: vec![],
                 params: vec![pm("owner", "address", false), pm("value", "uint256", false)],
@@ -625,6 +643,24 @@ mod tests {
             .route_and_decode_napi(&log, Some("Owned"))
             .unwrap();
         assert_eq!(routed_indexes(&routed), vec![0]);
+    }
+
+    #[test]
+    fn where_false_registration_matches_nothing_even_via_fan_out() {
+        // A `where: false` registration crosses the boundary with an empty
+        // `topic_selections`. Even sharing a signature with a broad sibling
+        // that fetches the log, the disabled registration must never match.
+        let mut disabled = value_reg(0, "Disabled", true, VALID_SIGHASH);
+        disabled.topic_selections = vec![];
+        let sibling = value_reg(1, "Live", true, VALID_SIGHASH);
+
+        let core = DecoderCore::from_registrations(&[disabled, sibling], false).unwrap();
+        let routed = core
+            .selection(&[0, 1], &HashMap::new())
+            .unwrap()
+            .route_and_decode_napi(&value_log(VALID_SIGHASH), None)
+            .unwrap();
+        assert_eq!(routed_indexes(&routed), vec![1]);
     }
 
     // One indexed address param + one body value, so a topic1-filtered log

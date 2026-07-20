@@ -1268,8 +1268,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         ...MockIndexer.evmOnEventRegistration(
         ~id=sighash,
         // Two indexed params so the log carries the topic1/topic2 values the
-        // OR branches filter on and decodes cleanly (topicCount 3).
-        ~topicCount=3,
+        // OR branches filter on and decodes cleanly (derived topicCount 3).
         ~paramsMetadata=[
           {name: "a", abiType: "uint256", indexed: true},
           {name: "b", abiType: "uint256", indexed: true},
