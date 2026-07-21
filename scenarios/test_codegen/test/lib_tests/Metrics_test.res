@@ -169,7 +169,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       effects: [
         {
           effect: "getMetadata",
-          scope: "global",
+          scope: "crossChain",
           callSeconds: 8.4,
           callSecondsTotal: 20.9,
           callCount: 300.,
@@ -397,23 +397,23 @@ envio_progress_latency{chainId="1"} 1500
 
 # HELP envio_effect_call_seconds Processing time taken to call the Effect function.
 # TYPE envio_effect_call_seconds counter
-envio_effect_call_seconds{effect="getMetadata",scope="global"} 8.4
+envio_effect_call_seconds{effect="getMetadata",scope="crossChain"} 8.4
 
 # HELP envio_effect_call_seconds_total Cumulative time spent calling the Effect function during the indexing process.
 # TYPE envio_effect_call_seconds_total counter
-envio_effect_call_seconds_total{effect="getMetadata",scope="global"} 20.9
+envio_effect_call_seconds_total{effect="getMetadata",scope="crossChain"} 20.9
 
 # HELP envio_effect_call_total Cumulative number of resolved Effect function calls during the indexing process.
 # TYPE envio_effect_call_total counter
-envio_effect_call_total{effect="getMetadata",scope="global"} 300
+envio_effect_call_total{effect="getMetadata",scope="crossChain"} 300
 
 # HELP envio_effect_active_calls The number of Effect function calls that are currently running.
 # TYPE envio_effect_active_calls gauge
-envio_effect_active_calls{effect="getMetadata",scope="global"} 1
+envio_effect_active_calls{effect="getMetadata",scope="crossChain"} 1
 
 # HELP envio_effect_cache The number of items in the effect cache.
 # TYPE envio_effect_cache gauge
-envio_effect_cache{effect="getMetadata",scope="global"} 128
+envio_effect_cache{effect="getMetadata",scope="crossChain"} 128
 
 # HELP envio_effect_cache_invalidations The number of effect cache invalidations.
 # TYPE envio_effect_cache_invalidations counter
@@ -421,7 +421,7 @@ envio_effect_cache_invalidations{effect="getMetadata"} 3
 
 # HELP envio_effect_queue The number of effect calls waiting in the rate limit queue.
 # TYPE envio_effect_queue gauge
-envio_effect_queue{effect="getMetadata",scope="global"} 4
+envio_effect_queue{effect="getMetadata",scope="crossChain"} 4
 
 # HELP envio_effect_queue_wait_seconds The time spent waiting in the rate limit queue.
 # TYPE envio_effect_queue_wait_seconds counter
