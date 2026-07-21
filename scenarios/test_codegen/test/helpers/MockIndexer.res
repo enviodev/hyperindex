@@ -420,6 +420,10 @@ module Indexer = {
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
+    // Defaults to 0 (not the production 100) so the small-scale fixtures here
+    // don't enter the reorg threshold before fetching. Tests exercising the
+    // tolerance pass an explicit value.
+    ~reorgThresholdReadyTolerance=0,
     // Lets regression tests surface fatal errors without terminating the Vitest worker.
     ~onError=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
@@ -470,6 +474,7 @@ module Indexer = {
         enableRawEvents,
         chainMap,
         batchSize: batchSize->Option.getOr(config.batchSize),
+        reorgThresholdReadyTolerance,
       }
     }
 
@@ -732,6 +737,7 @@ module Indexer = {
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
           ~targetBufferSize?,
+          ~reorgThresholdReadyTolerance,
           ~onError,
           ~mapStorage,
         )
