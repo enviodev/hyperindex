@@ -337,24 +337,30 @@ let makeCreateHistoryTableQuery = (
 
   let orderByColumns = switch orderBy {
   | Some(fieldNames) =>
-    fieldNames
-    ->Array.map(fieldName =>
-      switch entityConfig.table.fields->Array.findMap(field =>
-        switch field {
-        | Field(f) if f.fieldName === fieldName => Some(f)
-        | _ => None
+    // envio_checkpoint_id stays appended so the sorting key keeps a
+    // deterministic tie-break and the view's checkpoint dedup gets a clean
+    // ascending run per prefix. id is dropped: ClickHouse entities are
+    // read-only, so nothing looks history rows up by id.
+    let userColumns =
+      fieldNames
+      ->Array.map(fieldName =>
+        switch entityConfig.table.fields->Array.findMap(field =>
+          switch field {
+          | Field(f) if f.fieldName === fieldName => Some(f)
+          | _ => None
+          }
+        ) {
+        | Some(f) => `\`${f->Table.getClickHouseDbFieldName}\``
+        | None =>
+          // Validated at codegen, so a miss means the schema and the
+          // persisted config diverged.
+          JsError.throwWithMessage(
+            `ClickHouse orderBy field "${fieldName}" is not defined on entity "${entityConfig.name}"`,
+          )
         }
-      ) {
-      | Some(f) => `\`${f->Table.getClickHouseDbFieldName}\``
-      | None =>
-        // Validated at codegen, so a miss means the schema and the
-        // persisted config diverged.
-        JsError.throwWithMessage(
-          `ClickHouse orderBy field "${fieldName}" is not defined on entity "${entityConfig.name}"`,
-        )
-      }
-    )
-    ->Array.joinUnsafe(", ")
+      )
+      ->Array.joinUnsafe(", ")
+    `${userColumns}, ${EntityHistory.checkpointIdFieldName}`
   | None => `${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName}`
   }
 

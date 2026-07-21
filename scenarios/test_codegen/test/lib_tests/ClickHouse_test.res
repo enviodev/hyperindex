@@ -201,7 +201,7 @@ chains:
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
-ORDER BY (\`timestamp\`)
+ORDER BY (\`timestamp\`, envio_checkpoint_id)
 TTL timestamp + INTERVAL 2 YEAR`,
         })
       },
@@ -252,7 +252,7 @@ chains:
   \`envio_change\` Enum8('SET', 'DELETE')
 )
 ENGINE = MergeTree()
-ORDER BY (\`base_token_id\`, \`trade_time\`)`)
+ORDER BY (\`base_token_id\`, \`trade_time\`, envio_checkpoint_id)`)
       },
     )
   })
