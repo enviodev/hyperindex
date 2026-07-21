@@ -3533,27 +3533,34 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     t.expect((isReady(~knownHeight=209), isReady(~knownHeight=210))).toEqual((true, false))
   })
 
-  it("Returns false when queue is not empty even if thresholds are met", t => {
-    // EndBlock reached but queue has items
-    let (fs, _indexingAddresses) = makeFs(
-      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
-      ~addresses=[
-        {
-          Internal.address: mockAddress0,
-          contractName: "Gravatar",
-          registrationBlock: -1,
-        },
-      ],
-      ~startBlock=6,
-      ~endBlock=Some(5),
-      ~maxAddrInPartition=3,
-      ~maxOnBlockBufferSize=targetBufferSize,
-      ~chainId,
-      ~blockLag=0,
-      ~knownHeight=10,
-    )
-    let fsWithQueue = fs->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=6)])
-    t.expect(fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
+  it("Blocks on processable items, but not on items stuck above the frontier", t => {
+    // frontier (bufferBlockNumber) = 5, endBlock 5 reached.
+    let readyWithItemAt = itemBlockNumber => {
+      let (fs, _indexingAddresses) = makeFs(
+        ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+        ~addresses=[
+          {
+            Internal.address: mockAddress0,
+            contractName: "Gravatar",
+            registrationBlock: -1,
+          },
+        ],
+        ~startBlock=6,
+        ~endBlock=Some(5),
+        ~maxAddrInPartition=3,
+        ~maxOnBlockBufferSize=targetBufferSize,
+        ~chainId,
+        ~blockLag=0,
+        ~knownHeight=10,
+      )
+      fs
+      ->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=itemBlockNumber)])
+      ->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)
+    }
+    // A processable item (<= frontier 5) still needs draining; an item stuck
+    // above the frontier (as behind a lagging partition's gap) is reorg-safe and
+    // must not defer entry.
+    t.expect((readyWithItemAt(5), readyWithItemAt(6))).toEqual((false, true))
   })
 
   it("Returns true when the queue is empty and threshold is more than current block height", t => {

@@ -2556,13 +2556,16 @@ let isFetchingAtHead = ({endBlock, blockLag, knownHeight} as fetchState: t) => {
     }
 }
 
-// Frontier at (or within `tolerance` of) the lagged head with a drained buffer —
-// the moment the chain can cross into the reorg threshold. `tolerance` absorbs
-// the head advancing between a chain catching up and this check; it is not
-// applied to endBlock, where reaching the end is an exact target.
+// Frontier at (or within `tolerance` of) the lagged head with no processable
+// items left — the moment the chain can cross into the reorg threshold.
+// `tolerance` absorbs the head advancing between a chain catching up and this
+// check; it is not applied to endBlock, where reaching the end is an exact
+// target. Uses bufferReadyCount, not an empty buffer: items stuck above the
+// frontier behind a lagging partition's gap are reorg-safe (all <= head -
+// blockLag) and must not defer entry, or a many-partition chain never enters.
 let isReadyToEnterReorgThreshold = (
   ~tolerance,
-  {endBlock, blockLag, buffer, knownHeight} as fetchState: t,
+  {endBlock, blockLag, knownHeight} as fetchState: t,
 ) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   knownHeight !== 0 &&
@@ -2570,7 +2573,7 @@ let isReadyToEnterReorgThreshold = (
   | Some(endBlock) if bufferBlockNumber >= endBlock => true
   | _ => bufferBlockNumber >= knownHeight - blockLag - tolerance
   } &&
-  buffer->Utils.Array.isEmpty
+  fetchState->bufferReadyCount == 0
 }
 
 // Lower progress percentage = further behind = higher priority. Progress is
