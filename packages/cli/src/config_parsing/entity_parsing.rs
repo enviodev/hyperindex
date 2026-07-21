@@ -340,8 +340,9 @@ impl GraphQLEnum {
 pub struct ClickHouseTableOptions {
     /// Raw ClickHouse expression emitted as `PARTITION BY <expr>`.
     pub partition_by: Option<String>,
-    /// Entity field names replacing the default `ORDER BY (id,
-    /// envio_checkpoint_id)` sorting key.
+    /// Entity field names that lead the history table's sorting key, replacing
+    /// the default `id` prefix. `envio_checkpoint_id` stays appended, so the key
+    /// becomes `ORDER BY (<order_by...>, envio_checkpoint_id)`.
     pub order_by: Option<Vec<String>>,
     /// Raw ClickHouse expression emitted as `TTL <expr>`.
     pub ttl: Option<String>,
