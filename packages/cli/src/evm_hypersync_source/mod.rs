@@ -17,7 +17,7 @@ pub(crate) mod types;
 use std::collections::HashMap;
 
 use config::ClientConfig;
-use decode::{DecoderCore, SelectionDecoder};
+use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
@@ -46,7 +46,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 pub struct EvmHypersyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
-    decoder: DecoderCore,
+    decoder: Decoder,
     selection_builder: SelectionBuilder,
 }
 
@@ -63,7 +63,7 @@ impl EvmHypersyncClient {
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
         let decoder =
-            DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
+            Decoder::from_registrations(&event_registrations, enable_checksum_addresses)
                 .context("build decoder")
                 .map_err(map_err)?;
 
@@ -129,7 +129,10 @@ impl EvmHypersyncClient {
             .map_err(map_err)?;
         let selection_decoder = self
             .decoder
-            .selection(&params.registration_indexes)
+            .selection(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
             .map_err(map_err)?;
 
         let requested_transaction_fields = built.transaction_fields;
@@ -486,9 +489,9 @@ fn process_response(
     for log in logs.into_iter().flatten() {
         let (log_index, src_address, block_number, transaction_index) =
             flatten_log_for_js(&log, should_checksum).context("mapping log")?;
-        // Propagate genuine decode errors (malformed bytes, ABI mismatch) up to
-        // the JS caller instead of silently coercing them into a drop — a drop
-        // is reserved for logs that route to no registration.
+        // Only structurally malformed logs (missing topic0, bad topic bytes)
+        // surface here; per-registration decode failures are dropped inside
+        // `route_and_decode`.
         let routed = decoder
             .route_and_decode_simple(
                 &log,
@@ -682,9 +685,9 @@ mod tests {
     use hypersync_client::simple_types;
 
     fn empty_decoder() -> SelectionDecoder {
-        DecoderCore::from_registrations(&[], false)
+        Decoder::from_registrations(&[], false)
             .unwrap()
-            .selection(&[])
+            .selection(&[], &HashMap::new())
             .unwrap()
     }
 
@@ -692,7 +695,7 @@ mod tests {
     // registration so success-path tests still produce an item now that
     // unrouted logs are dropped.
     fn zero_event_decoder() -> SelectionDecoder {
-        DecoderCore::from_registrations(
+        Decoder::from_registrations(
             &[
                 crate::evm_hypersync_source::types::OnEventRegistrationInput {
                     index: 0,
@@ -702,7 +705,16 @@ mod tests {
                     contract_name: "Zero".to_string(),
                     is_wildcard: true,
                     depends_on_addresses: false,
-                    topic_selections: vec![],
+                    // One no-filter selection pinning topic0 (an empty list would
+                    // be `where: false` and match nothing).
+                    topic_selections: vec![
+                        crate::evm_hypersync_source::selection::TopicSelectionInput {
+                            topic0: vec![format!("0x{}", "00".repeat(32))],
+                            topic1: Some(vec![]),
+                            topic2: Some(vec![]),
+                            topic3: Some(vec![]),
+                        },
+                    ],
                     block_fields: vec![],
                     transaction_fields: vec![],
                     params: vec![],
@@ -711,7 +723,7 @@ mod tests {
             false,
         )
         .unwrap()
-        .selection(&[0])
+        .selection(&[0], &HashMap::new())
         .unwrap()
     }
 

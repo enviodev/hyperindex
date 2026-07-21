@@ -179,10 +179,12 @@ module Storage = {
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
-        pruneStaleCheckpoints: (~safeCheckpointId as _) =>
-          JsError.throwWithMessage("Not implemented"),
-        pruneStaleEntityHistory: (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-          JsError.throwWithMessage("Not implemented"),
+        pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+        pruneStaleEntityHistory: async (
+          ~entityName as _,
+          ~entityIndex as _,
+          ~safeCheckpointId as _,
+        ) => (),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
           JsError.throwWithMessage("Not implemented"),
         getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
@@ -198,6 +200,7 @@ module Storage = {
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
           ~chainMetaData as _,
+          ~onWrite as _,
         ) => JsError.throwWithMessage("Not implemented"),
         close: () => Promise.resolve(),
       },
@@ -375,6 +378,7 @@ module Indexer = {
     chain: chainId,
     sourceConfig: Config.sourceConfig,
     startBlock?: int,
+    maxReorgDepth?: int,
     blockLag?: int,
   }
 
@@ -396,9 +400,6 @@ module Indexer = {
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
-    // TODO: Should stop using global client
-    PromClient.defaultRegister->PromClient.resetMetrics
-
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
     | None => Logging.setLogLevel(#silent)
@@ -424,6 +425,9 @@ module Indexer = {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+              maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
+                originalChainConfig.maxReorgDepth,
+              ),
               blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
             },
           )
@@ -625,14 +629,47 @@ module Indexer = {
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
-        switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
-        | Some(m) =>
-          (await m.get())["values"]->Array.map(v => {
-            value: v.value->Int.toString,
-            labels: v.labels,
-          })
-        | None => []
-        }
+        // Parse the metric's samples back out of the rendered /metrics text.
+        Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
+        ->String.split("\n")
+        ->Array.filterMap(line =>
+          if line->String.startsWith(name ++ "{") || line->String.startsWith(name ++ " ") {
+            let rest = line->String.slice(~start=name->String.length)
+            let (labelsPart, value) = switch rest->String.lastIndexOf(" ") {
+            | -1 => ("", rest)
+            | i => (rest->String.slice(~start=0, ~end=i), rest->String.slice(~start=i + 1))
+            }
+            let labels = Dict.make()
+            // Quoted values may contain escaped `\"`, `\\` and `\n`, so match
+            // label pairs instead of splitting on commas/equals.
+            let labelRe = RegExp.fromString(
+              `([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\\]|\\\\.)*)"`,
+              ~flags="g",
+            )
+            let break = ref(false)
+            while !break.contents {
+              switch labelRe->RegExp.exec(labelsPart) {
+              | Some(result) =>
+                let matches = result->RegExp.Result.matches
+                switch (matches->Array.get(0), matches->Array.get(1)) {
+                | (Some(Some(key)), Some(Some(escaped))) =>
+                  labels->Dict.set(
+                    key,
+                    escaped
+                    ->String.replaceAll("\\n", "\n")
+                    ->String.replaceAll("\\\"", "\"")
+                    ->String.replaceAll("\\\\", "\\"),
+                  )
+                | _ => ()
+                }
+              | None => break := true
+              }
+            }
+            Some({value, labels})
+          } else {
+            None
+          }
+        )
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
@@ -998,6 +1035,20 @@ module Source = {
 }
 
 module Helper = {
+  // Wait until the source has a pending getItemsOrThrow call. Queries are
+  // serialized by the cross-chain budget waterfall, so a chain's query only
+  // appears after the more-behind chains' responses release the budget.
+  let waitItemsQuery = async (sourceMock: Source.t) => {
+    let attempts = ref(0)
+    while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
+      attempts := attempts.contents + 1
+      await Utils.delay(0)
+    }
+    if sourceMock.getItemsOrThrowCalls->Array.length === 0 {
+      JsError.throwWithMessage("Timed out waiting for a getItemsOrThrow call")
+    }
+  }
+
   let initialEnterReorgThreshold = async (
     ~t: Vitest.testContext,
     ~indexerMock: Indexer.t,
@@ -1051,6 +1102,13 @@ let evmOnEventRegistration = (
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
   ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
+  // Override the event's ABI when a test needs indexed params (so its logs
+  // carry the topics its `where` filters on). Defaults to a no-param,
+  // single-topic event. `topicCount` is derived from the indexed params the
+  // same way production's `EventConfigBuilder.buildEvmEventConfig` does, so the
+  // two can't drift.
+  ~paramsMetadata: array<Internal.paramMeta>=[],
+  ~topicCount=paramsMetadata->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc),
 ): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
@@ -1060,8 +1118,8 @@ let evmOnEventRegistration = (
     id,
     contractName,
     name: "EventWithoutFields",
-    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
-    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema(paramsMetadata),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
@@ -1071,8 +1129,8 @@ let evmOnEventRegistration = (
       ),
     ),
     sighash: id,
-    topicCount: 1,
-    paramsMetadata: [],
+    topicCount,
+    paramsMetadata,
   }
   {
     index: -1,

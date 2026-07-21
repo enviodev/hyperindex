@@ -140,25 +140,27 @@ describe("E2E tests", () => {
       MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=sourceMock100),
     ))
 
-    // Advance only chain 1337 to head
-    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    // Only the most-behind chain (100 — the progress tie breaks by ascending
+    // chain id) gets the follow-up query; chain 1337 sits the round out until
+    // the leader's reservation releases. Advance chain 100 to head first.
+    sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
     await indexerMock.getBatchWritePromise()
 
     // No chain is marked ready until every chain catches up
     t.expect(
       await indexerMock.metric("envio_progress_ready"),
-      ~message="No chain is ready while chain 100 is still syncing",
+      ~message="No chain is ready while chain 1337 is still syncing",
     ).toEqual([
       {value: "0", labels: Dict.fromArray([("chainId", "100")])},
       {value: "0", labels: Dict.fromArray([("chainId", "1337")])},
     ])
     t.expect(
       await indexerMock.metric("hyperindex_synced_to_head"),
-      ~message="All-ready metric should not be set since chain 100 is not ready",
+      ~message="All-ready metric should not be set since chain 1337 is not ready",
     ).toEqual([{value: "0", labels: Dict.make()}])
 
-    // Now advance chain 100 to head
-    sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+    // Now advance chain 1337 to head
+    sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
     await indexerMock.getBatchWritePromise()
 
     // Both chains should now be ready
@@ -1225,8 +1227,8 @@ describe("E2E tests", () => {
     )
     await Utils.delay(0)
 
-    // Step 1: Resolve height (blockLag=200 by default, headBlock=9800)
-    sourceMock.resolveGetHeightOrThrow(10_000)
+    // Step 1: Resolve height (blockLag=200 by default, headBlock=19800)
+    sourceMock.resolveGetHeightOrThrow(20_000)
     await Utils.delay(0)
     await Utils.delay(0)
 
@@ -1234,16 +1236,16 @@ describe("E2E tests", () => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Step 2 should have initial query",
-    ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
+    ).toEqual([{"fromBlock": 1, "toBlock": Some(19800), "retry": 0, "p": "0"}])
+    sourceMock.resolveGetItemsOrThrow([{blockNumber: 100, logIndex: 0}], ~latestFetchedBlockNumber=500)
     await indexerMock.getBatchWritePromise()
 
     // Step 3: Query 2 — resolve at block 800 (range=300)
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Step 3 should have follow-up query",
-    ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
+    ).toEqual([{"fromBlock": 501, "toBlock": Some(19800), "retry": 0, "p": "0"}])
+    sourceMock.resolveGetItemsOrThrow([{blockNumber: 600, logIndex: 0}], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
     // Chunking activates: chunkRange=min(300,500)=300, chunkSize=ceil(300*1.8)=540.
@@ -1268,16 +1270,19 @@ describe("E2E tests", () => {
     let chunk1 = calls->Array.getUnsafe(0)
     let chunk2 = calls->Array.getUnsafe(1)
     let chunk3 = calls->Array.getUnsafe(2)
-    chunk1.resolve([], ~latestFetchedBlockNumber=1340)
-    chunk2.resolve([], ~latestFetchedBlockNumber=1880)
-    chunk3.resolve([], ~latestFetchedBlockNumber=2420)
+    chunk1.resolve([{blockNumber: 900, logIndex: 0}], ~latestFetchedBlockNumber=1340)
+    chunk2.resolve([{blockNumber: 1400, logIndex: 0}], ~latestFetchedBlockNumber=1880)
+    chunk3.resolve([{blockNumber: 1900, logIndex: 0}], ~latestFetchedBlockNumber=2420)
     await indexerMock.getBatchWritePromise()
     // Drain the in-flight 540-chunk backlog so the partition regenerates its
     // tail at the grown chunkRange (540). New tail chunks reach ceil(540*1.8)=972.
     sourceMock.getItemsOrThrowCalls
     ->Array.copy
     ->Array.forEach(c =>
-      c.resolve([], ~latestFetchedBlockNumber=c.payload["toBlock"]->Option.getOr(c.payload["fromBlock"]))
+      c.resolve(
+        [{blockNumber: c.payload["fromBlock"], logIndex: 0}],
+        ~latestFetchedBlockNumber=c.payload["toBlock"]->Option.getOr(c.payload["fromBlock"]),
+      )
     )
     await indexerMock.getBatchWritePromise()
 
@@ -1297,10 +1302,13 @@ describe("E2E tests", () => {
     // Resolve the first pending chunk (at queue front) at a small partial range
     // (100 blocks) so the partition advances and the heuristic shrinks.
     let firstPending = sourceMock.getItemsOrThrowCalls->Array.get(0)->Option.getOrThrow
-    firstPending.resolve([], ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99)
+    firstPending.resolve(
+      [{blockNumber: firstPending.payload["fromBlock"], logIndex: 0}],
+      ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99,
+    )
     await indexerMock.getBatchWritePromise()
 
-    // After the partial response prevQueryRange=100, so chunkRange drops to
+    // After the partial response sourceRangeCapacity=100, so chunkRange drops to
     // min(100, 540)=100 and the regenerated chunks shrink to ceil(100*1.8)=180,
     // well below the grown 972-size tail.
     let shrunkChunks =
@@ -1336,13 +1344,13 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Should have initial query",
     ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=500)
+    sourceMock.resolveGetItemsOrThrow([{blockNumber: 100, logIndex: 0}], ~latestFetchedBlockNumber=500)
     await indexerMock.getBatchWritePromise()
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
       ~message="Should have follow-up query",
     ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
-    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=800)
+    sourceMock.resolveGetItemsOrThrow([{blockNumber: 600, logIndex: 0}], ~latestFetchedBlockNumber=800)
     await indexerMock.getBatchWritePromise()
 
     // Chunking activates: chunkRange=300, chunkSize=540. Uniform chunks tiled
@@ -1461,8 +1469,18 @@ describe("E2E tests", () => {
 
     // Step 2: Register DC1 at block 5000, DC2 at block 25100
     // Gap = 25099 - 4999 = 20100 > tooFarBlockRange(20000) → separate partitions
+    // The 100 plain events at blocks 3000-3099 give the chain a density signal
+    // (ready-buffer density immediately, the processing EMA once the batch
+    // commits). Without one the chain is cold and its target block is capped at
+    // frontier + 20k, which would gate the far partitions this merge
+    // choreography relies on fetching in parallel — and the density must be
+    // high enough that the chain-level range-cost budget affords DC2's full
+    // 12-chunk pipeline below.
     sourceMock.resolveGetItemsOrThrow(
       [
+        ...Array.fromInitializer(~length=100, i => (
+          {blockNumber: 3000 + i, logIndex: 0}: MockIndexer.Source.itemMock
+        )),
         {
           blockNumber: 5000,
           logIndex: 0,
@@ -1484,7 +1502,7 @@ describe("E2E tests", () => {
       ],
       ~latestFetchedBlockNumber=25100,
     )
-    // Batch writes because P0 advances and items at blocks 5000,25100 are processable
+    // Batch writes because P0 advances and the items at blocks 3000-3099 are processable
     await indexerMock.getBatchWritePromise()
 
     // DC1 = partition "2" at lfb=4999, DC2 = partition "3" at lfb=25099
@@ -1500,7 +1518,7 @@ describe("E2E tests", () => {
     // Buffer block stays 4999 (DC1 is earliest) → no batch write
     let dc2Call1 =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
-    dc2Call1.resolve([], ~latestFetchedBlockNumber=25600)
+    dc2Call1.resolve([{blockNumber: 25200, logIndex: 0}], ~latestFetchedBlockNumber=25600)
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
@@ -1514,11 +1532,11 @@ describe("E2E tests", () => {
 
     // Step 4: Resolve DC2 at lfb=25900 (range=300) → chunking activates.
     // chunkRange=min(300,500)=300, chunkSize=ceil(300*1.8)=540. Uniform chunks
-    // tiled from 25901 up to the per-partition cap of 10 chunks (→ 31300).
+    // tiled from 25901 up to the per-partition cap of 12 chunks (→ 32380).
     // Buffer block stays 4999 → no batch write
     let dc2Call2 =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "3")->Option.getOrThrow
-    dc2Call2.resolve([], ~latestFetchedBlockNumber=25900)
+    dc2Call2.resolve([{blockNumber: 25700, logIndex: 0}], ~latestFetchedBlockNumber=25900)
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
@@ -1527,7 +1545,7 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
-      ~message="Step 4: DC2 has 10 uniform 540-size chunks",
+      ~message="Step 4: DC2 has 12 uniform 540-size chunks",
     ).toEqual([
       ("2", 5000, Some(99800)),
       ("0", 25101, Some(99800)),
@@ -1541,33 +1559,35 @@ describe("E2E tests", () => {
       ("3", 29681, Some(30220)),
       ("3", 30221, Some(30760)),
       ("3", 30761, Some(31300)),
+      ("3", 31301, Some(31840)),
+      ("3", 31841, Some(32380)),
     ])
 
-    // Step 5: Resolve DC1 at lfb=11400 → merge triggers
-    // DC1 mergeBlock=11400 (idle), DC2 mergeBlock=31300 (last chunk toBlock)
-    // 11400 + 20000 = 31400 > 31300 → within range → MERGE
-    // Both lfb < mergeBlock → (true,true): both get mergeBlock=31300, new partition "4"
+    // Step 5: Resolve DC1 at lfb=12500 → merge triggers
+    // DC1 mergeBlock=12500 (idle), DC2 mergeBlock=32380 (last chunk toBlock)
+    // 12500 + 20000 = 32500 > 32380 → within range → MERGE
+    // Both lfb < mergeBlock → (true,true): both get mergeBlock=32380, new partition "4"
     // Buffer empty → no batch write
     let dc1Call =
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "2")->Option.getOrThrow
-    dc1Call.resolve([], ~latestFetchedBlockNumber=11400)
+    dc1Call.resolve([], ~latestFetchedBlockNumber=12500)
     await Utils.delay(0)
     await Utils.delay(0)
     await Utils.delay(0)
 
     // After merge:
-    // DC1("2"): mergeBlock=31300, single query 11401→31300 (no chunk history)
-    // DC2("3"): mergeBlock=31300, chunks still pending
+    // DC1("2"): mergeBlock=32380, single query 12501→32380 (no chunk history)
+    // DC2("3"): mergeBlock=32380, chunks still pending
     // P0("0"): still pending 25101→99800
-    // New("4"): lfb=31300, both addresses, inherits minRange=300 from DC2 history.
-    //   chunkSize=540, uniform chunks from 31301 up to the per-partition cap of 10.
+    // New("4"): lfb=32380, both addresses, inherits minRange=300 from DC2 history.
+    //   chunkSize=540, uniform chunks from 32381 up to the per-partition cap of 12.
     t.expect(
       sourceMock.getItemsOrThrowCalls
       ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
       ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
       ~message="After merge: DC1 queries to mergeBlock, DC2 chunks pending, new partition '4'",
     ).toEqual([
-      ("2", 11401, Some(31300)),
+      ("2", 12501, Some(32380)),
       ("0", 25101, Some(99800)),
       ("3", 25901, Some(26440)),
       ("3", 26441, Some(26980)),
@@ -1579,8 +1599,8 @@ describe("E2E tests", () => {
       ("3", 29681, Some(30220)),
       ("3", 30221, Some(30760)),
       ("3", 30761, Some(31300)),
-      ("4", 31301, Some(31840)),
-      ("4", 31841, Some(32380)),
+      ("3", 31301, Some(31840)),
+      ("3", 31841, Some(32380)),
       ("4", 32381, Some(32920)),
       ("4", 32921, Some(33460)),
       ("4", 33461, Some(34000)),
@@ -1589,6 +1609,10 @@ describe("E2E tests", () => {
       ("4", 35081, Some(35620)),
       ("4", 35621, Some(36160)),
       ("4", 36161, Some(36700)),
+      ("4", 36701, Some(37240)),
+      ("4", 37241, Some(37780)),
+      ("4", 37781, Some(38320)),
+      ("4", 38321, Some(38860)),
     ])
 
     // Verify merged partition "4" has both DC addresses
@@ -1720,9 +1744,12 @@ describe("E2E tests", () => {
         ~message="Should be in reorg threshold after both chains caught up",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      // Chains are at block 100, need to advance to 300 after threshold entry
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      // Chains are at block 100, need to advance to 300 after threshold entry.
+      // Only the most-behind chain (100 — the progress tie breaks by ascending
+      // chain id) holds a query; 1337 queries once the leader's budget releases.
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await indexerMock.getBatchWritePromise()
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexerMock.getBatchWritePromise()
 
       t.expect(
@@ -1802,6 +1829,105 @@ describe("E2E tests", () => {
         await indexerMock.metric("hyperindex_synced_to_head"),
         ~message="All chains should be synced to head",
       ).toEqual([{value: "1", labels: Dict.make()}])
+    },
+  )
+
+  // Regression (production): at realtime, when one chain falls far behind (a
+  // large new range that drains the shared fetch-buffer budget), a second chain
+  // that is only slightly behind its own head must keep polling for new blocks.
+  // The buggy scheduler drops such a chain as NothingToQuery (it is below its
+  // head, so it won't wait, yet the drained budget leaves it no query), so it is
+  // never dispatched — it stops fetching AND stops polling getHeightOrThrow, and
+  // its head tracking goes silent.
+  Async.it(
+    "Multichain realtime: a near-head chain keeps polling while another chain backfills a large range",
+    async t => {
+      let leaderSource = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let followerSource = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#100,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {chain: #1337, sourceConfig: Config.CustomSources([leaderSource.source])},
+          {chain: #100, sourceConfig: Config.CustomSources([followerSource.source])},
+        ],
+        ~shouldRollbackOnReorg=false,
+        ~targetBufferSize=1000,
+      )
+      await Utils.delay(0)
+
+      // Phase 1: both chains catch up to head (block 100) and become realtime.
+      // A handful of events on each seeds a density signal.
+      leaderSource.resolveGetHeightOrThrow(100)
+      followerSource.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      leaderSource.resolveGetItemsOrThrow(
+        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+      followerSource.resolveGetItemsOrThrow(
+        [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("hyperindex_synced_to_head"),
+        ~message="both chains reach realtime",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+
+      // Both chains are now at head, parked on a realtime getHeightOrThrow poll.
+      let followerPollsBefore = followerSource.getHeightOrThrowCalls->Array.length
+
+      // Phase 2: divergent new heights. The leader jumps far ahead (a large
+      // backlog whose reservation drains the shared fetch-buffer budget); the
+      // follower advances only a little past its own head.
+      leaderSource.resolveGetHeightOrThrow(1_000_000)
+      followerSource.resolveGetHeightOrThrow(105)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Drive the leader's backfill for several ticks, keeping it far behind (so
+      // it stays the budget-draining leader). Each response re-runs the
+      // cross-chain dispatch, so the follower is re-evaluated every tick.
+      for _ in 0 to 4 {
+        await MockIndexer.Helper.waitItemsQuery(leaderSource)
+        let call = leaderSource.getItemsOrThrowCalls->Array.getUnsafe(0)
+        let fromBlock = call.payload["fromBlock"]
+        call.resolve(
+          [{blockNumber: fromBlock + 20, logIndex: 0}, {blockNumber: fromBlock + 60, logIndex: 0}],
+          ~latestFetchedBlockNumber=fromBlock + 99,
+        )
+        await indexerMock.getBatchWritePromise()
+      }
+
+      // The follower is below its own head (frontier 100 < head 105). The
+      // indexer is realtime, so the cross-chain alignment clamp is dropped:
+      // instead of being starved behind the backfilling leader, the follower
+      // fetches its small range to head...
+      await MockIndexer.Helper.waitItemsQuery(followerSource)
+      let followerCall = followerSource.getItemsOrThrowCalls->Array.getUnsafe(0)
+      t.expect(
+        followerCall.payload["fromBlock"],
+        ~message="follower fetches its own range to head instead of waiting behind the leader",
+      ).toEqual(101)
+      followerCall.resolve([], ~latestFetchedBlockNumber=105)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // ...and once at head it goes back to polling for new blocks rather
+      // than going silent.
+      t.expect(
+        followerSource.getHeightOrThrowCalls->Array.length > followerPollsBefore,
+        ~message="follower keeps polling getHeightOrThrow while the leader backfills a large range",
+      ).toBe(true)
     },
   )
 })

@@ -9,7 +9,7 @@ mod classify;
 mod client;
 mod interval;
 
-use crate::evm_hypersync_source::decode::{DecoderCore, SelectionDecoder};
+use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
@@ -143,7 +143,7 @@ pub struct NextPageResponse {
 #[napi]
 pub struct EvmRpcClient {
     inner: JsonRpcClient,
-    decoder: DecoderCore,
+    decoder: Decoder,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     intervals: IntervalState,
@@ -165,7 +165,7 @@ impl EvmRpcClient {
             });
         let inner =
             JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
-        let decoder = DecoderCore::from_registrations(&event_registrations, checksum_addresses)
+        let decoder = Decoder::from_registrations(&event_registrations, checksum_addresses)
             .context("build decoder")
             .map_err(map_err)?;
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
@@ -264,7 +264,10 @@ impl EvmRpcClient {
         let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
         let selection_decoder = std::sync::Arc::new(
             self.decoder
-                .selection(&params.registration_indexes)
+                .selection(
+                    &params.registration_indexes,
+                    &params.addresses_by_contract_name,
+                )
                 .map_err(map_err)?,
         );
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
@@ -493,15 +496,13 @@ impl EvmRpcClient {
             let mut items = Vec::new();
             for raw in raw_logs {
                 let address = raw.normalized_address(should_checksum)?;
-                // Decode failures are skipped like unrouted logs (matching
-                // the pre-routing behavior where undecodable params made
-                // the JS side drop the item).
-                let routed = decoder
-                    .route_and_decode_napi(
-                        &raw.to_decoder_log(),
-                        contract_name_by_address.get(&address).map(String::as_str),
-                    )
-                    .unwrap_or_default();
+                // Per-registration decode failures are dropped inside
+                // `route_and_decode`; only structurally malformed logs error,
+                // and those propagate like on the HyperSync path.
+                let routed = decoder.route_and_decode_napi(
+                    &raw.to_decoder_log(),
+                    contract_name_by_address.get(&address).map(String::as_str),
+                )?;
                 if routed.is_empty() {
                     continue;
                 }

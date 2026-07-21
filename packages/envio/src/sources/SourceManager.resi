@@ -31,6 +31,18 @@ type requestStatSample = {
 
 let getRequestStatSamples: t => array<requestStatSample>
 
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: int,
+  height: int,
+}
+
+let getSourceHeightSamples: t => array<sourceHeightSample>
+
+let idleSeconds: t => float
+let waitingForNewBlockSeconds: t => float
+let queryingSeconds: t => float
+
 let inFlightCount: t => int
 
 let onReorg: (t, ~rollbackTargetBlock: int) => unit

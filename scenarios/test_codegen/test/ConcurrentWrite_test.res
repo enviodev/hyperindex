@@ -30,6 +30,7 @@ describe("Concurrent batch write and processing", () => {
             ~updatedEffectsCache,
             ~updatedEntities,
             ~chainMetaData,
+            ~onWrite,
           ) => {
             writeBatchCalls := writeBatchCalls.contents + 1
             let run = async () => {
@@ -48,6 +49,7 @@ describe("Concurrent batch write and processing", () => {
                 ~updatedEffectsCache,
                 ~updatedEntities,
                 ~chainMetaData,
+                ~onWrite,
               ) {
               | exception exn =>
                 let message = switch exn->JsExn.anyToExnInternal {
