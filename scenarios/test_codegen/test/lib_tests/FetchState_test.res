@@ -3533,6 +3533,31 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     t.expect((isReady(~knownHeight=209), isReady(~knownHeight=210))).toEqual((true, false))
   })
 
+  it("Does not apply the tolerance to a finite endBlock at or below the lagged head", t => {
+    // endBlock 100 sits below the lagged head (150), so it is an exact target.
+    // frontier 59 is within the tolerance of the lagged head (cutoff 50) but below
+    // the endBlock, so entry must wait for the endBlock rather than enter early.
+    let (fs, _indexingAddresses) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[
+        {
+          Internal.address: mockAddress0,
+          contractName: "Gravatar",
+          registrationBlock: -1,
+        },
+      ],
+      // latestFullyFetchedBlock = startBlock - 1 = 59
+      ~startBlock=60,
+      ~endBlock=Some(100),
+      ~maxAddrInPartition=3,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~chainId,
+      ~blockLag=0,
+      ~knownHeight=150,
+    )
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=100)).toBe(false)
+  })
+
   it("Blocks on processable items, but not on items stuck above the frontier", t => {
     // frontier (bufferBlockNumber) = 5, endBlock 5 reached.
     let readyWithItemAt = itemBlockNumber => {
