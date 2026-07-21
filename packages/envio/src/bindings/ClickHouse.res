@@ -317,8 +317,17 @@ let setUpdatesOrThrow = async (
 // The '{cluster}' macro resolves to each node's configured cluster name.
 let onClusterClause = (~onCluster: bool) => onCluster ? ` ON CLUSTER '{cluster}'` : ""
 
+// Strip both engine arguments `(...)` and a trailing `SETTINGS ...` clause to
+// get the bare engine name, e.g. `Replicated('/p','{shard}','{replica}') SETTINGS x=1`
+// and `Replicated SETTINGS x=1` both yield `Replicated`.
 let databaseEngineName = (engineSpec: string) =>
-  engineSpec->String.split("(")->Array.getUnsafe(0)->String.trim
+  engineSpec
+  ->String.trim
+  ->String.split("(")
+  ->Array.getUnsafe(0)
+  ->String.split(" ")
+  ->Array.getUnsafe(0)
+  ->String.trim
 
 // Generate CREATE TABLE query for entity history table
 let makeCreateHistoryTableQuery = (
@@ -495,9 +504,19 @@ let initialize = async (
     | None => ()
     }
 
-    await client->exec({
-      query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
-    })
+    if hasReplicatedDatabaseEngine {
+      // TRUNCATE DATABASE is unsupported on Replicated databases; drop and
+      // recreate instead. ON CLUSTER removes it from every node (the engine's
+      // own log can't replicate the drop of the database it lives in) and SYNC
+      // waits for the drop to finish before the CREATE below.
+      await client->exec({
+        query: `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
+      })
+    } else {
+      await client->exec({
+        query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
+      })
+    }
     await client->exec({
       query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
     })

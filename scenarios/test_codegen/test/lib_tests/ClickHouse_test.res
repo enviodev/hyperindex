@@ -73,6 +73,21 @@ describe("Test makeClickHouseEntitySchema", () => {
   })
 })
 
+describe("databaseEngineName", () => {
+  Async.it("Should strip arguments and a trailing SETTINGS clause", async t => {
+    let names =
+      [
+        "Replicated('/clickhouse/databases/db', '{shard}', '{replica}')",
+        "Replicated('/clickhouse/databases/db', '{shard}', '{replica}') SETTINGS max_broken_tables_ratio=1",
+        "Replicated SETTINGS max_broken_tables_ratio=1",
+        "  Replicated  ",
+        "Atomic",
+      ]->Array.map(ClickHouse.databaseEngineName)
+
+    t.expect(names).toEqual(["Replicated", "Replicated", "Replicated", "Replicated", "Atomic"])
+  })
+})
+
 describe("Test ClickHouse SQL generation functions", () => {
   describe("makeCreateCheckpointsTableQuery", () => {
     Async.it(
