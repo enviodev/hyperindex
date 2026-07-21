@@ -333,22 +333,8 @@ let finishWaitingForNewBlock = (
     let chainState = state->IndexerState.getChainState(~chain)
     chainState->ChainState.updateKnownHeight(~knownHeight)
 
-    let isBelowReorgThreshold =
-      !(state->IndexerState.isInReorgThreshold) &&
-      (state->IndexerState.config).shouldRollbackOnReorg
-    let shouldEnterReorgThreshold =
-      isBelowReorgThreshold &&
-      state
-      ->IndexerState.chainStates
-      ->Dict.valuesToArray
-      ->Array.every(cs => {
-        cs->ChainState.isReadyToEnterReorgThreshold
-      })
-
-    // Kick processing in case there are block handlers to run.
-    if shouldEnterReorgThreshold {
-      IndexerState.enterReorgThreshold(state)
-    }
+    // No reorg-threshold check here: scheduleProcessing always runs at least one
+    // processNextBatch (even with no items), which owns the entry decision.
     scheduleFetch()
     scheduleProcessing()
   }

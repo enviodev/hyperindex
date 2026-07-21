@@ -39,11 +39,6 @@ type t = {
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
   // prune / rollback lifecycle as the transaction store.
   blockStore: BlockStore.t,
-  // Latches true once the frontier first reaches the lagged head, keeping
-  // readiness monotonic so a later head advance can't retract it — otherwise the
-  // all-chains-ready check almost never lines up on a live indexer. Safe because
-  // nothing above head - maxReorgDepth is processed before the threshold.
-  mutable reachedReorgThresholdEdge: bool,
   reorgThresholdReadyTolerance: int,
 }
 
@@ -128,7 +123,6 @@ let make = (
     safeCheckpointTracking,
     transactionStore,
     blockStore,
-    reachedReorgThresholdEdge: false,
     reorgThresholdReadyTolerance,
   }
 }
@@ -394,18 +388,8 @@ let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPerc
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
-// See reachedReorgThresholdEdge.
-let latchReorgThresholdEdge = (cs: t, fetchState: FetchState.t) => {
-  if (
-    !cs.reachedReorgThresholdEdge &&
-    fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
-  ) {
-    cs.reachedReorgThresholdEdge = true
-  }
-  cs.reachedReorgThresholdEdge
-}
-
-let isReadyToEnterReorgThreshold = (cs: t) => cs->latchReorgThresholdEdge(cs.fetchState)
+let isReadyToEnterReorgThreshold = (cs: t) =>
+  cs.fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
 
 // Mark queries as in flight and reserve their estimated size against the shared
 // buffer budget in one step, so the counter stays in sync with the pending
@@ -928,7 +912,7 @@ let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
   | Some(chainAfterBatch) => chainAfterBatch.fetchState
   | None => cs.fetchState
   }
-  cs->latchReorgThresholdEdge(fetchState)
+  fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
 }
 
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,

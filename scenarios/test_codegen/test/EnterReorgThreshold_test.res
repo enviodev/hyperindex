@@ -4,11 +4,13 @@ open Vitest
 //
 // Entry is a one-time whole-indexer transition that requires EVERY chain to
 // satisfy `isReadyToEnterReorgThreshold` at the same batch-completion check
-// (BatchProcessing.res `Array.every`). Readiness is instantaneous and
-// non-monotonic: a chain that reached its lagged head is un-readied the moment
-// its head advances by a block. With more than one live chain the head of some
-// chain is always advancing, so the conjunction is never observed and the
-// indexer sits below the threshold forever.
+// (BatchProcessing.res `Array.every`). Without a tolerance, a chain that reached
+// its lagged head is un-readied the moment its head advances by a block. With
+// more than one live chain the head of some chain is always advancing, so the
+// conjunction is never observed and the indexer sits below the threshold forever.
+// The reorg-threshold ready tolerance closes this: a chain stays ready while
+// within `tolerance` blocks of the lagged head, so a small head advance during
+// the cross-chain handoff no longer defers entry.
 describe("PIN: multichain indexer enters the reorg threshold", () => {
   let waitNewHeightPoll = async (sourceMock: MockIndexer.Source.t, ~after) => {
     let attempts = ref(0)
@@ -40,6 +42,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
           {chain: #100, sourceConfig: Config.CustomSources([chainA.source]), maxReorgDepth: 200, blockLag: 0},
           {chain: #1337, sourceConfig: Config.CustomSources([chainB.source]), maxReorgDepth: 200, blockLag: 0},
         ],
+        ~reorgThresholdReadyTolerance=100,
         ~reducedPollingInterval=1,
         ~targetBufferSize=100,
       )
@@ -72,11 +75,10 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
         ~message="cannot enter while chain B is still backfilling",
       ).toEqual([{value: "0", labels: Dict.make()}])
 
-      // Chain A's head advances by one block while it idles at its lagged head.
-      // Under the instantaneous predicate this un-readies chain A: its lagged
-      // head moves to 801, ahead of its frontier at 800. (Chain A cannot even
-      // re-query 801 yet — chain B holds the shared fetch budget — so it stays
-      // below its new lagged head.)
+      // Chain A's head advances while it idles at its lagged head, so its frontier
+      // (800) now trails the lagged head (801). Without a tolerance this would
+      // un-ready chain A and defer entry; the 100-block tolerance keeps it ready.
+      // (Chain A cannot re-query 801 yet — chain B holds the shared fetch budget.)
       await waitNewHeightPoll(chainA, ~after=initialHeightPolls)
       chainA.resolveGetHeightOrThrow(1001)
       await Utils.delay(0)
@@ -96,12 +98,12 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       )
       await indexerMock.getBatchWritePromise()
 
-      // Both chains have reached their lagged heads at some point, so the
-      // indexer must be inside the reorg threshold — even though chain A's head
-      // advanced past its frontier before chain B caught up.
+      // Both chains are within the tolerance of their lagged heads, so the indexer
+      // enters — even though chain A's head advanced past its frontier before
+      // chain B caught up.
       t.expect(
         await indexerMock.metric("envio_reorg_threshold"),
-        ~message="the indexer enters the threshold once every chain has reached its lagged head",
+        ~message="the indexer enters the threshold with both chains within the tolerance of head",
       ).toEqual([{value: "1", labels: Dict.make()}])
     },
   )

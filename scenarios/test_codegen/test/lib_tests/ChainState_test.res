@@ -198,7 +198,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   })
 })
 
-describe("ChainState reorg-threshold readiness latch", () => {
+describe("ChainState reorg-threshold readiness", () => {
   // A chain with no address partitions, so bufferBlockNumber follows
   // latestOnBlockBlockNumber (the fetch frontier) and readiness can be set
   // directly. blockLag defaults to 0, so the lagged head is knownHeight.
@@ -216,7 +216,7 @@ describe("ChainState reorg-threshold readiness latch", () => {
       ~onBlockRegistrations=[
         {
           Internal.index: 0,
-          name: "latch-test",
+          name: "tolerance-test",
           chainId,
           startBlock: None,
           endBlock: None,
@@ -246,24 +246,17 @@ describe("ChainState reorg-threshold readiness latch", () => {
     )
   }
 
-  it("is not ready far below the head, and stays ready after the head jumps past the tolerance", t => {
-    // blockLag 0, tolerance 100: the ready cutoff is knownHeight - 100.
-    let belowHead = makeAtFrontier(~knownHeight=1000, ~frontier=850)
-
-    let atHead = makeAtFrontier(~knownHeight=1000, ~frontier=1000)
-    let readyAtHead = atHead->ChainState.isReadyToEnterReorgThreshold
-    // Head jumps beyond the tolerance after the chain reached it. Without the
-    // latch this retracts readiness (frontier 1000 < cutoff 1100); the latch
-    // keeps it ready.
-    atHead->ChainState.updateKnownHeight(~knownHeight=1200)
+  it("applies the configured tolerance below the lagged head", t => {
+    // blockLag 0, default tolerance 100: the ready cutoff is knownHeight - 100.
+    let beyondTolerance = makeAtFrontier(~knownHeight=1000, ~frontier=850)
+    let withinTolerance = makeAtFrontier(~knownHeight=1000, ~frontier=950)
 
     t.expect(
       (
-        belowHead->ChainState.isReadyToEnterReorgThreshold,
-        readyAtHead,
-        atHead->ChainState.isReadyToEnterReorgThreshold,
+        beyondTolerance->ChainState.isReadyToEnterReorgThreshold,
+        withinTolerance->ChainState.isReadyToEnterReorgThreshold,
       ),
-      ~message="readiness latches on reaching the head and survives a later head jump",
-    ).toEqual((false, true, true))
+      ~message="ready within the tolerance below the lagged head, not beyond it",
+    ).toEqual((false, true))
   })
 })
