@@ -200,9 +200,9 @@ chains:
   \`envio_change\` Enum8('SET', 'DELETE')
 )
 ENGINE = MergeTree()
-PARTITION BY toYYYYMM(timestamp)
+PARTITION BY toYYYYMM(\`timestamp\`)
 ORDER BY (\`timestamp\`, envio_checkpoint_id)
-TTL timestamp + INTERVAL 2 YEAR`,
+TTL \`timestamp\` + INTERVAL 2 YEAR`,
         })
       },
     )
@@ -253,6 +253,60 @@ chains:
 )
 ENGINE = MergeTree()
 ORDER BY (\`base_token_id\`, \`trade_time\`, envio_checkpoint_id)`)
+      },
+    )
+
+    Async.it(
+      "Should resolve schema field names inside partitionBy and ttl expressions to columns",
+      async t => {
+        let config = MockIndexerConfig.parseYaml(
+          ~schema=`
+type Trade @storage(clickhouse: {
+  partitionBy: "toYYYYMM(tradeTime)",
+  ttl: "tradeTime + INTERVAL 1 YEAR DELETE WHERE baseToken != ''"
+}) {
+  id: ID!
+  baseToken: Token!
+  tradeTime: Timestamp!
+}
+
+type Token @storage(clickhouse: true) {
+  id: ID!
+}
+`,
+          `
+name: clickhouse-expression-columns
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    column_name_format: snake_case
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+        ).config
+        let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Trade")
+
+        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
+
+        t.expect(
+          query,
+          ~message="partitionBy/ttl field references should resolve to ClickHouse columns, leaving functions, keywords and string literals untouched",
+        ).toBe(`CREATE TABLE IF NOT EXISTS test_db.\`envio_history_Trade\` (
+  \`id\` String,
+  \`base_token_id\` String,
+  \`trade_time\` DateTime64(3, 'UTC'),
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(\`trade_time\`)
+ORDER BY (id, envio_checkpoint_id)
+TTL \`trade_time\` + INTERVAL 1 YEAR DELETE WHERE \`base_token_id\` != ''`)
       },
     )
   })

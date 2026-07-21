@@ -1380,6 +1380,25 @@ type Token @storage(clickhouse: {orderBy: ["missing"]}) {
       "\`clickhouse.orderBy\` references field \`missing\` which doesn't exist",
     ),
     (
+      "rejects clickhouse orderBy listing id",
+      `
+type Token @storage(clickhouse: {orderBy: ["id"]}) {
+  id: ID!
+}
+`,
+      "\`clickhouse.orderBy\` must not list \`id\`",
+    ),
+    (
+      "rejects clickhouse orderBy on BigInt fields",
+      `
+type Token @storage(clickhouse: {orderBy: ["amount"]}) {
+  id: ID!
+  amount: BigInt!
+}
+`,
+      "field \`amount\` is a BigInt/BigDecimal",
+    ),
+    (
       "rejects empty storage directives",
       `
 type Token @storage {
