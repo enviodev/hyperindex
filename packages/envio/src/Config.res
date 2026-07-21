@@ -79,6 +79,10 @@ type t = {
   enableRawEvents: bool,
   maxAddrInPartition: int,
   batchSize: int,
+  // Slack (in blocks) below the lagged head within which a chain still counts as
+  // ready to enter the reorg threshold, absorbing head advances between catch-up
+  // and the entry check. Overridable in tests.
+  reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
@@ -997,6 +1001,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ecosystem,
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
+    reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
