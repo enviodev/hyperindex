@@ -1,4 +1,22 @@
-type chainData = ChainState.chainData
+// The public console/state chain shape. Kept to exactly this field set for
+// backward compatibility with consumers like RACE — new metric fields stay off
+// the HTTP response.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
@@ -11,6 +29,21 @@ type state =
       isPreRegisteringDynamicContracts: bool,
       rollbackOnReorg: bool,
     })
+
+let toChainData = (m: Metrics.chainMetrics): chainData => {
+  chainId: m.chainId,
+  poweredByHyperSync: m.poweredByHyperSync,
+  firstEventBlockNumber: m.firstEventBlockNumber,
+  latestProcessedBlock: m.latestProcessedBlock,
+  timestampCaughtUpToHeadOrEndblock: m.timestampCaughtUpToHeadOrEndblock,
+  numEventsProcessed: m.numEventsProcessed,
+  latestFetchedBlockNumber: m.latestFetchedBlockNumber,
+  knownHeight: m.knownHeight,
+  numBatchesFetched: m.numBatchesFetched,
+  startBlock: m.startBlock,
+  endBlock: m.endBlock,
+  numAddresses: m.numAddresses,
+}
 
 let chainDataSchema = S.schema((s): chainData => {
   chainId: s.matches(S.float),
@@ -331,13 +364,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let raw =
-      rawOptions->(
-        Utils.magic: 'a => {
-          "name": string,
-          "where": unknown,
-        }
-      )
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown})
     HandlerRegister.registerOnBlock(
       ~name=raw["name"],
       ~where=raw["where"],
@@ -496,23 +523,19 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
     }
   })
 
-  let runtimeRegistry = PromClient.makeRegistry()
-  PromClient.collectDefaultMetrics({"register": runtimeRegistry})
+  Metrics.startRuntimeCollectors()
 
   app->get("/metrics", (_req, res) => {
-    res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
+    res->set("Content-Type", Metrics.contentType)
     let _ =
-      Metrics.collect(~state=getIndexerState())->Promise.thenResolve(metrics =>
-        res->endWithData(metrics)
+      res->endWithData(
+        Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
       )
   })
 
   app->get("/metrics/runtime", (_req, res) => {
-    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
-    let _ =
-      runtimeRegistry
-      ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+    res->set("Content-Type", Metrics.contentType)
+    let _ = res->endWithData(Metrics.collectRuntime())
   })
 
   let server = app->listen(Env.serverPort)
@@ -636,17 +659,13 @@ let start = async (
     (onErrorReject.contents->Option.getUnsafe)(FatalError(errHandler.exn->Utils.prettifyExn))
   }
   let envioVersion = Utils.EnvioPackage.value.version
-  Prometheus.Info.set(~version=envioVersion)
-  Prometheus.ProcessStartTimeSeconds.set()
-  Prometheus.RollbackEnabled.set(~enabled=config.shouldRollbackOnReorg)
 
   if !isTest {
     startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
       switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {
-          let chains =
-            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toChainData)
+          let chains = (state->IndexerState.toMetrics).chains->Array.map(toChainData)
           Active({
             envioVersion,
             chains,

@@ -107,10 +107,9 @@ and executeRollback = async (
     },
   )
   logger->Logging.childInfo("Started rollback on reorg")
-  Prometheus.RollbackTargetBlockNumber.set(
-    ~blockNumber=rollbackTargetBlockNumber,
-    ~chain=reorgChain,
-  )
+  state
+  ->IndexerState.getChainState(~chain=reorgChain)
+  ->ChainState.setRollbackTargetBlock(~blockNumber=rollbackTargetBlockNumber)
 
   let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
@@ -212,7 +211,7 @@ and executeRollback = async (
     "deleted": diff["deletedEntities"],
     "upserted": diff["setEntities"],
   })
-  Prometheus.RollbackSuccess.increment(
+  state->IndexerState.recordRollbackSuccess(
     ~timeSeconds=Performance.secondsSince(startTime),
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
   )

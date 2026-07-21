@@ -200,6 +200,7 @@ module Storage = {
           ~updatedEffectsCache as _,
           ~updatedEntities as _,
           ~chainMetaData as _,
+          ~onWrite as _,
         ) => JsError.throwWithMessage("Not implemented"),
         close: () => Promise.resolve(),
       },
@@ -399,9 +400,6 @@ module Indexer = {
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
-    // TODO: Should stop using global client
-    PromClient.defaultRegister->PromClient.resetMetrics
-
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
     | None => Logging.setLogLevel(#silent)
@@ -631,14 +629,47 @@ module Indexer = {
         ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
-        switch PromClient.defaultRegister->PromClient.getSingleMetric(name) {
-        | Some(m) =>
-          (await m.get())["values"]->Array.map(v => {
-            value: v.value->Int.toString,
-            labels: v.labels,
-          })
-        | None => []
-        }
+        // Parse the metric's samples back out of the rendered /metrics text.
+        Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
+        ->String.split("\n")
+        ->Array.filterMap(line =>
+          if line->String.startsWith(name ++ "{") || line->String.startsWith(name ++ " ") {
+            let rest = line->String.slice(~start=name->String.length)
+            let (labelsPart, value) = switch rest->String.lastIndexOf(" ") {
+            | -1 => ("", rest)
+            | i => (rest->String.slice(~start=0, ~end=i), rest->String.slice(~start=i + 1))
+            }
+            let labels = Dict.make()
+            // Quoted values may contain escaped `\"`, `\\` and `\n`, so match
+            // label pairs instead of splitting on commas/equals.
+            let labelRe = RegExp.fromString(
+              `([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\\]|\\\\.)*)"`,
+              ~flags="g",
+            )
+            let break = ref(false)
+            while !break.contents {
+              switch labelRe->RegExp.exec(labelsPart) {
+              | Some(result) =>
+                let matches = result->RegExp.Result.matches
+                switch (matches->Array.get(0), matches->Array.get(1)) {
+                | (Some(Some(key)), Some(Some(escaped))) =>
+                  labels->Dict.set(
+                    key,
+                    escaped
+                    ->String.replaceAll("\\n", "\n")
+                    ->String.replaceAll("\\\"", "\"")
+                    ->String.replaceAll("\\\\", "\\"),
+                  )
+                | _ => ()
+                }
+              | None => break := true
+              }
+            }
+            Some({value, labels})
+          } else {
+            None
+          }
+        )
       },
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
