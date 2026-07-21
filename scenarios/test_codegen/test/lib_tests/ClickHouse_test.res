@@ -97,7 +97,11 @@ ORDER BY (id)`
     Async.it(
       "Should add ON CLUSTER and ReplicatedMergeTree when replicated",
       async t => {
-        let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db", ~replicated=true)
+        let query = ClickHouse.makeCreateCheckpointsTableQuery(
+          ~database="test_db",
+          ~replicated=true,
+          ~onCluster=true,
+        )
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` ON CLUSTER '{cluster}' (
   \`id\` UInt64,
@@ -112,6 +116,28 @@ ORDER BY (id)`
         t.expect(
           query,
           ~message="Replicated checkpoints table SQL should match exactly",
+        ).toBe(expectedQuery)
+      },
+    )
+
+    Async.it(
+      "Should use ReplicatedMergeTree without ON CLUSTER for Replicated database engine",
+      async t => {
+        let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db", ~replicated=true)
+
+        let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` (
+  \`id\` UInt64,
+  \`chain_id\` Int32,
+  \`block_number\` Int32,
+  \`block_hash\` Nullable(String),
+  \`events_processed\` UInt64
+)
+ENGINE = ReplicatedMergeTree
+ORDER BY (id)`
+
+        t.expect(
+          query,
+          ~message="Replicated-engine checkpoints table SQL should match exactly",
         ).toBe(expectedQuery)
       },
     )
@@ -169,6 +195,7 @@ ORDER BY (id, envio_checkpoint_id)`
           ~entityConfig,
           ~database="test_db",
           ~replicated=true,
+          ~onCluster=true,
         )
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` ON CLUSTER '{cluster}' (
@@ -239,7 +266,7 @@ WHERE \`envio_change\` = 'SET'`
         let query = ClickHouse.makeCreateViewQuery(
           ~entityConfig=entity,
           ~database="test_db",
-          ~replicated=true,
+          ~onCluster=true,
         )
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` ON CLUSTER '{cluster}' AS
