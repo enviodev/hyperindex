@@ -62,10 +62,9 @@ impl EvmHypersyncClient {
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
-        let decoder =
-            Decoder::from_registrations(&event_registrations, enable_checksum_addresses)
-                .context("build decoder")
-                .map_err(map_err)?;
+        let decoder = Decoder::from_registrations(&event_registrations, enable_checksum_addresses)
+            .context("build decoder")
+            .map_err(map_err)?;
 
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
