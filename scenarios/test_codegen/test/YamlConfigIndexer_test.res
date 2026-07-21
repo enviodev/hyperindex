@@ -14,7 +14,7 @@ describe("YAML-driven MockIndexer", () => {
   Async.it(
     "runs the indexer loop with a config parsed from user YAML instead of the generated one",
     async t => {
-      let {config} = MockIndexerConfig.parseYaml(
+      let {config, publicConfigJson} = MockIndexerConfig.parseYaml(
         ~schema=`
 type YamlToken {
   id: ID!
@@ -40,6 +40,7 @@ chains:
       let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#1337)
       let indexerMock = await MockIndexer.Indexer.make(
         ~config,
+        ~envioInfo=publicConfigJson->Config.stripSensitiveData,
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
         ~shouldRollbackOnReorg=false,
       )
@@ -49,6 +50,9 @@ chains:
       await Utils.delay(0)
       await Utils.delay(0)
 
+      // No explicit ~latestFetchedBlockNumber: the mock defaults it to at least
+      // the highest item block, so the block-5 item is processed rather than
+      // dropped for sitting above the fetched range.
       source.resolveGetItemsOrThrow([
         {
           blockNumber: 5,
@@ -59,7 +63,7 @@ chains:
             context.yamlToken.set({id: "token-1", owner: "0xabc"})
           },
         },
-      ], ~latestFetchedBlockNumber=300)
+      ])
       await indexerMock.getBatchWritePromise()
 
       let tokens: array<yamlToken> = await indexerMock.queryRaw(

@@ -410,6 +410,9 @@ module Indexer = {
     // A config parsed through the user-facing pipeline (MockIndexerConfig.parseYaml).
     // Defaults to the generated project config.
     ~config as customConfig: option<Config.t>=?,
+    // Recorded as envio_info on init. Supply the stripped public config JSON so
+    // restart/compat-diff scenarios validate against the real value instead of `{}`.
+    ~envioInfo: JSON.t=JSON.Encode.object(Dict.make()),
     ~saveFullHistory=false,
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
@@ -508,7 +511,7 @@ module Indexer = {
 
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
-      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~envioInfo,
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,
@@ -724,6 +727,7 @@ module Indexer = {
         await make(
           ~chains,
           ~config=?customConfig,
+          ~envioInfo,
           ~enableHasura,
           ~enableRawEvents,
           ~saveFullHistory,
@@ -964,8 +968,17 @@ module Source = {
                   ~knownHeight=knownHeight,
                   ~prevRangeLastBlock=?,
                 ) => {
-                  let latestFetchedBlockNumber =
-                    latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
+                  let latestFetchedBlockNumber = switch latestFetchedBlockNumber {
+                  | Some(latestFetchedBlockNumber) => latestFetchedBlockNumber
+                  | None =>
+                    // Never resolve below the highest item block: the indexer only
+                    // processes up to latestFetchedBlockNumber, so an item above the
+                    // fetched range (e.g. toBlock unset ⇒ defaults to fromBlock) would
+                    // otherwise be silently dropped.
+                    items->Array.reduce(toBlock->Option.getOr(fromBlock), (max, item) =>
+                      item.blockNumber > max ? item.blockNumber : max
+                    )
+                  }
 
                   let latestFetchedBlockHash = switch latestFetchedBlockHash {
                   | Some(latestFetchedBlockHash) => latestFetchedBlockHash
