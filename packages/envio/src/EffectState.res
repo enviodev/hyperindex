@@ -1,6 +1,7 @@
-// Owns all per-(effect, scope) runtime state and its lifecycle. The two maps
-// have different rollback semantics, so keeping them together behind an explicit
-// `resetForRollback` makes the invariant enforced rather than remembered.
+// Owns all per-(effect, scope) runtime state and its lifecycle. A single store
+// of tables holds the cache alongside the counters and rate-limit window that
+// must outlive a rollback; `resetForRollback` clears only the cache in place so
+// that survival is structural rather than remembered.
 
 // Per-scope rate-limit window and queue. A chain-scoped effect gets one of
 // these per chain, so each chain's throughput is independent.
@@ -12,9 +13,9 @@ type effectRateLimitState = {
   mutable nextWindowPromise: option<promise<unit>>,
 }
 
-// Per-(effect, scope) counters rendered into the envio_effect_* metrics.
-// Keyed by cache table name and kept outside the cache tables so a rollback
-// (which drops the tables) never rewinds the monotonic counters.
+// Per-(effect, scope) counters rendered into the envio_effect_* metrics. Live
+// on the cache table and survive a rollback because the table does, keeping the
+// prometheus counters monotonic across a reorg.
 type effectStats = {
   effectName: string,
   scope: Internal.chainScope,
@@ -55,50 +56,30 @@ type effectCacheInMemTable = {
   stats: effectStats,
 }
 
-type t = {
-  // Cache tables keyed by cache table name. Dropped on rollback — the cache
-  // is re-derivable from the db.
-  mutable tables: dict<effectCacheInMemTable>,
-  // Rate-limit windows keyed by the same name. Survive rollback: rate limiting
-  // reflects real API throughput, not indexing progress, so a reorg must not
-  // refill an effect's budget.
-  rateLimits: dict<effectRateLimitState>,
-  // Metric counters keyed by the same name. Survive rollback: prometheus
-  // counters must stay monotonic.
-  stats: dict<effectStats>,
+// Startup seed for an effect's persisted-rows count, keyed by cache table name.
+// Consumed when the effect's table is first created; until then it's enough to
+// render envio_effect_cache for an effect that hasn't run this session.
+type initialCacheCount = {
+  effectName: string,
+  scope: Internal.chainScope,
+  count: int,
 }
 
-let make = (): t => {tables: Dict.make(), rateLimits: Dict.make(), stats: Dict.make()}
+type t = {
+  // The single per-(effect, scope) store. Cache-derived fields are cleared on
+  // rollback; stats and the rate-limit window survive because the table does.
+  mutable tables: dict<effectCacheInMemTable>,
+  // Startup-only cache-count seeds, consumed as tables are created.
+  initialCacheCounts: dict<initialCacheCount>,
+}
 
-let getStats = (self: t, ~tableName, ~effectName, ~scope) =>
-  switch self.stats->Utils.Dict.dangerouslyGetNonOption(tableName) {
-  | Some(existing) => existing
-  | None =>
-    let created: effectStats = {
-      effectName,
-      scope,
-      callSeconds: 0.,
-      callSecondsTotal: 0.,
-      callCount: 0.,
-      activeCallsCount: 0,
-      prevCallStartTimerRef: %raw(`null`),
-      queueCount: 0,
-      queueWaitSeconds: 0.,
-      invalidationsCount: 0.,
-      cacheCount: 0,
-      hasCache: false,
-    }
-    self.stats->Dict.set(tableName, created)
-    created
-  }
+let make = (): t => {tables: Dict.make(), initialCacheCounts: Dict.make()}
 
 // Seed the persisted-rows count from the db on restart, before any cache table
-// is lazily created.
+// is lazily created. Consumed by getTable on first creation of the table.
 let setCacheCount = (self: t, ~effectName, ~scope, ~count) => {
   let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
-  let stats = self->getStats(~tableName, ~effectName, ~scope)
-  stats.cacheCount = count
-  stats.hasCache = true
+  self.initialCacheCounts->Dict.set(tableName, {effectName, scope, count})
 }
 
 // --- Metric mutations. The stats records are opaque outside this module, so
@@ -150,50 +131,86 @@ let commitCacheCount = (inMemTable: effectCacheInMemTable, ~count) => {
   inMemTable.stats.hasCache = true
 }
 
-let toMetrics = (self: t): array<Metrics.effectMetrics> =>
-  self.stats
-  ->Dict.valuesToArray
-  ->Array.map(stats => {
-    Metrics.effect: stats.effectName,
-    scope: stats.scope->Internal.EffectCache.scopeToString,
-    callSeconds: stats.callSeconds,
-    callSecondsTotal: stats.callSecondsTotal,
-    callCount: stats.callCount,
-    activeCallsCount: stats.activeCallsCount,
-    queueCount: stats.queueCount,
-    queueWaitSeconds: stats.queueWaitSeconds,
-    invalidationsCount: stats.invalidationsCount,
-    cacheCount: stats.hasCache ? Some(stats.cacheCount) : None,
+let statsToMetrics = (stats: effectStats): Metrics.effectMetrics => {
+  Metrics.effect: stats.effectName,
+  scope: stats.scope->Internal.EffectCache.scopeToString,
+  callSeconds: stats.callSeconds,
+  callSecondsTotal: stats.callSecondsTotal,
+  callCount: stats.callCount,
+  activeCallsCount: stats.activeCallsCount,
+  queueCount: stats.queueCount,
+  queueWaitSeconds: stats.queueWaitSeconds,
+  invalidationsCount: stats.invalidationsCount,
+  cacheCount: stats.hasCache ? Some(stats.cacheCount) : None,
+}
+
+// Full per-effect metrics for every live table, plus a cache-only entry for
+// each seed of an effect that hasn't run this session (envio_effect_cache
+// only). A seed is consumed once its table is created, so the two never
+// double-count the same effect.
+let toMetrics = (self: t): array<Metrics.effectMetrics> => {
+  let metrics = self.tables->Utils.Dict.mapValuesToArray(t => t.stats->statsToMetrics)
+  self.initialCacheCounts->Utils.Dict.forEach(({effectName, scope, count}) => {
+    metrics
+    ->Array.push({
+      Metrics.effect: effectName,
+      scope: scope->Internal.EffectCache.scopeToString,
+      callSeconds: 0.,
+      callSecondsTotal: 0.,
+      callCount: 0.,
+      activeCallsCount: 0,
+      queueCount: 0,
+      queueWaitSeconds: 0.,
+      invalidationsCount: 0.,
+      cacheCount: Some(count),
+    })
+    ->ignore
   })
+  metrics
+}
 
-let getRateLimitState = (self: t, ~tableName, ~effect: Internal.effect) =>
-  switch effect.rateLimit {
-  | None => None
-  | Some({callsPerDuration, durationMs}) =>
-    Some(
-      switch self.rateLimits->Utils.Dict.dangerouslyGetNonOption(tableName) {
-      | Some(existing) => existing
-      | None =>
-        let created: effectRateLimitState = {
-          callsPerDuration,
-          durationMs,
-          availableCalls: callsPerDuration,
-          windowStartTime: Date.now(),
-          nextWindowPromise: None,
-        }
-        self.rateLimits->Dict.set(tableName, created)
-        created
-      },
-    )
-  }
-
-// Get, or lazily create, the in-mem table for an (effect, scope). A recreated
-// table (e.g. after a rollback) reuses the surviving rate-limit window.
+// Get, or lazily create, the in-mem table for an (effect, scope). On first
+// creation the rate-limit window is built from the effect config and any
+// matching startup cache-count seed is consumed. A table recreated after a
+// rollback keeps its surviving stats and rate-limit window because the table
+// object itself survives — only its cache is cleared.
 let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) => {
   let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
   switch self.tables->Utils.Dict.dangerouslyGetNonOption(tableName) {
   | Some(inMemTable) => inMemTable
   | None =>
+    let stats: effectStats = {
+      effectName: effect.name,
+      scope,
+      callSeconds: 0.,
+      callSecondsTotal: 0.,
+      callCount: 0.,
+      activeCallsCount: 0,
+      prevCallStartTimerRef: %raw(`null`),
+      queueCount: 0,
+      queueWaitSeconds: 0.,
+      invalidationsCount: 0.,
+      cacheCount: 0,
+      hasCache: false,
+    }
+    switch self.initialCacheCounts->Utils.Dict.dangerouslyGetNonOption(tableName) {
+    | Some({count}) =>
+      stats.cacheCount = count
+      stats.hasCache = true
+      self.initialCacheCounts->Utils.Dict.deleteInPlace(tableName)
+    | None => ()
+    }
+    let rateLimitState = switch effect.rateLimit {
+    | None => None
+    | Some({callsPerDuration, durationMs}) =>
+      Some({
+        callsPerDuration,
+        durationMs,
+        availableCalls: callsPerDuration,
+        windowStartTime: Date.now(),
+        nextWindowPromise: None,
+      })
+    }
     let inMemTable: effectCacheInMemTable = {
       idsToStore: [],
       dict: Dict.make(),
@@ -202,8 +219,8 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
       effect,
       scope,
       table: Internal.makeCacheTable(~effectName=effect.name, ~scope),
-      rateLimitState: self->getRateLimitState(~tableName, ~effect),
-      stats: self->getStats(~tableName, ~effectName=effect.name, ~scope),
+      rateLimitState,
+      stats,
     }
     self.tables->Dict.set(tableName, inMemTable)
     inMemTable
@@ -212,6 +229,13 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
 
 let forEach = (self: t, fn) => self.tables->Utils.Dict.forEach(fn)
 
-// Drop the cache tables (re-derivable from the db) but keep the rate-limit
-// windows so a reorg doesn't hand an effect a fresh budget.
-let resetForRollback = (self: t) => self.tables = Dict.make()
+// Clear the cache-derived fields on every table in place. The cache is
+// re-derivable from the db, but stats and the rate-limit window must survive a
+// reorg — so the table object (their owner) is kept and only its cache reset.
+let resetForRollback = (self: t) =>
+  self.tables->Utils.Dict.forEach(t => {
+    t.dict = Dict.make()
+    t.idsToStore = []
+    t.changesCount = 0.
+    t.invalidationsCount = 0
+  })
