@@ -222,7 +222,7 @@ let makeInternal = (
       ~lowercaseAddresses,
     )
   | Config.FuelSourceConfig({hypersync}) => [
-      HyperFuelSource.make({
+      FuelHyperSyncSource.make({
         chain,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,

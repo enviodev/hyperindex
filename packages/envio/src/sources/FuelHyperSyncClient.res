@@ -98,7 +98,7 @@ module EventItems = {
 
 @send
 external classNew: (
-  Core.hyperfuelClientCtor,
+  Core.fuelHyperSyncClientCtor,
   cfg,
   ~userAgent: string,
   array<Registration.input>,
@@ -106,7 +106,7 @@ external classNew: (
 
 let make = (cfg: cfg, ~eventRegistrations) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  Core.getAddon().hyperfuelClient->classNew(
+  Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
     eventRegistrations,

@@ -21,9 +21,9 @@ Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   }
 
-  let client = switch HyperFuelClient.make(
+  let client = switch FuelHyperSyncClient.make(
     {url: endpointUrl, apiToken},
-    ~eventRegistrations=HyperFuelClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
   ) {
   | client => client
   | exception exn =>
@@ -47,14 +47,14 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let startFetchingBatchTimeRef = Performance.now()
 
     //fetch batch
-    let pageUnsafe = try await HyperFuel.GetLogs.query(
+    let pageUnsafe = try await FuelHyperSync.GetLogs.query(
       ~client,
       ~fromBlock,
       ~toBlock,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressesByContractName,
     ) catch {
-    | HyperFuel.GetLogs.Error(error) =>
+    | FuelHyperSync.GetLogs.Error(error) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -67,7 +67,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
               | _ => 500 * retry
               }
               WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in HyperFuel. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                message: `Block #${fromBlock->Int.toString} not found in FuelHyperSync. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
                 backoffMillis,
               })
             | UnexpectedMissingParams({missingParams}) =>
@@ -238,7 +238,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     poweredByHyperSync: true,
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()
-      let height = try await client->HyperFuelClient.getHeight catch {
+      let height = try await client->FuelHyperSyncClient.getHeight catch {
       | JsExn(e) =>
         switch e->JsExn.message {
         | Some(message) if message->isUnauthorizedError =>

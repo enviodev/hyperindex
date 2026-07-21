@@ -141,20 +141,20 @@ fn build_schemas(
 }
 
 #[napi]
-pub struct SvmHypersyncClient {
+pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
     schemas: HashMap<String, UpstreamSchema>,
     selection_builder: SelectionBuilder,
 }
 
 #[napi]
-impl SvmHypersyncClient {
+impl SvmHyperSyncClient {
     #[napi(constructor)]
     pub fn new(
         cfg: SvmClientConfig,
         user_agent: String,
         event_registrations: Vec<SvmOnEventRegistrationInput>,
-    ) -> napi::Result<SvmHypersyncClient> {
+    ) -> napi::Result<SvmHyperSyncClient> {
         Self::from_config(cfg, user_agent, event_registrations)
     }
 
@@ -166,7 +166,7 @@ impl SvmHypersyncClient {
         cfg: SvmClientConfig,
         user_agent: String,
         event_registrations: Vec<SvmOnEventRegistrationInput>,
-    ) -> napi::Result<SvmHypersyncClient> {
+    ) -> napi::Result<SvmHyperSyncClient> {
         let schemas = build_schemas(&event_registrations)
             .context("build program schemas")
             .map_err(map_err)?;
@@ -176,7 +176,7 @@ impl SvmHypersyncClient {
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
-        Ok(SvmHypersyncClient {
+        Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
             schemas,
             selection_builder,
@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = SvmHypersyncClient::new(
+        let client = SvmHyperSyncClient::new(
             SvmClientConfig {
                 url: "https://solana.hypersync.xyz".into(),
                 ..Default::default()

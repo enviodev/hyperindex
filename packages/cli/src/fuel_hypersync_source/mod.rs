@@ -14,19 +14,19 @@ use selection::{BuiltSelection, FuelEventKind, FuelOnEventRegistrationInput, Sel
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
-pub struct HyperfuelClient {
+pub struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
     selection_builder: SelectionBuilder,
 }
 
 #[napi]
-impl HyperfuelClient {
+impl FuelHyperSyncClient {
     #[napi(factory)]
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<FuelOnEventRegistrationInput>,
-    ) -> napi::Result<HyperfuelClient> {
+    ) -> napi::Result<FuelHyperSyncClient> {
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
             .map_err(map_err)?;
@@ -35,7 +35,7 @@ impl HyperfuelClient {
         let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
             .context("build client")
             .map_err(map_err)?;
-        Ok(HyperfuelClient {
+        Ok(FuelHyperSyncClient {
             inner,
             selection_builder,
         })

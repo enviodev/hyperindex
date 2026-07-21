@@ -91,7 +91,7 @@ let makeSelection = (): FetchState.selection => {
 }
 
 let makeHyperSyncSource = () =>
-  HyperSyncSource.make({
+  EvmHyperSyncSource.make({
     chain,
     endpointUrl: "https://eth.hypersync.xyz",
     onEventRegistrations: [pairCreatedRegistration],

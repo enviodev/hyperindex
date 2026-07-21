@@ -244,7 +244,7 @@ type t = {
 
 @send
 external classFromConfig: (
-  Core.svmHypersyncClientCtor,
+  Core.svmHyperSyncClientCtor,
   cfg,
   string,
   array<Registration.input>,
@@ -260,7 +260,7 @@ let make = (
   ~eventRegistrations=[],
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  Core.getAddon().svmHypersyncClient->classFromConfig(
+  Core.getAddon().svmHyperSyncClient->classFromConfig(
     {
       url,
       ?apiToken,

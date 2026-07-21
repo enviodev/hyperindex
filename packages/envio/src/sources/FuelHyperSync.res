@@ -1,7 +1,7 @@
 type logsQueryPage = {
-  items: array<HyperFuelClient.EventItems.item>,
+  items: array<FuelHyperSyncClient.EventItems.item>,
   // Blocks referenced by `items`, one per height.
-  blocks: array<HyperFuelClient.EventItems.block>,
+  blocks: array<FuelHyperSyncClient.EventItems.block>,
   nextBlock: int,
   archiveHeight: int,
 }
@@ -39,20 +39,20 @@ module GetLogs = {
   }
 
   let query = async (
-    ~client: HyperFuelClient.t,
+    ~client: FuelHyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
     ~registrationIndexes,
     ~addressesByContractName,
   ): logsQueryPage => {
-    let query: HyperFuelClient.EventItems.query = {
+    let query: FuelHyperSyncClient.EventItems.query = {
       fromBlock,
       toBlock,
       registrationIndexes,
       addressesByContractName,
     }
 
-    let res = switch await client->HyperFuelClient.getEventItems(query) {
+    let res = switch await client->FuelHyperSyncClient.getEventItems(query) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {

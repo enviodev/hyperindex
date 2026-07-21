@@ -1,6 +1,6 @@
 type logsQueryPage = {
-  items: array<HyperFuelClient.EventItems.item>,
-  blocks: array<HyperFuelClient.EventItems.block>,
+  items: array<FuelHyperSyncClient.EventItems.item>,
+  blocks: array<FuelHyperSyncClient.EventItems.block>,
   nextBlock: int,
   archiveHeight: int,
 }
@@ -13,7 +13,7 @@ module GetLogs: {
   exception Error(error)
 
   let query: (
-    ~client: HyperFuelClient.t,
+    ~client: FuelHyperSyncClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
     ~registrationIndexes: array<int>,

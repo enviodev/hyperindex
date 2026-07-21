@@ -121,7 +121,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
   Core.addonRef :=
     Some(
       {
-        "SvmHypersyncClient": {
+        "SvmHyperSyncClient": {
           "fromConfig": (
             _: SvmHyperSyncClient.cfg,
             _: string,

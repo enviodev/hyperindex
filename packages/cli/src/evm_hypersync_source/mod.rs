@@ -43,7 +43,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 }
 
 #[napi]
-pub struct EvmHypersyncClient {
+pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
     decoder: Decoder,
@@ -51,13 +51,13 @@ pub struct EvmHypersyncClient {
 }
 
 #[napi]
-impl EvmHypersyncClient {
+impl EvmHyperSyncClient {
     #[napi(factory)]
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
-    ) -> napi::Result<EvmHypersyncClient> {
+    ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
@@ -75,7 +75,7 @@ impl EvmHypersyncClient {
             .context("build client")
             .map_err(map_err)?;
 
-        Ok(EvmHypersyncClient {
+        Ok(EvmHyperSyncClient {
             inner,
             enable_checksum_addresses,
             decoder,
