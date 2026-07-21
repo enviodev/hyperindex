@@ -294,7 +294,7 @@ pub struct ParamMeta {
 /// routing identity (`id`/`contract_name`/`is_wildcard`), and the fetch state
 /// queries are built from (`topic_selections`, field selections).
 #[napi(object)]
-pub struct OnEventRegistration {
+pub struct OnEventRegistrationInput {
     /// Chain-scoped sequential registration index; returned on every routed
     /// item so JS resolves the registration by array index.
     pub index: i64,
