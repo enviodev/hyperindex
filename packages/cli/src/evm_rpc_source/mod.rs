@@ -9,7 +9,7 @@ mod classify;
 mod client;
 mod interval;
 
-use crate::evm_hypersync_source::decode::{DecoderCore, SelectionDecoder};
+use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
@@ -143,7 +143,7 @@ pub struct NextPageResponse {
 #[napi]
 pub struct EvmRpcClient {
     inner: JsonRpcClient,
-    decoder: DecoderCore,
+    decoder: Decoder,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     intervals: IntervalState,
@@ -165,7 +165,7 @@ impl EvmRpcClient {
             });
         let inner =
             JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
-        let decoder = DecoderCore::from_registrations(&event_registrations, checksum_addresses)
+        let decoder = Decoder::from_registrations(&event_registrations, checksum_addresses)
             .context("build decoder")
             .map_err(map_err)?;
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)

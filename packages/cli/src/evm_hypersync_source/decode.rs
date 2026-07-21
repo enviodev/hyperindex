@@ -28,9 +28,10 @@ enum TopicConstraint {
 
 /// A registration's static topic constraints — its resolved `where` in DNF:
 /// the outer Vec is an OR of alternatives, each alternative constrains the
-/// four topic positions. An empty DNF is `where: false` (the registration
-/// selects no events) and so matches nothing; a registration with no `where`
-/// carries one all-`Any` alternative instead.
+/// four topic positions. A registration with no `where` carries one all-`Any`
+/// alternative. (A `where: false` registration resolves to an empty DNF, but
+/// it's dropped at registration and never reaches routing — see
+/// `HandlerRegister`; an empty DNF here would just match nothing.)
 struct TopicFilters(Vec<[TopicConstraint; 4]>);
 
 impl TopicFilters {
@@ -77,8 +78,9 @@ impl TopicFilters {
         topics: &[Option<LogArgument>],
         contract_address_topics: &[[u8; 32]],
     ) -> bool {
-        // An empty DNF (`where: false`) matches nothing — `any` over no
-        // alternatives is already `false`, which is the intended semantics.
+        // No explicit empty-DNF guard: `any` over zero alternatives is already
+        // `false`. (An empty DNF is `where: false`, which is dropped at
+        // registration and never reaches here.)
         self.0.iter().any(|alternative| {
             alternative
                 .iter()
@@ -160,12 +162,12 @@ impl OnEventRegistration {
 /// chain-scoped index. Holds no routing state itself — a query resolves its
 /// own selection into a `SelectionDecoder` via `selection`.
 #[derive(Clone)]
-pub(crate) struct DecoderCore {
+pub(crate) struct Decoder {
     registrations: Arc<HashMap<i64, Arc<OnEventRegistration>>>,
     checksummed_addresses: bool,
 }
 
-impl DecoderCore {
+impl Decoder {
     pub(crate) fn from_registrations(
         registrations: &[OnEventRegistrationInput],
         checksum_addresses: bool,
@@ -465,7 +467,7 @@ mod tests {
     fn registration_rejects_zero_topics() {
         let mut reg = value_reg(0, "C", false, VALID_SIGHASH);
         reg.topic_count = 0;
-        let err = DecoderCore::from_registrations(&[reg], false)
+        let err = Decoder::from_registrations(&[reg], false)
             .err()
             .unwrap();
         assert!(format!("{err:#}").contains("topic_count must be 1..=4"));
@@ -475,7 +477,7 @@ mod tests {
     fn registration_rejects_five_topics() {
         let mut reg = value_reg(0, "C", false, VALID_SIGHASH);
         reg.topic_count = 5;
-        let err = DecoderCore::from_registrations(&[reg], false)
+        let err = Decoder::from_registrations(&[reg], false)
             .err()
             .unwrap();
         assert!(format!("{err:#}").contains("topic_count must be 1..=4"));
@@ -487,12 +489,12 @@ mod tests {
         one.topic_count = 1;
         let mut four = value_reg(1, "C", false, VALID_SIGHASH);
         four.topic_count = 4;
-        assert!(DecoderCore::from_registrations(&[one, four], false).is_ok());
+        assert!(Decoder::from_registrations(&[one, four], false).is_ok());
     }
 
     #[test]
     fn duplicate_registration_index_errors() {
-        let err = DecoderCore::from_registrations(
+        let err = Decoder::from_registrations(
             &[
                 value_reg(0, "C", false, VALID_SIGHASH),
                 value_reg(0, "D", false, VALID_SIGHASH),
@@ -506,7 +508,7 @@ mod tests {
 
     #[test]
     fn unknown_registration_index_errors() {
-        let core = DecoderCore::from_registrations(&[], false).unwrap();
+        let core = Decoder::from_registrations(&[], false).unwrap();
         let err = core.selection(&[7], &HashMap::new()).err().unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
@@ -524,7 +526,7 @@ mod tests {
             .selector()
             .to_string();
 
-        let core = DecoderCore::from_registrations(
+        let core = Decoder::from_registrations(
             &[OnEventRegistrationInput {
                 index: 7,
                 sighash: real_sighash.clone(),
@@ -579,7 +581,7 @@ mod tests {
 
     #[test]
     fn fans_out_to_wildcards_and_owned_contract_without_fallback_tier() {
-        let core = DecoderCore::from_registrations(
+        let core = Decoder::from_registrations(
             &[
                 value_reg(0, "Owned", false, VALID_SIGHASH),
                 value_reg(1, "W1", true, VALID_SIGHASH),
@@ -604,7 +606,7 @@ mod tests {
 
     #[test]
     fn routing_scoped_to_query_selection() {
-        let core = DecoderCore::from_registrations(
+        let core = Decoder::from_registrations(
             &[
                 value_reg(0, "Owned", false, VALID_SIGHASH),
                 value_reg(1, "W1", true, VALID_SIGHASH),
@@ -622,15 +624,16 @@ mod tests {
     }
 
     #[test]
-    fn where_false_registration_matches_nothing_even_via_fan_out() {
-        // A `where: false` registration crosses the boundary with an empty
-        // `topic_selections`. Even sharing a signature with a broad sibling
-        // that fetches the log, the disabled registration must never match.
+    fn empty_dnf_matches_nothing() {
+        // Defensive: a `where: false` registration (empty DNF) is dropped at
+        // registration and never reaches routing, but if one ever did — even
+        // sharing a signature with a broad sibling that fetches the log — it
+        // must match nothing rather than everything.
         let mut disabled = value_reg(0, "Disabled", true, VALID_SIGHASH);
         disabled.topic_selections = vec![];
         let sibling = value_reg(1, "Live", true, VALID_SIGHASH);
 
-        let core = DecoderCore::from_registrations(&[disabled, sibling], false).unwrap();
+        let core = Decoder::from_registrations(&[disabled, sibling], false).unwrap();
         let routed = core
             .selection(&[0, 1], &HashMap::new())
             .unwrap()
@@ -670,7 +673,7 @@ mod tests {
         filtered_b.params = indexed_address_params();
         filtered_b.topic_selections = vec![selection(Some(vec![topic1_b]))];
 
-        let core = DecoderCore::from_registrations(&[filtered_a, filtered_b], false).unwrap();
+        let core = Decoder::from_registrations(&[filtered_a, filtered_b], false).unwrap();
         let log = Log {
             topics: vec![Some(VALID_SIGHASH.to_string()), Some(topic1_a)],
             data: value_log(VALID_SIGHASH).data,
@@ -709,7 +712,7 @@ mod tests {
 
     #[test]
     fn contract_addresses_marker_materialized_from_query_addresses() {
-        let core = DecoderCore::from_registrations(&[marker_reg(0, "C")], false).unwrap();
+        let core = Decoder::from_registrations(&[marker_reg(0, "C")], false).unwrap();
         let addresses = HashMap::from([(
             "C".to_string(),
             vec!["0x00000000000000000000000000000000000000aa".to_string()],
@@ -740,7 +743,7 @@ mod tests {
         sibling.topic_count = 2;
         sibling.params = indexed_address_params();
 
-        let core = DecoderCore::from_registrations(&[marker_reg(0, "C"), sibling], false).unwrap();
+        let core = Decoder::from_registrations(&[marker_reg(0, "C"), sibling], false).unwrap();
         let addresses = HashMap::from([(
             "C".to_string(),
             vec!["0x00000000000000000000000000000000000000aa".to_string()],
@@ -769,7 +772,7 @@ mod tests {
             reg.params = params;
             reg
         };
-        let core = DecoderCore::from_registrations(
+        let core = Decoder::from_registrations(
             &[
                 variant(
                     0,
@@ -837,7 +840,7 @@ mod tests {
             reg.params = params;
             reg
         };
-        let core = DecoderCore::from_registrations(
+        let core = Decoder::from_registrations(
             &[
                 variant(
                     0,

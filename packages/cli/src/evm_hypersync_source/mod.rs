@@ -17,7 +17,7 @@ pub(crate) mod types;
 use std::collections::HashMap;
 
 use config::ClientConfig;
-use decode::{DecoderCore, SelectionDecoder};
+use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
@@ -46,7 +46,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 pub struct EvmHypersyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
-    decoder: DecoderCore,
+    decoder: Decoder,
     selection_builder: SelectionBuilder,
 }
 
@@ -63,7 +63,7 @@ impl EvmHypersyncClient {
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
         let decoder =
-            DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
+            Decoder::from_registrations(&event_registrations, enable_checksum_addresses)
                 .context("build decoder")
                 .map_err(map_err)?;
 
@@ -685,7 +685,7 @@ mod tests {
     use hypersync_client::simple_types;
 
     fn empty_decoder() -> SelectionDecoder {
-        DecoderCore::from_registrations(&[], false)
+        Decoder::from_registrations(&[], false)
             .unwrap()
             .selection(&[], &HashMap::new())
             .unwrap()
@@ -695,7 +695,7 @@ mod tests {
     // registration so success-path tests still produce an item now that
     // unrouted logs are dropped.
     fn zero_event_decoder() -> SelectionDecoder {
-        DecoderCore::from_registrations(
+        Decoder::from_registrations(
             &[
                 crate::evm_hypersync_source::types::OnEventRegistrationInput {
                     index: 0,
