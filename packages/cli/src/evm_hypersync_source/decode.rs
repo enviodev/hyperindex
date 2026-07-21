@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
-use crate::evm_hypersync_source::selection::TopicSelectionInput;
+use crate::evm_hypersync_source::selection::{address_to_topic_bytes, TopicSelectionInput};
 use crate::evm_hypersync_source::types::{
     sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
 };
@@ -371,16 +371,6 @@ fn apply_names(
             Ok((param.name.clone(), value))
         })
         .collect()
-}
-
-/// Left-pad a 20-byte address to its 32-byte indexed-topic form, so a decoded
-/// address param can be compared byte-for-byte against a log's topic.
-fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
-    let bytes = hypersync_client::format::Address::decode_hex(address)
-        .with_context(|| format!("decode address {address} for topic encoding"))?;
-    let mut topic = [0u8; 32];
-    topic[12..].copy_from_slice(bytes.as_slice());
-    Ok(topic)
 }
 
 /// Build the positional decoder for one registration. The decoder's topic0 is
