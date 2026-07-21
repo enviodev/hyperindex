@@ -13,8 +13,7 @@
   },
   "scripts": {
     "build": "rescript",
-    "watch": "rescript watch",
-    "test": "rescript && vitest run"
+    "watch": "rescript watch"
   },
   "author": "envio contributors <about@envio.dev>",
   "license": "SEE LICENSE IN licenses/README.md",
@@ -76,7 +75,6 @@
     "tsx": "4.21.0"
   },
   "devDependencies": {
-    "rescript": "12.2.0",
-    "vitest": "4.1.0"
+    "rescript": "12.2.0"
   }
 }

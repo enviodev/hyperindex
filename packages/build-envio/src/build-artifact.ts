@@ -58,9 +58,6 @@ const PUBLISH_FILES = [
   "index.d.ts",
   "index.js",
   "src",
-  // Internal ReScript test helpers (vitest-free) that dependent test suites
-  // compile against. Not part of the user-facing JS API (index.js).
-  "testing",
 ];
 
 // ── Core logic ──────────────────────────────────────────────────────
@@ -160,25 +157,6 @@ export function copyPublishFiles(envioDir: string, outDir: string): void {
     }
     copyRecursive(src, dest);
   }
-  stripTestSources(path.join(outDir, "rescript.json"));
-}
-
-/**
- * The `test` dir (vitest suites) isn't shipped, so the published
- * rescript.json must not reference it. The `testing` dir (vitest-free
- * shared helpers) IS shipped and stays in sources.
- */
-export function stripTestSources(rescriptJsonPath: string): void {
-  const config = JSON.parse(fs.readFileSync(rescriptJsonPath, "utf-8"));
-  if (Array.isArray(config.sources)) {
-    config.sources = config.sources.filter(
-      (source: { dir?: string }) => source?.dir !== "test"
-    );
-  }
-  fs.writeFileSync(
-    rescriptJsonPath,
-    JSON.stringify(config, null, 2) + "\n"
-  );
 }
 
 /**

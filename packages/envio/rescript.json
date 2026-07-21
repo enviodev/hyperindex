@@ -5,14 +5,6 @@
     {
       "dir": "src",
       "subdirs": true
-    },
-    {
-      "dir": "testing",
-      "subdirs": true
-    },
-    {
-      "dir": "test",
-      "subdirs": true
     }
   ],
   "suffix": ".res.mjs",

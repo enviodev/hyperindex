@@ -223,13 +223,8 @@ jobs:
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
 
-      - name: envio package tests
-        working-directory: packages/envio
-        env:
-          # The workspace envio package has no envio-linux-x64 dependency and
-          # this job has no Rust toolchain for the cargo dev fallback, so let
-          # require() find the prebuilt NAPI addon artifact via NODE_PATH.
-          NODE_PATH: ${{ github.workspace }}/.envio-artifacts
+      - name: envio-tests
+        working-directory: packages/envio-tests
         run: pnpm test
 
       - name: test_codegen
