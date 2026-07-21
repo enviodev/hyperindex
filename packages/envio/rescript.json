@@ -7,6 +7,10 @@
       "subdirs": true
     },
     {
+      "dir": "testing",
+      "subdirs": true
+    },
+    {
       "dir": "test",
       "subdirs": true
     }

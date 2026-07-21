@@ -14,17 +14,14 @@ describe("YAML-driven MockIndexer", () => {
   Async.it(
     "runs the indexer loop with a config parsed from user YAML instead of the generated one",
     async t => {
-      // Parse through the real user-facing pipeline (Rust napi → public JSON →
-      // Config.fromPublic), the same path MockIndexerConfig.parseYaml uses.
-      let config =
-        Core.parseConfigYaml(
-          ~schema=`
+      let {config} = MockIndexerConfig.parseYaml(
+        ~schema=`
 type YamlToken {
   id: ID!
   owner: String!
 }
 `,
-          `
+        `
 name: yaml-driven
 chains:
   - id: 1337
@@ -38,9 +35,7 @@ chains:
         events:
           - event: Transfer()
 `,
-        )
-        ->JSON.parseOrThrow
-        ->Config.fromPublic
+      )
 
       let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#1337)
       let indexerMock = await MockIndexer.Indexer.make(
