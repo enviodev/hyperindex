@@ -101,6 +101,28 @@ let epoch: t => int
 let lastPrunedAtMillis: t => dict<float>
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
 
+// Read-only snapshot of every metric; the single window into the mutable
+// counters for the /metrics endpoint, the TUI and the console API.
+let toMetrics: t => Metrics.t
+
+// Metric counters.
+let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
+let recordHandlerDuration: (t, ~contract: string, ~event: string, ~duration: float) => unit
+let startPreloadHandler: (t, ~contract: string, ~event: string) => Performance.timeRef
+let endPreloadHandler: (t, Performance.timeRef, ~contract: string, ~event: string) => unit
+let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
+let endStorageLoad: (
+  t,
+  Performance.timeRef,
+  ~storage: string,
+  ~operation: string,
+  ~whereSize: int,
+  ~size: int,
+) => unit
+let recordStorageWrite: (t, ~storage: string, ~timeSeconds: float) => unit
+let recordHistoryPrune: (t, ~entityName: string, ~timeSeconds: float) => unit
+let recordRollbackSuccess: (t, ~timeSeconds: float, ~rollbackedProcessedEvents: float) => unit
+
 // Store domain operations.
 let queueProcessedBatch: (t, ~batch: Batch.t) => unit
 let drainBatchRun: t => Batch.t

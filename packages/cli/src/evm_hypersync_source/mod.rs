@@ -17,11 +17,12 @@ pub(crate) mod types;
 use std::collections::HashMap;
 
 use config::ClientConfig;
-use decode::DecoderCore;
+use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
-    encode_address, map_hex_string, map_i64, Block, OnEventRegistration, ParamValue, RollbackGuard,
+    encode_address, map_hex_string, map_i64, Block, OnEventRegistrationInput, ParamValue,
+    RollbackGuard,
 };
 
 static LOGGER_INIT: Once = Once::new();
@@ -45,7 +46,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 pub struct EvmHypersyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
-    decoder: DecoderCore,
+    decoder: Decoder,
     selection_builder: SelectionBuilder,
 }
 
@@ -55,14 +56,14 @@ impl EvmHypersyncClient {
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
-        event_registrations: Vec<OnEventRegistration>,
+        event_registrations: Vec<OnEventRegistrationInput>,
     ) -> napi::Result<EvmHypersyncClient> {
         init_logger(cfg.log_level.as_deref());
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
         let decoder =
-            DecoderCore::from_registrations(&event_registrations, enable_checksum_addresses)
+            Decoder::from_registrations(&event_registrations, enable_checksum_addresses)
                 .context("build decoder")
                 .map_err(map_err)?;
 
@@ -122,6 +123,13 @@ impl EvmHypersyncClient {
         let built = self
             .selection_builder
             .build(
+                &params.registration_indexes,
+                &params.addresses_by_contract_name,
+            )
+            .map_err(map_err)?;
+        let selection_decoder = self
+            .decoder
+            .selection(
                 &params.registration_indexes,
                 &params.addresses_by_contract_name,
             )
@@ -207,7 +215,7 @@ impl EvmHypersyncClient {
                 response.data.blocks,
                 response.data.transactions,
                 response.data.logs,
-                &self.decoder,
+                &selection_decoder,
                 self.enable_checksum_addresses,
                 &validated_block_fields,
                 &requested_transaction_fields,
@@ -373,7 +381,7 @@ fn process_response(
     blocks: Vec<Vec<simple_types::Block>>,
     transactions: Vec<Vec<simple_types::Transaction>>,
     logs: Vec<Vec<simple_types::Log>>,
-    decoder: &DecoderCore,
+    decoder: &SelectionDecoder,
     should_checksum: bool,
     validated_block_fields: &[BlockField],
     requested_transaction_fields: &[TransactionField],
@@ -481,9 +489,9 @@ fn process_response(
     for log in logs.into_iter().flatten() {
         let (log_index, src_address, block_number, transaction_index) =
             flatten_log_for_js(&log, should_checksum).context("mapping log")?;
-        // Propagate genuine decode errors (malformed bytes, ABI mismatch) up to
-        // the JS caller instead of silently coercing them into a drop — a drop
-        // is reserved for logs that route to no registration.
+        // Only structurally malformed logs (missing topic0, bad topic bytes)
+        // surface here; per-registration decode failures are dropped inside
+        // `route_and_decode`.
         let routed = decoder
             .route_and_decode_simple(
                 &log,
@@ -492,10 +500,10 @@ fn process_response(
                     .map(String::as_str),
             )
             .context("decode event params")?;
-        if let Some(routed) = routed {
+        for routed in routed {
             items.push(EventItem {
                 log_index,
-                src_address,
+                src_address: src_address.clone(),
                 block_number,
                 transaction_index,
                 on_event_registration_index: routed.index,
@@ -676,30 +684,46 @@ mod tests {
     use super::*;
     use hypersync_client::simple_types;
 
-    fn empty_decoder() -> DecoderCore {
-        DecoderCore::from_registrations(&[], false).unwrap()
+    fn empty_decoder() -> SelectionDecoder {
+        Decoder::from_registrations(&[], false)
+            .unwrap()
+            .selection(&[], &HashMap::new())
+            .unwrap()
     }
 
     // Routes `full_log` (zero topic0, one topic, empty data) to a wildcard
     // registration so success-path tests still produce an item now that
     // unrouted logs are dropped.
-    fn zero_event_decoder() -> DecoderCore {
-        DecoderCore::from_registrations(
-            &[crate::evm_hypersync_source::types::OnEventRegistration {
-                index: 0,
-                sighash: format!("0x{}", "00".repeat(32)),
-                topic_count: 1,
-                event_name: "Zero".to_string(),
-                contract_name: "Zero".to_string(),
-                is_wildcard: true,
-                depends_on_addresses: false,
-                topic_selections: vec![],
-                block_fields: vec![],
-                transaction_fields: vec![],
-                params: vec![],
-            }],
+    fn zero_event_decoder() -> SelectionDecoder {
+        Decoder::from_registrations(
+            &[
+                crate::evm_hypersync_source::types::OnEventRegistrationInput {
+                    index: 0,
+                    sighash: format!("0x{}", "00".repeat(32)),
+                    topic_count: 1,
+                    event_name: "Zero".to_string(),
+                    contract_name: "Zero".to_string(),
+                    is_wildcard: true,
+                    depends_on_addresses: false,
+                    // One no-filter selection pinning topic0 (an empty list would
+                    // be `where: false` and match nothing).
+                    topic_selections: vec![
+                        crate::evm_hypersync_source::selection::TopicSelectionInput {
+                            topic0: vec![format!("0x{}", "00".repeat(32))],
+                            topic1: Some(vec![]),
+                            topic2: Some(vec![]),
+                            topic3: Some(vec![]),
+                        },
+                    ],
+                    block_fields: vec![],
+                    transaction_fields: vec![],
+                    params: vec![],
+                },
+            ],
             false,
         )
+        .unwrap()
+        .selection(&[0], &HashMap::new())
         .unwrap()
     }
 

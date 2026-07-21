@@ -28,15 +28,13 @@ let make = (
   ~isRealtime,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
-  let crossChainState = {
+  {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isInReorgThreshold,
     targetBufferSize,
   }
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
-  crossChainState
 }
 
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
@@ -49,6 +47,7 @@ let getChainState = (crossChainState: t, chainId) =>
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
 let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
+let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -120,7 +119,6 @@ let createBatch = (
 // blockLag and flip the flag.
 let enterReorgThreshold = (crossChainState: t) => {
   Logging.info("Reorg threshold reached")
-  Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
 
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -158,10 +156,6 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
     if !(cs->ChainState.isReady) {
       allChainsReady := false
     }
-  }
-
-  if allChainsReady.contents {
-    Prometheus.ProgressReady.setAllReady()
   }
 
   crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents

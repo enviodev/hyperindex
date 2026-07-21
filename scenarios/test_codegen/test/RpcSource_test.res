@@ -1267,6 +1267,12 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       let eventConfig = {
         ...MockIndexer.evmOnEventRegistration(
         ~id=sighash,
+        // Two indexed params so the log carries the topic1/topic2 values the
+        // OR branches filter on and decodes cleanly (derived topicCount 3).
+        ~paramsMetadata=[
+          {name: "a", abiType: "uint256", indexed: true},
+          {name: "b", abiType: "uint256", indexed: true},
+        ],
         ~eventFilters=[
           {
             topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
@@ -1289,10 +1295,20 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         index: 0,
       }
 
+      // Carries both indexed topics the OR branches filter on, so a real
+      // provider returns it for either server-side filter; routing re-checks
+      // the registration's topic filters against these values.
       let logJson = JSON.Object(
         Dict.fromArray([
           ("address", JSON.String(mockAddress->Address.toString)),
-          ("topics", JSON.Array([JSON.String(sighash)])),
+          (
+            "topics",
+            JSON.Array([
+              JSON.String(sighash),
+              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000001"),
+              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            ]),
+          ),
           ("data", JSON.String("0x")),
           ("blockNumber", JSON.String("0x64")),
           (

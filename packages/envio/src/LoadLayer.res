@@ -13,7 +13,8 @@ let loadById = (
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
+    let timerRef =
+      indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
 
     // Since LoadManager.call prevents registering entities already in the in-memory store,
     // we can be sure that we load only the new ones.
@@ -50,7 +51,8 @@ let loadById = (
       )
     })
 
-    timerRef->Prometheus.StorageLoad.endOperation(
+    indexerState->IndexerState.endStorageLoad(
+      timerRef,
       ~storage=storage.name,
       ~operation=key,
       ~whereSize=idsToLoad->Array.length,
@@ -76,25 +78,7 @@ let callEffect = (
   ~timerRef,
   ~onError,
 ) => {
-  let effectName = effect.name
-  let scopeLabel = inMemTable.scope->Internal.EffectCache.scopeToString
-  let hadActiveCalls = inMemTable.activeCallsCount > 0
-  inMemTable.activeCallsCount = inMemTable.activeCallsCount + 1
-  Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-    ~labels={"effect": effectName, "scope": scopeLabel},
-    ~value=inMemTable.activeCallsCount,
-  )
-
-  if hadActiveCalls {
-    let elapsed = Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=timerRef)
-    if elapsed > 0. {
-      Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-        ~labels={"effect": effectName, "scope": scopeLabel},
-        ~value=elapsed,
-      )
-    }
-  }
-  inMemTable.prevCallStartTimerRef = timerRef
+  inMemTable.stats->EffectState.startCall(~timerRef)
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
@@ -109,25 +93,7 @@ let callEffect = (
     onError(~inputKey=arg.cacheKey, ~exn)
   })
   ->Promise.finally(() => {
-    inMemTable.activeCallsCount = inMemTable.activeCallsCount - 1
-    Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-      ~labels={"effect": effectName, "scope": scopeLabel},
-      ~value=inMemTable.activeCallsCount,
-    )
-    let newTimer = Performance.now()
-    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels={"effect": effectName, "scope": scopeLabel},
-      ~value=Performance.secondsBetween(~from=inMemTable.prevCallStartTimerRef, ~to=newTimer),
-    )
-    inMemTable.prevCallStartTimerRef = newTimer
-
-    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(
-      ~labels={"effect": effectName, "scope": scopeLabel},
-    )
-    Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels={"effect": effectName, "scope": scopeLabel},
-      ~value=timerRef->Performance.secondsSince,
-    )
+    inMemTable.stats->EffectState.endCall(~startTimerRef=timerRef)
   })
 }
 
@@ -138,8 +104,6 @@ let rec executeWithRateLimit = (
   ~onError,
   ~isFromQueue: bool,
 ) => {
-  let effectName = effect.name
-
   let timerRef = Performance.now()
   let promises = []
 
@@ -194,25 +158,13 @@ let rec executeWithRateLimit = (
     }
 
     if immediateCount > 0 && isFromQueue {
-      // Update queue count metric
-      state.queueCount = state.queueCount - immediateCount
-      Prometheus.EffectQueueCount.set(
-        ~count=state.queueCount,
-        ~effectName,
-        ~scope=inMemTable.scope->Internal.EffectCache.scopeToString,
-      )
+      inMemTable.stats->EffectState.queueDequeued(~count=immediateCount)
     }
 
     // Handle queued items
     if queuedArgs->Utils.Array.notEmpty {
       if !isFromQueue {
-        // Update queue count metric
-        state.queueCount = state.queueCount + queuedArgs->Array.length
-        Prometheus.EffectQueueCount.set(
-          ~count=state.queueCount,
-          ~effectName,
-          ~scope=inMemTable.scope->Internal.EffectCache.scopeToString,
-        )
+        inMemTable.stats->EffectState.queueEnqueued(~count=queuedArgs->Array.length)
       }
 
       let millisUntilReset = ref(0)
@@ -232,9 +184,8 @@ let rec executeWithRateLimit = (
         nextWindowPromise
         ->Promise.then(() => {
           if millisUntilReset.contents > 0 {
-            Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.handleFloat(
-              ~labels=effectName,
-              ~value=millisUntilReset.contents->Int.toFloat /. 1000.,
+            inMemTable.stats->EffectState.addQueueWaitSeconds(
+              ~seconds=millisUntilReset.contents->Int.toFloat /. 1000.,
             )
           }
           executeWithRateLimit(
@@ -289,7 +240,8 @@ let loadEffect = (
       }
     ) {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
-      let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
+      let timerRef =
+        indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
       let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {
@@ -319,8 +271,7 @@ let loadEffect = (
           inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
         } catch {
         | S.Raised(error) =>
-          inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
-          Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
+          inMemTable->EffectState.recordInvalidation
           Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,
@@ -330,7 +281,8 @@ let loadEffect = (
         }
       })
 
-      timerRef->Prometheus.StorageLoad.endOperation(
+      indexerState->IndexerState.endStorageLoad(
+        timerRef,
         ~storage=storage.name,
         ~operation=key,
         ~whereSize=idsToLoad->Array.length,
@@ -386,7 +338,8 @@ let loadByFilter = (
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
+    let timerRef =
+      indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
 
     let size = ref(0)
 
@@ -434,7 +387,8 @@ let loadByFilter = (
     })
     ->Promise.all
 
-    timerRef->Prometheus.StorageLoad.endOperation(
+    indexerState->IndexerState.endStorageLoad(
+      timerRef,
       ~storage=storage.name,
       ~operation=key,
       ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),

@@ -69,6 +69,7 @@ impl TopicSelection {
     }
 }
 
+#[derive(PartialEq, Eq)]
 struct MaterializedTopicSelection {
     topic0: Vec<String>,
     topic1: Vec<String>,
@@ -95,28 +96,43 @@ struct RegistrationSelection {
     transaction_fields: Vec<TransactionField>,
 }
 
-/// Left-pad a 20-byte address to a 32-byte topic value. Lowercased — topic
-/// values are compared as bytes server-side and registration-time values are
-/// lowercased the same way.
-fn address_to_topic(address: &str) -> Result<String> {
+/// Left-pad a 20-byte address to its 32-byte indexed-topic form.
+pub(crate) fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
     let bytes = hypersync_client::format::Address::decode_hex(address)
         .with_context(|| format!("decode address {address} for topic encoding"))?;
+    let mut topic = [0u8; 32];
+    topic[12..].copy_from_slice(bytes.as_slice());
+    Ok(topic)
+}
+
+/// The 32-byte topic as a lowercase hex string — topic values are compared as
+/// bytes server-side and registration-time values are lowercased the same way.
+fn address_to_topic(address: &str) -> Result<String> {
     Ok(format!(
-        "0x000000000000000000000000{}",
-        faster_hex::hex_string(bytes.as_slice())
+        "0x{}",
+        faster_hex::hex_string(&address_to_topic_bytes(address)?)
     ))
 }
 
 /// Fold selections without topic1..3 filters into one selection combining
 /// their topic0s, keeping the common case at a single log selection/request.
+/// Repeated topic0s and identical filtered selections are deduplicated —
+/// several registrations may select the same signature now that routing fans
+/// one log out to all of them.
 fn compress(selections: Vec<MaterializedTopicSelection>) -> Vec<MaterializedTopicSelection> {
     let mut filterless_topic0s: Vec<String> = Vec::new();
-    let mut with_filters = Vec::new();
+    let mut with_filters: Vec<MaterializedTopicSelection> = Vec::new();
     for selection in selections {
         if selection.has_filters() {
-            with_filters.push(selection);
+            if !with_filters.contains(&selection) {
+                with_filters.push(selection);
+            }
         } else {
-            filterless_topic0s.extend(selection.topic0);
+            for topic0 in selection.topic0 {
+                if !filterless_topic0s.contains(&topic0) {
+                    filterless_topic0s.push(topic0);
+                }
+            }
         }
     }
     let mut result = Vec::with_capacity(with_filters.len() + 1);
@@ -157,7 +173,7 @@ pub(crate) struct SelectionBuilder {
 
 impl SelectionBuilder {
     pub(crate) fn from_registrations(
-        registrations: &[super::types::OnEventRegistration],
+        registrations: &[super::types::OnEventRegistrationInput],
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for reg in registrations {
@@ -306,7 +322,7 @@ impl SelectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evm_hypersync_source::types::OnEventRegistration;
+    use crate::evm_hypersync_source::types::OnEventRegistrationInput;
 
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -320,8 +336,8 @@ mod tests {
         is_wildcard: bool,
         depends_on_addresses: bool,
         topic1: Option<Vec<String>>,
-    ) -> OnEventRegistration {
-        OnEventRegistration {
+    ) -> OnEventRegistrationInput {
+        OnEventRegistrationInput {
             index: id,
             sighash: sighash.to_string(),
             topic_count: 1,
@@ -422,6 +438,52 @@ mod tests {
                     vec![],
                 ],
             }]
+        );
+    }
+
+    #[test]
+    fn compress_dedupes_repeated_topic0s_and_identical_filtered_selections() {
+        let builder = SelectionBuilder::from_registrations(&[
+            // Two registrations selecting the same signature with no filters,
+            // plus two with an identical topic1 filter.
+            reg(0, SIGHASH_A, "C", true, false, Some(vec![])),
+            reg(1, SIGHASH_A, "D", true, false, Some(vec![])),
+            reg(
+                2,
+                SIGHASH_B,
+                "C",
+                true,
+                false,
+                Some(vec![ADDR_TOPIC.to_string()]),
+            ),
+            reg(
+                3,
+                SIGHASH_B,
+                "D",
+                true,
+                false,
+                Some(vec![ADDR_TOPIC.to_string()]),
+            ),
+        ])
+        .unwrap();
+        let built = builder.build(&[0, 1, 2, 3], &HashMap::new()).unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                },
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![
+                        vec![SIGHASH_B.to_string()],
+                        vec![ADDR_TOPIC.to_string()],
+                        vec![],
+                        vec![],
+                    ],
+                },
+            ]
         );
     }
 

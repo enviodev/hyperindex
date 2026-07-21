@@ -44,6 +44,11 @@ type t = {
   sourcesState: array<sourceState>,
   mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
+  // Cumulative time spent in each status, rendered into the
+  // envio_indexing_idle/source_waiting/source_querying_seconds counters.
+  mutable idleSeconds: float,
+  mutable waitingForNewBlockSeconds: float,
+  mutable queryingSeconds: float,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
@@ -91,6 +96,55 @@ let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
   })
   samples
 }
+
+// Per-source known heights for envio_source_known_height. Sources with no
+// observed height yet are skipped.
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: int,
+  height: int,
+}
+
+let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    if sourceState.knownHeight > 0 {
+      samples->Array.push({
+        sourceName: sourceState.source.name,
+        chainId: sourceState.source.chain->ChainMap.Chain.toChainId,
+        height: sourceState.knownHeight,
+      })
+    }
+  })
+  samples
+}
+
+// Each accessor adds the in-progress interval of the current status, so a
+// scrape during a long idle/wait/query isn't stale until the next transition.
+let idleSeconds = (sourceManager: t) =>
+  sourceManager.idleSeconds +.
+  switch sourceManager.status {
+  | Idle => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+let waitingForNewBlockSeconds = (sourceManager: t) =>
+  sourceManager.waitingForNewBlockSeconds +.
+  switch sourceManager.status {
+  | WaitingForNewBlock => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+let queryingSeconds = (sourceManager: t) =>
+  sourceManager.queryingSeconds +.
+  switch sourceManager.status {
+  | Querying => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+// Partition queries currently in flight on this chain's sources. Summed across
+// chains by CrossChainState to enforce the indexer-wide concurrency budget.
+let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
 
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
@@ -217,10 +271,6 @@ let make = (
   | None =>
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
-  Prometheus.IndexingConcurrency.set(
-    ~concurrency=0,
-    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
-  )
   {
     sourcesState: sources->Array.map(source => {
       source,
@@ -243,6 +293,9 @@ let make = (
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
+    idleSeconds: 0.,
+    waitingForNewBlockSeconds: 0.,
+    queryingSeconds: 0.,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
     rateLimitWaiters: 0,
@@ -252,15 +305,13 @@ let make = (
 }
 
 let trackNewStatus = (sourceManager: t, ~newStatus) => {
-  let promCounter = switch sourceManager.status {
-  | Idle => Prometheus.IndexingIdleTime.counter
-  | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
-  | Querying => Prometheus.IndexingQueryTime.counter
+  let elapsed = sourceManager.statusStart->Performance.secondsSince
+  switch sourceManager.status {
+  | Idle => sourceManager.idleSeconds = sourceManager.idleSeconds +. elapsed
+  | WaitingForNewBlock =>
+    sourceManager.waitingForNewBlockSeconds = sourceManager.waitingForNewBlockSeconds +. elapsed
+  | Querying => sourceManager.queryingSeconds = sourceManager.queryingSeconds +. elapsed
   }
-  promCounter->Prometheus.SafeCounter.handleFloat(
-    ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Performance.secondsSince,
-  )
   sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
@@ -303,20 +354,12 @@ let dispatch = async (
       // when they were admitted; here we just execute them.
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
-      Prometheus.IndexingConcurrency.set(
-        ~concurrency=sourceManager.fetchingPartitionsCount,
-        ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-      )
       sourceManager->trackNewStatus(~newStatus=Querying)
       let _ = await queries
       ->Array.map(q => {
         let promise = q->executeQuery
         let _ = promise->Promise.thenResolve(_ => {
           sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          Prometheus.IndexingConcurrency.set(
-            ~concurrency=sourceManager.fetchingPartitionsCount,
-            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-          )
           if sourceManager.fetchingPartitionsCount === 0 {
             sourceManager->trackNewStatus(~newStatus=Idle)
           }
@@ -461,13 +504,8 @@ let getSourceNewHeight = async (
     }
   }
 
-  // Update Prometheus only if height increased
-  if newHeight.contents > initialHeight {
-    Prometheus.SourceHeight.set(
-      ~sourceName=source.name,
-      ~chainId=source.chain->ChainMap.Chain.toChainId,
-      ~blockNumber=newHeight.contents,
-    )
+  if newHeight.contents > sourceState.knownHeight {
+    sourceState.knownHeight = newHeight.contents
   }
 
   newHeight.contents
@@ -736,6 +774,13 @@ let executeQuery = async (
       )
       sourceState->recordRequestStats(response.requestStats)
       sourceState.lastFailedAt = None
+
+      // The response carries a fresh height for exactly this source, so during a
+      // long backfill (when the wait loop doesn't run) it keeps the per-source
+      // envio_source_known_height current.
+      if response.knownHeight > sourceState.knownHeight {
+        sourceState.knownHeight = response.knownHeight
+      }
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs}) =>
