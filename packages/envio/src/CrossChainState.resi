@@ -16,6 +16,7 @@ let make: (
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isInReorgThreshold: t => bool
+let targetBufferSize: t => int
 
 // Derived (pure).
 let nextItemIsNone: t => bool

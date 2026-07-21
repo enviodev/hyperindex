@@ -28,6 +28,49 @@ module EntityTables = {
   }
 }
 
+// Per-(contract, event) handler counters rendered into the
+// envio_processing_handler_* and envio_preload_handler_* metrics.
+type handlerStat = {
+  contract: string,
+  event: string,
+  mutable processingSeconds: float,
+  // Floats: cumulative counters outgrow int32.
+  mutable processingCount: float,
+  // Wall-clock preload time: overlapping preloads of the same handler count once.
+  mutable preloadSeconds: float,
+  mutable preloadCount: float,
+  // Cumulative per-call preload time; exceeds preloadSeconds under parallel execution.
+  mutable preloadSecondsTotal: float,
+  mutable preloadPendingCount: int,
+  mutable preloadPendingTimerRef: Performance.timeRef,
+}
+
+// Per-(storage, operation) load counters rendered into the
+// envio_storage_load_* metrics.
+type storageLoadStat = {
+  operation: string,
+  storage: string,
+  // Wall-clock load time: overlapping loads of the same operation count once.
+  mutable seconds: float,
+  mutable secondsTotal: float,
+  mutable count: float,
+  mutable whereSize: float,
+  mutable size: float,
+  mutable pendingCount: int,
+  mutable pendingTimerRef: Performance.timeRef,
+}
+
+type storageWriteStat = {
+  storage: string,
+  mutable seconds: float,
+  mutable count: int,
+}
+
+type historyPruneStat = {
+  mutable seconds: float,
+  mutable count: int,
+}
+
 type t = {
   config: Config.t,
   persistence: Persistence.t,
@@ -82,6 +125,16 @@ type t = {
   mutable epoch: int,
   // None off the simulate path.
   simulateDeadInputTracker: option<SimulateDeadInputTracker.t>,
+  // --- Metric counters, rendered by Metrics at scrape time. ---
+  mutable preloadSeconds: float,
+  mutable processingSeconds: float,
+  handlerStats: dict<handlerStat>,
+  storageLoadStats: dict<storageLoadStat>,
+  storageWriteStats: dict<storageWriteStat>,
+  historyPruneStats: dict<historyPruneStat>,
+  mutable rollbackSeconds: float,
+  mutable rollbackCount: int,
+  mutable rollbackEventsCount: float,
 }
 
 let make = (
@@ -144,6 +197,15 @@ let make = (
     isStopped: false,
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
+    preloadSeconds: 0.,
+    processingSeconds: 0.,
+    handlerStats: Dict.make(),
+    storageLoadStats: Dict.make(),
+    storageWriteStats: Dict.make(),
+    historyPruneStats: Dict.make(),
+    rollbackSeconds: 0.,
+    rollbackCount: 0,
+    rollbackEventsCount: 0.,
   }
 }
 
@@ -181,16 +243,6 @@ let makeFromDbState = (
     )
   }
 
-  Prometheus.ProcessingMaxBatchSize.set(~maxBatchSize=config.batchSize)
-  Prometheus.ReorgThreshold.set(~isInReorgThreshold)
-  initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
-    Prometheus.EffectCacheCount.set(
-      ~count,
-      ~effectName,
-      ~scope=scope->Internal.EffectCache.scopeToString,
-    )
-  })
-
   // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
   // backfill mode for all chains.
   let isRealtime =
@@ -216,27 +268,7 @@ let makeFromDbState = (
     )
   })
 
-  // Set initial progress metrics from DB state so dashboards reflect
-  // the persisted state immediately on restart
-  let allChainsReady = ref(initialState.chains->Array.length > 0)
-  chainStates->Utils.Dict.forEach(cs => {
-    let chainId = (cs->ChainState.chainConfig).id
-    Prometheus.ProgressBlockNumber.set(
-      ~blockNumber=cs->ChainState.committedProgressBlockNumber,
-      ~chainId,
-    )
-    Prometheus.ProgressReady.init(~chainId)
-    if cs->ChainState.isReady {
-      Prometheus.ProgressReady.set(~chainId)
-    } else {
-      allChainsReady := false
-    }
-  })
-  if allChainsReady.contents {
-    Prometheus.ProgressReady.setAllReady()
-  }
-
-  make(
+  let state = make(
     ~config,
     ~persistence,
     ~chainStates,
@@ -249,6 +281,10 @@ let makeFromDbState = (
     ~exitAfterFirstEventBlock,
     ~onError,
   )
+  initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
+    state.effectState->EffectState.setCacheCount(~effectName, ~scope, ~count)
+  })
+  state
 }
 
 // A fetch response or new-block waiter is stale once the indexer stopped or the
@@ -383,6 +419,219 @@ let isStopped = (state: t) => state.isStopped
 let epoch = (state: t) => state.epoch
 let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis
 let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
+
+// Read-only snapshot of every metric; the single window into the mutable
+// counters for the /metrics endpoint, the TUI and the console API.
+let toMetrics = (state: t): Metrics.t => {
+  let chainStates = state.crossChainState->CrossChainState.chainStates
+  let sourceRequests = []
+  let sourceHeights = []
+  chainStates->Utils.Dict.forEach(cs => {
+    let sourceManager = cs->ChainState.sourceManager
+    sourceManager
+    ->SourceManager.getRequestStatSamples
+    ->Array.forEach(s =>
+      sourceRequests->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        method: s.method,
+        count: s.count,
+        seconds: s.seconds,
+      })
+    )
+    sourceManager
+    ->SourceManager.getSourceHeightSamples
+    ->Array.forEach(s =>
+      sourceHeights->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        height: s.height,
+      })
+    )
+  })
+  let historyPrunes = []
+  state.historyPruneStats->Utils.Dict.forEachWithKey((s, entityName) =>
+    historyPrunes->Array.push({
+      Metrics.entity: entityName,
+      seconds: s.seconds,
+      count: s.count,
+    })
+  )
+  {
+    startTime: state.indexerStartTime,
+    targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
+    isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
+    rollbackEnabled: state.config.shouldRollbackOnReorg,
+    maxBatchSize: state.config.batchSize,
+    preloadSeconds: state.preloadSeconds,
+    processingSeconds: state.processingSeconds,
+    rollbackSeconds: state.rollbackSeconds,
+    rollbackCount: state.rollbackCount,
+    rollbackEventsCount: state.rollbackEventsCount,
+    chains: chainStates->Dict.valuesToArray->Array.map(ChainState.toMetrics),
+    handlers: state.handlerStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.contract: s.contract,
+      event: s.event,
+      processingSeconds: s.processingSeconds,
+      processingCount: s.processingCount,
+      preloadSeconds: s.preloadSeconds,
+      preloadCount: s.preloadCount,
+      preloadSecondsTotal: s.preloadSecondsTotal,
+    }),
+    effects: state.effectState->EffectState.toMetrics,
+    storageLoads: state.storageLoadStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.operation: s.operation,
+      storage: s.storage,
+      seconds: s.seconds,
+      secondsTotal: s.secondsTotal,
+      count: s.count,
+      whereSize: s.whereSize,
+      size: s.size,
+    }),
+    storageWrites: state.storageWriteStats
+    ->Dict.valuesToArray
+    ->Array.map(s => {
+      Metrics.storage: s.storage,
+      seconds: s.seconds,
+      count: s.count,
+    }),
+    historyPrunes,
+    sourceRequests,
+    sourceHeights,
+  }
+}
+
+// --- Metric counters. ---
+
+let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
+  state.preloadSeconds = state.preloadSeconds +. loadDuration
+  state.processingSeconds = state.processingSeconds +. handlerDuration
+}
+
+let getHandlerStat = (state: t, ~contract, ~event) => {
+  // Length-prefixed so names containing the separator can't collide.
+  let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
+  switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(stat) => stat
+  | None =>
+    let stat: handlerStat = {
+      contract,
+      event,
+      processingSeconds: 0.,
+      processingCount: 0.,
+      preloadSeconds: 0.,
+      preloadCount: 0.,
+      preloadSecondsTotal: 0.,
+      preloadPendingCount: 0,
+      preloadPendingTimerRef: %raw(`null`),
+    }
+    state.handlerStats->Dict.set(key, stat)
+    stat
+  }
+}
+
+let recordHandlerDuration = (state: t, ~contract, ~event, ~duration) => {
+  let stat = state->getHandlerStat(~contract, ~event)
+  stat.processingSeconds = stat.processingSeconds +. duration
+  stat.processingCount = stat.processingCount +. 1.
+}
+
+let startPreloadHandler = (state: t, ~contract, ~event) => {
+  let stat = state->getHandlerStat(~contract, ~event)
+  if stat.preloadPendingCount === 0 {
+    stat.preloadPendingTimerRef = Performance.now()
+  }
+  stat.preloadPendingCount = stat.preloadPendingCount + 1
+  Performance.now()
+}
+
+let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
+  let stat = state->getHandlerStat(~contract, ~event)
+  stat.preloadPendingCount = stat.preloadPendingCount - 1
+  if stat.preloadPendingCount === 0 {
+    stat.preloadSeconds =
+      stat.preloadSeconds +. stat.preloadPendingTimerRef->Performance.secondsSince
+  }
+  stat.preloadSecondsTotal = stat.preloadSecondsTotal +. timerRef->Performance.secondsSince
+  stat.preloadCount = stat.preloadCount +. 1.
+}
+
+let getStorageLoadStat = (state: t, ~storage, ~operation) => {
+  // Length-prefixed so names containing the separator can't collide.
+  let key = storage->String.length->Int.toString ++ ":" ++ storage ++ operation
+  switch state.storageLoadStats->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(stat) => stat
+  | None =>
+    let stat: storageLoadStat = {
+      operation,
+      storage,
+      seconds: 0.,
+      secondsTotal: 0.,
+      count: 0.,
+      whereSize: 0.,
+      size: 0.,
+      pendingCount: 0,
+      pendingTimerRef: %raw(`null`),
+    }
+    state.storageLoadStats->Dict.set(key, stat)
+    stat
+  }
+}
+
+let startStorageLoad = (state: t, ~storage, ~operation) => {
+  let stat = state->getStorageLoadStat(~storage, ~operation)
+  if stat.pendingCount === 0 {
+    stat.pendingTimerRef = Performance.now()
+  }
+  stat.pendingCount = stat.pendingCount + 1
+  Performance.now()
+}
+
+let endStorageLoad = (state: t, timerRef, ~storage, ~operation, ~whereSize, ~size) => {
+  let stat = state->getStorageLoadStat(~storage, ~operation)
+  stat.pendingCount = stat.pendingCount - 1
+  if stat.pendingCount === 0 {
+    stat.seconds = stat.seconds +. stat.pendingTimerRef->Performance.secondsSince
+  }
+  stat.secondsTotal = stat.secondsTotal +. timerRef->Performance.secondsSince
+  stat.count = stat.count +. 1.
+  stat.whereSize = stat.whereSize +. whereSize->Int.toFloat
+  stat.size = stat.size +. size->Int.toFloat
+}
+
+let recordStorageWrite = (state: t, ~storage, ~timeSeconds) => {
+  let stat = switch state.storageWriteStats->Utils.Dict.dangerouslyGetNonOption(storage) {
+  | Some(stat) => stat
+  | None =>
+    let stat: storageWriteStat = {storage, seconds: 0., count: 0}
+    state.storageWriteStats->Dict.set(storage, stat)
+    stat
+  }
+  stat.seconds = stat.seconds +. timeSeconds
+  stat.count = stat.count + 1
+}
+
+let recordHistoryPrune = (state: t, ~entityName, ~timeSeconds) => {
+  let stat = switch state.historyPruneStats->Utils.Dict.dangerouslyGetNonOption(entityName) {
+  | Some(stat) => stat
+  | None =>
+    let stat: historyPruneStat = {seconds: 0., count: 0}
+    state.historyPruneStats->Dict.set(entityName, stat)
+    stat
+  }
+  stat.seconds = stat.seconds +. timeSeconds
+  stat.count = stat.count + 1
+}
+
+let recordRollbackSuccess = (state: t, ~timeSeconds, ~rollbackedProcessedEvents) => {
+  state.rollbackSeconds = state.rollbackSeconds +. timeSeconds
+  state.rollbackCount = state.rollbackCount + 1
+  state.rollbackEventsCount = state.rollbackEventsCount +. rollbackedProcessedEvents
+}
 
 // --- Store domain operations. ---
 

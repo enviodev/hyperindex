@@ -44,6 +44,7 @@ let makeStore = () => {
       ~updatedEffectsCache as _,
       ~updatedEntities as _,
       ~chainMetaData,
+      ~onWrite as _,
     ) => {
       writeBatchChainMetaCalls->Array.push(chainMetaData)->ignore
       Promise.resolve()

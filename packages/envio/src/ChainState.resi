@@ -54,6 +54,17 @@ let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
+// Metric counters, rendered by Metrics at scrape time.
+let recordBlockRangeFetch: (
+  t,
+  ~totalTimeElapsed: float,
+  ~parsingTimeElapsed: float,
+  ~numEvents: int,
+  ~blockRangeSize: int,
+) => unit
+let recordReorgDetected: (t, ~blockNumber: int) => unit
+let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
+
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
@@ -86,22 +97,7 @@ let dispatch: (
 ) => promise<unit>
 
 // Views.
-type chainData = {
-  chainId: float,
-  poweredByHyperSync: bool,
-  firstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  numEventsProcessed: float,
-  latestFetchedBlockNumber: int,
-  @as("currentBlockHeight")
-  knownHeight: int,
-  numBatchesFetched: int,
-  startBlock: int,
-  endBlock: option<int>,
-  numAddresses: int,
-}
-let toChainData: t => chainData
+let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: t => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
