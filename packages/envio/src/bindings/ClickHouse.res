@@ -307,6 +307,13 @@ let setUpdatesOrThrow = async (
   }
 }
 
+// A plain database created with ON CLUSTER doesn't turn subsequent DDL into
+// cluster-wide statements; ClickHouse keeps no "this database is clustered"
+// flag. Every CREATE/ALTER/DELETE must carry its own ON CLUSTER to reach all
+// replicas, otherwise it runs only on the connected node. The '{cluster}' macro
+// resolves to each node's configured cluster name.
+let onClusterClause = (~replicated: bool) => replicated ? ` ON CLUSTER '{cluster}'` : ""
+
 // Generate CREATE TABLE query for entity history table
 let makeCreateHistoryTableQuery = (
   ~entityConfig: Internal.entityConfig,
@@ -333,7 +340,7 @@ let makeCreateHistoryTableQuery = (
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
-    )}\` (
+    )}\`${onClusterClause(~replicated)} (
   ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
   \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
       ~fieldType=UInt64,
@@ -359,7 +366,9 @@ let makeCreateCheckpointsTableQuery = (~database: string, ~replicated: bool=fals
   let blockHashField = (#block_hash: InternalTable.Checkpoints.field :> string)
   let eventsProcessedField = (#events_processed: InternalTable.Checkpoints.field :> string)
 
-  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\` (
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\`${onClusterClause(
+      ~replicated,
+    )} (
   \`${idField}\` ${getClickHouseFieldType(~fieldType=UInt64, ~isNullable=false, ~isArray=false)},
   \`${chainIdField}\` ${getClickHouseFieldType(
       ~fieldType=Int32,
@@ -387,7 +396,11 @@ ORDER BY (${idField})`
 }
 
 // Generate CREATE VIEW query for entity current state
-let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+let makeCreateViewQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~replicated: bool=false,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
@@ -409,7 +422,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     })
     ->Array.joinUnsafe(", ")
 
-  `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
+  `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\`${onClusterClause(~replicated)} AS
 SELECT ${entityFields}
 FROM (
   SELECT ${entityFields}, \`${EntityHistory.changeFieldName}\`
@@ -435,10 +448,7 @@ let initialize = async (
     | Some(engine) => ` ENGINE = ${engine}`
     | None => ""
     }
-    // Replicated database engine requires CREATE DATABASE to run on every
-    // replica; ON CLUSTER fans the DDL out via Keeper. The '{cluster}' macro
-    // resolves to each node's configured cluster name.
-    let onClusterClause = replicated ? ` ON CLUSTER '{cluster}'` : ""
+    let onClusterClause = onClusterClause(~replicated)
 
     switch databaseEngine {
     | Some(engineSpec) => {
@@ -473,7 +483,7 @@ let initialize = async (
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
+        client->exec({query: makeCreateViewQuery(~entityConfig, ~database, ~replicated)})
       ),
     )->Utils.Promise.ignoreValue
 

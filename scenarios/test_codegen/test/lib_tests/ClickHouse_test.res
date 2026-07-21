@@ -93,6 +93,28 @@ ORDER BY (id)`
         t.expect(query, ~message="Checkpoints table SQL should match exactly").toBe(expectedQuery)
       },
     )
+
+    Async.it(
+      "Should add ON CLUSTER and ReplicatedMergeTree when replicated",
+      async t => {
+        let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db", ~replicated=true)
+
+        let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` ON CLUSTER '{cluster}' (
+  \`id\` UInt64,
+  \`chain_id\` Int32,
+  \`block_number\` Int32,
+  \`block_hash\` Nullable(String),
+  \`events_processed\` UInt64
+)
+ENGINE = ReplicatedMergeTree
+ORDER BY (id)`
+
+        t.expect(
+          query,
+          ~message="Replicated checkpoints table SQL should match exactly",
+        ).toBe(expectedQuery)
+      },
+    )
   })
 
   describe("makeCreateHistoryTableQuery", () => {
@@ -138,6 +160,54 @@ ORDER BY (id, envio_checkpoint_id)`
         )
       },
     )
+
+    Async.it(
+      "Should add ON CLUSTER and ReplicatedMergeTree when replicated",
+      async t => {
+        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+        let query = ClickHouse.makeCreateHistoryTableQuery(
+          ~entityConfig,
+          ~database="test_db",
+          ~replicated=true,
+        )
+
+        let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` ON CLUSTER '{cluster}' (
+  \`id\` String,
+  \`string\` String,
+  \`optString\` Nullable(String),
+  \`arrayOfStrings\` Array(String),
+  \`int_\` Int32,
+  \`optInt\` Nullable(Int32),
+  \`arrayOfInts\` Array(Int32),
+  \`float_\` Float64,
+  \`optFloat\` Nullable(Float64),
+  \`arrayOfFloats\` Array(Float64),
+  \`bool\` Bool,
+  \`optBool\` Nullable(Bool),
+  \`bigInt\` String,
+  \`optBigInt\` Nullable(String),
+  \`arrayOfBigInts\` Array(String),
+  \`bigDecimal\` String,
+  \`optBigDecimal\` Nullable(String),
+  \`bigDecimalWithConfig\` Decimal(10,8),
+  \`arrayOfBigDecimals\` Array(String),
+  \`timestamp\` DateTime64(3, 'UTC'),
+  \`optTimestamp\` Nullable(DateTime64(3, 'UTC')),
+  \`json\` String,
+  \`enumField\` Enum8('ADMIN', 'USER'),
+  \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = ReplicatedMergeTree
+ORDER BY (id, envio_checkpoint_id)`
+
+        t.expect(
+          query,
+          ~message="Replicated entity history table SQL should match exactly",
+        ).toBe(expectedQuery)
+      },
+    )
   })
 
   describe("makeCreateViewQuery", () => {
@@ -159,6 +229,33 @@ FROM (
 WHERE \`envio_change\` = 'SET'`
 
         t.expect(query, ~message="A entity view SQL should match exactly").toBe(expectedQuery)
+      },
+    )
+
+    Async.it(
+      "Should add ON CLUSTER when replicated",
+      async t => {
+        let entity = MockIndexer.entityConfig(EntityWithAllTypes)
+        let query = ClickHouse.makeCreateViewQuery(
+          ~entityConfig=entity,
+          ~database="test_db",
+          ~replicated=true,
+        )
+
+        let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` ON CLUSTER '{cluster}' AS
+SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`
+FROM (
+  SELECT \`id\`, \`string\`, \`optString\`, \`arrayOfStrings\`, \`int_\`, \`optInt\`, \`arrayOfInts\`, \`float_\`, \`optFloat\`, \`arrayOfFloats\`, \`bool\`, \`optBool\`, \`bigInt\`, \`optBigInt\`, \`arrayOfBigInts\`, \`bigDecimal\`, \`optBigDecimal\`, \`bigDecimalWithConfig\`, \`arrayOfBigDecimals\`, \`timestamp\`, \`optTimestamp\`, \`json\`, \`enumField\`, \`optEnumField\`, \`envio_change\`
+  FROM test_db.\`envio_history_EntityWithAllTypes\`
+  WHERE \`envio_checkpoint_id\` <= (SELECT max(id) FROM test_db.\`envio_checkpoints\`)
+  ORDER BY \`envio_checkpoint_id\` DESC
+  LIMIT 1 BY \`id\`
+)
+WHERE \`envio_change\` = 'SET'`
+
+        t.expect(query, ~message="Replicated entity view SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })
