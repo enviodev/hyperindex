@@ -56,10 +56,11 @@ type effectCacheInMemTable = {
   stats: effectStats,
 }
 
-// Startup seed for an effect's persisted-rows count, keyed by cache table name.
-// Consumed when the effect's table is first created; until then it's enough to
-// render envio_effect_cache for an effect that hasn't run this session.
-type initialCacheCount = {
+// Cache-row count loaded from the db on restart for an effect whose in-mem
+// table hasn't been created yet this session, keyed by cache table name. Enough
+// to render envio_effect_cache until the effect runs; consumed (and removed) at
+// table creation so the table becomes the sole owner.
+type unregisteredCacheCount = {
   effectName: string,
   scope: Internal.chainScope,
   count: int,
@@ -68,18 +69,15 @@ type initialCacheCount = {
 type t = {
   // The single per-(effect, scope) store. Cache-derived fields are cleared on
   // rollback; stats and the rate-limit window survive because the table does.
-  mutable tables: dict<effectCacheInMemTable>,
-  // Startup-only cache-count seeds, consumed as tables are created.
-  initialCacheCounts: dict<initialCacheCount>,
+  tables: dict<effectCacheInMemTable>,
+  unregisteredCacheCounts: dict<unregisteredCacheCount>,
 }
 
-let make = (): t => {tables: Dict.make(), initialCacheCounts: Dict.make()}
+let make = (): t => {tables: Dict.make(), unregisteredCacheCounts: Dict.make()}
 
-// Seed the persisted-rows count from the db on restart, before any cache table
-// is lazily created. Consumed by getTable on first creation of the table.
-let setCacheCount = (self: t, ~effectName, ~scope, ~count) => {
+let setUnregisteredCacheCount = (self: t, ~effectName, ~scope, ~count) => {
   let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
-  self.initialCacheCounts->Dict.set(tableName, {effectName, scope, count})
+  self.unregisteredCacheCounts->Dict.set(tableName, {effectName, scope, count})
 }
 
 // --- Metric mutations. The stats records are opaque outside this module, so
@@ -145,12 +143,12 @@ let statsToMetrics = (stats: effectStats): Metrics.effectMetrics => {
 }
 
 // Full per-effect metrics for every live table, plus a cache-only entry for
-// each seed of an effect that hasn't run this session (envio_effect_cache
-// only). A seed is consumed once its table is created, so the two never
-// double-count the same effect.
+// each effect that hasn't run this session (envio_effect_cache only). Such an
+// entry is removed once its table is created, so the two never double-count the
+// same effect.
 let toMetrics = (self: t): array<Metrics.effectMetrics> => {
   let metrics = self.tables->Utils.Dict.mapValuesToArray(t => t.stats->statsToMetrics)
-  self.initialCacheCounts->Utils.Dict.forEach(({effectName, scope, count}) => {
+  self.unregisteredCacheCounts->Utils.Dict.forEach(({effectName, scope, count}) => {
     metrics
     ->Array.push({
       Metrics.effect: effectName,
@@ -171,7 +169,7 @@ let toMetrics = (self: t): array<Metrics.effectMetrics> => {
 
 // Get, or lazily create, the in-mem table for an (effect, scope). On first
 // creation the rate-limit window is built from the effect config and any
-// matching startup cache-count seed is consumed. A table recreated after a
+// matching unregistered cache count is consumed. A table recreated after a
 // rollback keeps its surviving stats and rate-limit window because the table
 // object itself survives — only its cache is cleared.
 let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) => {
@@ -193,11 +191,11 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
       cacheCount: 0,
       hasCache: false,
     }
-    switch self.initialCacheCounts->Utils.Dict.dangerouslyGetNonOption(tableName) {
+    switch self.unregisteredCacheCounts->Utils.Dict.dangerouslyGetNonOption(tableName) {
     | Some({count}) =>
       stats.cacheCount = count
       stats.hasCache = true
-      self.initialCacheCounts->Utils.Dict.deleteInPlace(tableName)
+      self.unregisteredCacheCounts->Utils.Dict.deleteInPlace(tableName)
     | None => ()
     }
     let rateLimitState = switch effect.rateLimit {

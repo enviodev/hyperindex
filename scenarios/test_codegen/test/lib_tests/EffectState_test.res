@@ -62,36 +62,54 @@ describe("EffectState rollback", () => {
   })
 })
 
-describe("EffectState cache-count seed", () => {
+describe("EffectState unregistered cache count", () => {
+  let cacheOnlyMetric = (~effect, ~count): Metrics.effectMetrics => {
+    effect,
+    scope: "crossChain",
+    callSeconds: 0.,
+    callSecondsTotal: 0.,
+    callCount: 0.,
+    activeCallsCount: 0,
+    queueCount: 0,
+    queueWaitSeconds: 0.,
+    invalidationsCount: 0.,
+    cacheCount: Some(count),
+  }
+
   it("renders a cache-only metric until the effect's table takes over", t => {
     let self = EffectState.make()
-    self->EffectState.setCacheCount(~effectName="seeded", ~scope=CrossChain, ~count=7)
-
-    let seedMetric: Metrics.effectMetrics = {
-      effect: "seeded",
-      scope: "crossChain",
-      callSeconds: 0.,
-      callSecondsTotal: 0.,
-      callCount: 0.,
-      activeCallsCount: 0,
-      queueCount: 0,
-      queueWaitSeconds: 0.,
-      invalidationsCount: 0.,
-      cacheCount: Some(7),
-    }
+    self->EffectState.setUnregisteredCacheCount(~effectName="a", ~scope=CrossChain, ~count=7)
 
     let beforeCreate = self->EffectState.toMetrics
 
-    let table = self->EffectState.getTable(~effect=makeEffect(~name="seeded"), ~scope=CrossChain)
+    let table = self->EffectState.getTable(~effect=makeEffect(~name="a"), ~scope=CrossChain)
     let afterCreate = self->EffectState.toMetrics
 
     table->EffectState.commitCacheCount(~count=9)
     let afterCommit = self->EffectState.toMetrics
 
     t.expect((beforeCreate, afterCreate, afterCommit)).toEqual((
-      [seedMetric],
-      [seedMetric],
-      [{...seedMetric, cacheCount: Some(9)}],
+      [cacheOnlyMetric(~effect="a", ~count=7)],
+      [cacheOnlyMetric(~effect="a", ~count=7)],
+      [cacheOnlyMetric(~effect="a", ~count=9)],
     ))
+  })
+
+  it("never double-counts: a registered effect drops its unregistered count", t => {
+    let self = EffectState.make()
+    self->EffectState.setUnregisteredCacheCount(~effectName="registered", ~scope=CrossChain, ~count=1)
+    self->EffectState.setUnregisteredCacheCount(~effectName="pending", ~scope=CrossChain, ~count=2)
+
+    // Registering "registered" consumes its unregistered count; "pending" stays.
+    self->EffectState.getTable(~effect=makeEffect(~name="registered"), ~scope=CrossChain)->ignore
+
+    t.expect(
+      (self->EffectState.toMetrics)
+      ->Array.toSorted((a, b) => String.compare(a.effect, b.effect)),
+      ~message="one series per effect — the registered effect's table replaces its seed",
+    ).toEqual([
+      cacheOnlyMetric(~effect="pending", ~count=2),
+      cacheOnlyMetric(~effect="registered", ~count=1),
+    ])
   })
 })
