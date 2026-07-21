@@ -50,7 +50,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
 
   IndexerState.make(
     ~config,
-    ~persistence=MockIndexer.defaultPersistence,
+    ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,
     // isInReorgThreshold avoids triggering a fetch on the mock source (which
     // implements no methods) when the processing loop runs to its empty exit.

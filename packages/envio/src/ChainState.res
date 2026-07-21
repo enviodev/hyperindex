@@ -39,6 +39,7 @@ type t = {
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
   // prune / rollback lifecycle as the transaction store.
   blockStore: BlockStore.t,
+  reorgThresholdReadyTolerance: int,
   // --- Per-chain metric counters, rendered by Metrics at scrape time.
   // Floats: cumulative counters outgrow int32. ---
   mutable blockRangeFetchSeconds: float,
@@ -51,7 +52,6 @@ type t = {
   mutable rollbackTargetBlock: option<int>,
   mutable progressLatencyMs: option<int>,
 }
-
 
 let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
   let addresses = []
@@ -94,6 +94,7 @@ let make = (
   ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~chainDensity=None,
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~reorgThresholdReadyTolerance=100,
   ~logger: Pino.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
@@ -115,6 +116,7 @@ let make = (
     safeCheckpointTracking,
     transactionStore,
     blockStore,
+    reorgThresholdReadyTolerance,
     blockRangeFetchSeconds: 0.,
     blockRangeParseSeconds: 0.,
     blockRangeFetchCount: 0.,
@@ -290,6 +292,7 @@ let makeInternal = (
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     ),
+    ~reorgThresholdReadyTolerance=config.reorgThresholdReadyTolerance,
     ~logger,
   )
 }
@@ -402,7 +405,6 @@ let recordReorgDetected = (cs: t, ~blockNumber) => {
 
 let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = Some(blockNumber)
 
-
 // Fetch-frontier reads. The FetchState is owned here; callers go through these
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
@@ -414,7 +416,6 @@ let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPerc
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
-let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
 
 // Mark queries as in flight and reserve their estimated size against the shared
 // buffer budget in one step, so the counter stays in sync with the pending
@@ -955,7 +956,7 @@ let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
   | Some(chainAfterBatch) => chainAfterBatch.fetchState
   | None => cs.fetchState
   }
-  fetchState->FetchState.isReadyToEnterReorgThreshold
+  fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
 }
 
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,

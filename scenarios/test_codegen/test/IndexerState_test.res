@@ -145,7 +145,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   let state = IndexerState.make(
     ~config,
-    ~persistence=MockIndexer.defaultPersistence,
+    ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,
     ~isInReorgThreshold=false,
     ~isRealtime=false,
@@ -336,7 +336,7 @@ describe("IndexerState", () => {
           )
           IndexerState.make(
             ~config,
-            ~persistence=MockIndexer.defaultPersistence,
+            ~persistence=MockIndexer.defaultPersistence(),
             ~chainStates,
             ~isInReorgThreshold=false,
             ~isRealtime=false,

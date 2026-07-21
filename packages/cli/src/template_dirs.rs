@@ -417,6 +417,7 @@ mod test {
                 "indexer-factory",
                 "indexer-filters",
                 "indexer-handlers",
+                "indexer-local-parallel",
                 "indexer-multichain",
                 "indexer-performance",
                 "indexer-schema",
