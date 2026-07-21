@@ -2557,11 +2557,11 @@ let isFetchingAtHead = ({endBlock, blockLag, knownHeight} as fetchState: t) => {
 }
 
 // Frontier at (or within `tolerance` of) the lagged head with a drained buffer —
-// the moment the chain can cross into the reorg threshold. Latched by ChainState.
-// `tolerance` absorbs the head advancing between a chain catching up and this
-// check; it is not applied to endBlock, where reaching the end is an exact target.
+// the moment the chain can cross into the reorg threshold. `tolerance` absorbs
+// the head advancing between a chain catching up and this check; it is not
+// applied to endBlock, where reaching the end is an exact target.
 let isReadyToEnterReorgThreshold = (
-  ~tolerance=0,
+  ~tolerance,
   {endBlock, blockLag, buffer, knownHeight} as fetchState: t,
 ) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber

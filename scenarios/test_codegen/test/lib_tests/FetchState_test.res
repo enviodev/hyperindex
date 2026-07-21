@@ -3386,14 +3386,14 @@ describe("FetchState.sortForBatch", () => {
 describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has knownHeight=0", t => {
     let (fetchState, _indexingAddresses) = makeInitial()
-    t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it(
     "Returns false when we just started the indexer and it has knownHeight=0, while start block is more than 0 + reorg threshold",
     t => {
       let (fetchState, _indexingAddresses) = makeInitial(~startBlock=6000)
-      t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+      t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
     },
   )
 
@@ -3416,7 +3416,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=0,
       ~knownHeight=10,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns false when endBlock not reached and below head - blockLag", t => {
@@ -3438,7 +3438,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it("Returns true when endBlock not reached but latest >= head - blockLag", t => {
@@ -3460,7 +3460,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=59,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns true when no endBlock and latest >= head - blockLag (boundary)", t => {
@@ -3482,7 +3482,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns false when no endBlock and latest < head - blockLag", t => {
@@ -3504,7 +3504,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it("With a tolerance, is ready within it below head - blockLag, false just beyond it", t => {
@@ -3553,7 +3553,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~knownHeight=10,
     )
     let fsWithQueue = fs->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=6)])
-    t.expect(fsWithQueue->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect(fsWithQueue->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it("Returns true when the queue is empty and threshold is more than current block height", t => {
@@ -3574,7 +3574,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=200,
       ~knownHeight=10,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 })
 
