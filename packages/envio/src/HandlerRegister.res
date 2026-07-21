@@ -625,7 +625,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
           }
           if isWildcard && wildcardEventIds->Utils.Set.has(eventId) {
             JsError.throwWithMessage(
-              `Another event is already registered with the same signature that would interfer with wildcard filtering: ${eventName} for contract ${contractName} ${chainSuffix}`,
+              `Another event is already registered with the same signature that would interfere with wildcard filtering: ${eventName} for contract ${contractName} ${chainSuffix}`,
             )
           }
           if isWildcard {
@@ -650,8 +650,23 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                     ),
                 )
 
+              // SVM dispatch is keyed by (programId, discriminator), not the
+              // discriminator alone — `eventConfig.id` is only the
+              // discriminator (or "none"). Scope the SVM validation key by
+              // programId so two wildcard handlers on different programs that
+              // share a discriminator aren't rejected as a false collision
+              // (Rust routing already scopes matches by program_id).
+              let eventId = switch config.ecosystem.name {
+              | Svm =>
+                let svmEventConfig =
+                  eventConfig->(
+                    Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+                  )
+                `${svmEventConfig.programId->SvmTypes.Pubkey.toString}_${eventConfig.id}`
+              | Evm | Fuel => eventConfig.id
+              }
               validateEventIdOrThrow(
-                ~eventId=eventConfig.id,
+                ~eventId,
                 ~contractName,
                 ~eventName,
                 ~isWildcard=switch registration {
