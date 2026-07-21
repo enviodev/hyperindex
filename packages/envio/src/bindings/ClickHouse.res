@@ -453,7 +453,6 @@ let initialize = async (
   ~enums as _: array<Table.enumConfig<Table.enum>>,
 ) => {
   try {
-    let replicated = Env.ClickHouse.replicated()
     let databaseEngine = Env.ClickHouse.databaseEngine()
     let databaseEngineClause = switch databaseEngine {
     | Some(engine) => ` ENGINE = ${engine}`
@@ -463,8 +462,15 @@ let initialize = async (
     | Some(engine) => engine->databaseEngineName === "Replicated"
     | None => false
     }
-    if hasReplicatedDatabaseEngine && !replicated {
-      JsError.throwWithMessage(`ENVIO_CLICKHOUSE_DATABASE_ENGINE is set to Replicated, but ENVIO_CLICKHOUSE_REPLICATED is not "true". Without it tables use the MergeTree engine and their data is not replicated. Set ENVIO_CLICKHOUSE_REPLICATED=true.`)
+    let envReplicated = Env.ClickHouse.replicated()
+    // A Replicated database engine only replicates data when its tables use the
+    // ReplicatedMergeTree engine, so it implies replicated mode even when
+    // ENVIO_CLICKHOUSE_REPLICATED is unset.
+    let replicated = envReplicated || hasReplicatedDatabaseEngine
+    if hasReplicatedDatabaseEngine && !envReplicated {
+      Logging.info(
+        "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so tables use the ReplicatedMergeTree engine.",
+      )
     }
     let databaseOnClusterClause = onClusterClause(~onCluster=replicated)
     // DDL that a Replicated database engine propagates itself must not carry
