@@ -496,15 +496,13 @@ impl EvmRpcClient {
             let mut items = Vec::new();
             for raw in raw_logs {
                 let address = raw.normalized_address(should_checksum)?;
-                // Decode failures are skipped like unrouted logs (matching
-                // the pre-routing behavior where undecodable params made
-                // the JS side drop the item).
-                let routed = decoder
-                    .route_and_decode_napi(
-                        &raw.to_decoder_log(),
-                        contract_name_by_address.get(&address).map(String::as_str),
-                    )
-                    .unwrap_or_default();
+                // Per-registration decode failures are dropped inside
+                // `route_and_decode`; only structurally malformed logs error,
+                // and those propagate like on the HyperSync path.
+                let routed = decoder.route_and_decode_napi(
+                    &raw.to_decoder_log(),
+                    contract_name_by_address.get(&address).map(String::as_str),
+                )?;
                 if routed.is_empty() {
                     continue;
                 }

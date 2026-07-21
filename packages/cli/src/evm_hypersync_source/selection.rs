@@ -96,15 +96,21 @@ struct RegistrationSelection {
     transaction_fields: Vec<TransactionField>,
 }
 
-/// Left-pad a 20-byte address to a 32-byte topic value. Lowercased — topic
-/// values are compared as bytes server-side and registration-time values are
-/// lowercased the same way.
-fn address_to_topic(address: &str) -> Result<String> {
+/// Left-pad a 20-byte address to its 32-byte indexed-topic form.
+pub(crate) fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
     let bytes = hypersync_client::format::Address::decode_hex(address)
         .with_context(|| format!("decode address {address} for topic encoding"))?;
+    let mut topic = [0u8; 32];
+    topic[12..].copy_from_slice(bytes.as_slice());
+    Ok(topic)
+}
+
+/// The 32-byte topic as a lowercase hex string — topic values are compared as
+/// bytes server-side and registration-time values are lowercased the same way.
+fn address_to_topic(address: &str) -> Result<String> {
     Ok(format!(
-        "0x000000000000000000000000{}",
-        faster_hex::hex_string(bytes.as_slice())
+        "0x{}",
+        faster_hex::hex_string(&address_to_topic_bytes(address)?)
     ))
 }
 

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
-use crate::evm_hypersync_source::selection::TopicSelectionInput;
+use crate::evm_hypersync_source::selection::{address_to_topic_bytes, TopicSelectionInput};
 use crate::evm_hypersync_source::types::{
     sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
 };
@@ -283,13 +283,15 @@ impl SelectionDecoder {
     /// ABI declaration. `contract_name` is the log address's owning contract
     /// per the partition's address index.
     ///
-    /// Same-signature registrations may declare different indexed/body
-    /// splits, and the log's bytes need not be valid under every declaration
-    /// — a match that fails to decode (or to name its params) just contributes
-    /// no item. Only when no match yields an item is the failure surfaced as
-    /// an error: the log was fetched for these registrations, so silently
-    /// dropping it would hide genuinely malformed data or a wrong ABI. An
-    /// empty result means the log routes nowhere and is dropped by the caller.
+    /// Same-signature registrations may declare different indexed/body splits,
+    /// and the log's bytes need not be valid under every declaration — a match
+    /// that fails to decode (or to name its params) just contributes no item.
+    /// A decode failure is benign whether or not a sibling in the selection
+    /// happens to decode: a wildcard registration routinely fetches foreign
+    /// same-signature logs whose indexed split its own declaration can't read,
+    /// so those are dropped, not surfaced. Only a structurally malformed log
+    /// (missing topic0, more topics than fit) is an error. An empty result
+    /// means the log routes nowhere and is dropped by the caller.
     fn route_and_decode(
         &self,
         topics: &[Option<LogArgument>],
@@ -309,10 +311,6 @@ impl SelectionDecoder {
             .context("topic_count overflow")?;
 
         let mut routed = Vec::new();
-        // Both decoding and param-naming failures are per-registration: capture
-        // the first, skip that registration, and surface it only if the log
-        // yields no item at all (see the contract above).
-        let mut first_error: Option<anyhow::Error> = None;
         for sel in &self.registrations {
             let reg = &sel.registration;
             if !reg.matches(
@@ -324,36 +322,24 @@ impl SelectionDecoder {
             ) {
                 continue;
             }
-            let result = reg
-                .decoder
-                .decode_log_parts(
-                    topics
-                        .iter()
-                        .take_while(|t| t.is_some())
-                        .map(|t| t.as_ref().unwrap().into()),
-                    data,
-                )
-                .context("decode log")
-                .and_then(|decoded| {
-                    apply_names(decoded, &reg.params, self.checksummed_addresses)
-                        .context("apply param names")
-                });
-            match result {
-                Ok(fields) => routed.push(RoutedEvent {
+            let decoded = reg.decoder.decode_log_parts(
+                topics
+                    .iter()
+                    .take_while(|t| t.is_some())
+                    .map(|t| t.as_ref().unwrap().into()),
+                data,
+            );
+            let fields = decoded.ok().and_then(|decoded| {
+                apply_names(decoded, &reg.params, self.checksummed_addresses).ok()
+            });
+            if let Some(fields) = fields {
+                routed.push(RoutedEvent {
                     index: reg.index,
                     params: ParamValue::Obj(fields),
-                }),
-                Err(e) => {
-                    if first_error.is_none() {
-                        first_error = Some(e);
-                    }
-                }
+                });
             }
         }
-        match (routed.is_empty(), first_error) {
-            (true, Some(err)) => Err(err),
-            _ => Ok(routed),
-        }
+        Ok(routed)
     }
 }
 
@@ -392,16 +378,6 @@ fn apply_names(
 /// from a signature string, so an event surfaced to handlers under a different
 /// `name:` (display name != on-chain name) still matches its real log (issue
 /// #1285). The event name plays no part in decoding — only the param types do.
-/// Left-pad a 20-byte address to its 32-byte indexed-topic form, so a decoded
-/// address param can be compared byte-for-byte against a log's topic.
-fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
-    let bytes = hypersync_client::format::Address::decode_hex(address)
-        .with_context(|| format!("decode address {address} for topic encoding"))?;
-    let mut topic = [0u8; 32];
-    topic[12..].copy_from_slice(bytes.as_slice());
-    Ok(topic)
-}
-
 fn build_event_decoder(sighash: [u8; 32], params: &[ParamMeta]) -> Result<DynSolEvent> {
     let mut indexed = Vec::new();
     let mut body = Vec::new();
@@ -895,14 +871,15 @@ mod tests {
             .unwrap();
         assert_eq!(routed_indexes(&routed), vec![0]);
 
-        // With only the failing declaration matched, the decode error surfaces
-        // instead of the log silently disappearing.
-        let err = core
+        // With only the failing declaration matched, the log drops rather than
+        // erroring — a decode failure is a benign "not this declaration's log",
+        // not malformed data (a wildcard registration routinely fetches foreign
+        // same-signature logs it can't read under its own indexed split).
+        let routed = core
             .selection(&[1], &HashMap::new())
             .unwrap()
             .route_and_decode_napi(&log, None)
-            .err()
-            .expect("expected a decode error when no matched declaration decodes");
-        assert!(format!("{err:#}").contains("decode log"));
+            .unwrap();
+        assert!(routed.is_empty());
     }
 }

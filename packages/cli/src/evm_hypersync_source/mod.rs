@@ -489,9 +489,9 @@ fn process_response(
     for log in logs.into_iter().flatten() {
         let (log_index, src_address, block_number, transaction_index) =
             flatten_log_for_js(&log, should_checksum).context("mapping log")?;
-        // Propagate genuine decode errors (malformed bytes, ABI mismatch) up to
-        // the JS caller instead of silently coercing them into a drop — a drop
-        // is reserved for logs that route to no registration.
+        // Only structurally malformed logs (missing topic0, bad topic bytes)
+        // surface here; per-registration decode failures are dropped inside
+        // `route_and_decode`.
         let routed = decoder
             .route_and_decode_simple(
                 &log,
