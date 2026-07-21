@@ -223,6 +223,10 @@ jobs:
               echo "Hasura is up"; exit 0; fi; sleep 1; done
           echo "Hasura did not become ready"; exit 1
 
+      - name: envio-tests
+        working-directory: packages/envio-tests
+        run: pnpm test
+
       - name: test_codegen
         working-directory: scenarios/test_codegen
         run: |
