@@ -124,6 +124,25 @@ importers:
       rescript:
         specifier: 12.2.0
         version: 12.2.0
+
+  packages/envio-tests:
+    dependencies:
+      bignumber.js:
+        specifier: 9.3.1
+        version: 9.3.1
+      envio:
+        specifier: file:../envio
+        version: link:../envio
+    devDependencies:
+      '@rescript/runtime':
+        specifier: 12.2.0
+        version: 12.2.0
+      rescript:
+        specifier: 12.2.0
+        version: 12.2.0
+      rescript-schema:
+        specifier: 9.5.1
+        version: 9.5.1(rescript@12.2.0)
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
@@ -228,6 +247,9 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
+      envio-tests:
+        specifier: file:../../packages/envio-tests
+        version: link:../../packages/envio-tests
       ts-expect:
         specifier: 1.3.0
         version: 1.3.0

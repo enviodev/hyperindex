@@ -1,22 +1,34 @@
 type chainId = Indexer.chainId
 
+// The generated project config. Cheap: Config.load() memoizes the pure parse.
 let config = Config.load()
 
+let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
+  config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
+
 let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
-  config.userEntitiesByName
-  ->Dict.get(name->(Utils.magic: Indexer.Entities.name<_> => string))
-  ->Option.getOrThrow
+  config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<_> => string))
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
-let defaultPersistence = PgStorage.makePersistenceFromConfig(
-  ~config,
-  ~storage=PgStorage.makeStorageFromEnv(
-    ~config,
-    ~sql=PgStorage.makeClient(),
-    ~pgSchema=Env.Db.publicSchema,
-    ~isHasuraEnabled=false,
-  ),
-)
+// Lazy so importing the helper doesn't open a pg client for tests that never use it.
+let defaultPersistenceRef = ref(None)
+let defaultPersistence = () =>
+  switch defaultPersistenceRef.contents {
+  | Some(persistence) => persistence
+  | None =>
+    let config = Config.load()
+    let persistence = PgStorage.makePersistenceFromConfig(
+      ~config,
+      ~storage=PgStorage.makeStorageFromEnv(
+        ~config,
+        ~sql=PgStorage.makeClient(),
+        ~pgSchema=Env.Db.publicSchema,
+        ~isHasuraEnabled=false,
+      ),
+    )
+    defaultPersistenceRef := Some(persistence)
+    persistence
+  }
 
 module InMemoryStore = {
   let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
@@ -32,10 +44,14 @@ module InMemoryStore = {
     )
   }
 
-  let make = (~entities=[]) => {
+  let make = (~config=?, ~entities=[]) => {
+    let config = switch config {
+    | Some(config) => config
+    | None => Config.load()
+    }
     let indexerState = IndexerState.make(
       ~config,
-      ~persistence=defaultPersistence,
+      ~persistence=defaultPersistence(),
       // A trivial chain state map for store-only tests that never run the loop.
       ~chainStates=Dict.make(),
       ~isInReorgThreshold=false,
@@ -207,12 +223,13 @@ module Storage = {
     }
   }
 
-  let toPersistence = (storageMock: t) => {
+  let toPersistence = (storageMock: t, ~config=?) => {
+    let config = switch config {
+    | Some(config) => config
+    | None => Config.load()
+    }
     {
-      ...PgStorage.makePersistenceFromConfig(
-        ~config=Config.load(),
-        ~storage=storageMock.storage,
-      ),
+      ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
       storageStatus: Ready({
         cleanRun: false,
         cache: Dict.make(),
@@ -249,7 +266,7 @@ type mockSourceEvent = {
 // MockSource items choose their callback at response time, after ChainState has
 // already been created. Install one stable registration up front and dispatch
 // through callback metadata carried only by the test payload.
-let makeMockSourceRegistration = (~index): Internal.onEventRegistration => {
+let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
     let args = args->(
       Utils.magic: Internal.handlerArgs => Internal.genericHandlerArgs<
@@ -285,9 +302,9 @@ let makeMockSourceRegistration = (~index): Internal.onEventRegistration => {
     eventConfig: ({
       id: "MockEvent",
       // Keep the synthetic registration in the same address-dependent fetch
-      // partition as the generated test registrations. MockSource ignores the
+      // partition as the config's registrations. MockSource ignores the
       // query selection, while ChainState still owns and resolves this slot.
-      contractName: "Gravatar",
+      contractName,
       name: "MockEvent",
       paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
       simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
@@ -344,6 +361,12 @@ let installMockSourceRegistrations = (
       }
       let mockRegistration = makeMockSourceRegistration(
         ~index=registrations.onEventRegistrations->Array.length,
+        // Any contract from the chain keeps the synthetic registration in the
+        // address-dependent partition of a real contract.
+        ~contractName=switch chainConfig.contracts->Array.get(0) {
+        | Some(contract) => contract.name
+        | None => "MockContract"
+        },
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
       sourceStates->Array.forEach(state =>
@@ -384,6 +407,9 @@ module Indexer = {
 
   let rec make = async (
     ~chains: array<chainConfig>,
+    // A config parsed through the user-facing pipeline (MockIndexerConfig.parseYaml).
+    // Defaults to the generated project config.
+    ~config as customConfig: option<Config.t>=?,
     ~saveFullHistory=false,
     // Reinit storage without Hasura
     // makes tests ~1.9 seconds faster
@@ -394,6 +420,10 @@ module Indexer = {
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
+    // Defaults to 0 (not the production 100) so the small-scale fixtures here
+    // don't enter the reorg threshold before fetching. Tests exercising the
+    // tolerance pass an explicit value.
+    ~reorgThresholdReadyTolerance=0,
     // Lets regression tests surface fatal errors without terminating the Vitest worker.
     ~onError=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
@@ -412,7 +442,10 @@ module Indexer = {
     // from the config it's given, so registration must see the resolved
     // config rather than the raw generated one.
     let config = {
-      let config = Config.load()
+      let config = switch customConfig {
+      | Some(config) => config
+      | None => Config.load()
+      }
 
       let chainMap =
         chains
@@ -441,10 +474,18 @@ module Indexer = {
         enableRawEvents,
         chainMap,
         batchSize: batchSize->Option.getOr(config.batchSize),
+        reorgThresholdReadyTolerance,
       }
     }
 
-    let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
+    let registrationsByChainId = switch customConfig {
+    | None => await HandlerLoader.registerAllHandlers(~config)
+    | Some(_) =>
+      // A supplied config has no handler files on disk; register inline
+      // handlers (if any) through the same public registry lifecycle.
+      HandlerRegister.startRegistration(~config)
+      HandlerRegister.finishRegistration(~config)
+    }
     installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let sql = PgStorage.makeClient()
@@ -544,7 +585,8 @@ module Indexer = {
         })
       },
       query: (type entity, name: Indexer.Entities.name<entity>) => {
-        let ec = entityConfig(name)
+        let ec =
+          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity> => string))
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
@@ -553,7 +595,8 @@ module Indexer = {
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
       queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
-        let ec = entityConfig(name)
+        let ec =
+          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity> => string))
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
@@ -685,6 +728,7 @@ module Indexer = {
         }
         await make(
           ~chains,
+          ~config=?customConfig,
           ~enableHasura,
           ~enableRawEvents,
           ~saveFullHistory,
@@ -693,6 +737,7 @@ module Indexer = {
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
           ~targetBufferSize?,
+          ~reorgThresholdReadyTolerance,
           ~onError,
           ~mapStorage,
         )
@@ -970,8 +1015,8 @@ module Source = {
                             ~message="MockSource on-event registration was not installed before resolving items",
                           )
                         let payload: Evm.payload = {
-                          contractName: "Gravatar",
-                          eventName: "MockEvent",
+                          contractName: onEventRegistration.eventConfig.contractName,
+                          eventName: onEventRegistration.eventConfig.name,
                           params: %raw(`{}`),
                           chainId: chain->ChainMap.Chain.toChainId,
                           srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
@@ -1102,6 +1147,13 @@ let evmOnEventRegistration = (
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
   ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
+  // Override the event's ABI when a test needs indexed params (so its logs
+  // carry the topics its `where` filters on). Defaults to a no-param,
+  // single-topic event. `topicCount` is derived from the indexed params the
+  // same way production's `EventConfigBuilder.buildEvmEventConfig` does, so the
+  // two can't drift.
+  ~paramsMetadata: array<Internal.paramMeta>=[],
+  ~topicCount=paramsMetadata->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc),
 ): Internal.evmOnEventRegistration => {
   let selectedTransactionFields =
     Utils.Set.fromArray(transactionFieldNames)->(
@@ -1111,8 +1163,8 @@ let evmOnEventRegistration = (
     id,
     contractName,
     name: "EventWithoutFields",
-    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
-    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
+    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
+    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema(paramsMetadata),
     selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
@@ -1122,8 +1174,8 @@ let evmOnEventRegistration = (
       ),
     ),
     sighash: id,
-    topicCount: 1,
-    paramsMetadata: [],
+    topicCount,
+    paramsMetadata,
   }
   {
     index: -1,
