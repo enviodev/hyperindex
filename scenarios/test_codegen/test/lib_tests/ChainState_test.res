@@ -251,9 +251,8 @@ describe("ChainState reorg-threshold readiness latch", () => {
 
     let atHead = makeAtFrontier(~knownHeight=1000, ~frontier=1000)
     let readyAtHead = atHead->ChainState.isReadyToEnterReorgThreshold
-    // A new block arrives after the chain reached its lagged head. The
-    // instantaneous predicate would retract readiness (frontier 1000 < head
-    // 1001); the latch keeps it ready so multichain entry can still converge.
+    // New block after the chain reached its head: without the latch this would
+    // retract readiness (frontier 1000 < head 1001).
     atHead->ChainState.updateKnownHeight(~knownHeight=1001)
 
     t.expect(

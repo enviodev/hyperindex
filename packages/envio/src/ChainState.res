@@ -39,14 +39,10 @@ type t = {
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
   // prune / rollback lifecycle as the transaction store.
   blockStore: BlockStore.t,
-  // Latches true the first time the fetch frontier reaches this chain's lagged
-  // head. Reorg-threshold entry requires every chain to have reached its head at
-  // once, but a live chain's head keeps advancing, so an instantaneous "at head"
-  // check is almost never true for all chains at the same batch. Latching makes
-  // the per-chain readiness monotonic: a chain that momentarily reached its head
-  // stays ready even after its head moves on. Safe because nothing above
-  // head - maxReorgDepth is processed before the threshold, so a latched chain
-  // that later trails the head has still not touched an un-reorg-safe block.
+  // Latches true once the frontier first reaches the lagged head, keeping
+  // readiness monotonic so a later head advance can't retract it — otherwise the
+  // all-chains-ready check almost never lines up on a live indexer. Safe because
+  // nothing above head - maxReorgDepth is processed before the threshold.
   mutable reachedReorgThresholdEdge: bool,
 }
 
@@ -394,8 +390,7 @@ let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPerc
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
-// Latches once the frontier reaches the lagged head with a drained buffer. See
-// reachedReorgThresholdEdge.
+// See reachedReorgThresholdEdge.
 let latchReorgThresholdEdge = (cs: t, fetchState: FetchState.t) => {
   if !cs.reachedReorgThresholdEdge && fetchState->FetchState.isReadyToEnterReorgThreshold {
     cs.reachedReorgThresholdEdge = true
