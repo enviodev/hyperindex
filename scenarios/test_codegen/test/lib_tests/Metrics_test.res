@@ -169,7 +169,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       effects: [
         {
           effect: "getMetadata",
-          scope: "crossChain",
+          scope: Internal.EffectCache.scopeToString(CrossChain),
           callSeconds: 8.4,
           callSecondsTotal: 20.9,
           callCount: 300.,
