@@ -317,6 +317,9 @@ let setUpdatesOrThrow = async (
 // The '{cluster}' macro resolves to each node's configured cluster name.
 let onClusterClause = (~onCluster: bool) => onCluster ? ` ON CLUSTER '{cluster}'` : ""
 
+let databaseEngineName = (engineSpec: string) =>
+  engineSpec->String.split("(")->Array.getUnsafe(0)->String.trim
+
 // Generate CREATE TABLE query for entity history table
 let makeCreateHistoryTableQuery = (
   ~entityConfig: Internal.entityConfig,
@@ -457,15 +460,20 @@ let initialize = async (
     | None => ""
     }
     let hasReplicatedDatabaseEngine = switch databaseEngine {
-    | Some(engine) => engine->String.startsWith("Replicated")
+    | Some(engine) => engine->databaseEngineName === "Replicated"
     | None => false
     }
+    if hasReplicatedDatabaseEngine && !replicated {
+      JsError.throwWithMessage(`ENVIO_CLICKHOUSE_DATABASE_ENGINE is set to Replicated, but ENVIO_CLICKHOUSE_REPLICATED is not "true". Without it tables use the MergeTree engine and their data is not replicated. Set ENVIO_CLICKHOUSE_REPLICATED=true.`)
+    }
     let databaseOnClusterClause = onClusterClause(~onCluster=replicated)
-    let tablesOnCluster = replicated && !hasReplicatedDatabaseEngine
+    // DDL that a Replicated database engine propagates itself must not carry
+    // ON CLUSTER on top of it — the clause is only for the plain-database case.
+    let ddlOnCluster = replicated && !hasReplicatedDatabaseEngine
 
     switch databaseEngine {
     | Some(engineSpec) => {
-        let expectedEngineName = engineSpec->String.split("(")->Array.getUnsafe(0)->String.trim
+        let expectedEngineName = engineSpec->databaseEngineName
         let existingResult = await client->query({
           query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
         })
@@ -481,7 +489,9 @@ let initialize = async (
     | None => ()
     }
 
-    await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}${databaseOnClusterClause}`})
+    await client->exec({
+      query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
+    })
     await client->exec({
       query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
     })
@@ -493,13 +503,13 @@ let initialize = async (
             ~entityConfig,
             ~database,
             ~replicated,
-            ~onCluster=tablesOnCluster,
+            ~onCluster=ddlOnCluster,
           ),
         })
       ),
     )->Utils.Promise.ignoreValue
     await client->exec({
-      query: makeCreateCheckpointsTableQuery(~database, ~replicated, ~onCluster=tablesOnCluster),
+      query: makeCreateCheckpointsTableQuery(~database, ~replicated, ~onCluster=ddlOnCluster),
     })
 
     // The client pools HTTP connections, so consecutive statements may reach
@@ -509,7 +519,7 @@ let initialize = async (
     // creates yet, failing with UNKNOWN_TABLE. Block until every replica has
     // caught up before creating the views. ON CLUSTER must precede the
     // database name in this command's grammar.
-    if replicated && hasReplicatedDatabaseEngine {
+    if hasReplicatedDatabaseEngine {
       await client->exec({
         query: `SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{cluster}' ${database}`,
       })
@@ -518,7 +528,7 @@ let initialize = async (
     await Promise.all(
       entities->Array.map(entityConfig =>
         client->exec({
-          query: makeCreateViewQuery(~entityConfig, ~database, ~onCluster=tablesOnCluster),
+          query: makeCreateViewQuery(~entityConfig, ~database, ~onCluster=ddlOnCluster),
         })
       ),
     )->Utils.Promise.ignoreValue
