@@ -197,3 +197,72 @@ describe("ChainState chain density EMA (per batch)", () => {
     t.expect(cs->ChainState.chainDensity, ~message="full-window batch replaces").toEqual(Some(25.))
   })
 })
+
+describe("ChainState reorg-threshold readiness latch", () => {
+  // A chain with no address partitions, so bufferBlockNumber follows
+  // latestOnBlockBlockNumber (the fetch frontier) and readiness can be set
+  // directly. blockLag defaults to 0, so the lagged head is knownHeight.
+  let makeAtFrontier = (~knownHeight, ~frontier) => {
+    let base = FetchState.make(
+      ~onEventRegistrations=[],
+      ~contractConfigs=Dict.make(),
+      ~addresses=[],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=3,
+      ~maxOnBlockBufferSize=10000,
+      ~chainId,
+      ~knownHeight=0,
+      ~onBlockRegistrations=[
+        {
+          Internal.index: 0,
+          name: "latch-test",
+          chainId,
+          startBlock: None,
+          endBlock: None,
+          interval: 1,
+          handler: "mock onBlock handler"->(
+            Utils.magic: string => Internal.onBlockArgs => promise<unit>
+          ),
+        },
+      ],
+    )
+    let fetchState = {...base, knownHeight, latestOnBlockBlockNumber: frontier, buffer: []}
+    ChainState.make(
+      ~chainConfig={...baseChainConfig, id: chainId},
+      ~fetchState,
+      ~indexingAddresses=IndexingAddresses.make(~contractConfigs=Dict.make(), ~addresses=[]),
+      ~sourceManager=SourceManager.make(
+        ~sources=[MockIndexer.Source.make([], ~chain=#1).source],
+        ~isRealtime=false,
+      ),
+      ~reorgDetection=ReorgDetection.make(
+        ~chainReorgCheckpoints=[],
+        ~maxReorgDepth=200,
+        ~shouldRollbackOnReorg=true,
+      ),
+      ~committedProgressBlockNumber=-1,
+      ~logger=Logging.getLogger(),
+    )
+  }
+
+  it("is not ready below the head, and stays ready after the head advances", t => {
+    let belowHead = makeAtFrontier(~knownHeight=1000, ~frontier=990)
+
+    let atHead = makeAtFrontier(~knownHeight=1000, ~frontier=1000)
+    let readyAtHead = atHead->ChainState.isReadyToEnterReorgThreshold
+    // A new block arrives after the chain reached its lagged head. The
+    // instantaneous predicate would retract readiness (frontier 1000 < head
+    // 1001); the latch keeps it ready so multichain entry can still converge.
+    atHead->ChainState.updateKnownHeight(~knownHeight=1001)
+
+    t.expect(
+      (
+        belowHead->ChainState.isReadyToEnterReorgThreshold,
+        readyAtHead,
+        atHead->ChainState.isReadyToEnterReorgThreshold,
+      ),
+      ~message="readiness latches on reaching the head and survives a later head advance",
+    ).toEqual((false, true, true))
+  })
+})
