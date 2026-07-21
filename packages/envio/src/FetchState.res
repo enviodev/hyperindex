@@ -909,19 +909,6 @@ let updateInternal = (
     firstEventBlock: fetchState.firstEventBlock,
   }
 
-  Prometheus.IndexingPartitions.set(
-    ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
-    ~chainId=fetchState.chainId,
-  )
-  Prometheus.IndexingBufferSize.set(
-    ~bufferSize=updatedFetchState.buffer->Array.length,
-    ~chainId=fetchState.chainId,
-  )
-  Prometheus.IndexingBufferBlockNumber.set(
-    ~blockNumber=updatedFetchState->bufferBlockNumber,
-    ~chainId=fetchState.chainId,
-  )
-
   updatedFetchState
 }
 
@@ -2340,21 +2327,12 @@ let make = (
     firstEventBlock,
   }
 
-  Prometheus.IndexingPartitions.set(
-    ~partitionsCount=optimizedPartitions->OptimizedPartitions.count,
-    ~chainId,
-  )
-  Prometheus.IndexingBufferSize.set(~bufferSize=buffer->Array.length, ~chainId)
-  Prometheus.IndexingBufferBlockNumber.set(~blockNumber=fetchState->bufferBlockNumber, ~chainId)
-  switch endBlock {
-  | Some(endBlock) => Prometheus.IndexingEndBlock.set(~endBlock, ~chainId)
-  | None => ()
-  }
-
   fetchState
 }
 
 let bufferSize = ({buffer}: t) => buffer->Array.length
+
+let partitionsCount = ({optimizedPartitions}: t) => optimizedPartitions->OptimizedPartitions.count
 
 let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlockNumber) => {
   // - Remove queries where fromBlock > target
@@ -2640,7 +2618,6 @@ let getProgressBlockNumberAt = ({buffer} as fetchState: t, ~index) => {
 
 let updateKnownHeight = (fetchState: t, ~knownHeight) => {
   if knownHeight > fetchState.knownHeight {
-    Prometheus.IndexingKnownHeight.set(~blockNumber=knownHeight, ~chainId=fetchState.chainId)
     fetchState->updateInternal(~knownHeight)
   } else {
     fetchState

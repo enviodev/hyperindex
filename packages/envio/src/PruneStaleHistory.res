@@ -106,7 +106,7 @@ let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpointId) 
       ~safeCheckpointId,
     ) {
     | () =>
-      Prometheus.RollbackHistoryPrune.increment(
+      state->IndexerState.recordHistoryPrune(
         ~timeSeconds=Performance.secondsSince(timeRef),
         ~entityName=entityConfig.name,
       )

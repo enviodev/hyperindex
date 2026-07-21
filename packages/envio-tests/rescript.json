@@ -1,10 +1,7 @@
 {
-  "name": "gravatar",
+  "name": "envio-tests",
+  "namespace": false,
   "sources": [
-    {
-      "dir": "src",
-      "subdirs": true
-    },
     {
       "dir": "test",
       "subdirs": true
@@ -18,11 +15,7 @@
   "jsx": {
     "version": 4
   },
-  "dependencies": [
-    "rescript-schema",
-    "envio",
-    "envio-tests"
-  ],
+  "dependencies": ["rescript-schema", "envio"],
   "compiler-flags": ["-open RescriptSchema"],
   "warnings": {
     "error": "+a"

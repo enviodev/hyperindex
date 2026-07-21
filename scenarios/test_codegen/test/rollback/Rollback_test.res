@@ -2975,6 +2975,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             ~updatedEffectsCache,
             ~updatedEntities,
             ~chainMetaData,
+            ~onWrite,
           ) => {
             writeBatchCalls := writeBatchCalls.contents + 1
             let run = async () => {
@@ -2991,6 +2992,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
                 ~updatedEffectsCache,
                 ~updatedEntities,
                 ~chainMetaData,
+                ~onWrite,
               )
             }
             run()

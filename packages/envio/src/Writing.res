@@ -61,11 +61,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(
-        ~count=effectCacheRecord.count,
-        ~effectName,
-        ~scope=scope->Internal.EffectCache.scopeToString,
-      )
+      inMemTable->EffectState.commitCacheCount(~count=effectCacheRecord.count)
       acc
       ->Array.push(
         (
@@ -155,6 +151,8 @@ let runOneWrite = async (state: IndexerState.t) => {
         ~updatedEntities,
         ~updatedEffectsCache,
         ~chainMetaData,
+        ~onWrite=(~storage, ~timeSeconds) =>
+          state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
       ),
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))

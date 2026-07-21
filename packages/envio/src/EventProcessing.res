@@ -74,7 +74,7 @@ let runEventHandlerOrThrow = async (
   }
   let handlerDuration = timeBeforeHandler->Performance.secondsSince
   let eventConfig = eventItem.onEventRegistration.eventConfig
-  Prometheus.ProcessingHandler.increment(
+  indexerState->IndexerState.recordHandlerDuration(
     ~contract=eventConfig.contractName,
     ~event=eventConfig.name,
     ~duration=handlerDuration,
@@ -163,16 +163,18 @@ let preloadBatchOrThrow = async (
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
-        let {handler, eventConfig: {contractName, name: eventName}} =
-          (item->Internal.castUnsafeEventItem).onEventRegistration
+        let {handler, eventConfig: {contractName, name: eventName}} = (
+          item->Internal.castUnsafeEventItem
+        ).onEventRegistration
         switch handler {
         | None => ()
         | Some(handler) =>
           try {
-            let timerRef = Prometheus.PreloadHandler.startOperation(
-              ~contract=contractName,
-              ~event=eventName,
-            )
+            let timerRef =
+              indexerState->IndexerState.startPreloadHandler(
+                ~contract=contractName,
+                ~event=eventName,
+              )
             promises->Array.push(
               handler({
                 event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
@@ -189,7 +191,8 @@ let preloadBatchOrThrow = async (
                 }),
               })
               ->Promise.thenResolve(_ => {
-                timerRef->Prometheus.PreloadHandler.endOperation(
+                indexerState->IndexerState.endPreloadHandler(
+                  timerRef,
                   ~contract=contractName,
                   ~event=eventName,
                 )
@@ -270,6 +273,7 @@ let runBatchHandlersOrThrow = async (
 let registerProcessEventBatchMetrics = (
   ~logger,
   ~batch: Batch.t,
+  ~indexerState,
   ~loadDuration,
   ~handlerDuration,
 ) => {
@@ -282,7 +286,7 @@ let registerProcessEventBatchMetrics = (
     })
   })
 
-  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
+  indexerState->IndexerState.recordBatchDurations(~loadDuration, ~handlerDuration)
 }
 
 type logPartitionInfo = {
@@ -380,6 +384,7 @@ let processEventBatch = async (
     registerProcessEventBatchMetrics(
       ~logger,
       ~batch,
+      ~indexerState,
       ~loadDuration=loaderDuration,
       ~handlerDuration,
     )
