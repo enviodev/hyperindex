@@ -387,11 +387,6 @@ fn apply_names(
         .collect()
 }
 
-/// Build the positional decoder for one registration. The decoder's topic0 is
-/// pinned to the on-chain sighash the registration carries rather than derived
-/// from a signature string, so an event surfaced to handlers under a different
-/// `name:` (display name != on-chain name) still matches its real log (issue
-/// #1285). The event name plays no part in decoding — only the param types do.
 /// Left-pad a 20-byte address to its 32-byte indexed-topic form, so a decoded
 /// address param can be compared byte-for-byte against a log's topic.
 fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
@@ -402,6 +397,11 @@ fn address_to_topic_bytes(address: &str) -> Result<[u8; 32]> {
     Ok(topic)
 }
 
+/// Build the positional decoder for one registration. The decoder's topic0 is
+/// pinned to the on-chain sighash the registration carries rather than derived
+/// from a signature string, so an event surfaced to handlers under a different
+/// `name:` (display name != on-chain name) still matches its real log (issue
+/// #1285). The event name plays no part in decoding — only the param types do.
 fn build_event_decoder(sighash: [u8; 32], params: &[ParamMeta]) -> Result<DynSolEvent> {
     let mut indexed = Vec::new();
     let mut body = Vec::new();
