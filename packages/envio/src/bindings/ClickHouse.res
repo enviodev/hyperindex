@@ -505,10 +505,13 @@ let initialize = async (
     }
 
     if hasReplicatedDatabaseEngine {
-      // TRUNCATE DATABASE is unsupported on Replicated databases; drop and
-      // recreate instead. ON CLUSTER removes it from every node (the engine's
-      // own log can't replicate the drop of the database it lives in) and SYNC
-      // waits for the drop to finish before the CREATE below.
+      // TRUNCATE DATABASE is unsupported on Replicated databases, so a reset
+      // has to DROP and recreate instead (plain databases keep the TRUNCATE
+      // fallback below). This requires the ClickHouse user to hold the DROP
+      // privilege; without it the reset fails here with ACCESS_DENIED. ON
+      // CLUSTER removes the database from every node — the engine's own log
+      // can't replicate the drop of the database it lives in — and SYNC waits
+      // for the drop to finish before the CREATE below.
       await client->exec({
         query: `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
       })
