@@ -105,4 +105,45 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       ).toEqual([{value: "1", labels: Dict.make()}])
     },
   )
+
+  Async.it(
+    "enters while still within the configured tolerance of the lagged head",
+    async t => {
+      let source = MockIndexer.Source.make(
+        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        ~chain=#1337,
+      )
+      let indexerMock = await MockIndexer.Indexer.make(
+        ~chains=[
+          {chain: #1337, sourceConfig: Config.CustomSources([source.source]), maxReorgDepth: 200, blockLag: 0},
+        ],
+        ~reorgThresholdReadyTolerance=100,
+        ~reducedPollingInterval=1,
+        ~targetBufferSize=100,
+      )
+      await Utils.delay(0)
+
+      source.resolveGetHeightOrThrow(1000)
+      await MockIndexer.Helper.waitItemsQuery(source)
+      // Pre-threshold blockLag is 200, so the chain queries up to block 800.
+      t.expect(
+        source.getItemsOrThrowCalls->Array.map(call => call.payload["toBlock"]),
+        ~message="pre-threshold query stops at the lagged head",
+      ).toEqual([Some(800)])
+
+      // Respond 50 blocks short of the lagged head (750 < 800) — within the
+      // 100-block tolerance, so the chain enters despite not reaching 800 exactly.
+      source.resolveGetItemsOrThrow(
+        [{MockIndexer.Source.blockNumber: 750, logIndex: 0}],
+        ~latestFetchedBlockNumber=750,
+        ~knownHeight=1000,
+      )
+      await indexerMock.getBatchWritePromise()
+
+      t.expect(
+        await indexerMock.metric("envio_reorg_threshold"),
+        ~message="enters within the tolerance below the lagged head",
+      ).toEqual([{value: "1", labels: Dict.make()}])
+    },
+  )
 })

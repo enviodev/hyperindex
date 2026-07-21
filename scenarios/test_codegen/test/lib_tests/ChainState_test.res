@@ -246,14 +246,16 @@ describe("ChainState reorg-threshold readiness latch", () => {
     )
   }
 
-  it("is not ready below the head, and stays ready after the head advances", t => {
-    let belowHead = makeAtFrontier(~knownHeight=1000, ~frontier=990)
+  it("is not ready far below the head, and stays ready after the head jumps past the tolerance", t => {
+    // blockLag 0, tolerance 100: the ready cutoff is knownHeight - 100.
+    let belowHead = makeAtFrontier(~knownHeight=1000, ~frontier=850)
 
     let atHead = makeAtFrontier(~knownHeight=1000, ~frontier=1000)
     let readyAtHead = atHead->ChainState.isReadyToEnterReorgThreshold
-    // New block after the chain reached its head: without the latch this would
-    // retract readiness (frontier 1000 < head 1001).
-    atHead->ChainState.updateKnownHeight(~knownHeight=1001)
+    // Head jumps beyond the tolerance after the chain reached it. Without the
+    // latch this retracts readiness (frontier 1000 < cutoff 1100); the latch
+    // keeps it ready.
+    atHead->ChainState.updateKnownHeight(~knownHeight=1200)
 
     t.expect(
       (
@@ -261,7 +263,7 @@ describe("ChainState reorg-threshold readiness latch", () => {
         readyAtHead,
         atHead->ChainState.isReadyToEnterReorgThreshold,
       ),
-      ~message="readiness latches on reaching the head and survives a later head advance",
+      ~message="readiness latches on reaching the head and survives a later head jump",
     ).toEqual((false, true, true))
   })
 })

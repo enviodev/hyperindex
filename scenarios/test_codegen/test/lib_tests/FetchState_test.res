@@ -3507,6 +3507,32 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
   })
 
+  it("With a tolerance, is ready within it below head - blockLag, false just beyond it", t => {
+    let isReady = (~knownHeight) => {
+      let (fs, _indexingAddresses) = makeFs(
+        ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+        ~addresses=[
+          {
+            Internal.address: mockAddress0,
+            contractName: "Gravatar",
+            registrationBlock: -1,
+          },
+        ],
+        // latestFullyFetchedBlock = startBlock - 1 = 99
+        ~startBlock=100,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~maxOnBlockBufferSize=targetBufferSize,
+        ~chainId,
+        ~blockLag=10,
+        ~knownHeight,
+      )
+      fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=100)
+    }
+    // frontier 99, ready cutoff = knownHeight - blockLag - tolerance: 209 -> 99, 210 -> 100
+    t.expect((isReady(~knownHeight=209), isReady(~knownHeight=210))).toEqual((true, false))
+  })
+
   it("Returns false when queue is not empty even if thresholds are met", t => {
     // EndBlock reached but queue has items
     let (fs, _indexingAddresses) = makeFs(

@@ -44,6 +44,7 @@ type t = {
   // all-chains-ready check almost never lines up on a live indexer. Safe because
   // nothing above head - maxReorgDepth is processed before the threshold.
   mutable reachedReorgThresholdEdge: bool,
+  reorgThresholdReadyTolerance: int,
 }
 
 // Per-chain shape returned by the status API.
@@ -105,6 +106,7 @@ let make = (
   ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~chainDensity=None,
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  ~reorgThresholdReadyTolerance=100,
   ~logger: Pino.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
@@ -127,6 +129,7 @@ let make = (
     transactionStore,
     blockStore,
     reachedReorgThresholdEdge: false,
+    reorgThresholdReadyTolerance,
   }
 }
 
@@ -288,6 +291,7 @@ let makeInternal = (
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     ),
+    ~reorgThresholdReadyTolerance=config.reorgThresholdReadyTolerance,
     ~logger,
   )
 }
@@ -392,7 +396,10 @@ let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
 // See reachedReorgThresholdEdge.
 let latchReorgThresholdEdge = (cs: t, fetchState: FetchState.t) => {
-  if !cs.reachedReorgThresholdEdge && fetchState->FetchState.isReadyToEnterReorgThreshold {
+  if (
+    !cs.reachedReorgThresholdEdge &&
+    fetchState->FetchState.isReadyToEnterReorgThreshold(~tolerance=cs.reorgThresholdReadyTolerance)
+  ) {
     cs.reachedReorgThresholdEdge = true
   }
   cs.reachedReorgThresholdEdge

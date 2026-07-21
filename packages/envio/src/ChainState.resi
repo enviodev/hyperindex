@@ -20,6 +20,7 @@ let make: (
   ~transactionStore: TransactionStore.t=?,
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
+  ~reorgThresholdReadyTolerance: int=?,
   ~logger: Pino.t,
 ) => t
 
