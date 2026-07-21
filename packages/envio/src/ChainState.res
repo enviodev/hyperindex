@@ -39,6 +39,15 @@ type t = {
   // Holds this chain's blocks (kept in Rust) keyed by block number. Same merge /
   // prune / rollback lifecycle as the transaction store.
   blockStore: BlockStore.t,
+  // Latches true the first time the fetch frontier reaches this chain's lagged
+  // head. Reorg-threshold entry requires every chain to have reached its head at
+  // once, but a live chain's head keeps advancing, so an instantaneous "at head"
+  // check is almost never true for all chains at the same batch. Latching makes
+  // the per-chain readiness monotonic: a chain that momentarily reached its head
+  // stays ready even after its head moves on. Safe because nothing above
+  // head - maxReorgDepth is processed before the threshold, so a latched chain
+  // that later trails the head has still not touched an un-reorg-safe block.
+  mutable reachedReorgThresholdEdge: bool,
 }
 
 // Per-chain shape returned by the status API.
@@ -121,6 +130,7 @@ let make = (
     safeCheckpointTracking,
     transactionStore,
     blockStore,
+    reachedReorgThresholdEdge: false,
   }
 }
 
@@ -384,7 +394,16 @@ let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPerc
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
-let isReadyToEnterReorgThreshold = (cs: t) => cs.fetchState->FetchState.isReadyToEnterReorgThreshold
+// Latches once the frontier reaches the lagged head with a drained buffer. See
+// reachedReorgThresholdEdge.
+let latchReorgThresholdEdge = (cs: t, fetchState: FetchState.t) => {
+  if !cs.reachedReorgThresholdEdge && fetchState->FetchState.isReadyToEnterReorgThreshold {
+    cs.reachedReorgThresholdEdge = true
+  }
+  cs.reachedReorgThresholdEdge
+}
+
+let isReadyToEnterReorgThreshold = (cs: t) => cs->latchReorgThresholdEdge(cs.fetchState)
 
 // Mark queries as in flight and reserve their estimated size against the shared
 // buffer budget in one step, so the counter stays in sync with the pending
@@ -907,7 +926,7 @@ let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
   | Some(chainAfterBatch) => chainAfterBatch.fetchState
   | None => cs.fetchState
   }
-  fetchState->FetchState.isReadyToEnterReorgThreshold
+  cs->latchReorgThresholdEdge(fetchState)
 }
 
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,

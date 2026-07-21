@@ -2556,6 +2556,9 @@ let isFetchingAtHead = ({endBlock, blockLag, knownHeight} as fetchState: t) => {
     }
 }
 
+// Whether the chain's fetch frontier is at the lagged head with a drained
+// buffer — the moment it can cross into the reorg threshold. Latched by
+// ChainState so a later head advance doesn't retract it.
 let isReadyToEnterReorgThreshold = ({endBlock, blockLag, buffer, knownHeight} as fetchState: t) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   knownHeight !== 0 &&
