@@ -282,7 +282,7 @@ let makeFromDbState = (
     ~onError,
   )
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
-    state.effectState->EffectState.setCacheCount(~effectName, ~scope, ~count)
+    state.effectState->EffectState.setUnregisteredCacheCount(~effectName, ~scope, ~count)
   })
   state
 }
