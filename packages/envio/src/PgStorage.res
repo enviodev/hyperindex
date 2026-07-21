@@ -1763,6 +1763,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~updatedEffectsCache,
     ~updatedEntities,
     ~chainMetaData,
+    ~onWrite,
   ) => {
     let pgUpdates = []
     let chUpdates = []
@@ -1784,10 +1785,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         Some(
           sink.writeBatch(~batch, ~updatedEntities=chUpdates)
           ->Promise.thenResolve(_ => {
-            Prometheus.StorageWrite.increment(
-              ~storage=sink.name,
-              ~timeSeconds=timerRef->Performance.secondsSince,
-            )
+            onWrite(~storage=sink.name, ~timeSeconds=timerRef->Performance.secondsSince)
             None
           })
           // Otherwise it fails with unhandled exception
@@ -1812,10 +1810,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~sinkPromise,
       ~chainMetaData,
     )
-    Prometheus.StorageWrite.increment(
-      ~storage="postgres",
-      ~timeSeconds=primaryTimerRef->Performance.secondsSince,
-    )
+    onWrite(~storage="postgres", ~timeSeconds=primaryTimerRef->Performance.secondsSince)
   }
 
   let close = () => sql->Postgres.endSql
