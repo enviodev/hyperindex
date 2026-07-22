@@ -332,6 +332,37 @@ impl GraphQLEnum {
     }
 }
 
+/// Per-entity tuning of the ClickHouse history table layout, written as an
+/// object argument of the `@storage` directive:
+/// `@storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)", orderBy:
+/// ["timestamp"], ttl: "timestamp + INTERVAL 2 YEAR"})`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ClickHouseTableOptions {
+    /// Raw ClickHouse expression emitted as `PARTITION BY <expr>`.
+    pub partition_by: Option<String>,
+    /// Entity field names that lead the history table's sorting key, replacing
+    /// the default `id` prefix. `envio_checkpoint_id` stays appended, so the key
+    /// becomes `ORDER BY (<order_by...>, envio_checkpoint_id)`.
+    pub order_by: Option<Vec<String>>,
+    /// Raw ClickHouse expression emitted as `TTL <expr>`.
+    pub ttl: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClickHouseEntityStorage {
+    Enabled(bool),
+    Options(ClickHouseTableOptions),
+}
+
+impl ClickHouseEntityStorage {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Enabled(enabled) => *enabled,
+            Self::Options(_) => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entity {
     pub name: String,
@@ -339,7 +370,7 @@ pub struct Entity {
     pub multi_field_indexes: Vec<MultiFieldIndex>,
     pub description: Option<String>,
     pub postgres: Option<bool>,
-    pub clickhouse: Option<bool>,
+    pub clickhouse: Option<ClickHouseEntityStorage>,
 }
 
 impl Entity {
@@ -349,7 +380,7 @@ impl Entity {
         multi_field_indexes: Vec<MultiFieldIndex>,
         description: Option<String>,
         postgres: Option<bool>,
-        clickhouse: Option<bool>,
+        clickhouse: Option<ClickHouseEntityStorage>,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -395,6 +426,12 @@ impl Entity {
                 "Entity name '{}' is too long. It must be less than 64 characters.",
                 name
             ));
+        }
+
+        if let Some(ClickHouseEntityStorage::Options(options)) = &clickhouse {
+            if let Some(order_by) = &options.order_by {
+                validate_clickhouse_order_by_fields(name, order_by, &fields)?;
+            }
         }
 
         Ok(Self {
@@ -602,13 +639,20 @@ impl Entity {
     }
 }
 
+const STORAGE_DIRECTIVE_HINT: &str = "Expected args from {postgres, clickhouse}: `postgres` \
+     takes a boolean, `clickhouse` takes a boolean or a table options object, e.g. \
+     @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \
+     \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).";
+
 /// Parse the optional `@storage` directive on an entity. Returns the
-/// `(postgres, clickhouse)` flags as the user wrote them; `None` for an
-/// unmentioned backend. Cross-entity checks (backend-not-globally-enabled,
+/// `(postgres, clickhouse)` values as the user wrote them; `None` for an
+/// unmentioned backend. The `clickhouse` arg accepts a boolean or a
+/// ClickHouse table options object (the object form implies the backend is
+/// enabled). Cross-entity checks (backend-not-globally-enabled,
 /// missing-in-multi-storage-mode) happen later in `system_config.rs`.
 fn parse_storage_directive(
     obj: &ObjectType<String>,
-) -> anyhow::Result<(Option<bool>, Option<bool>)> {
+) -> anyhow::Result<(Option<bool>, Option<ClickHouseEntityStorage>)> {
     let storage_directives: Vec<&Directive<'_, String>> = obj
         .directives
         .iter()
@@ -622,58 +666,75 @@ fn parse_storage_directive(
     if storage_directives.len() > 1 {
         return Err(anyhow!(
             "Invalid @storage directive on `{}`. Only one @storage directive \
-             is allowed per entity. Expected boolean args from {{postgres, \
-             clickhouse}}, e.g. @storage(postgres: true, clickhouse: true).",
+             is allowed per entity. {STORAGE_DIRECTIVE_HINT}",
             obj.name
         ));
     }
 
     let directive = storage_directives[0];
     let mut postgres: Option<bool> = None;
-    let mut clickhouse: Option<bool> = None;
+    let mut clickhouse: Option<ClickHouseEntityStorage> = None;
 
     for (arg_name, arg_value) in &directive.arguments {
-        let slot = match arg_name.as_str() {
-            "postgres" => &mut postgres,
-            "clickhouse" => &mut clickhouse,
+        let is_duplicate = match arg_name.as_str() {
+            "postgres" => postgres.is_some(),
+            "clickhouse" => clickhouse.is_some(),
             other => {
                 return Err(anyhow!(
                     "Invalid @storage directive on `{}`. Unknown argument \
-                     `{}`. Expected boolean args from {{postgres, \
-                     clickhouse}}, e.g. @storage(postgres: true, clickhouse: \
-                     true).",
+                     `{}`. {STORAGE_DIRECTIVE_HINT}",
                     obj.name,
                     other
                 ));
             }
         };
-        let value = match arg_value {
-            Value::Boolean(b) => *b,
-            _ => {
-                return Err(anyhow!(
-                    "Invalid @storage directive on `{}`. Argument `{}` must \
-                     be a boolean. Expected boolean args from {{postgres, \
-                     clickhouse}}, e.g. @storage(postgres: true, clickhouse: \
-                     true).",
-                    obj.name,
-                    arg_name
-                ));
-            }
-        };
-        if slot.is_some() {
+        if is_duplicate {
             return Err(anyhow!(
                 "Invalid @storage directive on `{}`. Argument `{}` is \
-                 specified more than once. Expected boolean args from \
-                 {{postgres, clickhouse}}, e.g. @storage(postgres: true, \
-                 clickhouse: true).",
+                 specified more than once. {STORAGE_DIRECTIVE_HINT}",
                 obj.name,
                 arg_name
             ));
         }
-        *slot = Some(value);
+        match (arg_name.as_str(), arg_value) {
+            ("postgres", Value::Boolean(b)) => postgres = Some(*b),
+            ("postgres", _) => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{}`. Argument `postgres` \
+                     must be a boolean. {STORAGE_DIRECTIVE_HINT}",
+                    obj.name
+                ));
+            }
+            ("clickhouse", Value::Boolean(b)) => {
+                clickhouse = Some(ClickHouseEntityStorage::Enabled(*b))
+            }
+            ("clickhouse", Value::Object(fields)) => {
+                let options = parse_clickhouse_table_options(&obj.name, fields)?;
+                // An options object with nothing set only enables the backend,
+                // so normalize it to the boolean form: it serializes identically
+                // to `clickhouse: true` and won't diff a stored config.
+                clickhouse = Some(if options == ClickHouseTableOptions::default() {
+                    ClickHouseEntityStorage::Enabled(true)
+                } else {
+                    ClickHouseEntityStorage::Options(options)
+                });
+            }
+            ("clickhouse", _) => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{}`. Argument \
+                     `clickhouse` must be a boolean or a table options \
+                     object. {STORAGE_DIRECTIVE_HINT}",
+                    obj.name
+                ));
+            }
+            _ => unreachable!("arg_name is validated above"),
+        }
     }
 
-    let enables_anything = matches!(postgres, Some(true)) || matches!(clickhouse, Some(true));
+    let enables_anything = matches!(postgres, Some(true))
+        || clickhouse
+            .as_ref()
+            .is_some_and(ClickHouseEntityStorage::is_enabled);
     if !enables_anything {
         return Err(anyhow!(
             "@storage on `{}` enables no storage. At least one of {{postgres, \
@@ -683,6 +744,130 @@ fn parse_storage_directive(
     }
 
     Ok((postgres, clickhouse))
+}
+
+fn parse_clickhouse_table_options(
+    entity_name: &str,
+    fields: &std::collections::BTreeMap<String, Value<'_, String>>,
+) -> anyhow::Result<ClickHouseTableOptions> {
+    let expression = |key: &str, value: &Value<'_, String>| match value {
+        Value::String(expr) if !expr.trim().is_empty() => Ok(expr.trim().to_string()),
+        _ => Err(anyhow!(
+            "Invalid @storage directive on `{entity_name}`. `clickhouse.{key}` must be a \
+             non-empty string with a ClickHouse expression, e.g. clickhouse: {{{key}: \
+             \"toYYYYMM(timestamp)\"}}."
+        )),
+    };
+
+    let mut options = ClickHouseTableOptions::default();
+    for (key, value) in fields {
+        match key.as_str() {
+            "partitionBy" => options.partition_by = Some(expression(key, value)?),
+            "ttl" => options.ttl = Some(expression(key, value)?),
+            "orderBy" => {
+                let field_names = match value {
+                    Value::List(items) if !items.is_empty() => items
+                        .iter()
+                        .map(|item| match item {
+                            Value::String(field_name) => Ok(field_name.trim().to_string()),
+                            _ => Err(anyhow!(
+                                "Invalid @storage directive on `{entity_name}`. \
+                                 `clickhouse.orderBy` must be a list of entity field names, \
+                                 e.g. clickhouse: {{orderBy: [\"timestamp\"]}}."
+                            )),
+                        })
+                        .collect::<anyhow::Result<Vec<String>>>()?,
+                    _ => {
+                        return Err(anyhow!(
+                            "Invalid @storage directive on `{entity_name}`. \
+                             `clickhouse.orderBy` must be a non-empty list of entity field \
+                             names, e.g. clickhouse: {{orderBy: [\"timestamp\"]}}."
+                        ));
+                    }
+                };
+                options.order_by = Some(field_names);
+            }
+            other => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{entity_name}`. Unknown `clickhouse` \
+                     option `{other}`. Expected options from {{partitionBy, orderBy, ttl}}, \
+                     e.g. clickhouse: {{partitionBy: \"toYYYYMM(timestamp)\", orderBy: \
+                     [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}}."
+                ));
+            }
+        }
+    }
+
+    Ok(options)
+}
+
+/// ClickHouse rejects Nullable and Array columns in the sorting key
+/// (`allow_nullable_key` is off by default, arrays are never allowed), and
+/// derived fields have no column at all — catch those at codegen instead of
+/// failing at table creation.
+fn validate_clickhouse_order_by_fields(
+    entity_name: &str,
+    order_by: &[String],
+    fields: &[Field],
+) -> anyhow::Result<()> {
+    let mut seen = HashSet::new();
+    for field_name in order_by {
+        if !seen.insert(field_name) {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` lists \
+                 field `{field_name}` more than once."
+            ));
+        }
+        if field_name == "id" {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` must not \
+                 list `id`: it's already the default sorting key. List only the additional \
+                 fields to sort by."
+            ));
+        }
+        let field = fields
+            .iter()
+            .find(|f| &f.name == field_name)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` \
+                 references field `{field_name}` which doesn't exist on the entity. Use the \
+                 field names as written in the schema."
+                )
+            })?;
+        if field.field_type.is_derived_from() {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
+                 `{field_name}` is a @derivedFrom field, which has no column in the \
+                 ClickHouse table."
+            ));
+        }
+        if field.field_type.is_optional() {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
+                 `{field_name}` is nullable, and ClickHouse doesn't allow nullable columns \
+                 in the sorting key. Make the field non-nullable to sort by it."
+            ));
+        }
+        if field.field_type.to_user_defined_field_type().is_array() {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
+                 `{field_name}` is an array, and ClickHouse doesn't allow array columns in \
+                 the sorting key."
+            ));
+        }
+        if matches!(
+            field.field_type.get_underlying_scalar(),
+            GqlScalar::BigInt(_) | GqlScalar::BigDecimal(_)
+        ) {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
+                 `{field_name}` is a BigInt/BigDecimal, which ClickHouse can store as a String \
+                 (lexicographic, not numeric ordering). Sorting by it isn't supported yet."
+            ));
+        }
+    }
+    Ok(())
 }
 
 ///  used to get the positive integers in the directives from the GraphQL schema.
@@ -1665,8 +1850,8 @@ impl GqlScalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, IndexFieldDirection, Schema,
-        UserDefinedFieldType,
+        anyhow, ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Field, FieldType,
+        GqlScalar, GraphQLEnum, IndexFieldDirection, Schema, UserDefinedFieldType,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
@@ -2593,7 +2778,7 @@ type TestEntity { id: ID! }
         assert_eq!(
             (
                 entity.postgres,
-                entity.clickhouse,
+                entity.clickhouse.clone(),
                 entity.has_storage_directive()
             ),
             (None, None, false)
@@ -2609,7 +2794,7 @@ type TestEntity @storage(postgres: true) { id: ID! }
         assert_eq!(
             (
                 entity.postgres,
-                entity.clickhouse,
+                entity.clickhouse.clone(),
                 entity.has_storage_directive()
             ),
             (Some(true), None, true)
@@ -2624,7 +2809,190 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
         let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             (entity.postgres, entity.clickhouse),
-            (Some(true), Some(true))
+            (Some(true), Some(ClickHouseEntityStorage::Enabled(true)))
+        );
+    }
+
+    // --- @storage(clickhouse: {...}) table options ---
+    // The full partitionBy/orderBy/ttl options object is exercised end-to-end
+    // (YAML + schema -> parser -> Config.res -> DDL) in `ClickHouse_test.res`.
+
+    #[test]
+    fn storage_directive_clickhouse_options_are_each_optional() {
+        let schema_str = r#"
+type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
+  id: ID!
+  timestamp: Timestamp!
+}
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            entity.clickhouse,
+            Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
+                partition_by: Some("toYYYYMM(timestamp)".to_string()),
+                order_by: None,
+                ttl: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn storage_directive_clickhouse_empty_options_counts_as_enabled() {
+        let schema_str = r#"
+type TestEntity @storage(clickhouse: {}) { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let clickhouse = entity.clickhouse.unwrap();
+        // Empty options normalize to the boolean form so they don't diff a
+        // config persisted as `clickhouse: true`.
+        assert_eq!(
+            (clickhouse.clone(), clickhouse.is_enabled(), entity.postgres),
+            (ClickHouseEntityStorage::Enabled(true), true, None)
+        );
+    }
+
+    #[test]
+    fn storage_directive_clickhouse_options_with_linked_entity_order_by() {
+        let schema_str = r#"
+type TestEntity @storage(clickhouse: {orderBy: ["token", "timestamp"]}) {
+  id: ID!
+  token: Token!
+  timestamp: Timestamp!
+}
+type Token { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            entity.clickhouse,
+            Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
+                partition_by: None,
+                order_by: Some(vec!["token".to_string(), "timestamp".to_string()]),
+                ttl: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn storage_directive_clickhouse_options_errors() {
+        let assert_error_contains = |schema_str: &str, expected: &str| {
+            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+                .expect_err(&format!("expected error containing '{expected}'"));
+            let message = format!("{err:#}");
+            assert!(
+                message.contains(expected),
+                "expected error containing '{expected}', got: {message}"
+            );
+        };
+
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {unknownOption: "x"}) { id: ID! }"#,
+            "Unknown `clickhouse` option `unknownOption`",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {partitionBy: ""}) { id: ID! }"#,
+            "`clickhouse.partitionBy` must be a non-empty string",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {ttl: true}) { id: ID! }"#,
+            "`clickhouse.ttl` must be a non-empty string",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {orderBy: []}) { id: ID! }"#,
+            "`clickhouse.orderBy` must be a non-empty list",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {orderBy: "timestamp"}) { id: ID! }"#,
+            "`clickhouse.orderBy` must be a non-empty list",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: 42) { id: ID! }"#,
+            "must be a boolean or a table options object",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(postgres: {default: true}) { id: ID! }"#,
+            "`postgres` must be a boolean",
+        );
+    }
+
+    #[test]
+    fn storage_directive_clickhouse_order_by_field_validation() {
+        let assert_error_contains = |schema_str: &str, expected: &str| {
+            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+                .expect_err(&format!("expected error containing '{expected}'"));
+            let message = format!("{err:#}");
+            assert!(
+                message.contains(expected),
+                "expected error containing '{expected}', got: {message}"
+            );
+        };
+
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["missing"]}) { id: ID! }
+            "#,
+            "references field `missing` which doesn't exist",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["timestamp", "timestamp"]}) {
+  id: ID!
+  timestamp: Timestamp!
+}
+            "#,
+            "lists field `timestamp` more than once",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["timestamp"]}) {
+  id: ID!
+  timestamp: Timestamp
+}
+            "#,
+            "field `timestamp` is nullable",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["tags"]}) {
+  id: ID!
+  tags: [String!]!
+}
+            "#,
+            "field `tags` is an array",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["tokens"]}) {
+  id: ID!
+  tokens: [Token!]! @derivedFrom(field: "owner")
+}
+type Token {
+  id: ID!
+  owner: TestEntity!
+}
+            "#,
+            "field `tokens` is a @derivedFrom field",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {orderBy: ["id"]}) { id: ID! }"#,
+            "`clickhouse.orderBy` must not list `id`",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["amount"]}) {
+  id: ID!
+  amount: BigInt!
+}
+            "#,
+            "field `amount` is a BigInt/BigDecimal",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["price"]}) {
+  id: ID!
+  price: BigDecimal!
+}
+            "#,
+            "field `price` is a BigInt/BigDecimal",
         );
     }
 }

@@ -720,11 +720,20 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+// Raw ClickHouse expressions/field names from the entity's
+// @storage(clickhouse: {...}) directive, applied to the history table DDL.
+type clickhouseTableOptions = {
+  partitionBy?: string,
+  orderBy?: array<string>,
+  ttl?: string,
+}
+
 // Per-entity storage resolved at parse time against the global storage
 // config. Downstream PG/CH consumers just check the matching boolean.
 type entityStorage = {
   postgres: bool,
   clickhouse: bool,
+  clickhouseOptions?: clickhouseTableOptions,
 }
 
 type genericEntityConfig<'entity> = {
