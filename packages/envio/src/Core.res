@@ -4,10 +4,10 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
-type evmHypersyncClientCtor
+type evmHyperSyncClientCtor
 type evmRpcClientCtor
-type svmHypersyncClientCtor
-type hyperfuelClientCtor
+type svmHyperSyncClientCtor
+type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
 type parseConfigYamlOptions = {
@@ -22,14 +22,14 @@ type addon = {
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   parseConfigYaml: (string, parseConfigYamlOptions) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
-  @as("EvmHypersyncClient")
-  evmHypersyncClient: evmHypersyncClientCtor,
+  @as("EvmHyperSyncClient")
+  evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
   evmRpcClient: evmRpcClientCtor,
-  @as("SvmHypersyncClient")
-  svmHypersyncClient: svmHypersyncClientCtor,
-  @as("HyperfuelClient")
-  hyperfuelClient: hyperfuelClientCtor,
+  @as("SvmHyperSyncClient")
+  svmHyperSyncClient: svmHyperSyncClientCtor,
+  @as("FuelHyperSyncClient")
+  fuelHyperSyncClient: fuelHyperSyncClientCtor,
   @as("TransactionStore")
   transactionStore: transactionStoreCtor,
   @as("BlockStore")

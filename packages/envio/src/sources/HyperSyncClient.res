@@ -358,11 +358,11 @@ type t = {
 }
 
 @send
-external classNew: (Core.evmHypersyncClientCtor, cfg, string, array<Registration.input>) => t =
+external classNew: (Core.evmHyperSyncClientCtor, cfg, string, array<Registration.input>) => t =
   "new"
 
 let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations) =>
-  Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventRegistrations)
+  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
