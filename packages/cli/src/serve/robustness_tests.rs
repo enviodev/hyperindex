@@ -30,7 +30,7 @@
 //! - startup failures name the unreachable endpoint, rejected credentials,
 //!   or missing database and point to the exact environment variables to fix.
 
-use super::env_config::{PgSslMode, ServeEnv};
+use super::env_config::{CorsConfig, PgSslMode, ServeEnv};
 use super::model::ServerModel;
 use super::project_schema::ProjectSchema;
 use super::test_support::{free_port, skip_without_docker, TestPg};
@@ -50,6 +50,7 @@ fn test_env(pg_port: u16) -> ServeEnv {
         pg_schema: "public".to_string(),
         pg_ssl: PgSslMode::Disable,
         admin_secret: "testing".to_string(),
+        cors: CorsConfig::AllowAll,
         response_limit: None,
         aggregate_entities: vec![],
         query_timeout_ms: Some(120_000),
@@ -126,6 +127,7 @@ async fn boot(
         model,
         pool: pool.clone(),
         admin_secret: env.admin_secret.clone(),
+        cors: env.cors.clone(),
         query_timeout,
         healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
@@ -1362,6 +1364,7 @@ async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
         model,
         pool: pool.clone(),
         admin_secret: env.admin_secret.clone(),
+        cors: env.cors.clone(),
         query_timeout: Some(Duration::from_secs(20)),
         healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),

@@ -30,6 +30,10 @@ pub struct ServeEnv {
     pub pg_schema: String,
     pub pg_ssl: PgSslMode,
     pub admin_secret: String,
+    /// Cross-origin policy applied to every response, mirroring Hasura's
+    /// HASURA_GRAPHQL_CORS_DOMAIN / HASURA_GRAPHQL_DISABLE_CORS: permissive
+    /// (reflect any Origin) by default.
+    pub cors: CorsConfig,
     pub response_limit: Option<u32>,
     pub aggregate_entities: Vec<String>,
     /// ENVIO_SERVE_QUERY_TIMEOUT_MS. Bounds every query both server-side
@@ -316,6 +320,12 @@ impl ServeEnv {
                 .unwrap_or_else(|| "public".to_string()),
             pg_ssl: parse_pg_ssl(r.var("ENVIO_PG_SSL_MODE").as_deref()),
             admin_secret: r.var_dev_fallback("HASURA_GRAPHQL_ADMIN_SECRET", "testing")?,
+            cors: parse_cors(
+                r.var("ENVIO_SERVE_DISABLE_CORS")
+                    .or_else(|| r.var("HASURA_GRAPHQL_DISABLE_CORS")),
+                r.var("ENVIO_SERVE_CORS_DOMAIN")
+                    .or_else(|| r.var("HASURA_GRAPHQL_CORS_DOMAIN")),
+            )?,
             response_limit,
             aggregate_entities: parse_aggregate_entities(
                 r.var("ENVIO_HASURA_PUBLIC_AGGREGATE").as_deref(),
@@ -569,6 +579,139 @@ fn parse_aggregate_entities(raw: Option<&str>) -> anyhow::Result<Vec<String>> {
     ))
 }
 
+/// Resolved cross-origin policy, mirroring Hasura v2's three states:
+/// `Disabled` (never emit CORS headers), `AllowAll` (reflect any Origin —
+/// the default and the `*` domain), and `AllowedOrigins` (reflect only
+/// Origins matching the configured list).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CorsConfig {
+    Disabled,
+    AllowAll,
+    AllowedOrigins(Vec<OriginPattern>),
+}
+
+impl CorsConfig {
+    /// Whether an `Origin` request-header value is allowed. `AllowAll`
+    /// reflects the origin verbatim without parsing it (matching Hasura,
+    /// which echoes even syntactically odd origins); the allow-list form
+    /// parses and matches on scheme, host, and port.
+    pub fn is_origin_allowed(&self, origin: &str) -> bool {
+        match self {
+            CorsConfig::Disabled => false,
+            CorsConfig::AllowAll => true,
+            CorsConfig::AllowedOrigins(patterns) => match parse_origin_parts(origin) {
+                Some((scheme, host, port)) => {
+                    patterns.iter().any(|p| p.matches(&scheme, &host, port))
+                }
+                None => false,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OriginPattern {
+    scheme: String,
+    host: HostPattern,
+    port: Option<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HostPattern {
+    Exact(String),
+    /// `*.example.com`: the stored suffix is `example.com` and matches
+    /// exactly one leading label (`a.example.com`, never `a.b.example.com`
+    /// or the bare `example.com`), mirroring Hasura's wildcard semantics.
+    Wildcard(String),
+}
+
+impl OriginPattern {
+    fn matches(&self, scheme: &str, host: &str, port: Option<u16>) -> bool {
+        self.scheme == scheme
+            && self.port == port
+            && match &self.host {
+                HostPattern::Exact(h) => h == host,
+                HostPattern::Wildcard(suffix) => match host.split_once('.') {
+                    Some((label, rest)) => !label.is_empty() && rest == suffix,
+                    None => false,
+                },
+            }
+    }
+}
+
+/// Splits `scheme://host[:port]` into lowercased scheme/host and an optional
+/// port. Returns None for anything without a scheme and host. IPv6 literals
+/// are not supported (Hasura CORS domains are hostnames).
+fn parse_origin_parts(origin: &str) -> Option<(String, String, Option<u16>)> {
+    let (scheme, rest) = origin.trim().split_once("://")?;
+    if scheme.is_empty() {
+        return None;
+    }
+    let rest = rest.trim_end_matches('/');
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+            (h, Some(p.parse::<u16>().ok()?))
+        }
+        _ => (rest, None),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), port))
+}
+
+fn parse_origin_pattern(entry: &str) -> Option<OriginPattern> {
+    let (scheme, host, port) = parse_origin_parts(entry)?;
+    let host = match host.strip_prefix("*.") {
+        Some(suffix) if !suffix.is_empty() => HostPattern::Wildcard(suffix.to_string()),
+        Some(_) => return None,
+        None => HostPattern::Exact(host),
+    };
+    Some(OriginPattern { scheme, host, port })
+}
+
+fn is_truthy(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "true" | "t" | "yes" | "y" | "1"
+    )
+}
+
+/// Resolves the CORS policy the same way Hasura does: an explicit
+/// disable-cors flag wins, an unset (or `*`) domain list is permissive, and
+/// any other domain list restricts to those origins.
+fn parse_cors(
+    disable_raw: Option<String>,
+    domain_raw: Option<String>,
+) -> anyhow::Result<CorsConfig> {
+    if disable_raw.as_deref().is_some_and(is_truthy) {
+        return Ok(CorsConfig::Disabled);
+    }
+    let Some(domain_raw) = domain_raw else {
+        return Ok(CorsConfig::AllowAll);
+    };
+    let entries: Vec<&str> = domain_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if entries.is_empty() || entries.contains(&"*") {
+        return Ok(CorsConfig::AllowAll);
+    }
+    let patterns = entries
+        .into_iter()
+        .map(|entry| {
+            parse_origin_pattern(entry).ok_or_else(|| {
+                anyhow!(
+                    "Invalid CORS domain \"{entry}\": expected scheme://host[:port], \
+                     e.g. https://*.example.com or http://localhost:3000"
+                )
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(CorsConfig::AllowedOrigins(patterns))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,6 +740,59 @@ mod tests {
                 VerifyFull, VerifyFull, VerifyFull,
             ],
         );
+    }
+
+    // Expected values captured live from hasura/graphql-engine:v2.43.0 with
+    // HASURA_GRAPHQL_CORS_DOMAIN="https://*.example.com, http://foo.com:8080,
+    // https://bar.com": scheme/host/port must match exactly and the wildcard
+    // spans exactly one leading label.
+    #[test]
+    fn cors_allowed_origins_matches_hasura_semantics() {
+        let cors = parse_cors(
+            None,
+            Some("https://*.example.com, http://foo.com:8080, https://bar.com".to_string()),
+        )
+        .unwrap();
+        let allowed = |origin: &str| cors.is_origin_allowed(origin);
+        assert_eq!(
+            [
+                allowed("https://a.example.com"),
+                allowed("https://deep.sub.example.com"),
+                allowed("https://example.com"),
+                allowed("http://a.example.com"),
+                allowed("http://foo.com:8080"),
+                allowed("http://foo.com"),
+                allowed("https://bar.com"),
+                allowed("https://bar.com:443"),
+                allowed("https://evil.com"),
+            ],
+            [true, false, false, false, true, false, true, false, false],
+        );
+    }
+
+    #[test]
+    fn cors_config_resolution() {
+        let is_allow_all = |cors: &CorsConfig| matches!(cors, CorsConfig::AllowAll);
+        assert_eq!(
+            [
+                parse_cors(None, None).unwrap(),
+                parse_cors(None, Some("*".to_string())).unwrap(),
+                parse_cors(None, Some("  ,  ".to_string())).unwrap(),
+                parse_cors(None, Some("https://a.com, *".to_string())).unwrap(),
+                // disable-cors wins over any domain list.
+                parse_cors(Some("true".to_string()), Some("https://a.com".to_string())).unwrap(),
+            ]
+            .map(|c| match c {
+                CorsConfig::AllowAll => "all",
+                CorsConfig::Disabled => "disabled",
+                CorsConfig::AllowedOrigins(_) => "list",
+            }),
+            ["all", "all", "all", "all", "disabled"],
+        );
+        assert!(is_allow_all(
+            &parse_cors(Some("false".to_string()), None).unwrap()
+        ));
+        assert!(parse_cors(None, Some("not-a-url".to_string())).is_err());
     }
 
     #[test]

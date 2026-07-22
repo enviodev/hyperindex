@@ -1,13 +1,15 @@
 //! HTTP server: POST /v1/graphql (+ health endpoints and the WebSocket
 //! upgrade for subscriptions).
 
+use super::env_config::CorsConfig;
 use super::exec::{self, GraphQLRequest, Schemas};
 use super::gql::schema_build::Role;
 use super::ServeState;
 use anyhow::{anyhow, Context};
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
+use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
@@ -61,6 +63,7 @@ pub async fn serve(
         shutdown: shutdown_rx.clone(),
     };
 
+    let cors = Arc::new(app_state.serve.cors.clone());
     let app = Router::new()
         .route(
             "/v1/graphql",
@@ -71,6 +74,7 @@ pub async fn serve(
         .route("/healthz", get(healthz))
         .route("/hasura/healthz", get(healthz))
         .route("/livez", get(livez))
+        .layer(axum::middleware::from_fn_with_state(cors, cors_middleware))
         .with_state(app_state)
         .into_make_service();
 
@@ -95,6 +99,87 @@ pub async fn serve(
         }
     }
     Ok(())
+}
+
+// CORS response values, byte-for-byte matching hasura/graphql-engine v2's
+// permissive defaults (captured live). Expose-Headers advertises Hasura's
+// cache-key headers even though serve never emits them, so a browser client
+// that reads them behaves identically against either backend.
+const CORS_ALLOW_METHODS: &str = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
+const CORS_EXPOSE_HEADERS: &str =
+    "X-Hasura-Query-Cache-Key,X-Hasura-Query-Family-Cache-Key,Warning";
+const CORS_MAX_AGE: &str = "1728000";
+
+/// Mirrors Hasura's CORS middleware: headers are injected only when the
+/// request carries an allowed `Origin`. A preflight (`OPTIONS`) from an
+/// allowed origin is answered directly with `204`; anything else falls
+/// through to normal routing and gets the headers added to its response.
+async fn cors_middleware(
+    State(cors): State<Arc<CorsConfig>>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .filter(|o| cors.is_origin_allowed(o))
+        .map(str::to_owned);
+
+    if request.method() == Method::OPTIONS {
+        if let Some(origin) = &origin {
+            let requested_headers = request
+                .headers()
+                .get("access-control-request-headers")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_owned();
+            return preflight_response(origin, &requested_headers);
+        }
+    }
+
+    let mut response = next.run(request).await;
+    if let Some(origin) = &origin {
+        inject_actual_cors_headers(response.headers_mut(), origin);
+    }
+    response
+}
+
+/// CORS headers added to a non-preflight response (`Allow-Headers` and
+/// `Max-Age` are preflight-only and deliberately absent here, matching
+/// Hasura).
+fn inject_actual_cors_headers(headers: &mut HeaderMap, origin: &str) {
+    put_header(headers, "access-control-allow-origin", origin);
+    put_header(headers, "access-control-allow-credentials", "true");
+    put_header(headers, "access-control-allow-methods", CORS_ALLOW_METHODS);
+    put_header(
+        headers,
+        "access-control-expose-headers",
+        CORS_EXPOSE_HEADERS,
+    );
+}
+
+fn preflight_response(origin: &str, requested_headers: &str) -> axum::response::Response {
+    let mut response = axum::response::Response::new(axum::body::Body::empty());
+    *response.status_mut() = StatusCode::NO_CONTENT;
+    let headers = response.headers_mut();
+    put_header(headers, "access-control-allow-origin", origin);
+    put_header(headers, "access-control-allow-credentials", "true");
+    put_header(headers, "access-control-allow-methods", CORS_ALLOW_METHODS);
+    put_header(headers, "access-control-allow-headers", requested_headers);
+    put_header(headers, "access-control-max-age", CORS_MAX_AGE);
+    put_header(
+        headers,
+        "access-control-expose-headers",
+        CORS_EXPOSE_HEADERS,
+    );
+    response
+}
+
+fn put_header(headers: &mut HeaderMap, name: &'static str, value: &str) {
+    if let Ok(value) = HeaderValue::from_str(value) {
+        headers.insert(HeaderName::from_static(name), value);
+    }
 }
 
 fn bind_listener(host: &str, port: u16) -> anyhow::Result<(SocketAddr, tokio::net::TcpListener)> {
@@ -580,6 +665,89 @@ mod tests {
                 .err()
                 .expect("malformed JSON must still be rejected");
         assert_eq!(malformed.code, "invalid-json");
+    }
+
+    // Expected header sets captured live from hasura/graphql-engine:v2.43.0
+    // with default (permissive) CORS.
+    fn cors_header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = headers
+            .iter()
+            .filter(|(name, _)| name.as_str().starts_with("access-control-"))
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_string(),
+                    value.to_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    #[test]
+    fn preflight_response_matches_hasura() {
+        let response = preflight_response(
+            "https://app.example.com",
+            "content-type,x-hasura-admin-secret",
+        );
+        assert_eq!(
+            (response.status(), cors_header_pairs(response.headers())),
+            (
+                StatusCode::NO_CONTENT,
+                vec![
+                    (
+                        "access-control-allow-credentials".to_string(),
+                        "true".to_string()
+                    ),
+                    (
+                        "access-control-allow-headers".to_string(),
+                        "content-type,x-hasura-admin-secret".to_string()
+                    ),
+                    (
+                        "access-control-allow-methods".to_string(),
+                        "GET,POST,PUT,PATCH,DELETE,OPTIONS".to_string()
+                    ),
+                    (
+                        "access-control-allow-origin".to_string(),
+                        "https://app.example.com".to_string()
+                    ),
+                    (
+                        "access-control-expose-headers".to_string(),
+                        "X-Hasura-Query-Cache-Key,X-Hasura-Query-Family-Cache-Key,Warning"
+                            .to_string()
+                    ),
+                    ("access-control-max-age".to_string(), "1728000".to_string()),
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn actual_request_cors_headers_match_hasura() {
+        let mut headers = HeaderMap::new();
+        inject_actual_cors_headers(&mut headers, "https://app.example.com");
+        // No Allow-Headers / Max-Age on a non-preflight response.
+        assert_eq!(
+            cors_header_pairs(&headers),
+            vec![
+                (
+                    "access-control-allow-credentials".to_string(),
+                    "true".to_string()
+                ),
+                (
+                    "access-control-allow-methods".to_string(),
+                    "GET,POST,PUT,PATCH,DELETE,OPTIONS".to_string()
+                ),
+                (
+                    "access-control-allow-origin".to_string(),
+                    "https://app.example.com".to_string()
+                ),
+                (
+                    "access-control-expose-headers".to_string(),
+                    "X-Hasura-Query-Cache-Key,X-Hasura-Query-Family-Cache-Key,Warning".to_string()
+                ),
+            ]
+        );
     }
 
     #[test]
