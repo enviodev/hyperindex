@@ -70,48 +70,31 @@ let getIndexingAddressesByChain = (state: testIndexerState): dict<
   byChain
 }
 
-let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): JSON.t => {
+let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): array<
+  Internal.entity,
+> => {
   // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
   // here too. TestIndexer never persists those, so there's nothing to return —
   // an empty result makes the effect recompute instead of crashing on a missing
   // entityConfig.
   switch state.entityConfigs->Dict.get(tableName) {
-  | None => []->JSON.Encode.array
-  | Some(entityConfig) =>
+  | None => []
+  | Some(_) =>
     let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-    let results = []
-
-    // Field values arrive as JSON from the worker boundary, so parse them
-    // with the field's schema before comparing. This properly handles
-    // bigint and BigDecimal comparisons
-    let parseLeaf = (~fieldName, ~fieldValue: unknown, ~isArray): unknown => {
-      let queryField = switch entityConfig.table->Table.queryFields->Dict.get(fieldName) {
-      | Some(queryField) => queryField
-      | None => JsError.throwWithMessage(`Field ${fieldName} not found in entity ${tableName}`)
-      }
-      fieldValue->S.convertOrThrow(isArray ? queryField.arrayFieldSchema : queryField.fieldSchema)
-    }
-    let filter = filter->EntityFilter.mapValues(~mapValue=parseLeaf)
-
     entityDict
     ->Dict.valuesToArray
-    ->Array.forEach(entity => {
-      // Cast entity to dict of field values (same approach as InMemoryTable)
+    ->Array.filter(entity => {
+      // The store holds decoded entities and the filter carries decoded values,
+      // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
       let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-      if filter->EntityFilter.matches(~entity=entityAsDict) {
-        // Serialize entity back to JSON for worker thread
-        let jsonEntity = entity->S.reverseConvertToJsonOrThrow(entityConfig.schema)
-        results->Array.push(jsonEntity)->ignore
-      }
+      filter->EntityFilter.matches(~entity=entityAsDict)
     })
-
-    results->JSON.Encode.array
   }
 }
 
 let handleWriteBatch = (
   state: testIndexerState,
-  ~updatedEntities: array<TestIndexerProxyStorage.serializableUpdatedEntity>,
+  ~updatedEntities: array<Persistence.updatedEntity>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<int>,
   ~checkpointBlockNumbers: array<int>,
@@ -121,7 +104,8 @@ let handleWriteBatch = (
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
 
-  updatedEntities->Array.forEach(({entityName, changes}) => {
+  updatedEntities->Array.forEach(({entityConfig, changes}: Persistence.updatedEntity) => {
+    let entityName = entityConfig.name
     let entityDict = switch state.entities->Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
@@ -129,57 +113,35 @@ let handleWriteBatch = (
       state.entities->Dict.set(entityName, dict)
       dict
     }
-    let entityConfig = state.entityConfigs->Dict.getUnsafe(entityName)
 
-    let processChange = (change: TestIndexerProxyStorage.serializableChange) => {
+    let entityChangeFor = checkpointId => {
+      let checkpointKey = checkpointId->BigInt.toString
+      let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
+      | Some(changes) => changes
+      | None =>
+        let changes = Dict.make()
+        changesByCheckpoint->Dict.set(checkpointKey, changes)
+        changes
+      }
+      switch entityChanges->Dict.get(entityName) {
+      | Some(change) => change
+      | None =>
+        let change = {sets: [], deleted: []}
+        entityChanges->Dict.set(entityName, change)
+        change
+      }
+    }
+
+    let processChange = (change: Change.t<Internal.entity>) => {
       switch change {
       | Set({entityId, entity, checkpointId}) =>
-        // Parse entity immediately to store decoded values for proper comparisons
-        // (bigint/BigDecimal need actual values, not JSON strings)
-        let parsedEntity = entity->S.parseOrThrow(entityConfig.schema)
-
-        // Update entities dict with parsed entity for load operations
-        entityDict->Dict.set(entityId, parsedEntity)
-
-        // Track change by checkpoint
-        let checkpointKey = checkpointId->BigInt.toString
-        let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
-        | Some(changes) => changes
-        | None =>
-          let changes = Dict.make()
-          changesByCheckpoint->Dict.set(checkpointKey, changes)
-          changes
-        }
-        let entityChange = switch entityChanges->Dict.get(entityName) {
-        | Some(change) => change
-        | None =>
-          let change = {sets: [], deleted: []}
-          entityChanges->Dict.set(entityName, change)
-          change
-        }
-        entityChange.sets->Array.push(parsedEntity->Utils.magic)->ignore
-
+        // The store keeps decoded entities so load comparisons (bigint /
+        // BigDecimal) work on real values.
+        entityDict->Dict.set(entityId, entity)
+        entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
       | Delete({entityId, checkpointId}) =>
-        // Update entities dict for load operations
         Dict.delete(entityDict->Obj.magic, entityId)
-
-        // Track change by checkpoint
-        let checkpointKey = checkpointId->BigInt.toString
-        let entityChanges = switch changesByCheckpoint->Dict.get(checkpointKey) {
-        | Some(changes) => changes
-        | None =>
-          let changes = Dict.make()
-          changesByCheckpoint->Dict.set(checkpointKey, changes)
-          changes
-        }
-        let entityChange = switch entityChanges->Dict.get(entityName) {
-        | Some(change) => change
-        | None =>
-          let change = {sets: [], deleted: []}
-          entityChanges->Dict.set(entityName, change)
-          change
-        }
-        entityChange.deleted->Array.push(entityId)->ignore
+        entityChangeFor(checkpointId).deleted->Array.push(entityId)->ignore
       }
     }
 
@@ -285,8 +247,6 @@ let makeInitialState = (
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     reorgCheckpoints: [],
-    // TestIndexer fakes the resume path; mirror what Main.start passes as
-    // ~envioInfo so the compat check always sees an empty diff.
     envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
   }
 }
@@ -487,9 +447,9 @@ type entityOperations = {
   set: Internal.entity => unit,
 }
 
-// Adapt the real storage interface to the in-memory entity store, reusing the
-// same handleLoad/handleWriteBatch that backed the worker's message proxy —
-// just called directly, without a worker thread or message channel.
+// Adapt the real storage interface to the in-memory entity store. In-process
+// there's no worker boundary, so entities are stored and loaded decoded — no
+// JSON serialization round-trip.
 let makeInMemoryStorage = (
   ~state: testIndexerState,
   ~getInitialState: unit => Persistence.initialState,
@@ -501,28 +461,10 @@ let makeInMemoryStorage = (
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
   resumeInitialState: async () => getInitialState(),
-  loadOrThrow: async (~filter, ~table: Table.table) => {
-    let serializeLeafOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
-      let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
-      | Some(queryField) => queryField
-      | None =>
-        JsError.throwWithMessage(
-          `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
-        )
-      }
-      fieldValue
-      ->S.reverseConvertToJsonOrThrow(
-        isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
-      )
-      ->(Utils.magic: JSON.t => unknown)
-    }
+  loadOrThrow: async (~filter, ~table: Table.table) =>
     state
-    ->handleLoad(
-      ~tableName=table.tableName,
-      ~filter=filter->EntityFilter.mapValues(~mapValue=serializeLeafOrThrow),
-    )
-    ->S.parseOrThrow(table->Table.rowsSchema)
-  },
+    ->handleLoad(~tableName=table.tableName, ~filter)
+    ->(Utils.magic: array<Internal.entity> => array<unknown>),
   writeBatch: async (
     ~batch,
     ~rollback as _,
@@ -533,35 +475,14 @@ let makeInMemoryStorage = (
     ~updatedEntities,
     ~chainMetaData as _,
     ~onWrite as _,
-  ) => {
-    let serializableEntities = updatedEntities->Array.map((
-      {entityConfig, changes}: Persistence.updatedEntity,
-    ) => {
-      let encodeChange = (
-        change: Change.t<Internal.entity>,
-      ): TestIndexerProxyStorage.serializableChange =>
-        switch change {
-        | Set({entityId, entity, checkpointId}) =>
-          Set({
-            entityId,
-            entity: entity->S.reverseConvertToJsonOrThrow(entityConfig.schema),
-            checkpointId,
-          })
-        | Delete({entityId, checkpointId}) => Delete({entityId, checkpointId})
-        }
-      {
-        TestIndexerProxyStorage.entityName: entityConfig.name,
-        changes: changes->Array.map(encodeChange),
-      }
-    })
+  ) =>
     state->handleWriteBatch(
-      ~updatedEntities=serializableEntities,
+      ~updatedEntities,
       ~checkpointIds=batch.checkpointIds,
       ~checkpointChainIds=batch.checkpointChainIds,
       ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
       ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
-    )
-  },
+    ),
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
