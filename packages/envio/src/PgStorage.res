@@ -672,7 +672,12 @@ let makeEffectCacheTableNamesQuery = (~pgSchema) => {
 }
 
 let makeCacheRowCountQuery = (~pgSchema, ~tableName) => {
-  `SELECT COUNT(*)::int AS count FROM "${pgSchema}"."${tableName}";`
+  // The table name comes from information_schema, so anything cache-shaped that
+  // was created out-of-band in the schema reaches here. Splice both identifiers
+  // as quoted identifiers, doubling embedded quotes, so a crafted name can't
+  // break out into raw SQL.
+  let quoteIdent = ident => `"${ident->String.replaceAll("\"", "\"\"")}"`
+  `SELECT COUNT(*)::int AS count FROM ${quoteIdent(pgSchema)}.${quoteIdent(tableName)};`
 }
 
 type psqlExecState =
