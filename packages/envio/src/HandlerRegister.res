@@ -407,23 +407,11 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
           )
         })
 
-        // A `where` that resolved to no topic selections (`false` for this
-        // chain) drops the chain's registration entirely — the event should
-        // never be fetched here. Each survivor is assigned its chain-scoped
-        // index by position.
-        let onEventRegistrations: array<Internal.onEventRegistration> = []
-        builtRegs
-        ->Array.concat(rawEventRegs)
-        ->Array.forEach(reg => {
-          let isDroppedByWhere =
-            config.ecosystem.name === Evm &&
-              (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
-          if !isDroppedByWhere {
-            onEventRegistrations
-            ->Array.push({...reg, index: onEventRegistrations->Array.length})
-            ->ignore
-          }
-        })
+        // Each registration is assigned its chain-scoped index by position.
+        let onEventRegistrations =
+          builtRegs
+          ->Array.concat(rawEventRegs)
+          ->Array.mapWithIndex((reg, index) => {...reg, index})
 
         registrationsByChainId->Dict.set(
           key,
