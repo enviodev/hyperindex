@@ -15,7 +15,7 @@
 // deduplication hint instead of silently mixing shapes across builds.
 type t = {
   version: string,
-  onEventRegistrationsByChainId: dict<unknown>,
+  pendingOnEventRegistrations: array<unknown>,
   mutable activeRegistration: option<unknown>,
   preRegistered: array<unknown>,
   rollbackCommitCallbacks: array<unknown>,
@@ -40,7 +40,7 @@ let value: t = {
   | None =>
     let fresh = {
       version,
-      onEventRegistrationsByChainId: Dict.make(),
+      pendingOnEventRegistrations: [],
       activeRegistration: None,
       preRegistered: [],
       rollbackCommitCallbacks: [],

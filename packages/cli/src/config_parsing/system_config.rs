@@ -1941,7 +1941,10 @@ impl Contract {
                         .clone()
                         .unwrap_or_else(|| "none".to_string()),
                 ),
-                EventKind::Fuel(_) => None,
+                // Fuel routing dispatches by sighash (a `LogData` logId, or a
+                // fixed value like `mint`/`burn`/`transfer`/`call`), so two
+                // events sharing it on one contract are indistinguishable too.
+                EventKind::Fuel(_) => Some(event.sighash.clone()),
             };
             if let Some(dispatch_key) = dispatch_key {
                 if let Some(existing) =

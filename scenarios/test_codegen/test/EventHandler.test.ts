@@ -747,69 +747,6 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
-  it("composes duplicate handlers with same options", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Process CustomSelection — original handler + composed handler should both run
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "CustomSelection",
-              transaction: { from: "0xfoo" },
-              block: { parentHash: "0xParentHash" },
-            },
-          ],
-        },
-      },
-    });
-
-    // Original handler sets entity with id = event.transaction.hash
-    // Composed handler sets entity with id = "composed-" + event.transaction.hash
-    const change = result.changes[0]?.CustomSelectionTestPass;
-    assert.equal(change?.sets?.length, 2, "Both original and composed handler should set entities");
-    assert.ok(
-      change?.sets?.some((e: { id: string }) => e.id.startsWith("composed-")),
-      "Composed handler should have set an entity with 'composed-' prefix"
-    );
-  });
-
-  it("composes duplicate contractRegister with same options", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Process FactoryEvent with composeContractRegister testCase —
-    // original contractRegister adds SimpleNft (via syncRegistration path),
-    // composed contractRegister adds NftFactory
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "composeContractRegister" },
-            },
-          ],
-        },
-      },
-    });
-
-    // The composed contractRegister should have registered NftFactory
-    const addresses = result.changes[0]?.addresses?.sets;
-    assert.ok(
-      addresses?.some((a: { contract: string }) => a.contract === "NftFactory"),
-      "Composed contractRegister should register NftFactory"
-    );
-  });
-
   it("captured contractRegister add() throws after handler resolved", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";

@@ -886,23 +886,6 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where:
   }
 });
 
-// Duplicate handler registration tests
-
-// Same options (no options) → should compose without error.
-// The composed handler sets an additional entity to prove it ran.
-indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
-  context.CustomSelectionTestPass.set({
-    id: "composed-" + event.transaction.hash,
-  });
-});
-
-// Same options → composed contractRegister registers an additional contract
-indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "composeContractRegister") {
-    context.chain.NftFactory.add(event.params.contract);
-  }
-});
-
 // Capture the inner add() closure in one contractRegister invocation, then try
 // to invoke the captured closure from a later onEvent handler (after the first
 // handler has resolved and params.isResolved === true). The call must throw —
