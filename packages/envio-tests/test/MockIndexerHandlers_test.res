@@ -21,9 +21,9 @@ type Account {
 }
 `
 
-describe("MockIndexerConfig handler type-checking", () => {
+describe("MockIndexerFixture handler type-checking", () => {
   it("accepts handlers that match the generated indexer types", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = MockIndexerFixture.fromYaml(
       ~schema,
       ~handlers=`
 import { indexer } from "envio";
@@ -44,7 +44,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   it("throws on handlers that reference a nonexistent event", t => {
     t.expect(
       () =>
-        MockIndexerConfig.parseYaml(
+        MockIndexerFixture.fromYaml(
           ~schema,
           ~handlers=`
 import { indexer } from "envio";

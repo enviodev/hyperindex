@@ -14,7 +14,7 @@ describe("YAML-driven MockIndexer", () => {
   Async.it(
     "runs the indexer loop with a config parsed from user YAML instead of the generated one",
     async t => {
-      let {config} = MockIndexerConfig.parseYaml(
+      let {config} = MockIndexerFixture.fromYaml(
         ~schema=`
 type YamlToken {
   id: ID!

@@ -11,7 +11,7 @@ type parsed = {
 // Parse the same YAML a user supplies, then cross the public JSON boundary used at runtime.
 // When `handlers` (TS source using `import {indexer} from "envio"`) is supplied, it's
 // type-checked against the config's generated types and any type error is thrown.
-let parseYaml = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~isRescript=false, yaml): parsed => {
+let fromYaml = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~isRescript=false, yaml): parsed => {
   let publicConfigJson =
     Core.parseConfigYaml(~schema?, ~env?, ~files?, ~isRescript, yaml)->JSON.parseOrThrow
 

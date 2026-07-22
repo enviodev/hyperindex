@@ -1,6 +1,6 @@
 open Vitest
 
-let config = MockIndexerConfig.parseYaml(
+let config = MockIndexerFixture.fromYaml(
   ~schema=`
 type Snapshot {
   id: ID!
@@ -30,7 +30,7 @@ chains:
 `,
 ).config
 
-let reverseFormatConfig = MockIndexerConfig.parseYaml(
+let reverseFormatConfig = MockIndexerFixture.fromYaml(
   ~schema=`
 type Token {
   id: ID!
