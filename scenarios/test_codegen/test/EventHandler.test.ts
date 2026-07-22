@@ -460,6 +460,36 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(users, [existingUser]);
   });
 
+  it("mutating entities across the set/get boundary doesn't corrupt the store", async () => {
+    const indexer = createTestIndexer();
+
+    const original: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    indexer.User.set(original);
+
+    // Mutating the object passed to set, or any entity handed back, must not
+    // leak into the in-memory store.
+    Object.assign(original, { address: "mutated-after-set" });
+    Object.assign(await indexer.User.getOrThrow("0"), { address: "mutated-after-getOrThrow" });
+    Object.assign((await indexer.User.get("0"))!, { address: "mutated-after-get" });
+    (await indexer.User.getAll()).forEach((u) => Object.assign(u, { address: "mutated-after-getAll" }));
+
+    assert.deepEqual(await indexer.User.getAll(), [
+      {
+        id: "0",
+        address: "existing",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ]);
+  });
+
   it("entity.getOrThrow throws if entity doesn't exist", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";

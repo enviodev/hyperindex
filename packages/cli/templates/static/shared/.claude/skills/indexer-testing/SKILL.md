@@ -99,6 +99,19 @@ await indexer.EntityName.getOrThrow("id"); // throws if not found
 await indexer.EntityName.getAll();         // returns all entities of this type
 ```
 
+## Test isolation
+
+Each `createTestIndexer()` gets its own isolated entity store, so independent
+indexers don't share entity state. Within one indexer, entity state and block
+progress persist across `process()` calls (each call continues where the last
+stopped).
+
+Tests run in-process (no per-test worker), so anything **module-level** in your
+handler code is shared across every indexer and every test in the file — and
+persists between them. This includes top-level `let`/`const` state, memoized
+clients, and effect caches. If a test depends on such state, reset it yourself
+(e.g. in a `beforeEach`); don't rely on `createTestIndexer()` to clear it.
+
 ## result.changes
 
 `result.changes` is an array of per-block change objects. Each entry has `block`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays of created/updated entities. Dynamic contract registrations appear under `addresses.sets`.
