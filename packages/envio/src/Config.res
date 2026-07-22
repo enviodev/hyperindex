@@ -314,10 +314,27 @@ let propertySchema = S.schema(s =>
   }
 )
 
+let clickhouseTableOptionsSchema: S.t<Internal.clickhouseTableOptions> = S.object(s => {
+  Internal.partitionBy: ?s.field("partitionBy", S.option(S.string)),
+  orderBy: ?s.field("orderBy", S.option(S.array(S.string))),
+  ttl: ?s.field("ttl", S.option(S.string)),
+})
+
+// The entity's `clickhouse` storage arg mirrors the @storage directive:
+// either a boolean or a table options object (which implies enabled).
+type entityClickhouseStorageJson =
+  | Enabled(bool)
+  | TableOptions(Internal.clickhouseTableOptions)
+
+let entityClickhouseStorageJsonSchema = S.union([
+  S.bool->S.shape(enabled => Enabled(enabled)),
+  clickhouseTableOptionsSchema->S.shape(options => TableOptions(options)),
+])
+
 let entityStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.option(S.bool)),
-    "clickhouse": s.matches(S.option(S.bool)),
+    "clickhouse": s.matches(S.option(entityClickhouseStorageJsonSchema)),
   }
 )
 
@@ -483,9 +500,21 @@ let parseEntitiesFromJson = (
     // config didn't enable, and that at least one backend stays true
     // for an annotated entity — so `getOr(false)` is safe here.
     let storage: Internal.entityStorage = switch entityJson["storage"] {
-    | Some(s) => {
-        postgres: s["postgres"]->Option.getOr(false),
-        clickhouse: s["clickhouse"]->Option.getOr(false),
+    | Some(s) =>
+      switch s["clickhouse"] {
+      | Some(TableOptions(options)) => {
+          postgres: s["postgres"]->Option.getOr(false),
+          clickhouse: true,
+          clickhouseOptions: options,
+        }
+      | Some(Enabled(clickhouse)) => {
+          postgres: s["postgres"]->Option.getOr(false),
+          clickhouse,
+        }
+      | None => {
+          postgres: s["postgres"]->Option.getOr(false),
+          clickhouse: false,
+        }
       }
     | None => {
         postgres: globalStorage.postgres,
