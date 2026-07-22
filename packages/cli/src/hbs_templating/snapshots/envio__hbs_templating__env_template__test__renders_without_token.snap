@@ -1,7 +1,7 @@
+---
+source: packages/cli/src/hbs_templating/env_template.rs
+expression: render(&None)
+---
 # To create or update a token visit https://envio.dev/app/api-tokens
-{{#if envio_api_token}}
-ENVIO_API_TOKEN="{{envio_api_token}}"
-{{else}}
 # Uncomment the line below and set a valid token
 # ENVIO_API_TOKEN="<YOUR-API-TOKEN>"
-{{/if}}

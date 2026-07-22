@@ -2648,22 +2648,7 @@ mod test {
 
     use super::SystemConfig;
     use crate::{config_parsing::system_config::Event, project_paths::ParsedProjectPaths};
-    use handlebars::Handlebars;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    #[test]
-    fn renders_nested_f32() {
-        let hbs = Handlebars::new();
-
-        let rendered_backoff_multiplicative = hbs
-            .render_template(
-                "{{backoff_multiplicative}}",
-                &json!({"backoff_multiplicative": 0.8}),
-            )
-            .unwrap();
-        assert_eq!(&rendered_backoff_multiplicative, "0.8");
-    }
 
     #[test]
     fn in_memory_yaml_matches_filesystem_public_config() {
