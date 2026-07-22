@@ -709,9 +709,15 @@ fn parse_storage_directive(
                 clickhouse = Some(ClickHouseEntityStorage::Enabled(*b))
             }
             ("clickhouse", Value::Object(fields)) => {
-                clickhouse = Some(ClickHouseEntityStorage::Options(
-                    parse_clickhouse_table_options(&obj.name, fields)?,
-                ))
+                let options = parse_clickhouse_table_options(&obj.name, fields)?;
+                // An options object with nothing set only enables the backend,
+                // so normalize it to the boolean form: it serializes identically
+                // to `clickhouse: true` and won't diff a stored config.
+                clickhouse = Some(if options == ClickHouseTableOptions::default() {
+                    ClickHouseEntityStorage::Enabled(true)
+                } else {
+                    ClickHouseEntityStorage::Options(options)
+                });
             }
             ("clickhouse", _) => {
                 return Err(anyhow!(
@@ -745,7 +751,7 @@ fn parse_clickhouse_table_options(
     fields: &std::collections::BTreeMap<String, Value<'_, String>>,
 ) -> anyhow::Result<ClickHouseTableOptions> {
     let expression = |key: &str, value: &Value<'_, String>| match value {
-        Value::String(expr) if !expr.trim().is_empty() => Ok(expr.clone()),
+        Value::String(expr) if !expr.trim().is_empty() => Ok(expr.trim().to_string()),
         _ => Err(anyhow!(
             "Invalid @storage directive on `{entity_name}`. `clickhouse.{key}` must be a \
              non-empty string with a ClickHouse expression, e.g. clickhouse: {{{key}: \
@@ -763,7 +769,7 @@ fn parse_clickhouse_table_options(
                     Value::List(items) if !items.is_empty() => items
                         .iter()
                         .map(|item| match item {
-                            Value::String(field_name) => Ok(field_name.clone()),
+                            Value::String(field_name) => Ok(field_name.trim().to_string()),
                             _ => Err(anyhow!(
                                 "Invalid @storage directive on `{entity_name}`. \
                                  `clickhouse.orderBy` must be a list of entity field names, \
@@ -812,6 +818,13 @@ fn validate_clickhouse_order_by_fields(
                  field `{field_name}` more than once."
             ));
         }
+        if field_name == "id" {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` must not \
+                 list `id`: it's already the default sorting key. List only the additional \
+                 fields to sort by."
+            ));
+        }
         let field = fields
             .iter()
             .find(|f| &f.name == field_name)
@@ -841,6 +854,16 @@ fn validate_clickhouse_order_by_fields(
                 "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
                  `{field_name}` is an array, and ClickHouse doesn't allow array columns in \
                  the sorting key."
+            ));
+        }
+        if matches!(
+            field.field_type.get_underlying_scalar(),
+            GqlScalar::BigInt(_) | GqlScalar::BigDecimal(_)
+        ) {
+            return Err(anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
+                 `{field_name}` is a BigInt/BigDecimal, which ClickHouse can store as a String \
+                 (lexicographic, not numeric ordering). Sorting by it isn't supported yet."
             ));
         }
     }
@@ -2791,32 +2814,8 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
     }
 
     // --- @storage(clickhouse: {...}) table options ---
-
-    #[test]
-    fn storage_directive_clickhouse_table_options() {
-        let schema_str = r#"
-type TestEntity @storage(clickhouse: {
-  partitionBy: "toYYYYMM(timestamp)",
-  orderBy: ["timestamp", "id"],
-  ttl: "timestamp + INTERVAL 2 YEAR"
-}) {
-  id: ID!
-  timestamp: Timestamp!
-}
-        "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
-        assert_eq!(
-            (entity.postgres, entity.clickhouse),
-            (
-                None,
-                Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
-                    partition_by: Some("toYYYYMM(timestamp)".to_string()),
-                    order_by: Some(vec!["timestamp".to_string(), "id".to_string()]),
-                    ttl: Some("timestamp + INTERVAL 2 YEAR".to_string()),
-                }))
-            )
-        );
-    }
+    // The full partitionBy/orderBy/ttl options object is exercised end-to-end
+    // (YAML + schema -> parser -> Config.res -> DDL) in `ClickHouse_test.res`.
 
     #[test]
     fn storage_directive_clickhouse_options_are_each_optional() {
@@ -2844,22 +2843,21 @@ type TestEntity @storage(clickhouse: {}) { id: ID! }
         "#;
         let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         let clickhouse = entity.clickhouse.unwrap();
+        // Empty options normalize to the boolean form so they don't diff a
+        // config persisted as `clickhouse: true`.
         assert_eq!(
             (clickhouse.clone(), clickhouse.is_enabled(), entity.postgres),
-            (
-                ClickHouseEntityStorage::Options(ClickHouseTableOptions::default()),
-                true,
-                None
-            )
+            (ClickHouseEntityStorage::Enabled(true), true, None)
         );
     }
 
     #[test]
     fn storage_directive_clickhouse_options_with_linked_entity_order_by() {
         let schema_str = r#"
-type TestEntity @storage(clickhouse: {orderBy: ["token", "id"]}) {
+type TestEntity @storage(clickhouse: {orderBy: ["token", "timestamp"]}) {
   id: ID!
   token: Token!
+  timestamp: Timestamp!
 }
 type Token { id: ID! }
         "#;
@@ -2868,7 +2866,7 @@ type Token { id: ID! }
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
                 partition_by: None,
-                order_by: Some(vec!["token".to_string(), "id".to_string()]),
+                order_by: Some(vec!["token".to_string(), "timestamp".to_string()]),
                 ttl: None,
             }))
         );
@@ -2973,6 +2971,28 @@ type Token {
 }
             "#,
             "field `tokens` is a @derivedFrom field",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {orderBy: ["id"]}) { id: ID! }"#,
+            "`clickhouse.orderBy` must not list `id`",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["amount"]}) {
+  id: ID!
+  amount: BigInt!
+}
+            "#,
+            "field `amount` is a BigInt/BigDecimal",
+        );
+        assert_error_contains(
+            r#"
+type TestEntity @storage(clickhouse: {orderBy: ["price"]}) {
+  id: ID!
+  price: BigDecimal!
+}
+            "#,
+            "field `price` is a BigInt/BigDecimal",
         );
     }
 }

@@ -358,6 +358,18 @@ let makeCreateHistoryTableQuery = (
   | None => (None, None, None)
   }
 
+  // Schema field name -> ClickHouse column name, so @storage(clickhouse: {...})
+  // options can reference fields the way they're written in the schema and get
+  // renames (`column_name_format: snake_case`) and linked-entity `_id` suffixes
+  // resolved here.
+  let columnByFieldName = Dict.make()
+  entityConfig.table.fields->Array.forEach(field =>
+    switch field {
+    | Field(f) => columnByFieldName->Dict.set(f.fieldName, f->Table.getClickHouseDbFieldName)
+    | DerivedFrom(_) => ()
+    }
+  )
+
   let orderByColumns = switch orderBy {
   | Some(fieldNames) =>
     // envio_checkpoint_id stays appended so the sorting key keeps a
@@ -367,13 +379,8 @@ let makeCreateHistoryTableQuery = (
     let userColumns =
       fieldNames
       ->Array.map(fieldName =>
-        switch entityConfig.table.fields->Array.findMap(field =>
-          switch field {
-          | Field(f) if f.fieldName === fieldName => Some(f)
-          | _ => None
-          }
-        ) {
-        | Some(f) => `\`${f->Table.getClickHouseDbFieldName}\``
+        switch columnByFieldName->Dict.get(fieldName) {
+        | Some(column) => `\`${column}\``
         | None =>
           // Validated at codegen, so a miss means the schema and the
           // persisted config diverged.
@@ -387,12 +394,28 @@ let makeCreateHistoryTableQuery = (
   | None => `${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName}`
   }
 
+  // partitionBy/ttl are raw ClickHouse expressions. Rewrite any bare identifier
+  // that names an entity field to that field's ClickHouse column, leaving
+  // functions, keywords, numbers, string literals and already-backticked
+  // identifiers untouched (a quoted token never matches a bare field name).
+  let resolveExpressionColumns = expression =>
+    expression->String.replaceRegExpBy0Unsafe(/'[^']*'|`[^`]*`|[A-Za-z_][A-Za-z0-9_]*/g, (
+      ~match,
+      ~offset as _,
+      ~input as _,
+    ) =>
+      switch columnByFieldName->Dict.get(match) {
+      | Some(column) => `\`${column}\``
+      | None => match
+      }
+    )
+
   let partitionByClause = switch partitionBy {
-  | Some(expression) => `\nPARTITION BY ${expression}`
+  | Some(expression) => `\nPARTITION BY ${expression->resolveExpressionColumns}`
   | None => ""
   }
   let ttlClause = switch ttl {
-  | Some(expression) => `\nTTL ${expression}`
+  | Some(expression) => `\nTTL ${expression->resolveExpressionColumns}`
   | None => ""
   }
 
