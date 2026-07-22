@@ -35,8 +35,10 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // Analogous to EVM, but keyed by `block.height` instead of
   // `block.number`. See `Evm.res` for the rationale on the two-stage
   // parse and the `_lte`/`_every` rejection.
+  // `S.strict` on the inner object rejects unknown `block` fields — including
+  // `block.number`, which is EVM-only; Fuel filters by `block.height`.
   onEventBlockFilterSchema: S.object(s =>
-    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))))
+    s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))->S.strict))
   ),
   logger,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
@@ -54,11 +56,14 @@ let make = (~logger: Pino.t): Ecosystem.t => {
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
+    let header = payload.block->(Utils.magic: Internal.eventBlock => {"id": string, "time": int})
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
       ~params=payload.params,
       ~srcAddress=payload.srcAddress,
+      ~blockHash=header["id"],
+      ~blockTimestamp=header["time"],
       ~cleanUpRawEventFieldsInPlace,
     )
   },

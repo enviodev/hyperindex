@@ -4,6 +4,24 @@ use crate::{
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
+use std::collections::HashMap;
+
+#[derive(Default)]
+#[napi_derive::napi(object)]
+pub struct ParseConfigYamlOptions {
+    pub schema: Option<String>,
+    pub env: Option<HashMap<String, String>>,
+    pub files: Option<HashMap<String, String>>,
+    pub is_rescript: Option<bool>,
+}
+
+fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result<String> {
+    let system_config =
+        config.map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+    system_config
+        .to_public_config_json(false)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
+}
 
 #[napi_derive::napi]
 pub fn get_config_json(
@@ -14,16 +32,29 @@ pub fn get_config_json(
     let config = config_path
         .or_else(|| std::env::var("ENVIO_CONFIG").ok())
         .unwrap_or_else(|| "config.yaml".to_string());
-    // Error messages intentionally omit absolute paths (cwd / resolved config
-    // path) — the JS caller already knows its cwd and what it passed in, and
-    // we don't want to leak filesystem layout into logs shipped off-host.
     let project_paths = ParsedProjectPaths::new(&project_root, &config)
         .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
-    let system_config = SystemConfig::parse_from_project_files(&project_paths)
-        .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e}")))?;
-    system_config
-        .to_public_config_json(false)
-        .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
+    serialize_config_result(SystemConfig::parse_from_project_files(&project_paths))
+}
+
+/// Parses an indexer config without consulting the filesystem or process
+/// environment. Schema text, interpolation variables, and ABI/IDL file bodies
+/// are supplied explicitly so callers can use this from any working directory.
+#[napi_derive::napi]
+pub fn parse_config_yaml(
+    yaml: String,
+    options: Option<ParseConfigYamlOptions>,
+) -> napi::Result<String> {
+    let options = options.unwrap_or_default();
+    let env = options.env.unwrap_or_default();
+    let files = options.files.unwrap_or_default();
+    serialize_config_result(SystemConfig::parse_yaml(
+        &yaml,
+        options.schema.as_deref(),
+        &env,
+        &files,
+        options.is_rescript.unwrap_or(false),
+    ))
 }
 
 /// Requests graceful shutdown of a Rust-owned long-running command. Node

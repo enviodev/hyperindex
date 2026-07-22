@@ -73,9 +73,10 @@ let runEventHandlerOrThrow = async (
     )
   }
   let handlerDuration = timeBeforeHandler->Performance.secondsSince
-  Prometheus.ProcessingHandler.increment(
-    ~contract=eventItem.onEventRegistration.eventConfig.contractName,
-    ~event=eventItem.onEventRegistration.eventConfig.name,
+  let eventConfig = eventItem.onEventRegistration.eventConfig
+  indexerState->IndexerState.recordHandlerDuration(
+    ~contract=eventConfig.contractName,
+    ~event=eventConfig.name,
     ~duration=handlerDuration,
   )
 }
@@ -121,8 +122,8 @@ let runHandlerOrThrow = async (
         }),
       )
     }
-  | Event({onEventRegistration}) =>
-    switch onEventRegistration.handler {
+  | Event(_) =>
+    switch (item->Internal.castUnsafeEventItem).onEventRegistration.handler {
     | Some(handler) =>
       await item->runEventHandlerOrThrow(
         ~handler,
@@ -161,15 +162,19 @@ let preloadBatchOrThrow = async (
     for idx in 0 to checkpointEventsProcessed - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
-      | Event({onEventRegistration: {handler, eventConfig: {contractName, name: eventName}}}) =>
+      | Event(_) =>
+        let {handler, eventConfig: {contractName, name: eventName}} = (
+          item->Internal.castUnsafeEventItem
+        ).onEventRegistration
         switch handler {
         | None => ()
         | Some(handler) =>
           try {
-            let timerRef = Prometheus.PreloadHandler.startOperation(
-              ~contract=contractName,
-              ~event=eventName,
-            )
+            let timerRef =
+              indexerState->IndexerState.startPreloadHandler(
+                ~contract=contractName,
+                ~event=eventName,
+              )
             promises->Array.push(
               handler({
                 event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
@@ -186,7 +191,8 @@ let preloadBatchOrThrow = async (
                 }),
               })
               ->Promise.thenResolve(_ => {
-                timerRef->Prometheus.PreloadHandler.endOperation(
+                indexerState->IndexerState.endPreloadHandler(
+                  timerRef,
                   ~contract=contractName,
                   ~event=eventName,
                 )
@@ -267,6 +273,7 @@ let runBatchHandlersOrThrow = async (
 let registerProcessEventBatchMetrics = (
   ~logger,
   ~batch: Batch.t,
+  ~indexerState,
   ~loadDuration,
   ~handlerDuration,
 ) => {
@@ -279,7 +286,7 @@ let registerProcessEventBatchMetrics = (
     })
   })
 
-  Prometheus.ProcessingBatch.registerMetrics(~loadDuration, ~handlerDuration)
+  indexerState->IndexerState.recordBatchDurations(~loadDuration, ~handlerDuration)
 }
 
 type logPartitionInfo = {
@@ -289,15 +296,19 @@ type logPartitionInfo = {
   lastItemBlockNumber?: int,
 }
 
-// Off the hot path: bulk-materialise the selected transaction fields for the
-// batch's store-backed (HyperSync) items and write them onto the payloads, so
-// handlers read plain objects. A batch can span chains, each with its own store
-// and field mask, so group items by chain before materialising.
-let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<ChainState.t>) => {
+// Off the hot path: bulk-materialise the selected transaction and block fields
+// for the batch's store-backed (HyperSync) items and write them onto the
+// payloads, so handlers read plain objects. A batch can span chains, each with
+// its own stores and field masks, so group items by chain before materialising.
+let materializeBatchEvents = async (
+  batch: Batch.t,
+  ~chainStates: dict<ChainState.t>,
+  ~ecosystem,
+) => {
   switch chainStates->Dict.valuesToArray {
   // Single-chain indexers (the common case): every item belongs to the one
   // chain, so skip the per-chain grouping and its allocations.
-  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items)
+  | [cs] => await cs->ChainState.materializeBatchItems(~items=batch.items, ~ecosystem)
   | _ =>
     let itemsByChain: dict<array<Internal.item>> = Dict.make()
     batch.items->Array.forEach(item => {
@@ -312,7 +323,7 @@ let materializeBatchTransactions = async (batch: Batch.t, ~chainStates: dict<Cha
     ->Dict.toArray
     ->Array.map(async ((chainId, items)) => {
       let cs = chainStates->Dict.getUnsafe(chainId)
-      await cs->ChainState.materializeBatchItems(~items)
+      await cs->ChainState.materializeBatchItems(~items, ~ecosystem)
     })
     ->Promise.all
   }
@@ -348,7 +359,7 @@ let processEventBatch = async (
     if batch.items->Utils.Array.notEmpty {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
-      await materializeBatchTransactions(batch, ~chainStates)
+      await materializeBatchEvents(batch, ~chainStates, ~ecosystem=config.ecosystem.name)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
@@ -373,6 +384,7 @@ let processEventBatch = async (
     registerProcessEventBatchMetrics(
       ~logger,
       ~batch,
+      ~indexerState,
       ~loadDuration=loaderDuration,
       ~handlerDuration,
     )

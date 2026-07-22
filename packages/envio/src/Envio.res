@@ -66,18 +66,21 @@ type svmLog = {
   message: string,
 }
 
-/** Block context for a matched instruction. `time`/`hash` follow the
- EVM/Fuel field names so the shared `Ecosystem.t` getters in `Svm.res` read
- them uniformly. */
+/** Block context for a matched instruction. `slot`/`hash` are always present;
+ `time` can still be absent — HyperSync/Solana may not report a block time for
+ every slot. Every other field is opt-in via `field_selection.block_fields`,
+ materialised from the per-chain block store at batch prep. */
 type svmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   slot: int,
-  /** Unix block time (seconds). `0` when HyperSync didn't return a block
-   for this instruction's slot. */
-  time: int,
-  /** Block hash. Currently always empty — populated by the future
-   reorg-guard `queryBlockHash(slot)` route. */
+  /** Unix block time (seconds). */
+  time?: int,
   hash: string,
+  /** Block height (distinct from slot). Absent when not selected via
+   `field_selection.block_fields`. */
+  height?: int,
+  parentSlot?: int,
+  parentHash?: string,
 }
 
 /** The per-instruction payload handlers receive as their `instruction`
@@ -111,7 +114,9 @@ type svmInstruction = {
   /** Program log entries scoped to this instruction. Absent when the
    per-instruction `include_logs` flag is `false`. */
   logs?: array<svmLog>,
-  block: svmInstructionBlock,
+  // Omitted on construction; materialised onto the payload at batch prep,
+  // before a handler ever reads it.
+  block?: svmInstructionBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
@@ -181,11 +186,19 @@ and effectOptions<'input, 'output> = {
   rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
+  /** Whether the effect's cache is shared across all chains. Defaults to `true`.
+   Set to `false` to isolate the cache (and rate limiting) per chain and enable
+   `context.chain.id` inside the handler. */
+  crossChain?: bool,
 }
+and effectChain = {id: int}
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
+  /** The chain the effect was called on. Only available on effects created with
+   `crossChain: false`; accessing it on a cross-chain effect throws. */
+  chain: effectChain,
 }
 and effectArgs<'input> = {
   input: 'input,
@@ -200,10 +213,23 @@ let durationToMs = (duration: rateLimitDuration) =>
   | Milliseconds(ms) => ms
   }
 
+// The name becomes both a Postgres cache-table suffix and a .envio/cache file
+// path segment. Path separators are excluded from the charset and a leading dot
+// is disallowed, so a name can never be "." / ".." or otherwise traverse out of
+// the cache dir; dots elsewhere are fine and keep existing names like
+// "token.metadata" working, since the (name, scope) <-> table <-> path mapping
+// stays reversible.
+let effectNameRe = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/
+
 let createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
+  if !(effectNameRe->RegExp.test(options.name)) {
+    JsError.throwWithMessage(
+      `Invalid effect name "${options.name}". Effect names may contain letters, numbers, underscores, hyphens and dots (but must not start with a dot or contain a path separator), because the name is used as the cache table name and cache file path.`,
+    )
+  }
   let outputSchema =
     S.schema(_ => options.output)->(Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>)
   let itemSchema = S.schema((s): Internal.effectCacheItem => {
@@ -217,8 +243,6 @@ let createEffect = (
         Internal.effectOutput,
       >
     ),
-    activeCallsCount: 0,
-    prevCallStartTimerRef: %raw(`null`),
     // This is the way to make the createEffect API
     // work without the need for users to call S.schema themselves,
     // but simply pass the desired object/tuple/etc.
@@ -228,7 +252,6 @@ let createEffect = (
     ),
     output: outputSchema,
     storageMeta: {
-      table: Internal.makeCacheTable(~effectName=options.name),
       outputSchema,
       itemSchema,
     },
@@ -236,16 +259,16 @@ let createEffect = (
     | Some(true) => true
     | _ => false
     },
+    crossChain: switch options.crossChain {
+    | Some(false) => false
+    | _ => true
+    },
     rateLimit: switch options.rateLimit {
     | Disable => None
     | Enable({calls, per}) =>
       Some({
         callsPerDuration: calls,
         durationMs: per->durationToMs,
-        availableCalls: calls,
-        windowStartTime: Date.now(),
-        queueCount: 0,
-        nextWindowPromise: None,
       })
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)

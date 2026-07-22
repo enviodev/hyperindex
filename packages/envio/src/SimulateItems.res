@@ -240,9 +240,12 @@ let deriveSrcAddress = (
   }
 }
 
-let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Config.chain): array<
-  Internal.item,
-> => {
+let parse = (
+  ~simulateItems: array<JSON.t>,
+  ~config: Config.t,
+  ~chainConfig: Config.chain,
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+): array<Internal.item> => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
@@ -304,15 +307,15 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
       let transactionJson: option<JSON.t> =
         rawItem["transaction"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
-      let (block, blockNumber, timestamp, blockHash) = switch config.ecosystem.name {
+      let (block, blockNumber) = switch config.ecosystem.name {
       | Fuel =>
         let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
-        (block, blockFields.height, blockFields.time, blockFields.id)
+        (block, blockFields.height)
       | Evm =>
         let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
         let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
-        (block, blockFields.number, blockFields.timestamp, blockFields.hash)
+        (block, blockFields.number)
       | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
       }
       let transaction = switch config.ecosystem.name {
@@ -336,7 +339,7 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
 
-      // Build a real registration the same way `HandlerRegister.buildOnEventRegistrations`
+      // Build a real registration the same way `HandlerRegister.finishRegistration`
       // does at startup (not a stub), so the address filter and `where`
       // behave identically to real indexing — the dead-input tracker relies
       // on `clientAddressFilter` actually gating unrouted items.
@@ -345,15 +348,18 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
         ~chainId,
         ~eventConfig,
       )
+      // Append into the registration array that the chain state will own and
+      // put that same registration object directly on the simulated item.
+      let onEventRegistrationIndex = onEventRegistrations->Array.length
+      let onEventRegistration = {...onEventRegistration, index: onEventRegistrationIndex}
+      onEventRegistrations->Array.push(onEventRegistration)->ignore
 
       items
       ->Array.push(
         Internal.Event({
           onEventRegistration,
-          timestamp,
           chain,
           blockNumber,
-          blockHash,
           logIndex,
           // Simulate keeps the transaction inline on the payload, so the store
           // key is unused.
@@ -384,7 +390,11 @@ let parse = (~simulateItems: array<JSON.t>, ~config: Config.t, ~chainConfig: Con
 
 // Apply simulate source config from processConfig JSON to a Config.t
 // This patches chainMap entries that have simulate items with CustomSources
-let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
+let patchConfig = (
+  ~config: Config.t,
+  ~processConfig: JSON.t,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+): Config.t => {
   let processChains: option<dict<JSON.t>> =
     (processConfig->(Utils.magic: JSON.t => {..}))["chains"]->Nullable.toOption
   switch processChains {
@@ -397,11 +407,31 @@ let patchConfig = (~config: Config.t, ~processConfig: JSON.t): Config.t => {
         let simulateRaw: option<array<JSON.t>> = raw["simulate"]->Nullable.toOption
         switch simulateRaw {
         | Some(simulateItems) =>
-          let items = parse(~simulateItems, ~config, ~chainConfig)
+          let chainRegistrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
+            chainIdStr,
+          ) {
+          | Some(registrations) => registrations
+          | None =>
+            let registrations: HandlerRegister.chainRegistrations = {
+              onEventRegistrations: [],
+              onBlockRegistrations: [],
+            }
+            registrationsByChainId->Dict.set(chainIdStr, registrations)
+            registrations
+          }
           let startBlock: int = raw["startBlock"]->(Utils.magic: 'a => int)
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
+          // Parse with the process's startBlock so items default into the range
+          // the source will be queried over; the source now filters by range.
+          let chainConfig = {...chainConfig, startBlock, endBlock}
+          let items = parse(
+            ~simulateItems,
+            ~config,
+            ~chainConfig,
+            ~onEventRegistrations=chainRegistrations.onEventRegistrations,
+          )
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
-          {...chainConfig, startBlock, endBlock, sourceConfig: Config.CustomSources([source])}
+          {...chainConfig, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }
       | None => chainConfig

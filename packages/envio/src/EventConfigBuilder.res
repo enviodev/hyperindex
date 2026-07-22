@@ -236,54 +236,30 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
 
 // ============== Build topic filter getters ==============
 
-let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
-  // Handle array/tuple types - these get keccak256'd
-  if abiType->String.endsWith("]") || abiType->String.startsWith("(") {
-    TopicFilter.castToHexUnsafe->(Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-  } else {
-    switch abiType {
-    | "address" =>
-      TopicFilter.fromAddress->(
-        Utils.magic: (Address.t => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | "bool" =>
-      TopicFilter.fromBool->(Utils.magic: (bool => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | "string" =>
-      TopicFilter.fromDynamicString->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | "bytes" =>
-      TopicFilter.fromDynamicBytes->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("uint") =>
-      TopicFilter.fromBigInt->(Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | t if t->String.startsWith("int") =>
-      TopicFilter.fromSignedBigInt->(
-        Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("bytes") =>
-      TopicFilter.castToHexUnsafe->(
-        Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | other => JsError.throwWithMessage(`Unsupported topic filter ABI type: ${other}`)
-    }
-  }
-}
+let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => value =>
+  Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
 let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)
+  let isTuple = p.abiType->String.startsWith("(")
   (eventFilter: dict<JSON.t>) =>
     eventFilter
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
-    ->Option.mapOr([], topicFilters =>
-      topicFilters->(Utils.magic: JSON.t => unknown)->normalizeOrThrow->Array.map(encoder)
-    )
+    ->Option.mapOr([], topicFilters => {
+      let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+      // A tuple filter value is itself an array, so a directly-passed tuple is
+      // indistinguishable from an OR-list by shape alone. A single tuple is
+      // the common case, so try it first; when the value doesn't ABI-encode as
+      // one tuple it must be an OR-list of tuples.
+      if isTuple {
+        switch encoder(raw) {
+        | encoded => [encoded]
+        | exception _ => raw->normalizeOrThrow->Array.map(encoder)
+        }
+      } else {
+        raw->normalizeOrThrow->Array.map(encoder)
+      }
+    })
 }
 
 // ============== Field selection ==============
@@ -401,6 +377,11 @@ let buildEvmEventConfig = (
     selectedBlockFields,
     selectedTransactionFields,
     transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
+    blockFieldMask: Evm.eventBlockFieldMask(
+      selectedBlockFields->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+    ),
     sighash,
     topicCount,
     paramsMetadata: params,
@@ -408,31 +389,26 @@ let buildEvmEventConfig = (
 }
 
 // Enrich an EVM definition into a per-(event,chain) registration: resolve the
-// registered `where` (with `probeChainId`) into the lazy `getEventFiltersOrThrow`
-// closure + address filters, and override `startBlock` with `where.block._gte`.
+// registered `where` for this chain into `resolvedWhere` + address filters,
+// and override `startBlock` with `where.block._gte`.
 let buildEvmOnEventRegistration = (
   ~eventConfig: Internal.evmEventConfig,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
-  ~eventFilters: option<JSON.t>,
-  ~probeChainId: int,
+  ~where: option<JSON.t>,
+  ~chainId: int,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
   let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
 
-  let {
-    getEventFiltersOrThrow,
-    filterByAddresses,
-    addressFilterParamGroups,
-    startBlock: whereStartBlock,
-  } = LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
+  let {resolvedWhere, filterByAddresses, addressFilterParamGroups} = LogSelection.parseWhereOrThrow(
+    ~where,
     ~sighash=eventConfig.sighash,
     ~params=indexedParams->Array.map(p => p.name),
     ~contractName=eventConfig.contractName,
-    ~probeChainId,
+    ~chainId,
     ~onEventBlockFilterSchema,
     ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
     ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
@@ -442,17 +418,18 @@ let buildEvmOnEventRegistration = (
   // `where.block.number._gte` overrides the contract-level startBlock when
   // present (an explicit per-event opt-in that wins over `config.yaml`);
   // otherwise the contract/chain value passes through.
-  let resolvedStartBlock = switch whereStartBlock {
+  let resolvedStartBlock = switch resolvedWhere.startBlock {
   | Some(_) as sb => sb
   | None => startBlock
   }
 
   {
+    index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     handler,
     contractRegister,
-    getEventFiltersOrThrow,
+    resolvedWhere,
     filterByAddresses,
     clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups, ~isWildcard),
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
@@ -460,7 +437,11 @@ let buildEvmOnEventRegistration = (
   }
 }
 
-// ============== Build SVM instruction config ==============
+// ============== Build SVM instruction event config ==============
+
+// Always-included block fields (slot, time, hash) are prepended at runtime so
+// they're always present regardless of config.
+let alwaysIncludedSvmBlockFields: array<Internal.svmBlockField> = [Slot, Time, Hash]
 
 let buildSvmInstructionEventConfig = (
   ~contractName: string,
@@ -470,6 +451,7 @@ let buildSvmInstructionEventConfig = (
   ~discriminatorByteLen: int,
   ~includeLogs: bool,
   ~transactionFields: array<Internal.svmTransactionField>=[],
+  ~blockFields: array<Internal.svmBlockField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~accounts: array<string>=[],
@@ -487,6 +469,12 @@ let buildSvmInstructionEventConfig = (
     Utils.Set.fromArray(transactionFields)->(
       Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
     )
+  let selectedBlockFields = Utils.Set.fromArray(
+    Array.concat(alwaysIncludedSvmBlockFields, blockFields),
+  )
+  let blockFieldMask = Svm.eventBlockFieldMask(
+    selectedBlockFields->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>),
+  )
   {
     id: switch discriminator {
     | Some(d) => d
@@ -502,6 +490,8 @@ let buildSvmInstructionEventConfig = (
     includeLogs,
     selectedTransactionFields,
     transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
+    selectedBlockFields,
+    blockFieldMask,
     accountFilters,
     isInner,
     accounts,
@@ -519,6 +509,7 @@ let buildSvmOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.svmOnEventRegistration => {
+  index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,
@@ -578,9 +569,11 @@ let buildFuelEventConfig = (
     contractName,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    // Fuel keeps the transaction inline on the payload; nothing to materialise.
+    // Fuel keeps the transaction and block inline on the payload; nothing to
+    // materialise.
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
+    blockFieldMask: 0.,
     kind: fuelKind,
   }
 }
@@ -594,6 +587,7 @@ let buildFuelOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
+  index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,

@@ -28,14 +28,27 @@ let decodeSingle = async (
   )
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
   let decoded = await NativeDecoder.decodeLogs(
-    ~eventParams=[{sighash, topicCount, eventName, contractName: "TestContract", params}],
+    ~eventRegistrations=[
+      {
+        index: 0,
+        sighash,
+        topicCount,
+        eventName,
+        contractName: "TestContract",
+        isWildcard: false,
+        dependsOnAddresses: true,
+        params,
+        topicSelections: [
+          {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
+        ],
+        blockFields: [],
+        transactionFields: [],
+      },
+    ],
     ~logs=[log],
+    ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
   )
-  decoded[0]
-  ->Option.getUnsafe
-  ->Nullable.toOption
-  ->Option.getUnsafe
-  ->Dict.getUnsafe("TestContract")
+  (decoded[0]->Option.getUnsafe).params
 }
 
 let allIndexedLog = (
@@ -58,13 +71,22 @@ let noneIndexedLog = (
 
 describe("EVM event decoding via EvmRpcClient.getLogs", () => {
   Async.it("produces named params directly for different indexed layouts", async t => {
+    let topicSelections: array<HyperSyncClient.Registration.topicSelectionInput> = [
+      {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
+    ]
     let decoded = await NativeDecoder.decodeLogs(
-      ~eventParams=[
+      ~eventRegistrations=[
         {
+          index: 0,
           sighash,
           topicCount: 4,
           eventName: "Transfer",
           contractName: "TestContract",
+          isWildcard: false,
+          dependsOnAddresses: true,
+          topicSelections,
+          blockFields: [],
+          transactionFields: [],
           params: [
             {name: "from", abiType: "address", indexed: true},
             {name: "to", abiType: "address", indexed: true},
@@ -72,10 +94,16 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           ],
         },
         {
+          index: 1,
           sighash,
           topicCount: 1,
           eventName: "Transfer",
           contractName: "TestContract",
+          isWildcard: false,
+          dependsOnAddresses: true,
+          topicSelections,
+          blockFields: [],
+          transactionFields: [],
           params: [
             {name: "from", abiType: "address", indexed: false},
             {name: "to", abiType: "address", indexed: false},
@@ -84,14 +112,10 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
       ],
       ~logs=[allIndexedLog, noneIndexedLog],
+      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
     )
 
-    let pick = i =>
-      decoded[i]
-      ->Option.getUnsafe
-      ->Nullable.toOption
-      ->Option.getUnsafe
-      ->Dict.getUnsafe("TestContract")
+    let pick = i => (decoded[i]->Option.getUnsafe).params
     let paramsAll = pick(0)
     let paramsNone = pick(1)
 
@@ -127,23 +151,32 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
 
   Async.it("handles empty params", async t => {
     let decoded = await NativeDecoder.decodeLogs(
-      ~eventParams=[
+      ~eventRegistrations=[
         {
+          index: 0,
           sighash: toEventSelector("event Empty()"),
           topicCount: 1,
           eventName: "Empty",
           contractName: "TestContract",
+          isWildcard: false,
+          dependsOnAddresses: true,
+          topicSelections: [
+            {
+              topic0: [toEventSelector("event Empty()")],
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: [],
           params: [],
         },
       ],
       ~logs=[([toEventSelector("event Empty()")], "0x")],
+      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
     )
-    let result =
-      decoded[0]
-      ->Option.getUnsafe
-      ->Nullable.toOption
-      ->Option.getUnsafe
-      ->Dict.getUnsafe("TestContract")
+    let result = (decoded[0]->Option.getUnsafe).params
     t.expect(result).toEqual(%raw(`{}`))
   })
 
@@ -178,11 +211,10 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
 
     let eventItem =
       Internal.Event({
-        onEventRegistration: (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-        timestamp: 1234,
+        onEventRegistration:
+          (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
         chain: ChainMap.Chain.makeUnsafe(~chainId=137),
         blockNumber,
-        blockHash: "0xblockhash",
         logIndex,
         transactionIndex: 0,
         payload,
@@ -197,7 +229,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       log_index: logIndex,
       src_address: srcAddress,
       block_hash: "0xblockhash",
-      block_timestamp: 1234,
+      block_timestamp: 9999,
       block_fields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
       transaction_fields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
       params: %raw(`"null"`),

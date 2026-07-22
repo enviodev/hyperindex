@@ -46,6 +46,70 @@ module Process = {
   @module external process: t = "process"
   @module("process") external cwd: unit => string = "cwd"
   @get external execPath: t => string = "execPath"
+
+  type memoryUsage = {
+    rss: float,
+    heapTotal: float,
+    heapUsed: float,
+    @as("external") external_: float,
+    arrayBuffers: float,
+  }
+  @module("process") external memoryUsage: unit => memoryUsage = "memoryUsage"
+
+  // Microseconds since process start.
+  type cpuUsage = {user: float, system: float}
+  @module("process") external cpuUsage: unit => cpuUsage = "cpuUsage"
+
+  @module("process") external uptime: unit => float = "uptime"
+  @module("process") external version: string = "version"
+  @module("process")
+  external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
+}
+
+module V8 = {
+  type heapSpaceStatistics = {
+    @as("space_name") spaceName: string,
+    @as("space_size") spaceSize: float,
+    @as("space_used_size") spaceUsedSize: float,
+    @as("space_available_size") spaceAvailableSize: float,
+  }
+  @module("v8")
+  external getHeapSpaceStatistics: unit => array<heapSpaceStatistics> = "getHeapSpaceStatistics"
+}
+
+module PerfHooks = {
+  type eventLoopUtilization = {idle: float, active: float, utilization: float}
+  type performance
+  @module("perf_hooks") external performance: performance = "performance"
+  @send external eventLoopUtilization: performance => eventLoopUtilization = "eventLoopUtilization"
+
+  // Sampled event-loop delay histogram; values are nanoseconds.
+  type intervalHistogram = {
+    mean: float,
+    min: float,
+    max: float,
+    stddev: float,
+  }
+  type monitorOptions = {resolution?: int}
+  @module("perf_hooks")
+  external monitorEventLoopDelay: (~options: monitorOptions=?) => intervalHistogram =
+    "monitorEventLoopDelay"
+  @send external enable: intervalHistogram => bool = "enable"
+  @send external reset: intervalHistogram => unit = "reset"
+  @send external percentile: (intervalHistogram, int) => float = "percentile"
+
+  type performanceEntry = {
+    duration: float, // milliseconds
+    detail: {"kind": int},
+  }
+  type observerList
+  @send external getEntries: observerList => array<performanceEntry> = "getEntries"
+  type performanceObserver
+  type observeOptions = {entryTypes: array<string>}
+  @new @module("perf_hooks")
+  external makePerformanceObserver: (observerList => unit) => performanceObserver =
+    "PerformanceObserver"
+  @send external observe: (performanceObserver, observeOptions) => unit = "observe"
 }
 
 module ChildProcess = {
@@ -173,5 +237,10 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readdir: Path.t => promise<array<string>> = "readdir"
+
+    type stats
+    @module("fs") @scope("promises")
+    external stat: Path.t => promise<stats> = "stat"
+    @send external statsIsDirectory: stats => bool = "isDirectory"
   }
 }

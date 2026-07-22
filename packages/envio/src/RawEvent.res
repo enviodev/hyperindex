@@ -19,24 +19,21 @@ let convertFieldsToJson = (fields: option<dict<unknown>>) => {
 
 // Block and transaction are passed already extracted from the ecosystem's
 // concrete payload (EVM or Fuel) — `RawEvent` stays payload-shape-agnostic and
-// only needs them as opaque field bags to serialise.
+// only needs them as opaque field bags to serialise. The dedicated
+// `block_hash`/`block_timestamp` column values are extracted from the payload
+// block by the ecosystem caller (the field names differ per ecosystem).
 let make = (
   eventItem: Internal.eventItem,
   ~block,
   ~transaction,
   ~params: Internal.eventParams,
   ~srcAddress: Address.t,
+  ~blockHash: string,
+  ~blockTimestamp: int,
   ~cleanUpRawEventFieldsInPlace: JSON.t => unit,
 ): Internal.rawEvent => {
-  let {
-    onEventRegistration,
-    chain,
-    blockNumber,
-    blockHash,
-    timestamp: blockTimestamp,
-    logIndex,
-  } = eventItem
-  let eventConfig = onEventRegistration.eventConfig
+  let {chain, blockNumber, logIndex} = eventItem
+  let eventConfig = eventItem.onEventRegistration.eventConfig
   let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =

@@ -1,4 +1,22 @@
-type chainData = ChainState.chainData
+// The public console/state chain shape. Kept to exactly this field set for
+// backward compatibility with consumers like RACE — new metric fields stay off
+// the HTTP response.
+type chainData = {
+  chainId: float,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
@@ -11,6 +29,21 @@ type state =
       isPreRegisteringDynamicContracts: bool,
       rollbackOnReorg: bool,
     })
+
+let toChainData = (m: Metrics.chainMetrics): chainData => {
+  chainId: m.chainId,
+  poweredByHyperSync: m.poweredByHyperSync,
+  firstEventBlockNumber: m.firstEventBlockNumber,
+  latestProcessedBlock: m.latestProcessedBlock,
+  timestampCaughtUpToHeadOrEndblock: m.timestampCaughtUpToHeadOrEndblock,
+  numEventsProcessed: m.numEventsProcessed,
+  latestFetchedBlockNumber: m.latestFetchedBlockNumber,
+  knownHeight: m.knownHeight,
+  numBatchesFetched: m.numBatchesFetched,
+  startBlock: m.startBlock,
+  endBlock: m.endBlock,
+  numAddresses: m.numAddresses,
+}
 
 let chainDataSchema = S.schema((s): chainData => {
   chainId: s.matches(S.float),
@@ -39,40 +72,24 @@ let stateSchema = S.union([
   })),
 ])
 
-// Shape of the user-returned `{_gte?, _lte?, _every?}` filter chunk after
-// the ecosystem-specific wrapper is stripped. Shared across all ecosystems —
-// the outer `block.number` / `block.height` / `slot` unwrap lives on each
-// ecosystem's `onBlockFilterSchema`, and the inner range fields are the
-// same everywhere.
-type blockRange = {
-  _gte: option<int>,
-  _lte: option<int>,
-  _every: int,
-}
-
-// `S.strict` rejects unknown fields so typos like `_gt` / `_evry` surface
-// with a readable schema error pointing at the offending key, instead of
-// silently registering a broken filter. `_every` defaults to 1 inside the
-// schema so the caller always sees a plain `int`, and `intMin(1)` rejects
-// zero/negative strides — `(blockNumber - startBlock) % 0` would crash and
-// any negative stride would never match.
-let blockRangeSchema: S.t<blockRange> = S.object(s => {
-  _gte: s.field("_gte", S.option(S.int)),
-  _lte: s.field("_lte", S.option(S.int)),
-  _every: s.field("_every", S.option(S.int->S.intMin(1))->S.Option.getOr(1)),
-})->S.strict
-
-let defaultBlockRange: blockRange = {_gte: None, _lte: None, _every: 1}
-
-let indexerStateRef: ref<option<IndexerState.t>> = ref(None)
+// Runtime state lives in the process-wide `EnvioGlobal` record (shared
+// across duplicate envio module instances); the slots are opaque there, so
+// cast them to the real types here.
+let getIndexerState = () =>
+  EnvioGlobal.value.indexerState->(Utils.magic: option<unknown> => option<IndexerState.t>)
+let setIndexerState = (state: IndexerState.t) =>
+  EnvioGlobal.value.indexerState = Some(state->(Utils.magic: IndexerState.t => unknown))
 
 // Persistence is set by Main.start before handler modules load, so that
 // the exported indexer value can lazily expose DB state (startBlock,
 // endBlock, isRealtime, dynamic contract addresses) once it's ready.
-let globalPersistenceRef: ref<option<Persistence.t>> = ref(None)
+let getGlobalPersistence = () =>
+  EnvioGlobal.value.persistence->(Utils.magic: option<unknown> => option<Persistence.t>)
+let setGlobalPersistence = (persistence: Persistence.t) =>
+  EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
 let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
-  switch globalPersistenceRef.contents {
+  switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
     | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
@@ -130,7 +147,7 @@ let buildChainsObject = (~config: Config.t) => {
       {
         enumerable: true,
         get: () => {
-          switch indexerStateRef.contents {
+          switch getIndexerState() {
           | Some(state) => state->IndexerState.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
@@ -164,7 +181,7 @@ let buildChainsObject = (~config: Config.t) => {
         {
           enumerable: true,
           get: () => {
-            switch indexerStateRef.contents {
+            switch getIndexerState() {
             | Some(state) => {
                 let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
                 let chainState = state->IndexerState.getChainState(~chain)
@@ -345,121 +362,18 @@ let getGlobalIndexer = (): 'indexer => {
     let _ = RollbackCommit.register(callback->(Utils.magic: 'a => RollbackCommit.callback))
   }
 
-  // Two-stage parse: first the ecosystem-specific outer schema unwraps the
-  // wrapper (`block.number` / `block.height` / `slot`) and surfaces the
-  // inner chunk as raw `unknown`; then the shared `blockRangeSchema`
-  // validates the `{_gte?, _lte?, _every?}` fields. Keeping the inner
-  // validation in one place means typos and shape mismatches surface with
-  // the same user-friendly error regardless of ecosystem.
-  let extractRange = (filter: unknown, ~name, ~ecosystem: Ecosystem.t): blockRange =>
-    try {
-      switch filter->S.parseOrThrow(ecosystem.onBlockFilterSchema) {
-      | None => defaultBlockRange
-      | Some(inner) => inner->S.parseOrThrow(blockRangeSchema)
-      }
-    } catch {
-    | S.Raised(exn) =>
-      JsError.throwWithMessage(
-        `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` returned an invalid filter: ${exn
-          ->Utils.prettifyExn
-          ->(Utils.magic: exn => string)}`,
-      )
-    }
-
-  // `where` is evaluated once per configured chain at registration time.
-  // Decoded ranges/stride feed directly into `HandlerRegister.registerOnBlock`
-  // so the fetcher's `(blockNumber - handlerStartBlock) % interval === 0`
-  // math at `FetchState.res:619` stays untouched.
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let config = Config.load()
-    let ecosystem = config.ecosystem
-    let raw =
-      rawOptions->(
-        Utils.magic: 'a => {
-          "name": string,
-          "where": option<Envio.onBlockWhereArgs<unknown> => unknown>,
-        }
-      )
-    let typedHandler = handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>)
-    let (chains, _) = buildChainsObject(~config)
-    let chainsDict = chains->(Utils.magic: {..} => dict<unknown>)
-    let name = raw["name"]
-    let logger = Logging.createChild(~params={"onBlock": name})
-
-    // `where` must be a function (unlike onEvent, which also accepts a static
-    // value). A static value would have to be evaluated against every chain
-    // independently, which has no useful semantic for block handlers.
-    // Normalize undefined/null to None up front so the per-chain loop below
-    // can't accidentally call `null` as a predicate (ReScript treats a JS
-    // `null` value as `Some(null)` when the field is typed as option).
-    let where = switch raw["where"]->(Utils.magic: option<'a> => unknown) {
-    | w if w === %raw(`undefined`) || w === %raw(`null`) => None
-    | w if typeof(w) === #function => Some(raw["where"]->Option.getUnsafe)
-    | w =>
-      JsError.throwWithMessage(
-        `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` expected \`where\` to be a function or omitted, but got ${(typeof(
-            w,
-          ) :> string)}.`,
-      )
-    }
-
-    let matchedAny = ref(false)
-
-    config.chainMap
-    ->ChainMap.values
-    ->Array.forEach(chainConfig => {
-      let chainId = chainConfig.id
-      let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
-
-      // Predicate returns `true` → match with no filter; `false` → skip;
-      // any plain object → structured filter. `undefined`/`null` returns
-      // are rejected — the TS type excludes `void`, so a missing return is
-      // a user bug we surface early rather than silently match-all.
-      let result = switch where {
-      | None => %raw(`true`)
-      | Some(predicate) => predicate({chain: chainObj})
-      }
-
-      let (shouldRegister, range) = if result === %raw(`true`) {
-        (true, defaultBlockRange)
-      } else if result === %raw(`false`) {
-        (false, defaultBlockRange)
-      } else if typeof(result) === #object && !(result->Array.isArray) && result !== %raw(`null`) {
-        (true, extractRange(result, ~name, ~ecosystem))
-      } else {
-        // Reject numbers, strings, functions, arrays, undefined, null —
-        // anything that isn't bool or a plain object would silently
-        // misregister.
-        JsError.throwWithMessage(
-          `\`indexer.${ecosystem.onBlockMethodName}("${name}")\` \`where\` predicate returned an invalid value of type ${(typeof(
-              result,
-            ) :> string)}. Expected boolean or a filter object.`,
-        )
-      }
-
-      if shouldRegister {
-        matchedAny := true
-        HandlerRegister.registerOnBlock(
-          ~name,
-          ~chainId,
-          ~interval=range._every,
-          ~startBlock=range._gte,
-          ~endBlock=range._lte,
-          ~handler=typedHandler,
-        )
-      }
-    })
-
-    // Catches misconfigured `where` predicates that return `false` for every
-    // configured chain — the handler would otherwise never fire with no hint.
-    // Includes the ecosystem-specific method name so SVM users see "onSlot"
-    // and don't get confused looking for a "Block handler" they never wrote.
-    if !matchedAny.contents {
-      logger->Logging.childWarn(
-        `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
-      )
-    }
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown})
+    HandlerRegister.registerOnBlock(
+      ~name=raw["name"],
+      ~where=raw["where"],
+      ~handler=handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>),
+      ~getChainsObject=config => {
+        let (chains, _) = buildChainsObject(~config)
+        chains->(Utils.magic: {..} => dict<unknown>)
+      },
+    )
   }
 
   // Ecosystem-specific surface: EVM/Fuel expose event + block handlers; SVM
@@ -506,8 +420,7 @@ let getGlobalIndexer = (): 'indexer => {
   let get = (~prop: string) =>
     switch prop {
     | "name" => Config.load().name->(Utils.magic: string => unknown)
-    | "description" =>
-      Config.load().description->(Utils.magic: option<string> => unknown)
+    | "description" => Config.load().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
         let (_, chainIds) = buildChainsObject(~config=Config.load())
         chainIds->(Utils.magic: array<int> => unknown)
@@ -610,23 +523,19 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
     }
   })
 
-  let runtimeRegistry = PromClient.makeRegistry()
-  PromClient.collectDefaultMetrics({"register": runtimeRegistry})
+  Metrics.startRuntimeCollectors()
 
   app->get("/metrics", (_req, res) => {
-    res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
+    res->set("Content-Type", Metrics.contentType)
     let _ =
-      Metrics.collect(~state=indexerStateRef.contents)->Promise.thenResolve(metrics =>
-        res->endWithData(metrics)
+      res->endWithData(
+        Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
       )
   })
 
   app->get("/metrics/runtime", (_req, res) => {
-    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
-    let _ =
-      runtimeRegistry
-      ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+    res->set("Content-Type", Metrics.contentType)
+    let _ = res->endWithData(Metrics.collectRuntime())
   })
 
   let server = app->listen(Env.serverPort)
@@ -709,7 +618,7 @@ let start = async (
   | Some(p) => p
   | None => PgStorage.makePersistenceFromConfig(~config)
   }
-  globalPersistenceRef := Some(persistence)
+  setGlobalPersistence(persistence)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -750,17 +659,13 @@ let start = async (
     (onErrorReject.contents->Option.getUnsafe)(FatalError(errHandler.exn->Utils.prettifyExn))
   }
   let envioVersion = Utils.EnvioPackage.value.version
-  Prometheus.Info.set(~version=envioVersion)
-  Prometheus.ProcessStartTimeSeconds.set()
-  Prometheus.RollbackEnabled.set(~enabled=config.shouldRollbackOnReorg)
 
   if !isTest {
     startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
-      switch indexerStateRef.contents {
+      switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {
-          let chains =
-            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toChainData)
+          let chains = (state->IndexerState.toMetrics).chains->Array.map(toChainData)
           Active({
             envioVersion,
             chains,
@@ -786,7 +691,7 @@ let start = async (
   if shouldUseTui {
     let _rerender = Tui.start(~getState=() => state)
   }
-  indexerStateRef := Some(state)
+  setIndexerState(state)
   state->IndexerLoop.start
   await runUntilFatalError
 }

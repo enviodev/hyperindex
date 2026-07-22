@@ -342,7 +342,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
 
-    #[subenum(HypersyncChain)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Robinhood = 4663,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -404,6 +404,9 @@ pub enum Network {
 
     #[subenum(HypersyncChain)]
     Tempo = 4217,
+
+    #[subenum(HypersyncChain)]
+    Tron = 728126428,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Unichain = 130,
@@ -548,7 +551,6 @@ impl Network {
             | Network::Plasma
             | Network::Plume
             | Network::Rinkeby
-            | Network::Robinhood
             | Network::Rsk
             | Network::Scroll
             | Network::ScrollSepolia
@@ -607,7 +609,9 @@ impl Network {
             | Network::Megaeth
             | Network::SeiTestnet
             | Network::StatusSepolia
-            | Network::Tempo => None,
+            | Network::Tempo
+            | Network::Tron
+            | Network::Robinhood => None,
         }
     }
 }

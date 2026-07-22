@@ -1046,7 +1046,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
 
 describe("ecosystem.toRawEvent", () => {
   Async.it(
-    "Derives a raw event row from a batch item, taking block hash from the item and stringifying bigint block fields",
+    "Derives a raw event row from a batch item, taking block hash and timestamp from the payload block and stringifying bigint block fields",
     async t => {
       let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
       let blockNumber = 5
@@ -1077,11 +1077,10 @@ describe("ecosystem.toRawEvent", () => {
 
       let eventItem =
         Internal.Event({
-          onEventRegistration: (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-          timestamp: 1234,
+          onEventRegistration:
+            (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
           chain: ChainMap.Chain.makeUnsafe(~chainId=137),
           blockNumber,
-          blockHash: "0xblockhash",
           logIndex,
           transactionIndex: 0,
           payload: event,
@@ -1096,7 +1095,7 @@ describe("ecosystem.toRawEvent", () => {
         log_index: logIndex,
         src_address: srcAddress,
         block_hash: "0xblockhash",
-        block_timestamp: 1234,
+        block_timestamp: 9999,
         block_fields: %raw(`{"gasUsed": "99", "miner": "0xminer"}`),
         transaction_fields: %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
         params: %raw(`"null"`),

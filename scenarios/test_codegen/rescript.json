@@ -20,7 +20,11 @@
   },
   "dependencies": [
     "rescript-schema",
-    "envio"
+    "envio",
+    "envio-tests"
   ],
-  "compiler-flags": ["-open RescriptSchema"]
+  "compiler-flags": ["-open RescriptSchema"],
+  "warnings": {
+    "error": "+a"
+  }
 }

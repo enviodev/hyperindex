@@ -1,16 +1,14 @@
 open Vitest
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so the common fields don't have to be repeated;
+// every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
+  itemsTarget: 0,
+  itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -75,14 +73,14 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem = Internal.Event({
-          timestamp: currentTime.contents,
           chain: ChainMap.Chain.makeUnsafe(~chainId=id),
           blockNumber: currentBlockNumber.contents,
-          blockHash: `0x${currentBlockNumber.contents->Int.toString}`,
           logIndex,
           transactionIndex: 0,
-          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
-            Utils.magic: string => Internal.onEventRegistration
+          // Carries an `index` so the buffer's dedup key resolves; the rest of
+          // the registration is unused by this test.
+          onEventRegistration: {"index": 0}->(
+            Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
           payload: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
             Utils.magic: string => Internal.eventPayload
@@ -91,9 +89,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         allEvents->Array.push(batchItem)->ignore
 
         let query: FetchState.query = {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 0.,
+          itemsTarget: 0,
+          itemsEst: 0,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -108,7 +106,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
-            ~indexingAddresses,
             ~query,
             ~latestFetchedBlock={
               blockNumber: currentBlockNumber.contents,
@@ -148,7 +145,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   let state = IndexerState.make(
     ~config,
-    ~persistence=MockIndexer.defaultPersistence,
+    ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,
     ~isInReorgThreshold=false,
     ~isRealtime=false,
@@ -186,14 +183,14 @@ describe("IndexerState", () => {
         let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
-          timestamp: 0,
           chain: MockConfig.chain1,
           blockNumber: 0,
-          blockHash: "0x0",
           logIndex: 0,
           transactionIndex: 0,
-          onEventRegistration: "Mock onEventRegistration in IndexerState test"->(
-            Utils.magic: string => Internal.onEventRegistration
+          // Carries an `index` so the buffer's dedup key resolves; the rest of
+          // the registration is unused by this test.
+          onEventRegistration: {"index": 0}->(
+            Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
           payload: `mock initial event`->(Utils.magic: string => Internal.eventPayload),
         })
@@ -280,9 +277,9 @@ describe("IndexerState", () => {
           eventBlocks->Array.forEach(
             blockNumber => {
               let query: FetchState.query = {
-                ...defaultQuery,
                 partitionId: "0",
-                estResponseSize: 0.,
+                itemsTarget: 0,
+                itemsEst: 0,
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
@@ -292,19 +289,17 @@ describe("IndexerState", () => {
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
                 fetchState.contents->FetchState.handleQueryResult(
-                  ~indexingAddresses,
                   ~query,
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[
                     Internal.Event({
-                      timestamp: blockNumber * 15,
                       chain: ChainMap.Chain.makeUnsafe(~chainId),
                       blockNumber,
-                      blockHash: `0x${blockNumber->Int.toString}`,
                       logIndex: 0,
                       transactionIndex: 0,
-                      onEventRegistration: "Mock onEventRegistration"->(
-                        Utils.magic: string => Internal.onEventRegistration
+                      // Carries an `index` so the buffer's dedup key resolves.
+                      onEventRegistration: {"index": 0}->(
+                        Utils.magic: {"index": int} => Internal.onEventRegistration
                       ),
                       payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
                     }),
@@ -341,7 +336,7 @@ describe("IndexerState", () => {
           )
           IndexerState.make(
             ~config,
-            ~persistence=MockIndexer.defaultPersistence,
+            ~persistence=MockIndexer.defaultPersistence(),
             ~chainStates,
             ~isInReorgThreshold=false,
             ~isRealtime=false,
@@ -365,9 +360,9 @@ describe("IndexerState", () => {
         // (its batch-time snapshot held only block 5).
         let cs = state->IndexerState.getChainState(~chain)
         let concurrentQuery: FetchState.query = {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 0.,
+          itemsTarget: 0,
+          itemsEst: 0,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -381,18 +376,20 @@ describe("IndexerState", () => {
           ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
           ~newItems=[
             Internal.Event({
-              timestamp: 15 * 15,
               chain,
               blockNumber: 15,
-              blockHash: "0x15",
               logIndex: 0,
               transactionIndex: 0,
-              onEventRegistration: "Mock onEventRegistration"->(Utils.magic: string => Internal.onEventRegistration),
+              // Carries an `index` so the buffer's dedup key resolves.
+              onEventRegistration: {"index": 0}->(
+                Utils.magic: {"index": int} => Internal.onEventRegistration
+              ),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
           ],
           ~knownHeight=cs->ChainState.knownHeight,
           ~transactionStore=None,
+          ~blockStore=None,
         )
 
         state->IndexerState.applyBatchProgress(~batch)

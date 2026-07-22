@@ -1,22 +1,22 @@
 open Vitest
 
 // Direct tests for the client-side address filter: the `where`-callback
-// detection (`addressFilterParamGroups`) in `LogSelection.parseEventFiltersOrThrow`
+// detection (`addressFilterParamGroups`) in `LogSelection.parseWhereOrThrow`
 // and the precompiled `clientAddressFilter` built in `EventConfigBuilder`.
 
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
-  LogSelection.parseEventFiltersOrThrow(
-    ~eventFilters,
+let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1) =>
+  LogSelection.parseWhereOrThrow(
+    ~where=eventFilters,
     ~sighash=transferSighash,
     ~params=["from", "to"],
     ~contractName="ERC20",
-    ~probeChainId,
+    ~chainId,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
-describe("parseEventFiltersOrThrow — address-param detection", () => {
+describe("parseWhereOrThrow — address-param detection", () => {
   it("collects the address-filtered param (single group)", t => {
     let {filterByAddresses, addressFilterParamGroups} = parseEvm(
       ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
@@ -83,8 +83,8 @@ describe("clientAddressFilter — precompiled predicate", () => {
       ~isWildcard=true,
       ~handler=None,
       ~contractRegister=None,
-      ~eventFilters=Some(eventFilters),
-      ~probeChainId=1,
+      ~where=Some(eventFilters),
+      ~chainId=1,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ).clientAddressFilter
 
@@ -156,7 +156,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
   })
 })
 
-describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
+describe("filterByClientAddress applies clientAddressFilter", () => {
   let transferParams: array<EventConfigBuilder.paramMeta> = [
     {name: "from", abiType: "address", indexed: true},
     {name: "to", abiType: "address", indexed: true},
@@ -176,19 +176,18 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     ~isWildcard=true,
     ~handler=None,
     ~contractRegister=None,
-    ~eventFilters=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
-    ~probeChainId=1,
+    ~where=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
+    ~chainId=1,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
 
+  let onEventRegistration = (onEventRegistration :> Internal.onEventRegistration)
   let makeItem = (~to, ~blockNumber): Internal.item =>
     Internal.Event({
-      timestamp: blockNumber * 15,
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
-      blockHash: `0x${blockNumber->Int.toString}`,
-      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+      onEventRegistration,
       logIndex: 0,
       transactionIndex: 0,
       payload: {"params": {"to": to}}->(
@@ -201,35 +200,17 @@ describe("FetchState.handleQueryResult applies clientAddressFilter", () => {
     let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-    let fetchState = FetchState.make(
-      ~onEventRegistrations,
-      ~contractConfigs,
-      ~addresses,
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=10,
-      ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
-      ~knownHeight=1000,
-    )
-    let query = switch fetchState->FetchState.getNextQuery {
-    | Ready([q]) => q
-    | _ => JsError.throwWithMessage("expected a single ready query")
-    }
-    fetchState->FetchState.startFetchingQueries(~queries=[query])
-    let updated =
-      fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
-        ~query,
-        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
-        // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
-        ~newItems=[makeItem(~to=registeredAddr, ~blockNumber=10), makeItem(~to=registeredAddr, ~blockNumber=3)],
-      )
-    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+    // to=registeredAddr (effectiveStartBlock 5): block 10 kept, block 3 dropped.
+    let filtered =
+      [
+        makeItem(~to=registeredAddr, ~blockNumber=10),
+        makeItem(~to=registeredAddr, ~blockNumber=3),
+      ]->FetchState.filterByClientAddress(~indexingAddresses)
+    t.expect(filtered->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })
 })
 
-describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddress events", () => {
+describe("filterByClientAddress drops over-fetched non-wildcard srcAddress events", () => {
   // Non-wildcard Transfer for ERC20, effective from block 5 (contract startBlock).
   // A merged partition can over-fetch an address before its effectiveStartBlock;
   // the codegen'd srcAddress check in clientAddressFilter drops those.
@@ -248,19 +229,18 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     ~isWildcard=false,
     ~handler=None,
     ~contractRegister=None,
-    ~eventFilters=None,
-    ~probeChainId=1,
+    ~where=None,
+    ~chainId=1,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
 
+  let onEventRegistration = (onEventRegistration :> Internal.onEventRegistration)
   let makeItem = (~srcAddress, ~blockNumber): Internal.item =>
     Internal.Event({
-      timestamp: blockNumber * 15,
       chain: ChainMap.Chain.makeUnsafe(~chainId=1),
       blockNumber,
-      blockHash: `0x${blockNumber->Int.toString}`,
-      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+      onEventRegistration,
       logIndex: 0,
       transactionIndex: 0,
       payload: {"srcAddress": srcAddress}->(
@@ -273,33 +253,12 @@ describe("FetchState.handleQueryResult drops over-fetched non-wildcard srcAddres
     let addresses = [{Internal.address: registeredAddr, contractName: "ERC20", registrationBlock: -1}]
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-    let fetchState = FetchState.make(
-      ~onEventRegistrations,
-      ~contractConfigs,
-      ~addresses,
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=10,
-      ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
-      ~knownHeight=1000,
-    )
-    let query = switch fetchState->FetchState.getNextQuery {
-    | Ready([q]) => q
-    | _ => JsError.throwWithMessage("expected a single ready query")
-    }
-    fetchState->FetchState.startFetchingQueries(~queries=[query])
-    let updated =
-      fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
-        ~query,
-        ~latestFetchedBlock={blockNumber: 20, blockTimestamp: 300},
-        ~newItems=[
-          makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
-          makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
-        ],
-      )
-    t.expect(updated.buffer->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
+    let filtered =
+      [
+        makeItem(~srcAddress=registeredAddr, ~blockNumber=10),
+        makeItem(~srcAddress=registeredAddr, ~blockNumber=3),
+      ]->FetchState.filterByClientAddress(~indexingAddresses)
+    t.expect(filtered->Array.map(item => item->Internal.getItemBlockNumber)).toEqual([10])
   })
 })
 

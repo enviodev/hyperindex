@@ -21,6 +21,28 @@ let make: (
 
 let getActiveSource: t => Source.t
 
+type requestStatSample = {
+  sourceName: string,
+  chainId: int,
+  method: string,
+  count: int,
+  seconds: float,
+}
+
+let getRequestStatSamples: t => array<requestStatSample>
+
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: int,
+  height: int,
+}
+
+let getSourceHeightSamples: t => array<sourceHeightSample>
+
+let idleSeconds: t => float
+let waitingForNewBlockSeconds: t => float
+let queryingSeconds: t => float
+
 let inFlightCount: t => int
 
 let onReorg: (t, ~rollbackTargetBlock: int) => unit

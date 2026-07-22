@@ -1,76 +1,30 @@
-exception MissingRequiredTopic0
-let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
-  if topic0->Utils.Array.isEmpty {
-    Error(MissingRequiredTopic0)
-  } else {
-    {
-      Internal.topic0,
-      topic1,
-      topic2,
-      topic3,
-    }->Ok
+// Expand a resolved topic selection into concrete topic values for a query:
+// `ContractAddresses` markers become the given partition addresses encoded as
+// topics; `Values` pass through.
+let materializeTopicFilter = (filter: Internal.topicFilter, ~addresses: array<Address.t>) =>
+  switch filter {
+  | Values(values) => values
+  | ContractAddresses(_) => addresses->Array.map(TopicFilter.fromAddress)
   }
 
-let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
-  [topic1, topic2, topic3]->Array.find(topic => !Utils.Array.isEmpty(topic))->Option.isSome
-}
-
-/**
-For a group of topic selections, if multiple only use topic0, then they can be compressed into one
-selection combining the topic0s
-*/
-let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) => {
-  let topic0sOfSelectionsWithoutFilters = []
-
-  let selectionsWithFilters = []
-
-  topicSelections->Array.forEach(selection => {
-    if selection->hasFilters {
-      selectionsWithFilters->Array.push(selection)->ignore
-    } else {
-      selection.topic0->Array.forEach(topic0 => {
-        topic0sOfSelectionsWithoutFilters->Array.push(topic0)->ignore
-      })
-    }
+let materializeTopicSelections = (
+  topicSelections: array<Internal.resolvedTopicSelection>,
+  ~addresses: array<Address.t>,
+): array<Internal.topicSelection> =>
+  topicSelections->Array.map(({topic0, topic1, topic2, topic3}): Internal.topicSelection => {
+    topic0,
+    topic1: topic1->materializeTopicFilter(~addresses),
+    topic2: topic2->materializeTopicFilter(~addresses),
+    topic3: topic3->materializeTopicFilter(~addresses),
   })
 
-  switch topic0sOfSelectionsWithoutFilters {
-  | [] => selectionsWithFilters
-  | topic0 =>
-    let selectionWithoutFilters = {
-      Internal.topic0,
-      topic1: [],
-      topic2: [],
-      topic3: [],
-    }
-    Array.concat([selectionWithoutFilters], selectionsWithFilters)
-  }
-}
-
-type t = {
-  addresses: array<Address.t>,
-  topicSelections: array<Internal.topicSelection>,
-}
-
-let make = (~addresses, ~topicSelections) => {
-  let topicSelections = compressTopicSelections(topicSelections)
-  {addresses, topicSelections}
-}
-
-type parsedEventFilters = {
-  getEventFiltersOrThrow: ChainMap.Chain.t => Internal.eventFilters,
+type parsedWhere = {
+  resolvedWhere: Internal.resolvedWhere,
   filterByAddresses: bool,
   // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
   // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
   // Consumed by the codegen of the event's `clientAddressFilter`.
   addressFilterParamGroups: array<array<string>>,
-  // `_gte` from the top-level `block` filter of the user's `where`,
-  // resolved at build time (per-chain via the `probeChainId`). The
-  // caller uses this to override the per-event `startBlock` — a
-  // `where`-derived startBlock always wins over contract-level
-  // config, so users can widen or narrow individual event ranges
-  // without touching `config.yaml`.
-  startBlock: option<int>,
 }
 
 // Inner schema for the event `block` filter chunk: `{_gte?}`.
@@ -123,24 +77,12 @@ let extractStartBlock = (
   }
 }
 
-// Build the runtime `chain` argument passed into a `where` callback.
-// Exposes `chain.id` and `chain.<ContractName>.addresses` as plain values
-// on a normal (Object.prototype) JS object. `Dict` is used so the
-// contract name can be a dynamic property key without defineProperty
-// ceremony.
-let makeChainArg = (~contractName: string, ~chainId: int, ~addresses: array<Address.t>) => {
-  let chainObj = Dict.make()
-  chainObj->Dict.set("id", chainId->Obj.magic)
-  chainObj->Dict.set(contractName, {"addresses": addresses}->Obj.magic)
-  chainObj
-}
-
-// Build the detection-time `chain` argument. `chain.<ContractName>.addresses`
-// is a getter so the runtime can tell whether the callback actually reads
-// it; the contract sub-object itself is built via `defineProperty` only
-// because its `addresses` field needs the getter — the enclosing chainObj
-// is a plain JS object.
-let makeDetectionChainArg = (
+// Build the `chain` argument passed into a `where` callback.
+// `chain.<ContractName>.addresses` is a getter so the runtime can tell
+// whether the callback actually reads it; the contract sub-object itself is
+// built via `defineProperty` only because its `addresses` field needs the
+// getter — the enclosing chainObj is a plain JS object.
+let makeChainArg = (
   ~contractName: string,
   ~chainId: int,
   ~getAddresses: unit => array<Address.t>,
@@ -155,7 +97,7 @@ let makeDetectionChainArg = (
   chainObj
 }
 
-// Sentinel returned by `chain.<Contract>.addresses` during detection. A Proxy
+// Sentinel returned by `chain.<Contract>.addresses`. A Proxy
 // whose traps throw on any access, so the only non-throwing use is passing it
 // straight through as a param filter value — which `extractAddressFilterGroups`
 // then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
@@ -173,77 +115,45 @@ let makeAddressesProbe: (
   return new Proxy([], {get: trap});
 }`)
 
-// Find which indexed params the probed `where` result assigned the Proxy to
-// (DNF: object => one AND-group, array => OR of groups), neutralizing each match
-// to `[]` so later passes can't touch the throwing Proxy. Throws when the
-// callback read the addresses but didn't use them as a param filter value, since
-// the caller only invokes this once it knows the addresses were read.
-let extractAddressFilterGroupsOrThrow = (
-  result: JSON.t,
-  ~probe: array<Address.t>,
-  ~contractName: string,
-): array<array<string>> => {
-  let groups = []
-  let scanGroup = (paramsObj: dict<JSON.t>) => {
-    let names = []
-    paramsObj->Utils.Dict.forEachWithKey((value, key) => {
-      if value === probe->(Utils.magic: array<Address.t> => JSON.t) {
-        names->Array.push(key)->ignore
-        paramsObj->Dict.set(key, []->(Utils.magic: array<unknown> => JSON.t))
-      }
-    })
-    if names->Utils.Array.isEmpty->not {
-      groups->Array.push(names)->ignore
-    }
-  }
-  switch result {
-  | Object(obj) =>
-    switch obj->Dict.get("params") {
-    | Some(Object(p)) => scanGroup(p)
-    | Some(Array(arr)) =>
-      arr->Array.forEach(item =>
-        switch item {
-        | Object(p) => scanGroup(p)
-        | _ => ()
-        }
-      )
-    | _ => ()
-    }
-  | _ => ()
-  }
-  if groups->Utils.Array.isEmpty {
-    JsError.throwWithMessage(
-      `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
-    )
-  }
-  groups
-}
-
-let parseEventFiltersOrThrow = {
+let parseWhereOrThrow = {
   let emptyTopics = []
   let noopGetter = _ => emptyTopics
 
   (
-    ~eventFilters: option<JSON.t>,
+    ~where: option<JSON.t>,
     ~sighash,
-    ~params,
+    ~params: array<string>,
     ~contractName: string,
-    ~probeChainId: int,
+    ~chainId: int,
     ~onEventBlockFilterSchema: S.t<option<unknown>>,
     ~topic1=noopGetter,
     ~topic2=noopGetter,
     ~topic3=noopGetter,
-  ): parsedEventFilters => {
-    let filterByAddresses = ref(false)
-    let addressFilterParamGroups = ref([])
-    let startBlock = ref(None)
+  ): parsedWhere => {
+    let addressFilterParamGroups = []
+    let readAddresses = ref(false)
+    let addressesSentinel = makeAddressesProbe(~contractName)
+    let sentinelJson = addressesSentinel->(Utils.magic: array<Address.t> => JSON.t)
     let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
     let default = {
       Internal.topic0,
-      topic1: emptyTopics,
-      topic2: emptyTopics,
-      topic3: emptyTopics,
+      topic1: Values(emptyTopics),
+      topic2: Values(emptyTopics),
+      topic3: Values(emptyTopics),
     }
+
+    // Topic positions map 1:1 onto the event's indexed params in declared
+    // order, so the sentinel check keys off `params[index]`. The sentinel must
+    // be detected before the topic getter runs — the getter would otherwise
+    // touch the throwing Proxy while encoding.
+    let topicFilterAt = (paramsFilter: dict<JSON.t>, ~index, ~getter) =>
+      switch params
+      ->Array.get(index)
+      ->Option.flatMap(name => paramsFilter->Utils.Dict.dangerouslyGetNonOption(name)) {
+      | Some(value) if value === sentinelJson =>
+        Internal.ContractAddresses({contractName: contractName})
+      | _ => Values(getter(paramsFilter))
+      }
 
     // Build a single topic selection from one indexed-param record (the
     // inside of `params`). Validates that the keys are actual indexed
@@ -253,18 +163,25 @@ let parseEventFiltersOrThrow = {
       if paramsFilter->Utils.Dict.isEmpty {
         default
       } else {
-        paramsFilter->Utils.Dict.forEachWithKey((_, key) => {
+        let sentinelParamNames = []
+        paramsFilter->Utils.Dict.forEachWithKey((value, key) => {
           if params->Array.includes(key)->not {
             JsError.throwWithMessage(
               `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
             )
           }
+          if value === sentinelJson {
+            sentinelParamNames->Array.push(key)->ignore
+          }
         })
+        if sentinelParamNames->Utils.Array.isEmpty->not {
+          addressFilterParamGroups->Array.push(sentinelParamNames)->ignore
+        }
         {
           Internal.topic0,
-          topic1: topic1(paramsFilter),
-          topic2: topic2(paramsFilter),
-          topic3: topic3(paramsFilter),
+          topic1: paramsFilter->topicFilterAt(~index=0, ~getter=topic1),
+          topic2: paramsFilter->topicFilterAt(~index=1, ~getter=topic2),
+          topic3: paramsFilter->topicFilterAt(~index=2, ~getter=topic3),
         }
       }
     }
@@ -289,7 +206,7 @@ let parseEventFiltersOrThrow = {
     //
     // The runtime accepts both the function form (the only form ReScript
     // exposes) and a top-level static object form (TypeScript convenience).
-    let parse = (where: JSON.t): array<Internal.topicSelection> => {
+    let parse = (where: JSON.t): array<Internal.resolvedTopicSelection> => {
       if where === Obj.magic(true) {
         [default]
       } else if where === Obj.magic(false) {
@@ -335,84 +252,42 @@ let parseEventFiltersOrThrow = {
       }
     }
 
-    let getEventFiltersOrThrow = switch eventFilters {
-    | None => {
-        let static: Internal.eventFilters = Static([default])
-        _ => static
-      }
-    | Some(eventFilters) =>
-      if typeof(eventFilters) === #function {
-        let fn = eventFilters->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
-        // Determine whether the callback uses addresses by probing it with
-        // a detection chain arg whose `chain.<ContractName>.addresses` getter
-        // flips a flag. The probe uses this chain's real configured id, so
-        // handlers that branch on `chain.id` are exercised along the path
-        // they take for this chain. Event configs are built per-chain, so
-        // each chain gets a `filterByAddresses` verdict that matches its
-        // own callback behaviour.
-        //
-        // The probe result is also reused to extract the per-event
-        // `startBlock` (from `where.block`) for this chain — a second
-        // invocation would risk observing different state for callbacks
-        // that close over mutable references.
-        // A misused Proxy (or any throw from the callback) propagates as-is —
-        // the Proxy's guidance message surfaces without wrapping.
-        let addressesProbe = makeAddressesProbe(~contractName)
-        let chain = makeDetectionChainArg(
-          ~contractName,
-          ~chainId=probeChainId,
-          ~getAddresses=() => {
-            filterByAddresses := true
-            addressesProbe
-          },
-        )
-        let probedResult = fn({chain: chain->Obj.magic})
-        if filterByAddresses.contents {
-          addressFilterParamGroups :=
-            extractAddressFilterGroupsOrThrow(probedResult, ~probe=addressesProbe, ~contractName)
-        }
-        startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, probedResult)
-        if filterByAddresses.contents {
-          chain => Internal.Dynamic(
-            addresses => {
-              let chainArg = makeChainArg(
-                ~contractName,
-                ~chainId=chain->ChainMap.Chain.toChainId,
-                ~addresses,
-              )
-              fn({chain: chainArg->Obj.magic})->parse
-            },
-          )
-        } else {
-          // No probed chain referenced the contract — cache as Static
-          // per chain to avoid recomputing topic selections each batch.
-          // The addresses getter throws: if a code path the probe didn't
-          // exercise reads `chain.<Contract>.addresses` at runtime, silent
-          // [] would produce wrong topics — throw a user-friendly error
-          // instead so the user rewrites the callback to surface the
-          // dependency up-front.
-          chain => {
-            let chainId = chain->ChainMap.Chain.toChainId
-            let chainArg = makeDetectionChainArg(~contractName, ~chainId, ~getAddresses=() =>
-              JsError.throwWithMessage(
-                `Invalid where configuration. Event callback for contract "${contractName}" read \`chain.${contractName}.addresses\` at runtime but the probe didn't detect the access on chainId ${chainId->Int.toString}. Move the \`chain.${contractName}.addresses\` read above any \`chain.id\` branching so the probe picks up the dependency and switches to the dynamic fetch path.`,
-              )
-            )
-            Internal.Static(fn({chain: chainArg->Obj.magic})->parse)
-          }
-        }
+    // The callback is invoked exactly once per chain, at registration time,
+    // with the chain's real configured id. `chain.<Contract>.addresses` yields
+    // the throwing-Proxy sentinel, which the param parser turns into a
+    // `ContractAddresses` marker; addresses are expanded from the marker only
+    // when a source query is built.
+    // A misused Proxy (or any throw from the callback) propagates as-is —
+    // the Proxy's guidance message surfaces without wrapping.
+    let (topicSelections, startBlock) = switch where {
+    | None => ([default], None)
+    | Some(where) =>
+      let whereValue = if typeof(where) === #function {
+        let fn = where->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
+        let chain = makeChainArg(~contractName, ~chainId, ~getAddresses=() => {
+          readAddresses := true
+          addressesSentinel
+        })
+        fn({chain: chain->Obj.magic})
       } else {
-        startBlock := extractStartBlock(~onEventBlockFilterSchema, ~contractName, eventFilters)
-        let static: Internal.eventFilters = Static(eventFilters->parse)
-        _ => static
+        where
       }
+      let topicSelections = whereValue->parse
+      if readAddresses.contents && addressFilterParamGroups->Utils.Array.isEmpty {
+        JsError.throwWithMessage(
+          `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+        )
+      }
+      (topicSelections, extractStartBlock(~onEventBlockFilterSchema, ~contractName, whereValue))
     }
 
     {
-      getEventFiltersOrThrow,
-      filterByAddresses: filterByAddresses.contents,
-      addressFilterParamGroups: addressFilterParamGroups.contents,
-      startBlock: startBlock.contents,
+      resolvedWhere: {
+        topicSelections,
+        startBlock,
+      },
+      filterByAddresses: addressFilterParamGroups->Utils.Array.isEmpty->not,
+      addressFilterParamGroups,
     }
   }
 }

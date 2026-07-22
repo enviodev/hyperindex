@@ -2026,6 +2026,7 @@ dependencies = [
  "async-recursion",
  "axum",
  "bollard",
+ "bs58",
  "clap",
  "clap-markdown",
  "colored",

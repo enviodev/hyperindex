@@ -16,13 +16,15 @@ let reraisIfRateLimited = exn =>
 
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  // Blocks referenced by `items`, deduplicated by block number.
-  blocks: array<HyperSyncClient.ResponseTypes.block>,
+  // Block headers referenced by `items`, deduplicated by block number.
+  blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
   rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   // Page store owning this page's raw transactions.
   transactionStore: TransactionStore.t,
+  // Page store owning this page's raw blocks.
+  blockStore: BlockStore.t,
 }
 
 type missingParams = {
@@ -59,23 +61,6 @@ module GetLogs = {
 
   exception Error(error)
 
-  let makeRequestBody = (
-    ~fromBlock,
-    ~toBlockInclusive,
-    ~addressesWithTopics,
-    ~fieldSelection,
-    ~maxNumLogs,
-  ): HyperSyncClient.QueryTypes.query => {
-    fromBlock,
-    toBlockExclusive: ?switch toBlockInclusive {
-    | Some(toBlockInclusive) => Some(toBlockInclusive + 1)
-    | None => None
-    },
-    logs: addressesWithTopics,
-    fieldSelection,
-    maxNumLogs,
-  }
-
   // Rust encodes structured failures as a JSON payload in the napi error's
   // message: `{"kind":"MissingFields","fields":["block.timestamp", ...]}`.
   // JSON.parse + shape check is the recovery protocol — no string-grepping
@@ -105,31 +90,19 @@ module GetLogs = {
     ~client: HyperSyncClient.t,
     ~fromBlock,
     ~toBlock,
-    ~logSelections: array<LogSelection.t>,
-    ~fieldSelection,
     ~maxNumLogs,
+    ~registrationIndexes,
+    ~addressesByContractName,
   ): logsQueryPage => {
-    let addressesWithTopics = logSelections->Array.flatMap(({addresses, topicSelections}) =>
-      topicSelections->Array.map(({topic0, topic1, topic2, topic3}) => {
-        let topics = HyperSyncClient.QueryTypes.makeTopicSelection(
-          ~topic0,
-          ~topic1,
-          ~topic2,
-          ~topic3,
-        )
-        HyperSyncClient.QueryTypes.makeLogSelection(~address=addresses, ~topics)
-      })
-    )
+    let query: HyperSyncClient.EventItems.query = {
+      fromBlock,
+      toBlock,
+      maxNumLogs,
+      registrationIndexes,
+      addressesByContractName,
+    }
 
-    let query = makeRequestBody(
-      ~fromBlock,
-      ~toBlockInclusive=toBlock,
-      ~addressesWithTopics,
-      ~fieldSelection,
-      ~maxNumLogs,
-    )
-
-    let (res, transactionStore) = switch await client.getEventItems(~query) {
+    let (res, transactionStore, blockStore) = switch await client.getEventItems(~query) {
     | res => res
     | exception exn =>
       reraisIfRateLimited(exn)
@@ -150,6 +123,7 @@ module GetLogs = {
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       rollbackGuard: res.rollbackGuard,
       transactionStore,
+      blockStore,
     }
   }
 }
@@ -206,6 +180,7 @@ module BlockData = {
     ~sourceName,
     ~chainId,
     ~logger,
+    ~requestStats: array<Source.requestStat>,
   ): queryResponse<array<ReorgDetection.blockDataWithTimestamp>> => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
 
@@ -218,7 +193,7 @@ module BlockData = {
       },
     )
 
-    Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="getBlockHashes")
+    let timerRef = Performance.now()
     let maybeSuccessfulRes = switch await client.get(~query=body) {
     | exception exn =>
       reraisIfRateLimited(exn)
@@ -226,6 +201,9 @@ module BlockData = {
     | res if res.nextBlock <= fromBlock => None
     | res => Some(res)
     }
+    requestStats
+    ->Array.push({Source.method: "getBlockHashes", seconds: timerRef->Performance.secondsSince})
+    ->ignore
 
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not have caught up yet
     switch maybeSuccessfulRes {
@@ -235,7 +213,15 @@ module BlockData = {
           `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
         )
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
-        await queryBlockData(~client, ~fromBlock, ~toBlock, ~sourceName, ~chainId, ~logger)
+        await queryBlockData(
+          ~client,
+          ~fromBlock,
+          ~toBlock,
+          ~sourceName,
+          ~chainId,
+          ~logger,
+          ~requestStats,
+        )
       }
     | Some(res) =>
       switch res->convertResponse {
@@ -248,6 +234,7 @@ module BlockData = {
             ~sourceName,
             ~chainId,
             ~logger,
+            ~requestStats,
           )
           restRes->Result.map(rest => datas->Array.concat(rest))
         }
@@ -262,8 +249,9 @@ module BlockData = {
     ~sourceName,
     ~chainId,
     ~logger,
-  ) => {
-    switch blockNumbers->Array.get(0) {
+  ): (queryResponse<array<ReorgDetection.blockDataWithTimestamp>>, array<Source.requestStat>) => {
+    let requestStats = []
+    let result = switch blockNumbers->Array.get(0) {
     | None => Ok([])
     | Some(firstBlock) => {
         let fromBlock = ref(firstBlock)
@@ -291,6 +279,7 @@ module BlockData = {
           ~sourceName,
           ~chainId,
           ~logger,
+          ~requestStats,
         )
         let filtered = res->Result.map(datas => {
           datas->Array.filter(data => set->Utils.Set.delete(data.blockNumber))
@@ -305,10 +294,12 @@ module BlockData = {
         filtered
       }
     }
+    (result, requestStats)
   }
 }
 
-let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger) =>
+let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger) => {
+  let requestStats = []
   BlockData.queryBlockData(
     ~client,
     ~fromBlock=blockNumber,
@@ -316,5 +307,7 @@ let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger) =>
     ~sourceName,
     ~chainId,
     ~logger,
-  )->Promise.thenResolve(res => res->Result.map(res => res->Array.get(0)))
+    ~requestStats,
+  )->Promise.thenResolve(res => (res->Result.map(res => res->Array.get(0)), requestStats))
+}
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
