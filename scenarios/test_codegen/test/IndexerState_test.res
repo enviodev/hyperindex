@@ -137,7 +137,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         ~shouldRollbackOnReorg=false,
       ),
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.getLogger(),
+      ~logger=Env.logger,
     )
 
     chainStates->Utils.Dict.setByInt(id, mockChainState)
@@ -329,7 +329,7 @@ describe("IndexerState", () => {
                   ~shouldRollbackOnReorg=false,
                 ),
                 ~committedProgressBlockNumber=-1,
-                ~logger=Logging.getLogger(),
+                ~logger=Env.logger,
               )
               chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
             },

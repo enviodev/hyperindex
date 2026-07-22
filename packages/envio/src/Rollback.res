@@ -72,7 +72,9 @@ let rec rollback = async (
     // found yet. Wait for the ReorgDetected branch above to find it and re-kick.
     | FindingReorgDepth => ()
     | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
-      Logging.trace("Waiting for batch to finish processing before executing rollback")
+      state
+      ->IndexerState.logger
+      ->Logging.childTrace("Waiting for batch to finish processing before executing rollback")
     | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(
         state,
@@ -99,7 +101,8 @@ and executeRollback = async (
   // Not derived from the reorg chain's logger: that would bind its chainId onto
   // every line, colliding with the per-chain chainId on the "Rollbacked" logs.
   // The reorg chain is identified by the reorgChain param instead.
-  let logger = Logging.createChild(
+  let logger = Logging.createChildFrom(
+    ~logger=state->IndexerState.logger,
     ~params={
       "action": "Rollback",
       "reorgChain": reorgChain,

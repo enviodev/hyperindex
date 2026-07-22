@@ -917,7 +917,8 @@ let warnDifferentContractType = (
   ~existingContract: indexingAddress,
   ~dc: indexingAddress,
 ) => {
-  let logger = Logging.createChild(
+  let logger = Logging.createChildFrom(
+    ~logger=Env.logger,
     ~params={
       "chainId": fetchState.chainId,
       "contractAddress": dc.address->Address.toString,
@@ -1194,7 +1195,8 @@ let registerDynamicContracts = (
             if existingContract.contractName != dc.contractName {
               fetchState->warnDifferentContractType(~existingContract, ~dc=dcWithStartBlock)
             } else if existingContract.effectiveStartBlock > dcWithStartBlock.effectiveStartBlock {
-              let logger = Logging.createChild(
+              let logger = Logging.createChildFrom(
+                ~logger=Env.logger,
                 ~params={
                   "chainId": fetchState.chainId,
                   "contractAddress": dc.address->Address.toString,
@@ -1265,7 +1267,8 @@ let registerDynamicContracts = (
               // Otherwise already queued for persistence by an earlier item in this batch.
               shouldRemove := true
             | None =>
-              let logger = Logging.createChild(
+              let logger = Logging.createChildFrom(
+                ~logger=Env.logger,
                 ~params={
                   "chainId": fetchState.chainId,
                   "contractAddress": dc.address->Address.toString,

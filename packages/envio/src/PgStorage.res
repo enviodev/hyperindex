@@ -1232,6 +1232,7 @@ let make = (
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
+  ~logger=Env.logger,
 ): Persistence.storage => {
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
@@ -1321,7 +1322,7 @@ let make = (
     if withUpload {
       // Try to restore cache tables from the .envio/cache TSV files
       switch await scanCacheDir() {
-      | [] => Logging.info("No cache found to upload.")
+      | [] => logger->Logging.childInfo("No cache found to upload.")
       | entries =>
         switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
         | Ok(psqlExec) =>
@@ -1349,9 +1350,9 @@ let make = (
             })
           })
           ->Promise.all
-          Logging.info("Successfully uploaded cache.")
+          logger->Logging.childInfo("Successfully uploaded cache.")
         | Error(message) =>
-          Logging.error(`Failed to upload cache, continuing without it. ${message}`)
+          logger->Logging.childError(`Failed to upload cache, continuing without it. ${message}`)
         }
       }
     }
@@ -1582,7 +1583,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
         switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
         | Ok(psqlExec) => {
-            Logging.info(
+            logger->Logging.childInfo(
               `Dumping cache: ${cacheTableInfo
                 ->Array.map(({tableName, count}) =>
                   tableName ++ " (" ++ count->Int.toString ++ " rows)"
@@ -1624,13 +1625,15 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             })
 
             let _ = await promises->Promise.all
-            Logging.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
+            logger->Logging.childInfo(
+              `Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`,
+            )
           }
-        | Error(message) => Logging.error(`Failed to dump cache. ${message}`)
+        | Error(message) => logger->Logging.childError(`Failed to dump cache. ${message}`)
         }
       }
     } catch {
-    | exn => Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
+    | exn => logger->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
     }
   }
 
@@ -1912,8 +1915,11 @@ let makeStorageFromEnv = (
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
+              ~logger=config.logger,
             )->Promise.catch(err => {
-              Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
+              config.logger
+              ->Logging.childErrorWithExn(err->Utils.prettifyExn, `Error tracking tables`)
+              ->Promise.resolve
             })
           },
         )
@@ -1937,11 +1943,11 @@ let makeStorageFromEnv = (
                 description: None,
                 columnConfigs: dict{},
               }),
+              ~logger=config.logger,
             )->Promise.catch(err => {
-              Logging.errorWithExn(
-                err->Utils.prettifyExn,
-                `Error tracking new tables`,
-              )->Promise.resolve
+              config.logger
+              ->Logging.childErrorWithExn(err->Utils.prettifyExn, `Error tracking new tables`)
+              ->Promise.resolve
             })
           },
         )
@@ -1950,9 +1956,15 @@ let makeStorageFromEnv = (
       }
     },
     ~isHasuraEnabled,
+    ~logger=config.logger,
   )
 }
 
 let makePersistenceFromConfig = (~config: Config.t, ~storage=makeStorageFromEnv(~config)) => {
-  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
+  Persistence.make(
+    ~userEntities=config.userEntities,
+    ~allEnums=config.allEnums,
+    ~storage,
+    ~logger=config.logger,
+  )
 }

@@ -66,6 +66,10 @@ type contractHandler = {
 }
 
 type t = {
+  // Per-indexer logger. Everything that used to reach for the process-global
+  // logger now derives from this (directly, or via per-chain children built off
+  // it). Sources and the ecosystem are constructed with it in `fromPublic`.
+  logger: Pino.t,
   name: string,
   description: option<string>,
   handlers: string,
@@ -585,7 +589,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     )
   }
 
-  let logger = Logging.getLogger()
+  let logger = Env.logger
   let ecosystem = switch ecosystemName {
   | Ecosystem.Evm => Evm.make(~logger)
   | Ecosystem.Fuel => Fuel.make(~logger)
@@ -1017,6 +1021,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 
   {
+    logger,
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),

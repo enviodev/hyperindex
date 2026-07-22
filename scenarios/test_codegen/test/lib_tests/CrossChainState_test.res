@@ -75,7 +75,7 @@ let makeChainState = (
     ),
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
-    ~logger=Logging.getLogger(),
+    ~logger=Env.logger,
   )
 }
 
@@ -150,7 +150,7 @@ let makeFetchingChainState = (
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
-    ~logger=Logging.getLogger(),
+    ~logger=Env.logger,
   )
 }
 
@@ -484,7 +484,7 @@ describe("CrossChainState fetch control", () => {
           ~shouldRollbackOnReorg=false,
         ),
         ~committedProgressBlockNumber=-1,
-        ~logger=Logging.getLogger(),
+        ~logger=Env.logger,
       )
 
       // Chain 2 (less behind, visited second): its density-bearing partition

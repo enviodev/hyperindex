@@ -18,7 +18,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
     // for staleness to restart the EventSource connection
     let staleTimeMillis = 15_000
     let newTimeoutId = setTimeout(() => {
-      Logging.trace({
+      Env.logger->Logging.childTrace({
         "msg": "Timeout fired for height stream",
         "chainId": chainId,
         "url": hyperSyncUrl,
@@ -71,7 +71,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
 
     es->EventSource.onopen(_ => {
       errorCount := 0
-      Logging.trace({
+      Env.logger->Logging.childTrace({
         "msg": "SSE connection opened for height stream",
         "chainId": chainId,
         "url": hyperSyncUrl,
@@ -80,7 +80,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
 
     es->EventSource.onerror(error => {
       errorCount := errorCount.contents + 1
-      Logging.trace({
+      Env.logger->Logging.childTrace({
         "msg": "EventSource error on height stream, reconnecting",
         "chainId": chainId,
         "url": hyperSyncUrl,
@@ -106,7 +106,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~chainId, ~onHeight: int => unit): (u
         // Call the callback with the new height
         onHeight(height)
       | None =>
-        Logging.trace({
+        Env.logger->Logging.childTrace({
           "msg": "Height was not a number in event.data",
           "chainId": chainId,
           "data": event.data,

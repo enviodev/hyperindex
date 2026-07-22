@@ -79,13 +79,15 @@ let logStrategy =
     ~fallback=ConsolePretty,
   )
 
-Logging.setLogger(
-  Logging.makeLogger(
-    ~logStrategy,
-    ~logFilePath,
-    ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Option.getOr(#info),
-  ),
+// The process-wide base logger. Indexer code doesn't reach for this directly —
+// it flows through `Config.t.logger` (and per-chain children of it). Kept here
+// as the default sink for bootstrap/process-level logging (Bin process
+// handlers, pre-config errors) and as `ErrorHandling`'s fallback logger.
+let logger = Logging.makeLogger(
+  ~logStrategy,
+  ~logFilePath,
+  ~defaultFileLogLevel,
+  ~userLogLevel=userLogLevel->Option.getOr(#info),
 )
 
 module Db = {

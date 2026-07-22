@@ -17,6 +17,7 @@ let make: (
   ~reducedPollingInterval: int=?,
   ~recoveryTimeout: float=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
+  ~logger: Pino.t=?,
 ) => t
 
 let getActiveSource: t => Source.t

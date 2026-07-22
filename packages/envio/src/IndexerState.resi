@@ -75,6 +75,7 @@ let getSafeCheckpointId: t => option<Internal.checkpointId>
 
 // Accessors.
 let config: t => Config.t
+let logger: t => Pino.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t

@@ -278,7 +278,7 @@ let syncOnEventRegistrations = (
   })
 }
 
-let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging.getLogger()) => {
+let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Env.logger) => {
   switch eventOptions {
   | Some(value) =>
     let value = value->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
@@ -299,13 +299,7 @@ let setEventOptions = (~contractName, ~eventName, ~eventOptions, ~logger=Logging
   }
 }
 
-let setHandler = (
-  ~contractName,
-  ~eventName,
-  handler,
-  ~eventOptions,
-  ~logger=Logging.getLogger(),
-) => {
+let setHandler = (~contractName, ~eventName, handler, ~eventOptions, ~logger=Env.logger) => {
   withRegistration(registration => {
     let t = get(~contractName, ~eventName)
     let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
@@ -363,7 +357,7 @@ let setContractRegister = (
   ~eventName,
   contractRegister,
   ~eventOptions,
-  ~logger=Logging.getLogger(),
+  ~logger=Env.logger,
 ) => {
   withRegistration(registration => {
     let t = get(~contractName, ~eventName)
@@ -489,7 +483,7 @@ let registerOnBlock = (
     let config = registration.config
     let ecosystem = config.ecosystem
     let chainsDict = getChainsObject(config)
-    let logger = Logging.createChild(~params={"onBlock": name})
+    let logger = Logging.createChildFrom(~logger=config.logger, ~params={"onBlock": name})
 
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain
@@ -769,7 +763,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
           )
           ->Array.joinUnsafe(", ")
-        Logging.getLogger()->Logging.childInfo(
+        config.logger->Logging.childInfo(
           `Events without a handler, skipped for indexing: ${groups}`,
         )
       }

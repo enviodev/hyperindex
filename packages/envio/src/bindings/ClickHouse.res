@@ -153,7 +153,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   })
 }
 
-let logger = Logging.createChild(~params={"context": "ClickHouse"})
+let logger = Logging.createChildFrom(~logger=Env.logger, ~params={"context": "ClickHouse"})
 
 // On transient failure, split values in half and retry each half.
 // If only 1 row remains, retry with delay.
@@ -543,7 +543,7 @@ let initialize = async (
     // ENVIO_CLICKHOUSE_REPLICATED is unset.
     let replicated = envReplicated || hasReplicatedDatabaseEngine
     if hasReplicatedDatabaseEngine && !envReplicated {
-      Logging.info(
+      logger->Logging.childInfo(
         "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so tables use the ReplicatedMergeTree engine.",
       )
     }
@@ -627,10 +627,10 @@ let initialize = async (
       ),
     )->Utils.Promise.ignoreValue
 
-    Logging.trace("ClickHouse storage initialization completed successfully")
+    logger->Logging.childTrace("ClickHouse storage initialization completed successfully")
   } catch {
   | exn => {
-      Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
+      logger->Logging.childErrorWithExn(exn, "Failed to initialize ClickHouse storage")
       JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
@@ -644,7 +644,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
       await client->exec({query: `USE ${database}`})
     } catch {
     | exn =>
-      Logging.errorWithExn(
+      logger->Logging.childErrorWithExn(
         exn,
         `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
       )
@@ -674,7 +674,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
   } catch {
   | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
-      Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
+      logger->Logging.childErrorWithExn(exn, "Failed to resume ClickHouse storage")
       JsError.throwWithMessage("ClickHouse resume failed")
     }
   }

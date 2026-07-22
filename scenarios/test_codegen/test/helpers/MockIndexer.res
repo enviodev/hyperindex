@@ -432,7 +432,7 @@ module Indexer = {
   ) => {
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
+    | None => Env.logger->Logging.setLogLevel(#silent)
     | Some(_) => ()
     }
 

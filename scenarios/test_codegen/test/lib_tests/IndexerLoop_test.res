@@ -43,7 +43,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
         ~shouldRollbackOnReorg=false,
       ),
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.getLogger(),
+      ~logger=Env.logger,
     )
     chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
   })

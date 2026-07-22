@@ -13,7 +13,7 @@ let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1) =>
     ~params=["from", "to"],
     ~contractName="ERC20",
     ~chainId,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Env.logger).onEventBlockFilterSchema,
   )
 
 describe("parseWhereOrThrow — address-param detection", () => {
@@ -85,7 +85,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
       ~contractRegister=None,
       ~where=Some(eventFilters),
       ~chainId=1,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make(~logger=Env.logger).onEventBlockFilterSchema,
     ).clientAddressFilter
 
   let addr = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
@@ -178,7 +178,7 @@ describe("filterByClientAddress applies clientAddressFilter", () => {
     ~contractRegister=None,
     ~where=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
     ~chainId=1,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Env.logger).onEventBlockFilterSchema,
     ~startBlock=5,
   )
 
@@ -231,7 +231,7 @@ describe("filterByClientAddress drops over-fetched non-wildcard srcAddress event
     ~contractRegister=None,
     ~where=None,
     ~chainId=1,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make(~logger=Env.logger).onEventBlockFilterSchema,
     ~startBlock=5,
   )
 

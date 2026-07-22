@@ -140,18 +140,20 @@ let rec onQueryResponse = async (
       eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
     })
     if numContractRegisterEvents === 0 {
-      Logging.trace({
+      chainState
+      ->ChainState.logger
+      ->Logging.childTrace({
         "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,
         "numEvents": parsedQueueItems->Array.length,
       })
     } else {
-      Logging.trace({
+      chainState
+      ->ChainState.logger
+      ->Logging.childTrace({
         "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,

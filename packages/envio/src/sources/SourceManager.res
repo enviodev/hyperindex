@@ -41,6 +41,7 @@ type requestStatSample = {
 // Encapsulates the fetching logic for a chain's sources.
 // with a mutable state for easier reasoning and testing.
 type t = {
+  logger: Pino.t,
   sourcesState: array<sourceState>,
   mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
@@ -262,6 +263,7 @@ let make = (
     ~backoffMultiplicative=2,
     ~maxRetryInterval=60_000,
   ),
+  ~logger=Env.logger,
 ) => {
   let hasRealtime = sources->Array.some(s => s.sourceFor === Realtime)
   let initialActiveSource = switch sources->Array.find(source =>
@@ -272,6 +274,7 @@ let make = (
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
   {
+    logger,
     sourcesState: sources->Array.map(source => {
       source,
       knownHeight: 0,
@@ -583,7 +586,8 @@ let getNextSource = (sourceManager, ~isRealtime, ~excludedSources=?) => {
 let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
-  let logger = Logging.createChild(
+  let logger = Logging.createChildFrom(
+    ~logger=sourceManager.logger,
     ~params={
       "chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
       "knownHeight": knownHeight,
@@ -724,7 +728,8 @@ let executeQuery = async (
     ) {
     | Some(s) =>
       if s.source !== sourceManager.activeSource {
-        let logger = Logging.createChild(
+        let logger = Logging.createChildFrom(
+          ~logger=sourceManager.logger,
           ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
         )
         logger->Logging.childInfo({
@@ -736,7 +741,8 @@ let executeQuery = async (
       }
       s
     | None =>
-      let logger = Logging.createChild(
+      let logger = Logging.createChildFrom(
+        ~logger=sourceManager.logger,
         ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
       )
       %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
@@ -746,7 +752,8 @@ let executeQuery = async (
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
 
-    let logger = Logging.createChild(
+    let logger = Logging.createChildFrom(
+      ~logger=sourceManager.logger,
       ~params={
         "chainId": source.chain->ChainMap.Chain.toChainId,
         "logType": "Block Range Query",
@@ -896,7 +903,8 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let sourceState = switch sourceManager->getNextSource(~isRealtime) {
     | Some(s) => s
     | None =>
-      let logger = Logging.createChild(
+      let logger = Logging.createChildFrom(
+        ~logger=sourceManager.logger,
         ~params={"chainId": sourceManager.activeSource.chain->ChainMap.Chain.toChainId},
       )
       %raw(`null`)->ErrorHandling.mkLogAndRaise(
@@ -908,7 +916,8 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let source = sourceState.source
     let retry = retryRef.contents
 
-    let logger = Logging.createChild(
+    let logger = Logging.createChildFrom(
+      ~logger=sourceManager.logger,
       ~params={
         "chainId": source.chain->ChainMap.Chain.toChainId,
         "logType": "Block Hash Query",

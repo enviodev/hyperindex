@@ -855,11 +855,12 @@ let initTestWorker = () => {
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
       ~storage,
+      ~logger=config.logger,
     )
 
     // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
     switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
+    | None => config.logger->Logging.setLogLevel(#silent)
     | Some(_) => ()
     }
 
@@ -891,7 +892,7 @@ let initTestWorker = () => {
     })
     ->ignore
   | None =>
-    Logging.error("TestIndexerWorker: No worker data provided")
+    Env.logger->Logging.childError("TestIndexerWorker: No worker data provided")
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }
