@@ -7,6 +7,8 @@ type registrationsByChainId = dict<chainRegistrations>
 let startRegistration: (~config: Config.t) => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: (~config: Config.t) => registrationsByChainId
+let clearActiveRegistration: unit => unit
+let runInHandlerScope: (unit => 'a) => 'a
 let throwIfFinishedRegistration: (~methodName: string) => unit
 
 let buildOnEventRegistration: (

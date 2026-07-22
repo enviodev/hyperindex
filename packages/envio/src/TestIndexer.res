@@ -487,17 +487,144 @@ type entityOperations = {
   set: Internal.entity => unit,
 }
 
-type workerData = {
-  chainId: int,
-  startBlock: int,
-  endBlock: option<int>,
-  simulate: option<array<JSON.t>>,
-  initialState: Persistence.initialState,
+// Adapt the real storage interface to the in-memory entity store, reusing the
+// same handleLoad/handleWriteBatch that backed the worker's message proxy —
+// just called directly, without a worker thread or message channel.
+let makeInMemoryStorage = (
+  ~state: testIndexerState,
+  ~getInitialState: unit => Persistence.initialState,
+): Persistence.storage => {
+  name: "test-inmemory",
+  isInitialized: async () => true,
+  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?, ~envioInfo as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: initialize should not be called; the initial state is derived from config.",
+    ),
+  resumeInitialState: async () => getInitialState(),
+  loadOrThrow: async (~filter, ~table: Table.table) => {
+    let serializeLeafOrThrow = (~fieldName, ~fieldValue: unknown, ~isArray) => {
+      let queryField = switch table->Table.queryFields->Dict.get(fieldName) {
+      | Some(queryField) => queryField
+      | None =>
+        JsError.throwWithMessage(
+          `TestIndexer: The table "${table.tableName}" doesn't have the field "${fieldName}"`,
+        )
+      }
+      fieldValue
+      ->S.reverseConvertToJsonOrThrow(
+        isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+      )
+      ->(Utils.magic: JSON.t => unknown)
+    }
+    state
+    ->handleLoad(
+      ~tableName=table.tableName,
+      ~filter=filter->EntityFilter.mapValues(~mapValue=serializeLeafOrThrow),
+    )
+    ->S.parseOrThrow(table->Table.rowsSchema)
+  },
+  writeBatch: async (
+    ~batch,
+    ~rollback as _,
+    ~isInReorgThreshold as _,
+    ~config as _,
+    ~allEntities as _,
+    ~updatedEffectsCache as _,
+    ~updatedEntities,
+    ~chainMetaData as _,
+    ~onWrite as _,
+  ) => {
+    let serializableEntities = updatedEntities->Array.map((
+      {entityConfig, changes}: Persistence.updatedEntity,
+    ) => {
+      let encodeChange = (
+        change: Change.t<Internal.entity>,
+      ): TestIndexerProxyStorage.serializableChange =>
+        switch change {
+        | Set({entityId, entity, checkpointId}) =>
+          Set({
+            entityId,
+            entity: entity->S.reverseConvertToJsonOrThrow(entityConfig.schema),
+            checkpointId,
+          })
+        | Delete({entityId, checkpointId}) => Delete({entityId, checkpointId})
+        }
+      {
+        TestIndexerProxyStorage.entityName: entityConfig.name,
+        changes: changes->Array.map(encodeChange),
+      }
+    })
+    state->handleWriteBatch(
+      ~updatedEntities=serializableEntities,
+      ~checkpointIds=batch.checkpointIds,
+      ~checkpointChainIds=batch.checkpointChainIds,
+      ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
+      ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+    )
+  },
+  dumpEffectCache: async () => (),
+  reset: async () => (),
+  setChainMeta: async _ => Obj.magic(),
+  pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+  pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
+    (),
+  getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    ),
+  getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    ),
+  getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+    JsError.throwWithMessage(
+      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+    ),
+  close: async () => (),
 }
 
-let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
-  unit => t<'processConfig>
-) => {
+// Copy the per-chain registration arrays so a process() run's simulate-source
+// additions (SimulateItems.patchConfig pushes onEventRegistrations) never
+// mutate the shared base registration — lets independent createTestIndexer runs
+// proceed in parallel without clobbering each other's registrations.
+let cloneRegistrations = (
+  base: HandlerRegister.registrationsByChainId,
+): HandlerRegister.registrationsByChainId => {
+  let clone = Dict.make()
+  base
+  ->Dict.toArray
+  ->Array.forEach(((chainIdStr, chainRegistrations: HandlerRegister.chainRegistrations)) =>
+    clone->Dict.set(
+      chainIdStr,
+      {
+        HandlerRegister.onEventRegistrations: chainRegistrations.onEventRegistrations->Array.copy,
+        onBlockRegistrations: chainRegistrations.onBlockRegistrations->Array.copy,
+      },
+    )
+  )
+  clone
+}
+
+// User handlers register into the process-global HandlerRegister as an import
+// side effect. Capture the resolved registrations once per process (imports are
+// module-cached anyway) and reuse them across every createTestIndexer run, so
+// the global registration cycle runs a single time and never races.
+let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
+let getRegistrations = (~config) =>
+  switch registrationsRef.contents {
+  | Some(promise) => promise
+  | None =>
+    let promise = HandlerLoader.registerAllHandlers(~config)->Promise.thenResolve(registrations => {
+      // Reopen the registration API for tests that call indexer.onEvent /
+      // contractRegister after a run has captured its registrations.
+      HandlerRegister.clearActiveRegistration()
+      registrations
+    })
+    registrationsRef := Some(promise)
+    promise
+  }
+
+let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => {
   () => {
     let allEntities = config.allEntities
     let entities = Dict.make()
@@ -534,6 +661,26 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
       entities,
       entityConfigs,
       processChanges: [],
+    }
+
+    // Per-instance in-memory storage over `state.entities`. `process()` runs are
+    // sequential within one indexer, so a single ref carries the current run's
+    // config-derived initial state; separate indexers get separate storages, so
+    // independent indexers run in parallel without shared mutable state.
+    let currentInitialState: ref<option<Persistence.initialState>> = ref(None)
+    let storage = makeInMemoryStorage(~state, ~getInitialState=() =>
+      currentInitialState.contents->Option.getOrThrow
+    )
+    let persistence = Persistence.make(
+      ~userEntities=config.userEntities,
+      ~allEnums=config.allEnums,
+      ~storage,
+    )
+
+    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set.
+    switch Env.userLogLevel {
+    | None => Logging.setLogLevel(#silent)
+    | Some(_) => ()
     }
 
     // Build entity operations for each user entity
@@ -689,110 +836,126 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
           // Reset processChanges for this run
           state.processChanges = []
 
-          let runChainWorker = ((
+          let runChainInProcess = async ((
             chainIdStr,
-            chainId,
+            _chainId,
             rawChainConfig: rawChainConfig,
             processChainConfig,
           )) => {
-            // Build initialState from resolved block range
+            // Build initialState from resolved block range. Rebuilt per chain so
+            // later chains in the same process() call see contracts registered
+            // by earlier ones.
             let chains: dict<chainConfig> = Dict.make()
             chains->Dict.set(chainIdStr, processChainConfig)
-
-            // Rebuilt per chain so workers see contracts registered by earlier
-            // chains in the same process() call.
             let indexingAddressesByChain = getIndexingAddressesByChain(state)
-
             let initialState = makeInitialState(
               ~config,
               ~processConfigChains=chains,
               ~indexingAddressesByChain,
             )
 
-            Promise.make((resolve, reject) => {
-              let workerData: workerData = {
-                chainId,
-                startBlock: processChainConfig.startBlock,
-                endBlock: processChainConfig.endBlock,
-                simulate: rawChainConfig.simulate,
-                initialState,
-              }
-              let worker = try {
-                NodeJs.WorkerThreads.makeWorker(
-                  workerPath,
-                  {
-                    workerData: workerData->(Utils.magic: workerData => JSON.t),
-                    // Explicitly forward parent env so handlers running in
-                    // the worker observe the same environment as the test
-                    // process (e.g. E2E_EXPECTED_END_BLOCK).
-                    env: %raw(`process.env`),
-                  },
-                )
-              } catch {
-              | exn =>
-                reject(exn->Utils.magic)
-                throw(exn)
-              }
+            // No endBlock means auto-exit mode: process one block checkpoint at a
+            // time and stop after the first block with events.
+            let exitAfterFirstEventBlock = processChainConfig.endBlock->Option.isNone
 
-              // Handle messages from worker
-              worker->NodeJs.WorkerThreads.onMessage((
-                msg: TestIndexerProxyStorage.workerMessage,
-              ) => {
-                let respond = data =>
-                  worker->NodeJs.WorkerThreads.workerPostMessage(
-                    {
-                      TestIndexerProxyStorage.id: msg.id,
-                      payload: TestIndexerProxyStorage.Response({data: data}),
-                    }->Utils.magic,
-                  )
+            // Rebuild the processConfig JSON that SimulateItems.patchConfig reads
+            // to turn `simulate` items into a SimulateSource for the chain.
+            let resolvedChainDict: dict<unknown> = Dict.make()
+            resolvedChainDict->Dict.set(
+              "startBlock",
+              processChainConfig.startBlock->(Utils.magic: int => unknown),
+            )
+            switch processChainConfig.endBlock {
+            | Some(eb) => resolvedChainDict->Dict.set("endBlock", eb->(Utils.magic: int => unknown))
+            | None => ()
+            }
+            switch rawChainConfig.simulate {
+            | Some(s) =>
+              resolvedChainDict->Dict.set("simulate", s->(Utils.magic: array<JSON.t> => unknown))
+            | None => ()
+            }
+            let resolvedChainsDict: dict<unknown> = Dict.make()
+            resolvedChainsDict->Dict.set(
+              chainIdStr,
+              resolvedChainDict->(Utils.magic: dict<unknown> => unknown),
+            )
+            let processConfigJson =
+              {"chains": resolvedChainsDict}->(Utils.magic: {"chains": dict<unknown>} => JSON.t)
 
-                switch msg.payload {
-                | Load({tableName, filter}) => state->handleLoad(~tableName, ~filter)->respond
+            // Each run gets its own copy of the shared base registration so the
+            // simulate-source registration it appends stays isolated.
+            let registrationsByChainId = cloneRegistrations(await getRegistrations(~config))
+            let patchedConfig: Config.t = SimulateItems.patchConfig(
+              ~config,
+              ~processConfig=processConfigJson,
+              ~registrationsByChainId,
+            )
+            let runConfig = {...patchedConfig, shouldRollbackOnReorg: false}
+            let runConfig = exitAfterFirstEventBlock ? {...runConfig, batchSize: 1} : runConfig
 
-                | WriteBatch({
-                    updatedEntities,
-                    checkpointIds,
-                    checkpointChainIds,
-                    checkpointBlockNumbers,
-                    checkpointBlockHashes: _,
-                    checkpointEventsProcessed,
-                  }) =>
-                  state->handleWriteBatch(
-                    ~updatedEntities,
-                    ~checkpointIds,
-                    ~checkpointChainIds,
-                    ~checkpointBlockNumbers,
-                    ~checkpointEventsProcessed,
-                  )
-                  JSON.Encode.null->respond
+            // Bypass Persistence.init: hand the loop the config-derived initial
+            // state directly (never a real DB) and mark the storage Ready so
+            // writes go through.
+            currentInitialState := Some(initialState)
+            persistence.storageStatus = Ready(initialState)
+
+            let indexerStateRef = ref(None)
+            // Stop the loop and let any in-flight processing/write settle, so a
+            // finished run leaves nothing driving the shared state into the next.
+            let cleanup = async () => {
+              switch indexerStateRef.contents {
+              | Some(indexerState) =>
+                indexerState->IndexerState.stop
+                while (
+                  indexerState->IndexerState.isProcessing ||
+                    indexerState->IndexerState.writeFiber->Option.isSome
+                ) {
+                  await Utils.delay(0)
                 }
-              })
-
-              worker->NodeJs.WorkerThreads.onError(err => {
-                worker->NodeJs.WorkerThreads.terminate->ignore
-                reject(err)
-              })
-
-              worker->NodeJs.WorkerThreads.onExit(code => {
-                if code !== 0 {
-                  reject(Utils.Error.make(`Worker exited with code ${code->Int.toString}`))
-                } else {
-                  resolve()
-                }
-              })
-            })
+              | None => ()
+              }
+            }
+            try {
+              // Run inside the handler scope so a handler that calls
+              // indexer.onEvent throws, as in production, without finishing the
+              // process-global registration the test itself uses.
+              await HandlerRegister.runInHandlerScope(() =>
+                Promise.make((resolve, reject) => {
+                  let indexerState = IndexerState.makeFromDbState(
+                    ~config=runConfig,
+                    ~persistence,
+                    ~initialState,
+                    ~registrationsByChainId,
+                    ~exitAfterFirstEventBlock,
+                    ~onError=errHandler => {
+                      errHandler->ErrorHandling.log
+                      reject(errHandler.exn->Utils.prettifyExn)
+                    },
+                    // Caught up: resolve the run instead of exiting the process.
+                    ~onExit=() => resolve(),
+                  )
+                  indexerStateRef := Some(indexerState)
+                  indexerState->IndexerLoop.start
+                })
+              )
+              await cleanup()
+            } catch {
+            | exn =>
+              await cleanup()
+              throw(exn)
+            }
           }
 
-          // Set flag before starting workers
+          // Set flag before starting the run
           state.processInProgress = true
 
-          // Run worker threads sequentially, one chain at a time
+          // Run chains sequentially, one at a time
           let rec runChains = idx => {
             if idx >= chainEntries->Array.length {
               state.processInProgress = false
               Promise.resolve({changes: state.processChanges})
             } else {
-              runChainWorker(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
+              runChainInProcess(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
                 runChains(idx + 1)
               )
             }
@@ -807,91 +970,5 @@ let makeCreateTestIndexer = (~config: Config.t, ~workerPath: string): (
     )
 
     result->(Utils.magic: dict<unknown> => t<'processConfig>)
-  }
-}
-
-let initTestWorker = () => {
-  if NodeJs.WorkerThreads.isMainThread {
-    JsError.throwWithMessage("initTestWorker must be called from a worker thread")
-  }
-
-  let parentPort = switch NodeJs.WorkerThreads.parentPort->Nullable.toOption {
-  | Some(port) => port
-  | None => JsError.throwWithMessage("initTestWorker: No parent port available")
-  }
-
-  let workerData: option<workerData> = NodeJs.WorkerThreads.workerData->Nullable.toOption
-  switch workerData {
-  | Some({chainId, startBlock, endBlock, simulate, initialState}) =>
-    let chainIdStr = chainId->Int.toString
-
-    // auto-exit mode: no endBlock means fetch first block with events and exit
-    let exitAfterFirstEventBlock = endBlock->Option.isNone
-
-    // Build processConfig JSON for SimulateItems.patchConfig
-    let resolvedChainDict: dict<unknown> = Dict.make()
-    resolvedChainDict->Dict.set("startBlock", startBlock->(Utils.magic: int => unknown))
-    switch endBlock {
-    | Some(eb) => resolvedChainDict->Dict.set("endBlock", eb->(Utils.magic: int => unknown))
-    | None => ()
-    }
-    switch simulate {
-    | Some(s) => resolvedChainDict->Dict.set("simulate", s->(Utils.magic: array<JSON.t> => unknown))
-    | None => ()
-    }
-    let resolvedChainsDict: dict<unknown> = Dict.make()
-    resolvedChainsDict->Dict.set(
-      chainIdStr,
-      resolvedChainDict->(Utils.magic: dict<unknown> => unknown),
-    )
-    let processConfig =
-      {"chains": resolvedChainsDict}->(Utils.magic: {"chains": dict<unknown>} => JSON.t)
-
-    // Create proxy storage that communicates with main thread
-    let proxy = TestIndexerProxyStorage.make(~parentPort, ~initialState)
-    let storage = TestIndexerProxyStorage.makeStorage(proxy)
-    let config = Config.load()
-    let persistence = Persistence.make(
-      ~userEntities=config.userEntities,
-      ~allEnums=config.allEnums,
-      ~storage,
-    )
-
-    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-    switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
-    | Some(_) => ()
-    }
-
-    let patchConfig = (config: Config.t, registrationsByChainId) => {
-      let config = SimulateItems.patchConfig(~config, ~processConfig, ~registrationsByChainId)
-
-      // In auto-exit mode, set batchSize=1 to process one block checkpoint at a time
-      if exitAfterFirstEventBlock {
-        {...config, batchSize: 1}
-      } else {
-        config
-      }
-    }
-    Main.start(~persistence, ~isTest=true, ~patchConfig, ~exitAfterFirstEventBlock)
-    ->Promise.catch(exn => {
-      // `Main.start` rejects on any fatal error: a runtime failure arrives wrapped
-      // in `Main.FatalError` (already logged), a setup throw (e.g. an invalid
-      // simulate item) arrives raw. The parent only learns of failures
-      // through the worker `error` event, which fires on an *uncaught* exception.
-      // Throwing synchronously in this catch would just reject the catch's own
-      // promise (swallowed by `ignore`); `setImmediate` re-throws outside the
-      // promise chain so it becomes uncaught and reaches the parent.
-      let toThrow = switch exn {
-      | Main.FatalError(inner) => inner
-      | _ => exn->Utils.prettifyExn
-      }
-      NodeJs.setImmediate(() => throw(toThrow))
-      Promise.resolve()
-    })
-    ->ignore
-  | None =>
-    Logging.error("TestIndexerWorker: No worker data provided")
-    NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

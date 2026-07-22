@@ -732,15 +732,44 @@ let isPendingRegistration = () => {
   }
 }
 
+// Drop the finished registration context so the public `indexer.onEvent` /
+// `.contractRegister` API stays callable afterwards. The in-process test runner
+// captures registrations once and reuses them, then clears the context so a
+// test can still exercise the registration API (calls queue as pre-registered
+// and are ignored by the captured run) instead of hitting the "after the
+// indexer has started" guard.
+let clearActiveRegistration = () => {
+  EnvioGlobal.value.activeRegistration = None
+}
+
+// The in-process test runner executes user handlers with the same
+// process-global `indexer` the test itself can reach, so it can't use the
+// global `finished` flag to make a handler's `indexer.onEvent` throw without
+// also breaking test-time registration. Instead it runs each indexer inside an
+// AsyncLocalStorage scope; a handler executing within that scope hits the
+// "after the indexer has started" guard, while test-time calls (and other
+// concurrent runs' scopes) are unaffected.
+type asyncLocalStorage
+@module("node:async_hooks") @new
+external makeAsyncLocalStorage: unit => asyncLocalStorage = "AsyncLocalStorage"
+@send external alsRun: (asyncLocalStorage, {..}, unit => 'a) => 'a = "run"
+@send external alsGetStore: asyncLocalStorage => Nullable.t<{..}> = "getStore"
+
+let handlerScope = makeAsyncLocalStorage()
+let isInHandlerScope = () => handlerScope->alsGetStore->Nullable.toOption->Option.isSome
+let runInHandlerScope = fn => handlerScope->alsRun({"active": true}, fn)
+
 // Early guard called from `indexer.onEvent` / `.contractRegister` / `.onBlock` /
 // `.onSlot` so the user sees a method-specific error at the call site, instead
 // of hitting the generic `withRegistration` throw deep inside `setHandler` etc.
 let throwIfFinishedRegistration = (~methodName) => {
-  switch getActiveRegistration() {
-  | Some({finished: true}) =>
+  let finished = switch getActiveRegistration() {
+  | Some({finished}) => finished
+  | None => false
+  }
+  if finished || isInHandlerScope() {
     JsError.throwWithMessage(
       `Cannot call \`indexer.${methodName}\` after the indexer has started. Make sure all handlers are registered at the top level of your handler module.`,
     )
-  | _ => ()
   }
 }
