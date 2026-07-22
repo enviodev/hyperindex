@@ -103,34 +103,25 @@ mod test {
 
     #[test]
     fn rescript_package_json_no_extra_deps() {
-        assert_eq!(
-            template(true, "latest", vec![]).render_package_json(),
-            "{\n  \"name\": \"my-project\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"clean\": \"rescript clean\",\n    \"build\": \"rescript\",\n    \"watch\": \"rescript watch\",\n    \"codegen\": \"envio codegen\",\n    \"dev\": \"pnpm build && envio dev\",\n    \"start\": \"pnpm build && envio start\",\n    \"test\": \"pnpm build && vitest run --test-timeout=20000\"\n  },\n  \"devDependencies\": {\n    \"rescript\": \"12.2.0\",\n    \"@rescript/runtime\": \"12.2.0\",\n    \"vitest\": \"4.1.0\"\n  },\n  \"dependencies\": {\n    \"envio\": \"latest\"\n  },\n  \"engines\": {\n    \"node\": \">=22.0.0\"\n  }\n}\n"
-        );
+        insta::assert_snapshot!(template(true, "latest", vec![]).render_package_json());
     }
 
     #[test]
     fn typescript_package_json_no_extra_deps() {
-        assert_eq!(
-            template(false, "latest", vec![]).render_package_json(),
-            "{\n  \"name\": \"my-project\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"codegen\": \"envio codegen\",\n    \"dev\": \"envio dev\",\n    \"start\": \"envio start\",\n    \"test\": \"vitest run --test-timeout=20000\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"24.12.2\",\n    \"typescript\": \"6.0.3\",\n    \"vitest\": \"4.1.0\"\n  },\n  \"dependencies\": {\n    \"envio\": \"latest\"\n  },\n  \"engines\": {\n    \"node\": \">=22.0.0\"\n  }\n}\n"
-        );
+        insta::assert_snapshot!(template(false, "latest", vec![]).render_package_json());
     }
 
     #[test]
     fn package_json_with_extra_deps() {
-        assert_eq!(
-            template(
-                true,
-                "1.2.3",
-                vec![
-                    ("viem".to_string(), "2.54.0".to_string()),
-                    ("foo".to_string(), "1.0.0".to_string())
-                ]
-            )
-            .render_package_json(),
-            "{\n  \"name\": \"my-project\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"clean\": \"rescript clean\",\n    \"build\": \"rescript\",\n    \"watch\": \"rescript watch\",\n    \"codegen\": \"envio codegen\",\n    \"dev\": \"pnpm build && envio dev\",\n    \"start\": \"pnpm build && envio start\",\n    \"test\": \"pnpm build && vitest run --test-timeout=20000\"\n  },\n  \"devDependencies\": {\n    \"rescript\": \"12.2.0\",\n    \"@rescript/runtime\": \"12.2.0\",\n    \"vitest\": \"4.1.0\"\n  },\n  \"dependencies\": {\n    \"envio\": \"1.2.3\",\n    \"viem\": \"2.54.0\",\n    \"foo\": \"1.0.0\"\n  },\n  \"engines\": {\n    \"node\": \">=22.0.0\"\n  }\n}\n"
-        );
+        insta::assert_snapshot!(template(
+            true,
+            "1.2.3",
+            vec![
+                ("viem".to_string(), "2.54.0".to_string()),
+                ("foo".to_string(), "1.0.0".to_string())
+            ]
+        )
+        .render_package_json());
     }
 
     #[test]
