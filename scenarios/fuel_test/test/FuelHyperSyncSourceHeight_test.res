@@ -37,7 +37,7 @@ let withServer = async (handler, body) => {
   }
 }
 
-describe("HyperFuelSource - getHeightOrThrow", () => {
+describe("FuelHyperSyncSource - getHeightOrThrow", () => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
 
   // The native client validates that the token is a UUID before sending requests.
@@ -50,10 +50,11 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
       res->writeHead(200)
       res->endWith(`{"height": 123}`)
     }, async endpointUrl => {
-      let source = HyperFuelSource.make({
+      let source = FuelHyperSyncSource.make({
         chain,
         endpointUrl,
         apiToken: Some(apiToken),
+        onEventRegistrations: [],
       })
       let {height} = await source.getHeightOrThrow()
 
@@ -75,10 +76,11 @@ describe("HyperFuelSource - getHeightOrThrow", () => {
       res->writeHead(401)
       res->endWith("Unauthorized")
     }, async endpointUrl => {
-      let source = HyperFuelSource.make({
+      let source = FuelHyperSyncSource.make({
         chain,
         endpointUrl,
         apiToken: Some(apiToken),
+        onEventRegistrations: [],
       })
       let result = await Promise.race([
         source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),
