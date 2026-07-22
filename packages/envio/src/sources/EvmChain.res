@@ -48,7 +48,7 @@ let makeSources = (
 ) => {
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
-      HyperSyncSource.make({
+      EvmHyperSyncSource.make({
         chain,
         endpointUrl,
         onEventRegistrations,
