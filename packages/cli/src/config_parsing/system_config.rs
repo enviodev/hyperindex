@@ -1952,7 +1952,7 @@ impl Contract {
                 {
                     return Err(anyhow!(
                         "Duplicate event detected on contract {name}: {existing} and {} share the \
-                         same signature, so they can't be told apart while indexing. Remove the \
+                         same dispatch key, so they can't be told apart while indexing. Remove the \
                          duplicate event.",
                         event.name,
                     ));
