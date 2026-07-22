@@ -1,5 +1,3 @@
-let getCacheRowCountFnName = "get_cache_row_count"
-
 let makeClient = () => {
   Postgres.makeSql(
     ~config={
@@ -267,18 +265,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   | None => ()
   }
 
-  [
-    query.contents,
-    `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
-RETURNS integer AS $$
-DECLARE
-  result integer;
-BEGIN
-  EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
-  RETURN result;
-END;
-$$ LANGUAGE plpgsql;`,
-  ]
+  [query.contents]
 }
 
 let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
@@ -661,16 +648,19 @@ type schemaCacheTableInfo = {
   count: int,
 }
 
+type cacheRowCount = {
+  @as("count")
+  count: int,
+}
+
 // Matches both the cross-chain (`envio_effect_<name>`) and chain-scoped
 // (`envio_<chainId>_effect_<name>`) cache-table formats. Kept in sync with
 // Internal.EffectCache.
-let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
+let makeEffectCacheTableNamesQuery = (~pgSchema) => {
   // The column guard requires the effect-cache shape (exactly an `id` + `output`
   // pair) so a user entity table that happens to match the name pattern is never
   // mistaken for an effect cache.
-  `SELECT
-    t.table_name,
-    ${getCacheRowCountFnName}(t.table_name) as count
+  `SELECT t.table_name
    FROM information_schema.tables t
    WHERE t.table_schema = '${pgSchema}'
    AND t.table_name ~ '^envio_([0-9]+_)?effect_.+'
@@ -679,6 +669,15 @@ let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
      FROM information_schema.columns c
      WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name
    ) = ARRAY['id', 'output'];`
+}
+
+let makeCacheRowCountQuery = (~pgSchema, ~tableName) => {
+  // The table name comes from information_schema, so anything cache-shaped that
+  // was created out-of-band in the schema reaches here. Splice both identifiers
+  // as quoted identifiers, doubling embedded quotes, so a crafted name can't
+  // break out into raw SQL.
+  let quoteIdent = ident => `"${ident->String.replaceAll("\"", "\"\"")}"`
+  `SELECT COUNT(*)::int AS count FROM ${quoteIdent(pgSchema)}.${quoteIdent(tableName)};`
 }
 
 type psqlExecState =
@@ -1301,6 +1300,23 @@ let make = (
     result
   }
 
+  // Each indexer counts the effect-cache tables in its own schema. The counts
+  // are computed here per table rather than through a shared SQL helper so
+  // indexers isolated by schema in one database never touch each other's state.
+  let queryCacheTableInfo = async (): array<schemaCacheTableInfo> => {
+    let tableNames: array<schemaTableName> = await sql->Postgres.unsafe(
+      makeEffectCacheTableNamesQuery(~pgSchema),
+    )
+    await tableNames
+    ->Array.map(async ({tableName}) => {
+      let rows: array<cacheRowCount> = await sql->Postgres.unsafe(
+        makeCacheRowCountQuery(~pgSchema, ~tableName),
+      )
+      ({tableName, count: (rows->Array.getUnsafe(0)).count}: schemaCacheTableInfo)
+    })
+    ->Promise.all
+  }
+
   let restoreEffectCache = async (~withUpload) => {
     if withUpload {
       // Try to restore cache tables from the .envio/cache TSV files
@@ -1340,9 +1356,7 @@ let make = (
       }
     }
 
-    let cacheTableInfo: array<schemaCacheTableInfo> = await sql->Postgres.unsafe(
-      makeSchemaCacheTableInfoQuery(~pgSchema),
-    )
+    let cacheTableInfo = await queryCacheTableInfo()
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
       // Integration with other tools like Hasura
@@ -1551,10 +1565,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
   let dumpEffectCache = async () => {
     try {
-      let cacheTableInfo: array<schemaCacheTableInfo> =
-        (await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))->Array.filter(i =>
-          i.count > 0
-        )
+      let cacheTableInfo = (await queryCacheTableInfo())->Array.filter(i => i.count > 0)
 
       if cacheTableInfo->Utils.Array.notEmpty {
         // Create .envio/cache directory if it doesn't exist

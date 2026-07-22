@@ -249,11 +249,10 @@ describe("Test PgStorage SQL generation functions", () => {
           ~isHasuraEnabled=true,
         )
 
-        // Should return exactly 2 queries: main DDL + functions
         t.expect(
           queries->Array.length,
-          ~message="Should return exactly 2 queries for main DDL and functions",
-        ).toBe(2)
+          ~message="Should return a single main DDL query",
+        ).toBe(1)
 
         let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
@@ -327,11 +326,10 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
           ~isHasuraEnabled=false,
         )
 
-        // Should return exactly 2 query (main DDL, and a function for cache)
         t.expect(
           queries->Array.length,
-          ~message="Should return single query when no entities have functions. And a function needed for cache.",
-        ).toBe(2)
+          ~message="Should return a single main DDL query",
+        ).toBe(1)
 
         let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
@@ -376,19 +374,6 @@ FROM "test_schema"."envio_chains";`
           mainQuery,
           ~message="Minimal configuration should match expected SQL exactly",
         ).toBe(expectedMainQuery)
-
-        t.expect(
-          queries->Array.get(1)->Option.getOrThrow,
-          ~message="A function for cache should be created",
-        ).toBe(`CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
-RETURNS integer AS $$
-DECLARE
-  result integer;
-BEGIN
-  EXECUTE format('SELECT COUNT(*) FROM "test_schema".%I', table_name) INTO result;
-  RETURN result;
-END;
-$$ LANGUAGE plpgsql;`)
       },
     )
 
@@ -408,11 +393,10 @@ $$ LANGUAGE plpgsql;`)
 
         t.expect(
           queries->Array.length,
-          ~message="Should return 2 queries for entity with history function",
-        ).toBe(2)
+          ~message="Should return a single main DDL query",
+        ).toBe(1)
 
         let mainQuery = queries->Array.get(0)->Option.getOrThrow
-        let functionsQuery = queries->Array.get(1)->Option.getOrThrow
 
         let expectedMainQuery = `DROP SCHEMA IF EXISTS "public" CASCADE;
 CREATE SCHEMA "public";
@@ -457,20 +441,6 @@ FROM "public"."envio_chains";`
         t.expect(mainQuery, ~message="Single entity SQL should match expected output exactly").toBe(
           expectedMainQuery,
         )
-
-        // Verify functions query contains the A history function
-        t.expect(
-          functionsQuery,
-          ~message="Should contain cache row count function definition",
-        ).toBe(`CREATE OR REPLACE FUNCTION get_cache_row_count(table_name text) 
-RETURNS integer AS $$
-DECLARE
-  result integer;
-BEGIN
-  EXECUTE format('SELECT COUNT(*) FROM "public".%I', table_name) INTO result;
-  RETURN result;
-END;
-$$ LANGUAGE plpgsql;`)
       },
     )
   })
