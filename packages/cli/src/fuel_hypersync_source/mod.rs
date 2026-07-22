@@ -10,7 +10,9 @@ mod types;
 
 use config::ClientConfig;
 use hyperfuel_client::net_types;
-use selection::{BuiltSelection, FuelEventKind, FuelOnEventRegistrationInput, SelectionBuilder};
+use selection::{
+    BuiltSelection, FuelEventKind, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder,
+};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
@@ -141,7 +143,12 @@ fn build_query(
     let to_block = params
         .to_block
         // Inclusive on the boundary, exclusive on the wire.
-        .map(|b| u64::try_from(b + 1).context("to_block must be >= 0"))
+        .map(|b| {
+            u64::try_from(b)
+                .context("to_block must be >= 0")?
+                .checked_add(1)
+                .context("to_block overflow")
+        })
         .transpose()?;
 
     let mut receipt_fields = vec![
@@ -229,7 +236,7 @@ fn route_receipts(
                 value.map(BigInt::from)
             };
             let item = match reg.kind {
-                FuelEventKind::LogData => EventItem {
+                RegistrationKind::LogData { .. } => EventItem {
                     on_event_registration_index: reg.index,
                     receipt_index: receipt.receipt_index,
                     tx_id: receipt.tx_id.clone(),
@@ -242,7 +249,7 @@ fn route_receipts(
                     asset_id: None,
                     to: None,
                 },
-                FuelEventKind::Mint | FuelEventKind::Burn => EventItem {
+                RegistrationKind::Mint | RegistrationKind::Burn => EventItem {
                     on_event_registration_index: reg.index,
                     receipt_index: receipt.receipt_index,
                     tx_id: receipt.tx_id.clone(),
@@ -255,7 +262,7 @@ fn route_receipts(
                     asset_id: None,
                     to: None,
                 },
-                FuelEventKind::Transfer | FuelEventKind::Call => {
+                RegistrationKind::Transfer | RegistrationKind::Call => {
                     // TransferOut receipts carry the wallet recipient in
                     // `to_address`; everything else uses `to`.
                     let (recipient, recipient_name) =

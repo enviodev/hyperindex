@@ -23,8 +23,9 @@ pub(crate) mod mod_helpers {
         (0..s.len())
             .step_by(2)
             .map(|i| {
-                u8::from_str_radix(&s[i..i + 2], 16)
-                    .map_err(|_| anyhow!("invalid hex byte at offset {i} in '{input}'"))
+                s.get(i..i + 2)
+                    .and_then(|byte| u8::from_str_radix(byte, 16).ok())
+                    .ok_or_else(|| anyhow!("invalid hex byte at offset {i} in '{input}'"))
             })
             .collect()
     }
@@ -285,7 +286,12 @@ impl SvmHyperSyncClient {
             // Inclusive on the boundary, exclusive on the wire.
             to_slot: params
                 .to_slot
-                .map(|b| u64::try_from(b + 1).context("to_slot must be non-negative"))
+                .map(|b| {
+                    u64::try_from(b)
+                        .context("to_slot must be non-negative")?
+                        .checked_add(1)
+                        .context("to_slot overflow")
+                })
                 .transpose()
                 .map_err(map_err)?,
             instructions: built.instruction_selections.clone(),

@@ -29,14 +29,28 @@ pub enum FuelEventKind {
     Call,
 }
 
-impl FuelEventKind {
+/// Internal per-registration kind. Unlike the `FuelEventKind` boundary enum,
+/// the `LogData` variant carries its parsed `rb`, so a LogData registration
+/// can't exist without one and no other kind can carry a stray rb — the
+/// invalid states the napi input's `kind`+`log_id` pair could express are
+/// resolved once, at construction.
+#[derive(Clone, Copy)]
+pub(crate) enum RegistrationKind {
+    LogData { rb: u64 },
+    Mint,
+    Burn,
+    Transfer,
+    Call,
+}
+
+impl RegistrationKind {
     fn receipt_types(&self) -> &'static [u8] {
         match self {
-            FuelEventKind::LogData => &[RECEIPT_LOG_DATA],
-            FuelEventKind::Mint => &[RECEIPT_MINT],
-            FuelEventKind::Burn => &[RECEIPT_BURN],
-            FuelEventKind::Transfer => &[RECEIPT_TRANSFER, RECEIPT_TRANSFER_OUT],
-            FuelEventKind::Call => &[RECEIPT_CALL],
+            RegistrationKind::LogData { .. } => &[RECEIPT_LOG_DATA],
+            RegistrationKind::Mint => &[RECEIPT_MINT],
+            RegistrationKind::Burn => &[RECEIPT_BURN],
+            RegistrationKind::Transfer => &[RECEIPT_TRANSFER, RECEIPT_TRANSFER_OUT],
+            RegistrationKind::Call => &[RECEIPT_CALL],
         }
     }
 }
@@ -62,9 +76,7 @@ pub(crate) struct Registration {
     pub index: i64,
     pub contract_name: String,
     pub is_wildcard: bool,
-    pub kind: FuelEventKind,
-    /// Parsed `log_id`; `Some` exactly for LogData registrations.
-    pub rb: Option<u64>,
+    pub kind: RegistrationKind,
 }
 
 impl Registration {
@@ -78,7 +90,9 @@ impl Registration {
         contract_name: Option<&str>,
     ) -> bool {
         let kind_matches = match self.kind {
-            FuelEventKind::LogData => receipt_type == RECEIPT_LOG_DATA && rb == self.rb,
+            RegistrationKind::LogData { rb: reg_rb } => {
+                receipt_type == RECEIPT_LOG_DATA && rb == Some(reg_rb)
+            }
             kind => kind.receipt_types().contains(&receipt_type),
         };
         kind_matches && (self.is_wildcard || contract_name == Some(self.contract_name.as_str()))
@@ -129,30 +143,32 @@ impl SelectionBuilder {
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for reg in registrations {
-            let rb = match reg.kind {
+            let kind = match reg.kind {
                 FuelEventKind::LogData => {
                     let log_id = reg.log_id.as_ref().with_context(|| {
                         format!("LogData registration {} is missing logId", reg.event_name)
                     })?;
-                    Some(log_id.parse::<u64>().with_context(|| {
+                    let rb = log_id.parse::<u64>().with_context(|| {
                         format!("parse logId {} for event {}", log_id, reg.event_name)
-                    })?)
+                    })?;
+                    RegistrationKind::LogData { rb }
                 }
                 FuelEventKind::Call => {
                     anyhow::ensure!(
                         reg.is_wildcard,
                         "Call receipt indexing currently supported only in wildcard mode"
                     );
-                    None
+                    RegistrationKind::Call
                 }
-                _ => None,
+                FuelEventKind::Mint => RegistrationKind::Mint,
+                FuelEventKind::Burn => RegistrationKind::Burn,
+                FuelEventKind::Transfer => RegistrationKind::Transfer,
             };
             let parsed = Registration {
                 index: reg.index,
                 contract_name: reg.contract_name.clone(),
                 is_wildcard: reg.is_wildcard,
-                kind: reg.kind,
-                rb,
+                kind,
             };
             anyhow::ensure!(
                 map.insert(reg.index, std::sync::Arc::new(parsed)).is_none(),
@@ -193,20 +209,18 @@ impl SelectionBuilder {
                 .with_context(|| format!("Unknown registration index {id} in query selection"))?;
             registrations.push(reg.clone());
             match reg.kind {
-                FuelEventKind::LogData => needs_log_data = true,
-                FuelEventKind::Mint | FuelEventKind::Burn => needs_supply = true,
-                FuelEventKind::Transfer => needs_transfer = true,
-                FuelEventKind::Call => needs_call = true,
+                RegistrationKind::LogData { .. } => needs_log_data = true,
+                RegistrationKind::Mint | RegistrationKind::Burn => needs_supply = true,
+                RegistrationKind::Transfer => needs_transfer = true,
+                RegistrationKind::Call => needs_call = true,
             }
             match (reg.kind, reg.is_wildcard) {
-                (FuelEventKind::LogData, true) => {
-                    push_unique(&mut wildcard_rbs, reg.rb.unwrap_or_default())
-                }
-                (FuelEventKind::LogData, false) => push_unique(
+                (RegistrationKind::LogData { rb }, true) => push_unique(&mut wildcard_rbs, rb),
+                (RegistrationKind::LogData { rb }, false) => push_unique(
                     rbs_by_contract
                         .entry(reg.contract_name.as_str())
                         .or_default(),
-                    reg.rb.unwrap_or_default(),
+                    rb,
                 ),
                 (kind, true) => {
                     for &receipt_type in kind.receipt_types() {
@@ -329,11 +343,14 @@ mod tests {
             .collect()
     }
 
-    fn selection_view(s: &net_types::ReceiptSelection) -> (Vec<String>, Vec<u8>, Vec<u64>) {
+    fn selection_view(
+        s: &net_types::ReceiptSelection,
+    ) -> (Vec<String>, Vec<u8>, Vec<u64>, Vec<u8>) {
         (
             s.root_contract_id.iter().map(Hex::encode_hex).collect(),
             s.receipt_type.clone(),
             s.rb.clone(),
+            s.tx_status.clone(),
         )
     }
 
@@ -370,14 +387,26 @@ mod tests {
                         RECEIPT_TRANSFER_OUT
                     ],
                     vec![],
+                    vec![TX_STATUS_SUCCESS],
                 ),
                 (
                     vec![ADDR_1.to_string(), ADDR_2.to_string()],
                     vec![RECEIPT_LOG_DATA],
                     vec![1],
+                    vec![TX_STATUS_SUCCESS],
                 ),
-                (vec![ADDR_3.to_string()], vec![RECEIPT_BURN], vec![]),
-                (vec![ADDR_3.to_string()], vec![RECEIPT_LOG_DATA], vec![3]),
+                (
+                    vec![ADDR_3.to_string()],
+                    vec![RECEIPT_BURN],
+                    vec![],
+                    vec![TX_STATUS_SUCCESS],
+                ),
+                (
+                    vec![ADDR_3.to_string()],
+                    vec![RECEIPT_LOG_DATA],
+                    vec![3],
+                    vec![TX_STATUS_SUCCESS],
+                ),
             ]
         );
         assert_eq!(
@@ -402,8 +431,13 @@ mod tests {
                 .map(selection_view)
                 .collect::<Vec<_>>(),
             vec![
-                (vec![], vec![RECEIPT_CALL], vec![]),
-                (vec![], vec![RECEIPT_LOG_DATA], vec![2, 3]),
+                (vec![], vec![RECEIPT_CALL], vec![], vec![TX_STATUS_SUCCESS]),
+                (
+                    vec![],
+                    vec![RECEIPT_LOG_DATA],
+                    vec![2, 3],
+                    vec![TX_STATUS_SUCCESS],
+                ),
             ]
         );
     }
@@ -433,7 +467,12 @@ mod tests {
                 .iter()
                 .map(selection_view)
                 .collect::<Vec<_>>(),
-            vec![(vec![ADDR_1.to_string()], vec![RECEIPT_BURN], vec![])]
+            vec![(
+                vec![ADDR_1.to_string()],
+                vec![RECEIPT_BURN],
+                vec![],
+                vec![TX_STATUS_SUCCESS]
+            )]
         );
     }
 
@@ -520,5 +559,26 @@ mod tests {
             .map(|reg| reg.index)
             .collect();
         assert_eq!(routed, vec![1]);
+    }
+
+    #[test]
+    fn every_selection_filters_to_successful_tx_status() {
+        // Only receipts from successful transactions are indexed, so every
+        // built selection — wildcard, contract-bound receipt types, and
+        // contract-bound rb — must carry `tx_status = [1]`.
+        let builder = SelectionBuilder::from_registrations(&[
+            reg(0, "C1", FuelEventKind::Mint, false, None),
+            reg(1, "C1", FuelEventKind::LogData, false, Some("1")),
+            reg(2, "W", FuelEventKind::Call, true, None),
+            reg(3, "W", FuelEventKind::LogData, true, Some("2")),
+        ])
+        .unwrap();
+        let built = builder
+            .build(&[0, 1, 2, 3], &addresses(&[("C1", &[ADDR_1])]))
+            .unwrap();
+        assert!(built
+            .receipt_selections
+            .iter()
+            .all(|s| s.tx_status == vec![TX_STATUS_SUCCESS]));
     }
 }
