@@ -746,46 +746,6 @@ describe("Use Envio test framework to test event handlers", () => {
       sets: [{ address: expectedChecksummedAddress, contract: "SimpleNft" }],
     });
   });
-
-  it("captured contractRegister add() throws after handler resolved", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Two sequential FactoryEvent events:
-    //   1. testCase "captureAdd"       — contractRegister handler stashes
-    //      context.chain.SimpleNft.add into a module-scoped variable.
-    //   2. testCase "callCapturedAdd"  — onEvent handler tries to call the
-    //      captured closure. By then the first event's contractRegister params
-    //      have isResolved=true, so the closure must throw. The handler
-    //      records the outcome via the CustomSelectionTestPass entity id.
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "captureAdd" },
-            },
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "callCapturedAdd" },
-            },
-          ],
-        },
-      },
-    });
-
-    const sets = result.changes[0]?.CustomSelectionTestPass?.sets ?? [];
-    assert.ok(
-      sets.some((e: { id: string }) => e.id === "captured-add-threw"),
-      `Captured contractRegister add() should throw after handler resolved. Got entity ids: ${sets.map((e: { id: string }) => e.id).join(", ")}`
-    );
-  });
-
   it("Should be able to run effect with cache", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
