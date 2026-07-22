@@ -231,10 +231,28 @@ let runWithShutdownSignals = %raw(`function(run, requestShutdown) {
   });
 }`)
 
+// True only when the parsed subcommand is `serve`. The subcommand is the
+// first positional arg; global value-taking flags (`-d`/`--directory`/
+// `--config`) consume the token after them, and other leading flags are
+// skipped — so an unrelated arg value that happens to equal "serve" (e.g.
+// `envio init --name serve`) does not trigger the serve-only shutdown wiring.
+let isServeCommand: array<string> => bool = %raw(`function(args) {
+  var valueFlags = { "-d": true, "--directory": true, "--config": true };
+  for (var i = 0; i < args.length; i++) {
+    var a = args[i];
+    if (a[0] === "-") {
+      if (a.indexOf("=") === -1 && valueFlags[a]) { i++; }
+      continue;
+    }
+    return a === "serve";
+  }
+  return false;
+}`)
+
 let runCli = args => {
   let addon = getAddon()
   let invoke = () => addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
-  if args->Array.some(arg => arg === "serve") {
+  if isServeCommand(args) {
     runWithShutdownSignals(invoke, () => addon.requestShutdown())
   } else {
     invoke()
