@@ -21,6 +21,7 @@ type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   parseConfigYaml: (string, parseConfigYamlOptions) => string,
+  generateIndexerTypes: (string, parseConfigYamlOptions) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("EvmHypersyncClient")
   evmHypersyncClient: evmHypersyncClientCtor,
@@ -209,12 +210,30 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 // A supplied schema is authoritative; omitted or blank schema text means an empty schema.
 let parseConfigYaml = (~schema=?, ~env=?, ~files=?, ~isRescript=false, yaml) => {
   let addon = getAddon()
-  addon.parseConfigYaml(yaml, {
-    ?schema,
-    ?env,
-    ?files,
-    isRescript,
-  })
+  addon.parseConfigYaml(
+    yaml,
+    {
+      ?schema,
+      ?env,
+      ?files,
+      isRescript,
+    },
+  )
+}
+
+// Generates the `.envio/types.d.ts` contents for an inline config, so callers
+// can type-check handlers against the config's generated `indexer` surface.
+let generateIndexerTypes = (~schema=?, ~env=?, ~files=?, yaml) => {
+  let addon = getAddon()
+  addon.generateIndexerTypes(
+    yaml,
+    {
+      ?schema,
+      ?env,
+      ?files,
+      isRescript: false,
+    },
+  )
 }
 
 let runCli = args => {

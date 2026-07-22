@@ -1,6 +1,6 @@
 use crate::{
     clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
-    project_paths::ParsedProjectPaths,
+    hbs_templating::codegen_templates::ProjectTemplate, project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
@@ -21,6 +21,21 @@ fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result
     system_config
         .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
+}
+
+fn parse_yaml_from_options(
+    yaml: &str,
+    options: ParseConfigYamlOptions,
+) -> anyhow::Result<SystemConfig> {
+    let env = options.env.unwrap_or_default();
+    let files = options.files.unwrap_or_default();
+    SystemConfig::parse_yaml(
+        yaml,
+        options.schema.as_deref(),
+        &env,
+        &files,
+        options.is_rescript.unwrap_or(false),
+    )
 }
 
 #[napi_derive::napi]
@@ -45,16 +60,23 @@ pub fn parse_config_yaml(
     yaml: String,
     options: Option<ParseConfigYamlOptions>,
 ) -> napi::Result<String> {
-    let options = options.unwrap_or_default();
-    let env = options.env.unwrap_or_default();
-    let files = options.files.unwrap_or_default();
-    serialize_config_result(SystemConfig::parse_yaml(
-        &yaml,
-        options.schema.as_deref(),
-        &env,
-        &files,
-        options.is_rescript.unwrap_or(false),
-    ))
+    serialize_config_result(parse_yaml_from_options(&yaml, options.unwrap_or_default()))
+}
+
+/// Generates the `.envio/types.d.ts` contents for an inline config, without
+/// touching the filesystem. Mirrors `parse_config_yaml`'s inputs; returns the
+/// same TypeScript the production codegen writes, so a caller can type-check
+/// handlers against a config's generated `indexer` surface.
+#[napi_derive::napi]
+pub fn generate_indexer_types(
+    yaml: String,
+    options: Option<ParseConfigYamlOptions>,
+) -> napi::Result<String> {
+    let config = parse_yaml_from_options(&yaml, options.unwrap_or_default())
+        .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+    let template = ProjectTemplate::from_config(&config)
+        .map_err(|e| napi::Error::from_reason(format!("Failed generating indexer types: {e:#}")))?;
+    Ok(template.indexer_types_dts().to_string())
 }
 
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
