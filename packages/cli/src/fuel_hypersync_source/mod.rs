@@ -10,9 +10,7 @@ mod types;
 
 use config::ClientConfig;
 use hyperfuel_client::net_types;
-use selection::{
-    BuiltSelection, FuelEventKind, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder,
-};
+use selection::{BuiltSelection, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
@@ -327,6 +325,7 @@ fn map_err(e: anyhow::Error) -> napi::Error {
 
 #[cfg(test)]
 mod tests {
+    use super::selection::FuelEventKind;
     use super::*;
 
     #[test]

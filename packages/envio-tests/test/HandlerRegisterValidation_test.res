@@ -4,7 +4,6 @@ open Vitest
 // guard `finishRegistration` runs so a single log/receipt/instruction can't fan
 // out to two events on one contract, or to two wildcards sharing a signature —
 // Rust-side routing dispatches by these ids, so a collision double-delivers.
-// Replaces the deleted EventRouter unit tests now that routing lives in Rust.
 
 describe("HandlerRegister.validateEventIdOrThrow", () => {
   let add = (validator, ~eventId, ~contractName, ~isWildcard) =>
