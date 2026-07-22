@@ -43,7 +43,13 @@ let addQueueWaitSeconds: (effectStats, ~seconds: float) => unit
 // persistence math) and the monotonic metric counter.
 let recordInvalidation: effectCacheInMemTable => unit
 let commitCacheCount: (effectCacheInMemTable, ~count: int) => unit
-// Seed the persisted-rows count from the db on restart.
-let setCacheCount: (t, ~effectName: string, ~scope: Internal.chainScope, ~count: int) => unit
+// Record the db cache-row count for an effect not yet created in memory this
+// session (loaded on restart). Consumed when the effect's table is created.
+let setUnregisteredCacheCount: (
+  t,
+  ~effectName: string,
+  ~scope: Internal.chainScope,
+  ~count: int,
+) => unit
 
 let toMetrics: t => array<Metrics.effectMetrics>
