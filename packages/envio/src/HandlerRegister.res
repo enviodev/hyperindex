@@ -262,18 +262,19 @@ let resolveChainRegistrations = (~config: Config.t, ~chainConfig: Config.chain):
 let isDroppedByWhere = (~config: Config.t, reg: Internal.onEventRegistration) =>
   config.ecosystem.name === Evm && (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
 
-// Resolve the intent against the first chain that defines its event and discard
-// the result, so a broken `where` (bad filter, unknown indexed param) throws at
-// the user's registration call site instead of being deferred to
-// `finishRegistration`. `config` may be a narrowed TestIndexer chain subset; if
-// no chain defines the event there's nothing to validate.
+// Resolve the intent against every chain that defines its event and discard the
+// results, so a broken `where` (bad filter, unknown indexed param) throws at the
+// user's registration call site instead of being deferred to
+// `finishRegistration` — even when only a later chain's resolution is invalid.
+// `config` may be a narrowed TestIndexer chain subset; if no chain defines the
+// event there's nothing to validate.
 let validateIntentWhere = (~config: Config.t, intent: pendingOnEventRegistration) => {
   let isWildcard = intent.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = intent.eventOptions->Option.flatMap(v => v.where)
   config.chainMap
   ->ChainMap.values
-  ->Array.some(chainConfig =>
-    chainConfig.contracts->Array.some(contract =>
+  ->Array.forEach(chainConfig =>
+    chainConfig.contracts->Array.forEach(contract =>
       if contract.name === intent.contractName {
         switch contract.events->Array.find(e => e.name === intent.eventName) {
         | Some(eventConfig) =>
@@ -287,15 +288,11 @@ let validateIntentWhere = (~config: Config.t, intent: pendingOnEventRegistration
             ~where,
             ~startBlock=?contract.startBlock,
           )
-          true
-        | None => false
+        | None => ()
         }
-      } else {
-        false
       }
     )
   )
-  ->ignore
 }
 
 let addIntent = (registration: activeRegistration, intent: pendingOnEventRegistration) => {
