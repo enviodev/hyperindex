@@ -1919,11 +1919,43 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
-        // TODO: Validatate that all event names are unique
         validate_names_valid_rescript(
             &events.iter().map(|e| e.name.clone()).collect(),
             "event".to_string(),
         )?;
+
+        // Two event definitions on one contract that share a dispatch key are
+        // indistinguishable at routing time — one log/instruction would decode
+        // to both — so reject them here. The key mirrors the runtime `eventId`:
+        // sighash plus indexed-topic count for EVM, the discriminator for SVM
+        // (already program-scoped, since these are one program's instructions).
+        let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
+        for event in &events {
+            let dispatch_key = match &event.kind {
+                EventKind::Params(params) => {
+                    let indexed_count = params.iter().filter(|p| p.indexed).count();
+                    Some(format!("{}_{}", event.sighash, indexed_count))
+                }
+                EventKind::Svm(svm) => Some(
+                    svm.discriminator
+                        .clone()
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
+                EventKind::Fuel(_) => None,
+            };
+            if let Some(dispatch_key) = dispatch_key {
+                if let Some(existing) =
+                    seen_by_dispatch_key.insert(dispatch_key, event.name.clone())
+                {
+                    return Err(anyhow!(
+                        "Duplicate event detected on contract {name}: {existing} and {} share the \
+                         same signature, so they can't be told apart while indexing. Remove the \
+                         duplicate event.",
+                        event.name,
+                    ));
+                }
+            }
+        }
 
         Ok(Self {
             name,
@@ -2709,6 +2741,66 @@ mod test {
             filesystem.to_public_config_json(false).unwrap(),
             memory.to_public_config_json(false).unwrap(),
         );
+    }
+
+    #[test]
+    fn rejects_duplicate_event_on_same_contract() {
+        // Two events with the same signature on one contract are
+        // indistinguishable at routing time; parsing must reject them.
+        let yaml = r#"
+name: dup-event-test
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+"#;
+        let err = SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
+            .err()
+            .expect("expected a duplicate-event error");
+        assert!(
+            format!("{err:#}").contains("Duplicate event detected on contract ERC20"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn allows_distinct_events_and_shared_signature_across_contracts() {
+        // Distinct signatures on one contract are fine, and the same signature
+        // on two different contracts is allowed (routing scopes by contract).
+        let yaml = r#"
+name: ok-events-test
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Approval(address indexed owner, address indexed spender, uint256 value)
+  - name: ERC721
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+      - name: ERC721
+        address: "0x2222222222222222222222222222222222222222"
+"#;
+        SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
+            .expect("config with distinct/cross-contract events should parse");
     }
 
     #[test]
