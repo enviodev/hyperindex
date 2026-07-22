@@ -821,8 +821,8 @@ fn validate_clickhouse_order_by_fields(
         if field_name == "id" {
             return Err(anyhow!(
                 "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` must not \
-                 list `id`: it's the default sorting key, and a custom `orderBy` replaces that \
-                 prefix while `envio_checkpoint_id` stays appended. List only the other fields."
+                 list `id`: it's already the default sorting key. List only the additional \
+                 fields to sort by."
             ));
         }
         let field = fields
@@ -2814,33 +2814,8 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
     }
 
     // --- @storage(clickhouse: {...}) table options ---
-
-    #[test]
-    fn storage_directive_clickhouse_table_options() {
-        let schema_str = r#"
-type TestEntity @storage(clickhouse: {
-  partitionBy: "toYYYYMM(timestamp)",
-  orderBy: ["timestamp", "blockNumber"],
-  ttl: "timestamp + INTERVAL 2 YEAR"
-}) {
-  id: ID!
-  timestamp: Timestamp!
-  blockNumber: Int!
-}
-        "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
-        assert_eq!(
-            (entity.postgres, entity.clickhouse),
-            (
-                None,
-                Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
-                    partition_by: Some("toYYYYMM(timestamp)".to_string()),
-                    order_by: Some(vec!["timestamp".to_string(), "blockNumber".to_string()]),
-                    ttl: Some("timestamp + INTERVAL 2 YEAR".to_string()),
-                }))
-            )
-        );
-    }
+    // The full partitionBy/orderBy/ttl options object is exercised end-to-end
+    // (YAML + schema -> parser -> Config.res -> DDL) in `ClickHouse_test.res`.
 
     #[test]
     fn storage_directive_clickhouse_options_are_each_optional() {

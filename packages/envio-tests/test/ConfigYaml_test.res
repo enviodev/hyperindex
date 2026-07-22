@@ -1368,7 +1368,7 @@ type Token @storage(clickhouse: {indexGranularity: 1024}) {
   id: ID!
 }
 `,
-      "Unknown \`clickhouse\` option \`indexGranularity\`",
+      `Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl}, e.g. clickhouse: {partitionBy: "toYYYYMM(timestamp)", orderBy: ["timestamp"], ttl: "timestamp + INTERVAL 2 YEAR"}.`,
     ),
     (
       "rejects clickhouse orderBy referencing missing fields",
@@ -1377,7 +1377,7 @@ type Token @storage(clickhouse: {orderBy: ["missing"]}) {
   id: ID!
 }
 `,
-      "\`clickhouse.orderBy\` references field \`missing\` which doesn't exist",
+      `Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` references field \`missing\` which doesn't exist on the entity. Use the field names as written in the schema.`,
     ),
     (
       "rejects clickhouse orderBy listing id",
@@ -1386,7 +1386,7 @@ type Token @storage(clickhouse: {orderBy: ["id"]}) {
   id: ID!
 }
 `,
-      "\`clickhouse.orderBy\` must not list \`id\`",
+      `Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` must not list \`id\`: it's already the default sorting key. List only the additional fields to sort by.`,
     ),
     (
       "rejects clickhouse orderBy on BigInt fields",
@@ -1396,7 +1396,7 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
   amount: BigInt!
 }
 `,
-      "field \`amount\` is a BigInt/BigDecimal",
+      `Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` field \`amount\` is a BigInt/BigDecimal, which ClickHouse can store as a String (lexicographic, not numeric ordering). Sorting by it isn't supported yet.`,
     ),
     (
       "rejects empty storage directives",
