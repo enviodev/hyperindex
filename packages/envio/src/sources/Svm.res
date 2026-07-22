@@ -16,6 +16,17 @@ let transactionFields =
 // Computed per event at config build and cached on the event config.
 let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
+// Ordered block field names. The index of each is the field code shared with the
+// Rust store (`SvmBlockField`) — keep this order in sync.
+let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
+
+// `slot`/`time`/`hash` are always included; every other block field is opt-in
+// via `field_selection.block_fields`. All are materialised from the store.
+//
+// One instruction's selected block fields → store selection bitmask. Computed per
+// event at config build and cached on the event config.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
   blockNumberName: "height",
@@ -84,14 +95,7 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
       let timerRef = Performance.now()
       let height = await GetFinalizedSlot.route->Rest.fetch((), ~client)
       let seconds = timerRef->Performance.secondsSince
-      Prometheus.SourceRequestCount.increment(~sourceName=name, ~chainId, ~method="getSlot")
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId,
-        ~method="getSlot",
-        ~seconds,
-      )
-      height
+      {Source.height, requestStats: [{Source.method: "getSlot", seconds}]}
     },
     getItemsOrThrow: (
       ~fromBlock as _,

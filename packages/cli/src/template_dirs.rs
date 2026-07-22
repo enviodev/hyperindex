@@ -409,6 +409,7 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "envio-cloud-cli",
                 "envio-docs",
                 "indexer-blocks",
                 "indexer-configuration",
@@ -416,6 +417,7 @@ mod test {
                 "indexer-factory",
                 "indexer-filters",
                 "indexer-handlers",
+                "indexer-local-parallel",
                 "indexer-multichain",
                 "indexer-performance",
                 "indexer-schema",

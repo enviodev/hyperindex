@@ -48,6 +48,13 @@ export type EffectCaller = <I, O>(
   input: I extends undefined ? undefined : I
 ) => Promise<O>;
 
+/** The chain an Effect was called on. Available only on chain-scoped effects
+ * (`crossChain: false`). */
+export type EffectChain = {
+  /** The chain id the effect handler was called on. */
+  readonly id: number;
+};
+
 /** Context passed to an Effect's handler function. */
 export type EffectContext = {
   /** Access the logger instance with the event as context. */
@@ -57,6 +64,9 @@ export type EffectContext = {
   /** Whether to cache this call's result. Defaults to the effect's `cache`
    * option; set to `false` to skip caching for this specific invocation. */
   cache: boolean;
+  /** The chain the effect was called on. Only available on effects created with
+   * `crossChain: false`; accessing it on a cross-chain effect throws. */
+  readonly chain: EffectChain;
 };
 
 /** Rate-limit window for an {@link Effect}. Strings resolve to common
@@ -82,6 +92,11 @@ export type EffectOptions<Input, Output> = {
   readonly rateLimit: RateLimit;
   /** Whether the effect should be cached. */
   readonly cache?: boolean;
+  /** Whether the effect's cache is shared across all chains. Defaults to
+   * `true`. Set to `false` to isolate the cache and rate limiting per chain and
+   * enable `context.chain.id` inside the handler. Changing this changes the
+   * effect's cache identity. */
+  readonly crossChain?: boolean;
 };
 
 /** Arguments passed to the handler function of an {@link Effect}. */
@@ -209,6 +224,10 @@ export function createEffect<
     readonly rateLimit: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
+    /** Whether the effect's cache is shared across all chains. Defaults to
+     * `true`. Set to `false` to isolate the cache and rate limiting per chain
+     * and enable `context.chain.id` inside the handler. */
+    readonly crossChain?: boolean;
   },
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;
@@ -979,13 +998,24 @@ export type SvmInstructionParams = {
   readonly extraAccounts: readonly string[];
 };
 
-/** Block context for a matched instruction. */
+/** Permissive fallback shape for an instruction's `block`. The generated
+ * per-instruction type narrows this to `slot`/`hash` (always present) and
+ * `time` (always present but possibly `undefined`), plus the selected
+ * `field_selection.block_fields`. */
 export type SvmInstructionBlock = {
   /** Slot this instruction's block was matched in. */
   readonly slot: number;
-  readonly time: number;
-  /** Always empty for now — reserved for the future reorg-guard route. */
+  /** Unix block time (seconds). Absent when HyperSync/Solana doesn't report a
+   * block time for this slot. */
+  readonly time?: number;
+  /** Block hash. */
   readonly hash: string;
+  /** Block height. Select via `field_selection.block_fields`. */
+  readonly height?: number;
+  /** Parent slot. Select via `field_selection.block_fields`. */
+  readonly parentSlot?: number;
+  /** Parent block hash. Select via `field_selection.block_fields`. */
+  readonly parentHash?: string;
 };
 
 export type SvmTokenBalance = {
@@ -1016,6 +1046,7 @@ export type SvmLog = {
 export type SvmInstruction<
   Params extends SvmInstructionParams = SvmInstructionParams,
   Tx = SvmTransaction,
+  Block = SvmInstructionBlock,
 > = {
   /** Program name as declared under `programs[].name` in `config.yaml`. */
   readonly programName: string;
@@ -1041,7 +1072,12 @@ export type SvmInstruction<
   /** Present when the instruction's `include_logs` is `true`; only logs
    * scoped to this exact instruction (matching `instruction_address`). */
   readonly logs?: readonly SvmLog[];
-  readonly block: SvmInstructionBlock;
+  /** The block this instruction's slot belongs to. Carries `slot`/`hash`
+   * (always present) and `time` (always present but possibly `undefined`),
+   * plus the fields selected via this instruction's
+   * `field_selection.block_fields`; unselected fields are typed as
+   * `FieldNotSelected<...>`. */
+  readonly block: Block;
 };
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
@@ -1315,7 +1351,8 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                       Config,
                       SvmInstruction<
                         SvmParamsFromProgramTable<Programs[P][I]>,
-                        Programs[P][I]["transaction"]
+                        Programs[P][I]["transaction"],
+                        Programs[P][I]["block"]
                       >
                     >,
                   ) => Promise<void>,

@@ -79,6 +79,10 @@ type t = {
   enableRawEvents: bool,
   maxAddrInPartition: int,
   batchSize: int,
+  // Slack (in blocks) below the lagged head within which a chain still counts as
+  // ready to enter the reorg threshold, absorbing head advances between catch-up
+  // and the entry check. Overridable in tests.
+  reorgThresholdReadyTolerance: int,
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
@@ -198,15 +202,20 @@ let svmEventDescriptorSchema = S.schema(s =>
     "discriminator": s.matches(S.option(S.string)),
     "discriminatorByteLen": s.matches(S.int),
     "transactionFields": s.matches(S.array(Internal.svmTransactionFieldSchema)),
+    "blockFields": s.matches(S.option(S.array(Internal.svmBlockFieldSchema))),
     "includeLogs": s.matches(S.bool),
+    // An array of AND-groups OR-ed together: the CLI normalizes both the flat
+    // and `any_of` YAML shapes to `Vec<Vec<SvmAccountFilterJson>>`.
     "accountFilters": s.matches(
       S.option(
         S.array(
-          S.schema(s =>
-            {
-              "position": s.matches(S.int),
-              "values": s.matches(S.array(S.string)),
-            }
+          S.array(
+            S.schema(s =>
+              {
+                "position": s.matches(S.int),
+                "values": s.matches(S.array(S.string)),
+              }
+            ),
           ),
         ),
       ),
@@ -701,6 +710,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                   "discriminator": option<string>,
                   "discriminatorByteLen": int,
                   "transactionFields": array<Internal.svmTransactionField>,
+                  "blockFields": option<array<Internal.svmBlockField>>,
                   "includeLogs": bool,
                   "accountFilters": option<
                     array<array<{"position": int, "values": array<string>}>>,
@@ -736,6 +746,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~discriminator=svm["discriminator"],
             ~discriminatorByteLen=svm["discriminatorByteLen"],
             ~transactionFields=svm["transactionFields"],
+            ~blockFields=?svm["blockFields"],
             ~includeLogs=svm["includeLogs"],
             ~accountFilters,
             ~isInner=svm["isInner"],
@@ -990,6 +1001,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ecosystem,
     maxAddrInPartition,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
+    reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,

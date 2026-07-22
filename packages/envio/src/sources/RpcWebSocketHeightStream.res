@@ -108,11 +108,6 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
           | NewHead(blockNumber) =>
             errorCount := 0
             resetStaleTimeout()
-            Prometheus.SourceRequestCount.increment(
-              ~sourceName="WebSocket",
-              ~chainId,
-              ~method="eth_subscribe",
-            )
             onHeight(blockNumber)
           | SubscriptionConfirmed(_) => resetStaleTimeout()
           | ErrorResponse =>

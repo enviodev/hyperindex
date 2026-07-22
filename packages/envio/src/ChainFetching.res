@@ -11,12 +11,18 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
-  ~page: option<TransactionStore.t>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => {
-  // contractRegister handlers can read event.transaction, so materialise the
-  // selected fields onto the payloads before running them. All items belong to
-  // the chain being fetched, hence its single page store and mask.
-  await ChainState.materializePageItems(~items=itemsWithContractRegister, ~page)
+  // contractRegister handlers can read event.transaction and event.block, so
+  // materialise the selected fields onto the payloads before running them. All
+  // items belong to the chain being fetched, hence its single page stores.
+  await ChainState.materializePageItems(
+    ~items=itemsWithContractRegister,
+    ~transactionStore,
+    ~blockStore,
+    ~ecosystem=config.ecosystem.name,
+  )
 
   let itemsWithDcs = []
 
@@ -43,9 +49,9 @@ let runContractRegistersOrThrow = async (
   for idx in 0 to itemsWithContractRegister->Array.length - 1 {
     let item = itemsWithContractRegister->Array.getUnsafe(idx)
     let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem {
-    | {onEventRegistration: {contractRegister: Some(contractRegister)}} => contractRegister
-    | {onEventRegistration: {contractRegister: None, eventConfig: {name: eventName}}} =>
+    let contractRegister = switch eventItem.onEventRegistration {
+    | {contractRegister: Some(contractRegister)} => contractRegister
+    | {contractRegister: None, eventConfig: {name: eventName}} =>
       // Unexpected case, since we should pass only events with contract register to this function
       JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
@@ -113,6 +119,7 @@ let rec onQueryResponse = async (
     let {
       parsedQueueItems,
       transactionStore,
+      blockStore,
       latestFetchedBlockNumber,
       latestFetchedBlockTimestamp,
       stats,
@@ -121,19 +128,7 @@ let rec onQueryResponse = async (
       fromBlockQueried,
     } = response
 
-    if knownHeight > chainState->ChainState.knownHeight {
-      Prometheus.SourceHeight.set(
-        ~blockNumber=knownHeight,
-        ~chainId=(chainState->ChainState.chainConfig).id,
-        // The knownHeight from response won't necessarily
-        // belong to the currently active source.
-        // But for simplicity, assume it does.
-        ~sourceName=(chainState->ChainState.sourceManager->SourceManager.getActiveSource).name,
-      )
-    }
-
-    Prometheus.FetchingBlockRange.increment(
-      ~chainId=chain->ChainMap.Chain.toChainId,
+    chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
       ~numEvents=parsedQueueItems->Array.length,
@@ -144,15 +139,26 @@ let rec onQueryResponse = async (
       let eventItem = item->Internal.castUnsafeEventItem
       eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
     })
-    Logging.trace({
-      "msg": "Finished querying",
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "partitionId": query.partitionId,
-      "fromBlock": fromBlockQueried,
-      "toBlock": latestFetchedBlockNumber,
-      "numEvents": parsedQueueItems->Array.length,
-      "numContractRegisterEvents": numContractRegisterEvents,
-    })
+    if numContractRegisterEvents === 0 {
+      Logging.trace({
+        "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "partitionId": query.partitionId,
+        "fromBlock": fromBlockQueried,
+        "toBlock": latestFetchedBlockNumber,
+        "numEvents": parsedQueueItems->Array.length,
+      })
+    } else {
+      Logging.trace({
+        "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "partitionId": query.partitionId,
+        "fromBlock": fromBlockQueried,
+        "toBlock": latestFetchedBlockNumber,
+        "numEvents": parsedQueueItems->Array.length,
+        "numContractRegisterEvents": numContractRegisterEvents,
+      })
+    }
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
 
@@ -165,10 +171,8 @@ let rec onQueryResponse = async (
             ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
           ),
         )
-        Prometheus.ReorgCount.increment(~chain)
-        Prometheus.ReorgDetectionBlockNumber.set(
+        chainState->ChainState.recordReorgDetected(
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
-          ~chain,
         )
         if (state->IndexerState.config).shouldRollbackOnReorg {
           Some(reorgDetected.scannedBlock.blockNumber)
@@ -205,17 +209,18 @@ let rec onQueryResponse = async (
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
+      // Drop over-fetched events (a merged partition returning an address before
+      // its effectiveStartBlock, or a wildcard param referencing an address
+      // registered after the log's block) before contract registration, so they
+      // neither spawn dynamic contracts nor enter the buffer.
+      let newItems = chainState->ChainState.filterByClientAddress(parsedQueueItems)
       let itemsWithContractRegister = []
-      let newItems = []
-      for idx in 0 to parsedQueueItems->Array.length - 1 {
-        let item = parsedQueueItems->Array.getUnsafe(idx)
+      for idx in 0 to newItems->Array.length - 1 {
+        let item = newItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
         if eventItem.onEventRegistration.contractRegister !== None {
           itemsWithContractRegister->Array.push(item)
         }
-        // TODO: Don't really need to keep it in the queue
-        // when there's no handler (besides raw_events, processed counter, and dcsToStore consuming)
-        newItems->Array.push(item)
       }
 
       // Re-check staleness: contract registration is async, so the chain state
@@ -234,6 +239,7 @@ let rec onQueryResponse = async (
             },
             ~query,
             ~transactionStore,
+            ~blockStore,
           )
           ChainMetadata.stage(state)
           scheduleFetch()
@@ -246,7 +252,8 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
-          ~page=transactionStore,
+          ~transactionStore,
+          ~blockStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newItemsWithDcs => proceed(~newItemsWithDcs)
@@ -264,6 +271,7 @@ and applyQueryResponse = (
   ~latestFetchedBlock,
   ~query,
   ~transactionStore,
+  ~blockStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chain)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
@@ -275,6 +283,7 @@ and applyQueryResponse = (
     ~newItemsWithDcs,
     ~knownHeight,
     ~transactionStore,
+    ~blockStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
@@ -310,22 +319,8 @@ let finishWaitingForNewBlock = (
     let chainState = state->IndexerState.getChainState(~chain)
     chainState->ChainState.updateKnownHeight(~knownHeight)
 
-    let isBelowReorgThreshold =
-      !(state->IndexerState.isInReorgThreshold) &&
-      (state->IndexerState.config).shouldRollbackOnReorg
-    let shouldEnterReorgThreshold =
-      isBelowReorgThreshold &&
-      state
-      ->IndexerState.chainStates
-      ->Dict.valuesToArray
-      ->Array.every(cs => {
-        cs->ChainState.isReadyToEnterReorgThreshold
-      })
-
-    // Kick processing in case there are block handlers to run.
-    if shouldEnterReorgThreshold {
-      IndexerState.enterReorgThreshold(state)
-    }
+    // No reorg-threshold check here: scheduleProcessing always runs at least one
+    // processNextBatch (even with no items), which owns the entry decision.
     scheduleFetch()
     scheduleProcessing()
   }

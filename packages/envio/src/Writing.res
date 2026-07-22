@@ -16,8 +16,8 @@ let getChangesCount = (state: IndexerState.t) => {
     total := total.contents +. (state->InMemoryStore.getInMemTable(~entityConfig)).changesCount
   })
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable => {
+  ->IndexerState.effectState
+  ->EffectState.forEach(inMemTable => {
     total := total.contents +. inMemTable.changesCount
   })
   state
@@ -38,9 +38,9 @@ let waitForCommit = (state: IndexerState.t): promise<unit> =>
 let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updatedEffectCache> => {
   let acc = []
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable => {
-    let {idsToStore, dict, effect, invalidationsCount} = inMemTable
+  ->IndexerState.effectState
+  ->EffectState.forEach(inMemTable => {
+    let {idsToStore, dict, effect, invalidationsCount, scope, table} = inMemTable
     switch idsToStore {
     | [] => ()
     | ids =>
@@ -51,17 +51,29 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
         }
       )
       let effectName = effect.name
-      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
+      let tableName = table.tableName
+      let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(tableName) {
       | Some(c) => c
       | None =>
-        let c: Persistence.effectCacheRecord = {effectName, count: 0}
-        cache->Dict.set(effectName, c)
+        let c: Persistence.effectCacheRecord = {effectName, scope, tableName, count: 0}
+        cache->Dict.set(tableName, c)
         c
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-      acc->Array.push(({effect, items, shouldInitialize}: Persistence.updatedEffectCache))->ignore
+      inMemTable->EffectState.commitCacheCount(~count=effectCacheRecord.count)
+      acc
+      ->Array.push(
+        (
+          {
+            table,
+            itemSchema: effect.storageMeta.itemSchema,
+            items,
+            shouldInitialize,
+          }: Persistence.updatedEffectCache
+        ),
+      )
+      ->ignore
     }
     inMemTable.idsToStore = []
     inMemTable.invalidationsCount = 0
@@ -113,16 +125,37 @@ let runOneWrite = async (state: IndexerState.t) => {
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
 
-    await persistence.storage.writeBatch(
-      ~batch,
-      ~rollback,
-      ~isInReorgThreshold=batch.isInReorgThreshold,
-      ~config,
-      ~allEntities=persistence.allEntities,
-      ~updatedEntities,
-      ~updatedEffectsCache,
-      ~chainMetaData,
+    let writtenEntityNames = Utils.Set.make()
+    updatedEntities->Array.forEach(({entityConfig}) =>
+      writtenEntityNames->Utils.Set.add(entityConfig.name)->ignore
     )
+    let pruneTargets = PruneStaleHistory.select(
+      state,
+      ~writtenEntityNames,
+      ~isRollback=rollback->Option.isSome,
+    )
+
+    // The prune runs concurrently with the batch write, but only for entities
+    // absent from it, so they never touch the same history table. Both must be
+    // awaited before the next write starts, otherwise a still-running prune
+    // could overlap the next batch's history writes and lose an anchor (which
+    // breaks a later rollback). Rollback writes touch every history table, so
+    // they get no concurrent prune at all.
+    let _ = await Promise.all2((
+      persistence.storage.writeBatch(
+        ~batch,
+        ~rollback,
+        ~isInReorgThreshold=batch.isInReorgThreshold,
+        ~config,
+        ~allEntities=persistence.allEntities,
+        ~updatedEntities,
+        ~updatedEffectsCache,
+        ~chainMetaData,
+        ~onWrite=(~storage, ~timeSeconds) =>
+          state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+      ),
+      PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
+    ))
 
     state->IndexerState.markCommitted(~upToCheckpointId)
 
@@ -131,6 +164,10 @@ let runOneWrite = async (state: IndexerState.t) => {
       await RollbackCommit.fire(~progressBlockNumberByChainId)
     | _ => ()
     }
+
+    // Entities starved of the concurrent prune (eg written in every batch) are
+    // pruned here with no other pg writer running.
+    await PruneStaleHistory.runForced(state, ~targets=pruneTargets)
   }
 }
 
@@ -192,8 +229,8 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
     ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state
-  ->IndexerState.effects
-  ->Utils.Dict.forEach(inMemTable =>
+  ->IndexerState.effectState
+  ->EffectState.forEach(inMemTable =>
     inMemTable->InMemoryStore.dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
   )
 }

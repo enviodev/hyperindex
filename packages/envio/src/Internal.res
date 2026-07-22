@@ -166,6 +166,19 @@ let allSvmTransactionFields: array<svmTransactionField> = [
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
+// All SVM block fields. `slot`/`time`/`hash` are always included; the rest are
+// selectable via `field_selection.block_fields` (see `allSvmBlockFields`).
+type svmBlockField =
+  | @as("slot") Slot
+  | @as("time") Time
+  | @as("hash") Hash
+  | @as("height") Height
+  | @as("parentSlot") ParentSlot
+  | @as("parentHash") ParentHash
+
+let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
+let svmBlockFieldSchema = S.enum(allSvmBlockFields)
+
 // Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
@@ -295,8 +308,8 @@ type genericEvent<'params, 'block, 'transaction> = {
   block: 'block,
 }
 
-// Opaque internally — block-level values needed by the runtime
-// (blockNumber, timestamp, blockHash) live on the item instead.
+// Opaque internally — the block number needed by the runtime lives on the
+// item instead.
 type event
 
 // Opaque payload an item carries. A source builds an ecosystem-specific
@@ -311,6 +324,14 @@ type eventPayload
 // store-backed ecosystems (HyperSync) and present inline otherwise.
 @get external getPayloadTransaction: eventPayload => Nullable.t<eventTransaction> = "transaction"
 @set external setPayloadTransaction: (eventPayload, eventTransaction) => unit = "transaction"
+
+// Generic access to the payload's `block`: written/enriched at batch prep for
+// store-backed ecosystems (EVM/SVM HyperSync) and present inline otherwise.
+@get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
+@set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
+
+// The log's emitting address (EVM/Fuel; the program id carries it for SVM).
+@get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -411,6 +432,12 @@ type eventConfig = private {
   // so each transaction decodes only the fields its event selected. `0.` when
   // nothing is selected or the ecosystem carries the transaction inline (Fuel).
   transactionFieldMask: float,
+  // Selected block fields precompiled to the block-store selection bitmask (bit
+  // per ecosystem field code). `0.` for ecosystems that carry the block fully
+  // inline (RPC/Fuel). The EVM selection always includes number/timestamp/hash,
+  // so an EVM mask always has their bits set; SVM stamps slot/time/hash inline
+  // from the response and its mask is the user's selection alone.
+  blockFieldMask: float,
 }
 
 type fuelEventKind =
@@ -435,14 +462,33 @@ type topicSelection = {
   topic3: array<EvmTypes.Hex.t>,
 }
 
+// A single topic position of a resolved `where`: either static pre-encoded
+// values, or a marker for "the currently registered addresses of this
+// contract", expanded to topic values when a source query is built.
+type topicFilter =
+  | Values(array<EvmTypes.Hex.t>)
+  | ContractAddresses({contractName: string})
+
+type resolvedTopicSelection = {
+  topic0: array<EvmTypes.Hex.t>,
+  topic1: topicFilter,
+  topic2: topicFilter,
+  topic3: topicFilter,
+}
+
+// The registered `where` fully resolved at registration time for one chain.
+// `topicSelections` is in disjunctive normal form (outer array is OR);
+// an empty array means the `where` returned `false` for this chain.
+type resolvedWhere = {
+  topicSelections: array<resolvedTopicSelection>,
+  startBlock: option<int>,
+}
+
 // Per-event, per-invocation arguments passed to a `where` callback. The
 // concrete `chain` shape (which contract key it exposes) is generated per
 // event in user-project codegen — here it's an open record so codegen'd
 // types subtype-coerce into it cleanly.
 type onEventWhereArgs<'chain> = {chain: 'chain}
-
-type eventFilters =
-  Static(array<topicSelection>) | Dynamic(array<Address.t> => array<topicSelection>)
 
 type evmEventConfig = {
   ...eventConfig,
@@ -474,6 +520,10 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
+  /** Block fields selected via `field_selection.block_fields` (`slot` is always
+   included and excluded from this set). Drives the block query columns;
+   precompiled to `blockFieldMask` for store materialisation. */
+  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
@@ -508,6 +558,11 @@ type svmInstructionEventConfig = {
 // must stay directly constructable), and the evm→base cast in sources is sound
 // by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
+  // Chain-scoped sequential index — the registration's position in the
+  // chain's onEventRegistrations array, assigned when registration finishes
+  // (-1 until then). Native-routed items reference their registration by this
+  // index across the napi boundary; sources resolve it before creating an item.
+  index: int,
   eventConfig: eventConfig,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
@@ -529,7 +584,7 @@ type onEventRegistration = {
 
 type evmOnEventRegistration = {
   ...onEventRegistration,
-  getEventFiltersOrThrow: ChainMap.Chain.t => eventFilters,
+  resolvedWhere: resolvedWhere,
 }
 
 // Fuel and SVM registrations add no ecosystem-specific fetch state (their
@@ -554,15 +609,14 @@ type indexingAddress = {
 
 type dcs = array<indexingAddress>
 
-// Duplicate the type from item
-// to make item properly unboxed
+// Duplicate the type from item to keep item properly unboxed. Runtime event
+// items carry the registration their source already resolved from the
+// ChainState-owned registration array.
 type eventItem = private {
   kind: [#0],
   onEventRegistration: onEventRegistration,
-  timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
-  blockHash: string,
   logIndex: int,
   // Within-block transaction index — the key into the per-chain transaction
   // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
@@ -614,10 +668,8 @@ type item =
   | @as(0)
   Event({
       onEventRegistration: onEventRegistration,
-      timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
-      blockHash: string,
       logIndex: int,
       transactionIndex: int,
       payload: eventPayload,
@@ -700,33 +752,108 @@ type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheStorageMeta = {
   itemSchema: S.t<effectCacheItem>,
   outputSchema: S.t<effectOutput>,
-  table: Table.table,
 }
-type rateLimitState = {
+type rateLimitOptions = {
   callsPerDuration: int,
   durationMs: int,
-  mutable availableCalls: int,
-  mutable windowStartTime: float,
-  mutable queueCount: int,
-  mutable nextWindowPromise: option<promise<unit>>,
 }
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,
+  // When true (the default) a single cache is shared across every chain and the
+  // handler must not read context.chain. When false the cache is isolated per
+  // chain and context.chain.id is available.
+  crossChain: bool,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
-  // The number of functions that are currently running.
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
-  rateLimit: option<rateLimitState>,
+  rateLimit: option<rateLimitOptions>,
 }
+
+// Whether some piece of data (currently an effect cache; entities in a future
+// version) is shared across every chain or isolated to a single chain. Unboxed:
+// `CrossChain` is the string "crossChain" and `Chain(id)` is the raw chain id,
+// discriminated by runtime type.
+@unboxed
+type chainScope =
+  | @as("crossChain") CrossChain
+  | Chain(int)
+
 let cacheTablePrefix = "envio_effect_"
+
+// The single reversible mapping between an effect's (name, scope) and its
+// canonical Postgres cache-table name and .envio/cache file path. Everything
+// that needs a cache address goes through here instead of slicing prefixes.
+//   CrossChain  ->  envio_effect_<name>        <name>.tsv
+//   Chain(1)    ->  envio_1_effect_<name>      1/<name>.tsv
+//   Chain(137)  ->  envio_137_effect_<name>    137/<name>.tsv
+module EffectCache = {
+  let toTableName = (~effectName, ~scope) =>
+    switch scope {
+    | CrossChain => cacheTablePrefix ++ effectName
+    | Chain(chainId) => `envio_${chainId->Int.toString}_effect_${effectName}`
+    }
+
+  // "crossChain" or the decimal chain id. Used as the `scope` Prometheus label.
+  let scopeToString = scope =>
+    switch scope {
+    | CrossChain => "crossChain"
+    | Chain(chainId) => chainId->Int.toString
+    }
+
+  // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —
+  // Int.fromString alone follows parseInt semantics and accepts both.
+  let parseChainId = str =>
+    switch Int.fromString(str) {
+    | Some(chainId) if chainId >= 0 && chainId->Int.toString === str => Some(chainId)
+    | _ => None
+    }
+
+  let chainScopedRe = /^envio_([0-9]+)_effect_(.+)$/
+  let crossChainRe = /^envio_effect_(.+)$/
+
+  // Inverse of toTableName. Returns None for any table name that isn't a cache
+  // table. Chain-scoped is tried first: the `_effect_` separator keeps effect
+  // names that themselves start with digits unambiguous.
+  let fromTableName = (tableName): option<(string, chainScope)> =>
+    switch RegExp.exec(chainScopedRe, tableName) {
+    | Some(result) =>
+      switch (
+        RegExp.Result.matches(result)->Array.get(0),
+        RegExp.Result.matches(result)->Array.get(1),
+      ) {
+      | (Some(Some(chainIdStr)), Some(Some(effectName))) =>
+        switch parseChainId(chainIdStr) {
+        | Some(chainId) => Some((effectName, Chain(chainId)))
+        | None => None
+        }
+      | _ => None
+      }
+    | None =>
+      switch RegExp.exec(crossChainRe, tableName) {
+      | Some(result) =>
+        switch RegExp.Result.matches(result)->Array.get(0) {
+        | Some(Some(effectName)) => Some((effectName, CrossChain))
+        | _ => None
+        }
+      | None => None
+      }
+    }
+
+  // Relative posix path within .envio/cache. Chain-scoped caches live one
+  // directory level deep, named by chain id.
+  let toCachePath = (~effectName, ~scope) =>
+    switch scope {
+    | CrossChain => effectName ++ ".tsv"
+    | Chain(chainId) => `${chainId->Int.toString}/${effectName}.tsv`
+    }
+}
+
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
-let makeCacheTable = (~effectName) => {
+let makeCacheTable = (~effectName, ~scope) => {
   Table.mkTable(
-    cacheTablePrefix ++ effectName,
+    EffectCache.toTableName(~effectName, ~scope),
     ~fields=[
       Table.mkField("id", String, ~fieldSchema=S.string, ~isPrimaryKey=true),
       Table.mkField("output", Json, ~fieldSchema=cacheOutputSchema, ~isNullable=true),

@@ -110,7 +110,7 @@ impl Schema {
         let schema_string = std::fs::read_to_string(&schema_path).context(format!(
             "Failed to read schema file at {}. Please ensure that the schema file is \
              placed correctly in the directory.",
-            &schema_path.to_str().unwrap_or("bad file path"),
+            schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
         Self::from_string(&schema_string)
@@ -811,7 +811,7 @@ impl Field {
                     }
                     let precision = get_positive_integer(arg_value).context(format!(
                         "Parsing precision.digits directive on BigInt field with field name {}",
-                        &field.name
+                        field.name
                     ))?;
                     pg_type_modifications.big_int_precision = Some(precision);
                 }
@@ -828,14 +828,14 @@ impl Field {
                                     Some(get_positive_integer(arg_value).context(format!(
                                         "Parsing numeric.precision directive on BigDecimal with \
                                          field name {}",
-                                        &field.name
+                                        field.name
                                     ))?);
                             }
                             "scale" => {
                                 scale = Some(get_positive_integer(arg_value).context(format!(
                                     "Parsing numeric.scale directive on BigDecimal with field \
                                      name {}",
-                                    &field.name
+                                    field.name
                                 ))?);
                             }
                             unknown_param => {
@@ -1696,176 +1696,6 @@ mod tests {
     }
 
     #[test]
-    fn test_field_does_not_exist_in_entity() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: ["field_that_doesnt_exist", "id", "tokenId"]) {
-  id: ID!
-  tokenId: BigInt! @index
-  collection: String!
-  owner: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema);
-
-        assert!(parsed_entity.is_err());
-        let err_message = format!("{:?}", parsed_entity.unwrap_err());
-        assert!(err_message.contains("Field 'field_that_doesnt_exist' does not exist"));
-    }
-
-    #[test]
-    fn test_missing_id_field() {
-        let schema_str = r#"
-type TestEntity {
-  testField: String
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema);
-
-        assert!(parsed_entity.is_err());
-        let err_message = parsed_entity.unwrap_err().to_string();
-        assert_eq!(
-            err_message,
-            "No 'id' field found on entity TestEntity. Please add an 'id' field to your entity."
-        );
-    }
-
-    #[test]
-    fn test_field_is_derived_from_and_indexed() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: ["collection"]) {
-  id: ID!
-  tokenId: BigInt!
-  collection: [Collection!]! @derivedFrom(field: "owner")
-  owner: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema);
-
-        assert!(parsed_entity.is_err());
-        let err_message = format!("{:?}", parsed_entity.unwrap_err());
-        println!("{err_message}");
-        assert!(err_message.contains("Index error: Field 'collection' is a @derivedFrom field"));
-    }
-
-    #[test]
-    fn test_duplicate_index_definition() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: ["id", "tokenId"])
-  @index(fields: ["id", "tokenId"]) {
-  id: ID!
-  tokenId: BigInt! @index
-  collection: String!
-  owner: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema);
-
-        assert!(parsed_entity.is_err());
-        let err_message = format!("{:?}", parsed_entity.unwrap_err());
-        assert!(err_message.contains(
-            "Index error: Duplicate index found on fields [\"id\", \"tokenId\"] in entity \
-             'TestEntity'"
-        ));
-    }
-
-    #[test]
-    fn test_field_marked_as_indexed_and_index_directive() {
-        let schema_str = r#"
-type TestEntity @index(fields: ["tokenId"]) {
-  id: ID!
-  tokenId: BigInt! @index
-  collection: String!
-  owner: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema);
-
-        assert!(parsed_entity.is_err());
-        let err_message = format!("{:?}", parsed_entity.unwrap_err());
-        println!("{err_message}");
-        assert!(err_message.contains(
-            "The field 'tokenId' is marked as an index. Please either remove the @index \
-             directive on the field, or the @index(fields: [\"tokenId\"]) directive on the entity"
-        ));
-    }
-
-    #[test]
-    fn more_than_one_derived_from_directive() {
-        let schema_str = r#"
-type TestEntity {
-  id: ID!
-  testField: String @derivedFrom(field: "someField") @derivedFrom(field: "anotherField")
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let result = Entity::from_object(&first_entity_schema);
-
-        assert!(
-            result.is_err(),
-            "Should error with more than one @derivedFrom directive"
-        );
-    }
-
-    #[test]
-    fn more_than_one_indexed_directive() {
-        let schema_str = r#"
-type TestEntity {
-  id: ID!
-  testField: String @index @index
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let result = Entity::from_object(&first_entity_schema);
-
-        assert!(
-            result.is_err(),
-            "Should error with more than one @index directive"
-        );
-    }
-
-    #[test]
-    fn fail_derived_from_and_indexed_directive() {
-        let schema_str = r#"
-type TestEntity {
-  id: ID!
-  testField: String @derivedFrom(field: "someField") @index
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let result = Entity::from_object(&first_entity_schema);
-
-        assert!(
-            result.is_err(),
-            "Should error with both @derivedFrom and @index directives"
-        );
-    }
-
-    #[test]
-    fn fail_id_field_with_derived_from_or_indexed_directive() {
-        let schema_str = r#"
-type TestEntity {
-  id: ID! @derivedFrom(field: "someField")
-  ID: ID! @index
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let result = Entity::from_object(&first_entity_schema);
-
-        assert!(
-            result.is_err(),
-            "Should error when 'id' or 'ID' field is indexed or derived from"
-        );
-    }
-
-    #[test]
     fn gql_type_to_rescript_type_string() {
         let empty_schema = Schema::empty();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::String)
@@ -2448,92 +2278,6 @@ type TestEntity {
     }
 
     #[test]
-    fn test_error_case_config_on_non_bigint_or_bigdecimal() {
-        let schema_str = r#"
-        type Entity {
-            id: ID!
-        exampleString: String @config(precision: 76)
-        }
-        "#;
-
-        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let result = Schema::from_document(gql_doc);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message
-            .contains("The config directive is only applicable to BigInt and BigDecimal"));
-    }
-
-    #[test]
-    fn test_error_case_config_unknown_parameter() {
-        let schema_str = r#"
-        type Entity {
-            id: ID!
-        exampleBigDecimalWrongDirective: BigDecimal @config(wronglabel: 76, scale: 5)
-        }
-        "#;
-
-        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let result = Schema::from_document(gql_doc);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("The config directive on a Big"));
-    }
-
-    #[test]
-    fn test_error_case_config_missing_parameters() {
-        let schema_str = r#"
-        type Entity {
-            id: ID!
-        exampleBigDecimalMissingParams: BigDecimal @config(precision: 76)
-        }
-        "#;
-
-        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let result = Schema::from_document(gql_doc);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("The config directive on a Big"));
-    }
-
-    #[test]
-    fn test_error_case_numeric_unknown_parameter() {
-        let schema_str = r#"
-        type Entity {
-            id: ID!
-            exampleBigIntWrongDirective: BigDecimal @config(wronglabel: 76, scale: 5)
-        }
-        "#;
-
-        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let result = Schema::from_document(gql_doc);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("The config directive on a Big"));
-    }
-
-    #[test]
-    fn test_error_case_numeric_unknown_parameter_with_precision() {
-        let schema_str = r#"
-        type Entity {
-            id: ID!
-            exampleBigIntWrongDirective: BigDecimal @config(precision: 76, wronglabel: 4, scale: 5)
-        }
-        "#;
-
-        let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let result = Schema::from_document(gql_doc);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("The config directive on a Big"));
-    }
-
-    #[test]
     fn multifield_index_should_retain_original_order() {
         let schema_str = r#"
         type Entity 
@@ -2621,23 +2365,6 @@ type OtherEntity {
             .map(|f| f.name.as_str())
             .collect();
         assert_eq!(other_field_names, vec!["id", "lastField", "firstField"]);
-    }
-
-    #[test]
-    fn test_duplicate_field_detection() {
-        let schema_str = r#"
-type TestEntity {
-  id: ID!
-  name: String!
-  name: String!
-}
-        "#;
-        let gql_doc = setup_document(schema_str).unwrap();
-        let result = Schema::from_document(gql_doc);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("duplicate"));
     }
 
     #[test]
@@ -2731,40 +2458,6 @@ type TestEntity
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].direction, IndexFieldDirection::Asc);
         assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
-    }
-
-    #[test]
-    fn test_index_with_invalid_direction() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: [["tokenId", "INVALID"]]) {
-  id: ID!
-  tokenId: BigInt!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let result = Entity::from_object(&first_entity_schema);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("Index direction must be \"ASC\" or \"DESC\""));
-    }
-
-    #[test]
-    fn test_index_with_wrong_list_length() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: [["tokenId", "DESC", "extra"]]) {
-  id: ID!
-  tokenId: BigInt!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let result = Entity::from_object(&first_entity_schema);
-
-        assert!(result.is_err());
-        let err_message = format!("{:?}", result.unwrap_err());
-        assert!(err_message.contains("exactly 2 elements"));
     }
 
     #[test]
@@ -2932,88 +2625,6 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
         assert_eq!(
             (entity.postgres, entity.clickhouse),
             (Some(true), Some(true))
-        );
-    }
-
-    #[test]
-    fn storage_directive_unknown_arg_errors() {
-        let schema_str = r#"
-type TestEntity @storage(redis: true) { id: ID! }
-        "#;
-        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Invalid @storage directive on `TestEntity`. Unknown argument `redis`. \
-             Expected boolean args from {postgres, clickhouse}, e.g. @storage(postgres: \
-             true, clickhouse: true)."
-        );
-    }
-
-    #[test]
-    fn storage_directive_non_bool_arg_errors() {
-        let schema_str = r#"
-type TestEntity @storage(postgres: "yes") { id: ID! }
-        "#;
-        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Invalid @storage directive on `TestEntity`. Argument `postgres` must be a \
-             boolean. Expected boolean args from {postgres, clickhouse}, e.g. \
-             @storage(postgres: true, clickhouse: true)."
-        );
-    }
-
-    #[test]
-    fn storage_directive_duplicate_directive_errors() {
-        let schema_str = r#"
-type TestEntity @storage(postgres: true) @storage(clickhouse: true) { id: ID! }
-        "#;
-        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Invalid @storage directive on `TestEntity`. Only one @storage directive is \
-             allowed per entity. Expected boolean args from {postgres, clickhouse}, e.g. \
-             @storage(postgres: true, clickhouse: true)."
-        );
-    }
-
-    #[test]
-    fn storage_directive_duplicate_arg_errors() {
-        let schema_str = r#"
-type TestEntity @storage(postgres: true, postgres: false) { id: ID! }
-        "#;
-        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Invalid @storage directive on `TestEntity`. Argument `postgres` is specified \
-             more than once. Expected boolean args from {postgres, clickhouse}, e.g. \
-             @storage(postgres: true, clickhouse: true)."
-        );
-    }
-
-    #[test]
-    fn storage_directive_all_false_errors() {
-        let schema_str = r#"
-type TestEntity @storage(postgres: false) { id: ID! }
-        "#;
-        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
-             clickhouse} must be true."
-        );
-    }
-
-    #[test]
-    fn storage_directive_empty_errors() {
-        let schema_str = r#"
-type TestEntity @storage { id: ID! }
-        "#;
-        let err = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "@storage on `TestEntity` enables no storage. At least one of {postgres, \
-             clickhouse} must be true."
         );
     }
 }

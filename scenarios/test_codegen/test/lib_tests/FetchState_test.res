@@ -4,17 +4,15 @@ let chainId = 0
 let targetBufferSize = 5000
 let knownHeight = 0
 
-// Spread into expected query literals so the cross-chain scheduler fields
-// (chainId/progress, both 0 outside of CrossChainState) don't have to be
+// Spread into expected query literals so the common fields don't have to be
 // repeated everywhere. Every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
+  itemsTarget: 0,
+  itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
 }
@@ -76,16 +74,17 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
   }
 }
 
-let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1): Internal.item => Internal.Event({
-  timestamp: blockNumber * 15,
-  chain: ChainMap.Chain.makeUnsafe(~chainId),
-  blockNumber,
-  blockHash: `0x${blockNumber->Int.toString}`,
-  onEventRegistration: Utils.magic("Mock onEventRegistration in fetchstate test"),
-  logIndex,
-  transactionIndex: 0,
-  payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
-})
+let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1, ~registrationIndex=0): Internal.item =>
+  Internal.Event({
+    chain: ChainMap.Chain.makeUnsafe(~chainId),
+    blockNumber,
+    // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
+    // resolves; the rest of the registration is unused by these tests.
+    onEventRegistration: Utils.magic({"index": registrationIndex}),
+    logIndex,
+    transactionIndex: 0,
+    payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
+  })
 
 let dcToItem = (dc: Internal.indexingAddress) => {
   let item = mockEvent(~blockNumber=dc.registrationBlock)
@@ -236,10 +235,10 @@ describe("FetchState.make", () => {
             mergeBlock: None,
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
           },
         ],
         ~nextPartitionIndex=1,
@@ -351,10 +350,10 @@ describe("FetchState.make", () => {
             mergeBlock: None,
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
           },
         ],
         ~nextPartitionIndex=1,
@@ -408,10 +407,10 @@ describe("FetchState.make", () => {
               mergeBlock: None,
               dynamicContract: None,
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
             {
               id: "1",
@@ -424,10 +423,10 @@ describe("FetchState.make", () => {
               mergeBlock: None,
               dynamicContract: Some("Gravatar"),
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
           ],
           ~nextPartitionIndex=2,
@@ -494,10 +493,10 @@ describe("FetchState.make", () => {
               mergeBlock: None,
               dynamicContract: None,
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
             {
               id: "1",
@@ -510,10 +509,10 @@ describe("FetchState.make", () => {
               mergeBlock: None,
               dynamicContract: None,
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
             {
               id: "2",
@@ -526,10 +525,10 @@ describe("FetchState.make", () => {
               mergeBlock: None,
               dynamicContract: Some("Gravatar"),
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
             {
               id: "3",
@@ -542,10 +541,10 @@ describe("FetchState.make", () => {
               mergeBlock: None,
               dynamicContract: Some("Gravatar"),
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
           ],
           ~nextPartitionIndex=4,
@@ -1280,10 +1279,10 @@ describe("FetchState.registerDynamicContracts", () => {
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
       {
         id: "2",
@@ -1296,10 +1295,10 @@ describe("FetchState.registerDynamicContracts", () => {
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
     ])
 
@@ -1347,10 +1346,10 @@ describe("FetchState.registerDynamicContracts", () => {
         mergeBlock: None,
         dynamicContract: Some("NftFactory"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
       {
         id: "2",
@@ -1365,10 +1364,10 @@ describe("FetchState.registerDynamicContracts", () => {
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
     ])
   })
@@ -1529,10 +1528,10 @@ describe("FetchState.registerDynamicContracts", () => {
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
     ])
   })
@@ -1579,10 +1578,10 @@ describe("FetchState.registerDynamicContracts", () => {
         ]),
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
       {
         id: "2",
@@ -1596,10 +1595,10 @@ describe("FetchState.registerDynamicContracts", () => {
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
     ])
   })
@@ -1676,10 +1675,10 @@ describe("FetchState.registerDynamicContracts", () => {
               mergeBlock: None,
               dynamicContract: None,
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
             {
               id: "1",
@@ -1697,10 +1696,10 @@ describe("FetchState.registerDynamicContracts", () => {
               mergeBlock: None,
               dynamicContract: Some("NftFactory"),
               mutPendingQueries: [],
-              prevQueryRange: 0,
-              prevRangeSize: 0,
-              prevPrevQueryRange: 0,
-              latestBlockRangeUpdateBlock: 0,
+              sourceRangeCapacity: 0,
+              eventDensity: None,
+              prevSourceRangeCapacity: 0,
+              latestSourceRangeCapacityUpdateBlock: 0,
             },
           ],
           ~nextPartitionIndex=2,
@@ -1722,24 +1721,6 @@ describe("FetchState.registerDynamicContracts", () => {
       })
     },
   )
-})
-
-describe("FetchState.calculateDefaultEstResponseSize", () => {
-  it("Scales down as partitionsCount grows, clamped to [2_000, 10_000]", t => {
-    t.expect({
-      "onePartition": FetchState.calculateDefaultEstResponseSize(~partitionsCount=1),
-      "twoPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=2),
-      "threePartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=3),
-      "tenPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=10),
-      "hundredPartitions": FetchState.calculateDefaultEstResponseSize(~partitionsCount=100),
-    }).toEqual({
-      "onePartition": 10_000.,
-      "twoPartitions": 10_000.,
-      "threePartitions": 20_000. /. 3.,
-      "tenPartitions": 2_000.,
-      "hundredPartitions": 2_000.,
-    })
-  })
 })
 
 describe("FetchState.getNextQuery & integration", () => {
@@ -1773,10 +1754,10 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: Some(2. /. 11.),
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
             mergeBlock: None,
@@ -1814,10 +1795,10 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: Some(2. /. 11.),
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.fromArray([
               ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
@@ -1832,10 +1813,11 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            // This partition already returned an empty response over block 2.
+            eventDensity: Some(0.),
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
             mergeBlock: None,
@@ -1861,30 +1843,42 @@ describe("FetchState.getNextQuery & integration", () => {
   }
 
   // The default configuration with ability to overwrite some values.
-  // Partitions here have no response yet, so query sizing falls back to
-  // FetchState.calculateDefaultEstResponseSize, which scales with partition count
-  // (20_000. /. partitionsCount, clamped to [2_000., 10_000.]).
-  let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10) =>
-    switch endBlock {
-    | Some(_) => {...fs, endBlock}
-    | None => fs
-    }
-    ->FetchState.updateKnownHeight(~knownHeight)
-    ->FetchState.getNextQuery
+  // Partitions here have no response yet, so query sizing is a share of
+  // rangeBudget split across the partitions with unknown density (see
+  // FetchState.getNextQuery) — with the defaults below, a single unknown
+  // partition gets the whole 10_000., N of them split it evenly (rounded up).
+  //
+  // chainTargetBlock is derived from the fetchState's actual (post-update)
+  // knownHeight rather than the ~knownHeight param directly, since
+  // updateKnownHeight never downgrades — passing a knownHeight lower than the
+  // fetchState already has would otherwise desync chainTargetBlock from the
+  // real frontier, same as ChainState.getNextQuery derives it in production.
+  let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10, ~chainTargetItems=10_000.) => {
+    let updated =
+      switch endBlock {
+      | Some(_) => {...fs, endBlock}
+      | None => fs
+      }->FetchState.updateKnownHeight(~knownHeight)
+    updated->FetchState.getNextQuery(~chainTargetBlock=updated.knownHeight, ~chainTargetItems)
+  }
 
   it("Emulate first indexer queries with a static event", t => {
-    let (fetchState, indexingAddresses) = makeInitial()
+    let (fetchState, _) = makeInitial()
 
     t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
+    t.expect(
+      fetchState->getNextQuery(~chainTargetItems=0.),
+      ~message="A zero admission budget must not generate a query while the chain is behind",
+    ).toEqual(NothingToQuery)
 
     let nextQuery = fetchState->getNextQuery
 
     t.expect(nextQuery).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          itemsTarget: 10000,
+          itemsEst: 10000,
           fromBlock: 0,
           toBlock: None,
           selection: fetchState.normalSelection,
@@ -1909,7 +1903,8 @@ describe("FetchState.getNextQuery & integration", () => {
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
-        estResponseSize: 10000.,
+        itemsTarget: 10000,
+        itemsEst: 10000,
         fetchedBlock: None,
       },
     ])
@@ -1921,7 +1916,6 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={
         blockNumber: 10,
@@ -1937,6 +1931,10 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(updatedFetchState->getNextQuery, ~message="Should wait for new block").toEqual(
       WaitingForNewBlock,
     )
+    t.expect(
+      updatedFetchState->getNextQuery(~chainTargetItems=0.),
+      ~message="A zero admission budget must preserve WaitingForNewBlock",
+    ).toEqual(WaitingForNewBlock)
     t.expect(
       updatedFetchState->getNextQuery(~endBlock=Some(11)),
       ~message=`Should wait for new block
@@ -1962,9 +1960,9 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          itemsTarget: 10000,
+          itemsEst: 10000,
           fromBlock: 11,
           toBlock: None,
           selection: updatedFetchState.normalSelection,
@@ -1984,7 +1982,7 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Emulate first indexer queries with block lag configured", t => {
-    let (fetchState, indexingAddresses) = makeInitial(~blockLag=2)
+    let (fetchState, _) = makeInitial(~blockLag=2)
 
     t.expect(fetchState->getNextQuery(~knownHeight=0)).toEqual(WaitingForNewBlock)
 
@@ -1997,9 +1995,9 @@ describe("FetchState.getNextQuery & integration", () => {
     t.expect(nextQuery, ~message="No block lag when we are close to the end block").toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          itemsTarget: 10000,
+          itemsEst: 10000,
           toBlock: Some(8),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -2016,9 +2014,9 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          itemsTarget: 10000,
+          itemsEst: 10000,
           toBlock: Some(8),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
@@ -2041,7 +2039,6 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={
         blockNumber: 8,
@@ -2085,10 +2082,10 @@ describe("FetchState.getNextQuery & integration", () => {
         mergeBlock: Some(10),
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
       // Creates a new partition for this without merging, since 0 is full and 1 has mergeBlock
       {
@@ -2102,10 +2099,10 @@ describe("FetchState.getNextQuery & integration", () => {
         mergeBlock: None,
         dynamicContract: Some("Gravatar"),
         mutPendingQueries: [],
-        prevQueryRange: 0,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 0,
-        latestBlockRangeUpdateBlock: 0,
+        sourceRangeCapacity: 0,
+        eventDensity: None,
+        prevSourceRangeCapacity: 0,
+        latestSourceRangeCapacityUpdateBlock: 0,
       },
     ])
 
@@ -2115,9 +2112,9 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 20_000. /. 3.,
+          itemsTarget: 5000,
+          itemsEst: 5000,
           toBlock: Some(10),
           isChunk: false,
           selection: fetchState.normalSelection,
@@ -2125,9 +2122,11 @@ describe("FetchState.getNextQuery & integration", () => {
           fromBlock: 1,
         },
         {
-          ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 20_000. /. 3.,
+          // Sits one block ahead of partition "1", so 9/10 of the range to the
+          // target -> 4500 vs 5000.
+          itemsTarget: 4500,
+          itemsEst: 4500,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2153,7 +2152,6 @@ describe("FetchState.getNextQuery & integration", () => {
     let updatedFetchState =
       fetchStateWithDcs
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=queries->Array.getUnsafe(0),
         ~latestFetchedBlock={
           blockNumber: 10,
@@ -2162,7 +2160,6 @@ describe("FetchState.getNextQuery & integration", () => {
         ~newItems=[],
       )
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=queries->Array.getUnsafe(1),
         ~latestFetchedBlock={
           blockNumber: 2,
@@ -2175,20 +2172,20 @@ describe("FetchState.getNextQuery & integration", () => {
       makeIntermidiateDcMerge(),
     )
 
-    let expectedPartition2Query: FetchState.query = {
-      ...defaultQuery,
+    let makePartition2Query = (~itemsTarget): FetchState.query => {
       partitionId: "2",
-      estResponseSize: 10000.,
+      itemsTarget,
+      itemsEst: itemsTarget,
       fromBlock: 3,
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
       isChunk: false,
     }
-    let expectedPartition0Query: FetchState.query = {
-      ...defaultQuery,
+    let makePartition0Query = (~itemsTarget): FetchState.query => {
       partitionId: "0",
-      estResponseSize: 10000.,
+      itemsTarget,
+      itemsEst: itemsTarget,
       toBlock: None,
       selection: fetchState.normalSelection,
       addressesByContractName: Dict.fromArray([
@@ -2203,18 +2200,30 @@ describe("FetchState.getNextQuery & integration", () => {
       ~message=`Since the partition "0" reached the maxAddrNumber,
       there's no point to continue merging partitions,
       so we have two queries concurrently`,
-    ).toEqual(Ready([expectedPartition2Query, expectedPartition0Query]))
+    ).toEqual(
+      // Partition "0" sits at block 11 (the head), covering only the last block
+      // of the range to the target -> a small probe next to "2"'s 5000.
+      Ready([makePartition2Query(~itemsTarget=5000), makePartition0Query(~itemsTarget=556)]),
+    )
+    // Partition "0" is above the target block, so it's the only eligible
+    // unknown-density partition here and gets the whole budget.
+    let partition2QuerySolo = makePartition2Query(~itemsTarget=10000)
     t.expect(
       updatedFetchState->getNextQuery(~knownHeight=10),
       ~message=`Even if a single partition reached block height,
       we finish fetching other partitions until waiting for the new block first`,
-    ).toEqual(Ready([expectedPartition2Query]))
+    ).toEqual(Ready([partition2QuerySolo]))
 
-    updatedFetchState->FetchState.startFetchingQueries(~queries=[expectedPartition2Query])
+    updatedFetchState->FetchState.startFetchingQueries(~queries=[partition2QuerySolo])
+    // Partition "2" is now fully reserved at 10_000 (its own pending query);
+    // chainTargetItems must cover that existing reservation plus fresh room
+    // for partition "0" — in production this is automatic, since
+    // CrossChainState always credits a chain's own pendingBudget back into
+    // chainTargetItems (see CrossChainState.checkAndFetch).
     t.expect(
-      updatedFetchState->getNextQuery(~knownHeight=11),
+      updatedFetchState->getNextQuery(~knownHeight=11, ~chainTargetItems=20_000.),
       ~message=`Should skip fetching queries`,
-    ).toEqual(Ready([expectedPartition0Query]))
+    ).toEqual(Ready([makePartition0Query(~itemsTarget=10000)]))
   })
 
   it("Emulate partition merging cases", t => {
@@ -2232,9 +2241,9 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          itemsTarget: 5000,
+          itemsEst: 5000,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2242,9 +2251,11 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
         },
         {
-          ...defaultQuery,
           FetchState.partitionId: "0",
-          estResponseSize: 10000.,
+          // At block 11 (the head), it covers only the last block of the range
+          // to the target, so a small probe next to partition "2"'s 5000.
+          itemsTarget: 556,
+          itemsEst: 556,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([
@@ -2259,16 +2270,15 @@ describe("FetchState.getNextQuery & integration", () => {
     // Continue with the state from previous test
     // But increase the maxAddrInPartition up to 4
     let fetchState = makeIntermidiateDcMerge(~maxAddrInPartition=4, ~knownHeight=11)
-    let indexingAddresses = makeIntermidiateIndex()
     t.expect(
       fetchState->getNextQuery,
       ~message="Although, if we pass it through partition optimization, it should merge partitions now",
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 10000.,
+          itemsTarget: 5000,
+          itemsEst: 5000,
           toBlock: Some(10),
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
@@ -2276,9 +2286,9 @@ describe("FetchState.getNextQuery & integration", () => {
           isChunk: false,
         },
         {
-          ...defaultQuery,
           FetchState.partitionId: "0",
-          estResponseSize: 10000.,
+          itemsTarget: 556,
+          itemsEst: 556,
           toBlock: None,
           selection: originalFetchState.normalSelection,
           addressesByContractName: Dict.fromArray([
@@ -2301,7 +2311,6 @@ describe("FetchState.getNextQuery & integration", () => {
     // When it didn't finish fetching to the target partition block
     fetchState->FetchState.startFetchingQueries(~queries=[p2Query])
     let fetchStateWithResponse1 = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query=p2Query,
       ~latestFetchedBlock={
         blockNumber: 9,
@@ -2334,7 +2343,6 @@ describe("FetchState.getNextQuery & integration", () => {
     fetchStateWithResponse1->FetchState.startFetchingQueries(~queries)
 
     let fetchStateWithResponse2 = fetchStateWithResponse1->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query=queries->Array.getUnsafe(0),
       ~latestFetchedBlock={
         blockNumber: 10,
@@ -2358,14 +2366,15 @@ describe("FetchState.getNextQuery & integration", () => {
                 fromBlock: 11,
                 toBlock: None,
                 isChunk: false,
-                estResponseSize: 10000.,
+                itemsTarget: 2500,
+                itemsEst: 2500,
                 fetchedBlock: None,
               },
             ],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: Some(2. /. 11.),
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             latestFetchedBlock: {
               blockNumber: 10,
               blockTimestamp: 10,
@@ -2411,7 +2420,11 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count).toEqual(3)
 
-    let nextQuery = {...fetchState, knownHeight: 10}->FetchState.getNextQuery
+    let nextQuery =
+      {...fetchState, knownHeight: 10}->FetchState.getNextQuery(
+        ~chainTargetBlock=10,
+        ~chainTargetItems=10_000.,
+      )
 
     t.expect(
       nextQuery,
@@ -2421,9 +2434,9 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 20_000. /. 3.,
+          itemsTarget: 3333,
+          itemsEst: 3333,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -2434,9 +2447,9 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Dict.make(),
         },
         {
-          ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 20_000. /. 3.,
+          itemsTarget: 3333,
+          itemsEst: 3333,
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
@@ -2444,9 +2457,10 @@ describe("FetchState.getNextQuery & integration", () => {
           addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
         },
         {
-          ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 20_000. /. 3.,
+          // Starts at block 2, so 9 of the 11-block range to the target -> 2727.
+          itemsTarget: 2727,
+          itemsEst: 2727,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2480,10 +2494,11 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            // Kept partition preserves its observed empty-response density.
+            eventDensity: Some(0.),
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress3])]),
             mergeBlock: None,
@@ -2496,10 +2511,10 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([
               ("Gravatar", [mockAddress0, mockAddress1, mockAddress2]),
@@ -2531,10 +2546,10 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: fetchState.normalSelection,
             // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]),
@@ -2568,10 +2583,10 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: fetchState.normalSelection,
             addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress0])]),
             mergeBlock: None,
@@ -2616,9 +2631,9 @@ describe("FetchState.getNextQuery & integration", () => {
     fetchState->FetchState.startFetchingQueries(
       ~queries=[
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 5000.,
+          itemsTarget: 5000,
+          itemsEst: 5000,
           toBlock: None,
           selection: {
             dependsOnAddresses: false,
@@ -2655,10 +2670,10 @@ describe("FetchState.getNextQuery & integration", () => {
             },
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: {
               dependsOnAddresses: false,
               onEventRegistrations: wildcardEventConfigs,
@@ -2679,7 +2694,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
 describe("FetchState unit tests for specific cases", () => {
   it("Should merge events in correct order on merging", t => {
-    let (base, indexingAddresses) = makeInitial()
+    let (base, _) = makeInitial()
     let normalSelection = base.normalSelection
     let fetchState = base->FetchState.updateInternal(
       ~optimizedPartitions=FetchState.OptimizedPartitions.make(
@@ -2692,10 +2707,10 @@ describe("FetchState unit tests for specific cases", () => {
             },
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
             mergeBlock: None,
@@ -2708,10 +2723,10 @@ describe("FetchState unit tests for specific cases", () => {
             },
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
             mergeBlock: None,
@@ -2731,9 +2746,9 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "1",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 1,
       toBlock: None,
       isChunk: false,
@@ -2743,13 +2758,15 @@ describe("FetchState unit tests for specific cases", () => {
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState = fetchState->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={
         blockNumber: 10,
         blockTimestamp: 10,
       },
-      ~newItems=[mockEvent(~blockNumber=4, ~logIndex=1), mockEvent(~blockNumber=4, ~logIndex=1)],
+      ~newItems=[
+        mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=0),
+        mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=1),
+      ],
     )
 
     t.expect(updatedFetchState.buffer, ~message="Should merge events in correct order").toEqual([
@@ -2757,14 +2774,14 @@ describe("FetchState unit tests for specific cases", () => {
       mockEvent(~blockNumber=2),
       mockEvent(~blockNumber=3),
       mockEvent(~blockNumber=4),
-      mockEvent(~blockNumber=4, ~logIndex=1),
-      mockEvent(~blockNumber=4, ~logIndex=1),
+      mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=0),
+      mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=1),
       mockEvent(~blockNumber=4, ~logIndex=2),
     ])
   })
 
   it("Sorts newItems when source returns them unsorted", t => {
-    let (base, indexingAddresses) = makeInitial()
+    let (base, _) = makeInitial()
     let fetchState = base
 
     let unsorted = [
@@ -2775,9 +2792,9 @@ describe("FetchState unit tests for specific cases", () => {
     ]
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2788,7 +2805,6 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
         ~newItems=unsorted,
@@ -2814,7 +2830,7 @@ describe("FetchState unit tests for specific cases", () => {
     // FetchState with 2 partitions,
     // one of them reached the head
     // another reached max queue size
-    let (fetchState, indexingAddresses) = makeFs(
+    let (fetchState, _) = makeFs(
       ~onEventRegistrations=[
         (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
         wildcard,
@@ -2829,9 +2845,9 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let query0: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2842,9 +2858,9 @@ describe("FetchState unit tests for specific cases", () => {
       addressesByContractName: Dict.make(),
     }
     let query1: FetchState.query = {
-      ...defaultQuery,
       partitionId: "1",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2856,28 +2872,29 @@ describe("FetchState unit tests for specific cases", () => {
     let fetchState =
       fetchState
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=query0,
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
         ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=0)],
       )
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=query1,
         ~latestFetchedBlock=getBlockData(~blockNumber=2),
         ~newItems=[],
       )
 
     t.expect(
-      {...fetchState, knownHeight: 2}->FetchState.getNextQuery,
+      {...fetchState, knownHeight: 2}->FetchState.getNextQuery(
+        ~chainTargetBlock=2,
+        ~chainTargetItems=10_000.,
+      ),
       ~message=`Should be possible to query wildcard partition,
       if it didn't reach max queue size limit`,
     ).toEqual(
       Ready([
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 10000.,
+          itemsTarget: 10000,
+          itemsEst: 10000,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
@@ -2906,9 +2923,9 @@ describe("FetchState unit tests for specific cases", () => {
     let registeringBlockNumber = 3
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2919,7 +2936,6 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let fetchStateWithEvents =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[
           mockEvent(~blockNumber=6, ~logIndex=2),
@@ -2948,7 +2964,7 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Returns NoItem when there is an empty partition at block 0", t => {
-    let (fetchState, indexingAddresses) = makeFs(
+    let (fetchState, _) = makeFs(
       ~onEventRegistrations=[
         (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
       ],
@@ -2974,9 +2990,9 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 0,
       toBlock: None,
       isChunk: false,
@@ -2986,7 +3002,6 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[mockEvent(~blockNumber=0, ~logIndex=1)],
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
@@ -3014,10 +3029,10 @@ describe("FetchState unit tests for specific cases", () => {
             latestFetchedBlock,
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
             mergeBlock: None,
@@ -3027,10 +3042,10 @@ describe("FetchState unit tests for specific cases", () => {
             latestFetchedBlock,
             dynamicContract: None,
             mutPendingQueries: [],
-            prevQueryRange: 0,
-            prevRangeSize: 0,
-            prevPrevQueryRange: 0,
-            latestBlockRangeUpdateBlock: 0,
+            sourceRangeCapacity: 0,
+            eventDensity: None,
+            prevSourceRangeCapacity: 0,
+            latestSourceRangeCapacityUpdateBlock: 0,
             selection: normalSelection,
             addressesByContractName: Dict.make(),
             mergeBlock: None,
@@ -3086,15 +3101,14 @@ describe("FetchState unit tests for specific cases", () => {
       {...makeInitialFs(~startBlock=10), endBlock: Some(9)}->FetchState.isActivelyIndexing,
       ~message=`Shouldn't be active if endBlock is less than the startBlock`,
     ).toEqual(false)
-    let (_, indexingAddresses) = makeInitial()
     let fetchState = {
       ...makeInitialFs(),
       endBlock: Some(0),
     }
     let query: FetchState.query = {
-      ...defaultQuery,
       partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       fromBlock: 0,
       toBlock: Some(0),
       isChunk: false,
@@ -3105,7 +3119,6 @@ describe("FetchState unit tests for specific cases", () => {
     t.expect(
       fetchState
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[mockEvent(~blockNumber=0)],
         ~latestFetchedBlock={blockNumber: -1, blockTimestamp: 0},
@@ -3116,12 +3129,11 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("isFetchingAtHead", t => {
-    let (_, indexingAddresses) = makeInitial()
     let fetchToHead = (fetchState: FetchState.t, ~latestFetchedBlockNumber) => {
       let query: FetchState.query = {
-        ...defaultQuery,
         partitionId: "0",
-        estResponseSize: 5000.,
+        itemsTarget: 5000,
+        itemsEst: 5000,
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
@@ -3130,7 +3142,6 @@ describe("FetchState unit tests for specific cases", () => {
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       fetchState->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~newItems=[],
         ~latestFetchedBlock={blockNumber: latestFetchedBlockNumber, blockTimestamp: 0},
@@ -3176,9 +3187,9 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
       let query: FetchState.query = {
-        ...defaultQuery,
         partitionId: "0",
-        estResponseSize: 5000.,
+        itemsTarget: 5000,
+        itemsEst: 5000,
         selection: fetchState.normalSelection,
         addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress1])]),
         fromBlock: 0,
@@ -3188,7 +3199,6 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       let fetchState =
         fetchState->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query,
           ~newItems=[
             mockEvent(~blockNumber=6, ~logIndex=2),
@@ -3202,7 +3212,10 @@ describe("FetchState unit tests for specific cases", () => {
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
       let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
 
-      let queries = switch fetchStateWithDcA->FetchState.getNextQuery {
+      let queries = switch fetchStateWithDcA->FetchState.getNextQuery(
+        ~chainTargetBlock=knownHeight,
+        ~chainTargetItems=10_000.,
+      ) {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3232,7 +3245,10 @@ describe("FetchState unit tests for specific cases", () => {
       let fetchStateWithDcB =
         fetchStateWithDcA->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
 
-      let queries = switch fetchStateWithDcB->FetchState.getNextQuery {
+      let queries = switch fetchStateWithDcB->FetchState.getNextQuery(
+        ~chainTargetBlock=knownHeight,
+        ~chainTargetItems=10_000.,
+      ) {
       | Ready(queries) => queries
       | _ => JsError.throwWithMessage("Expected Ready queries")
       }
@@ -3244,35 +3260,52 @@ describe("FetchState unit tests for specific cases", () => {
         fromBlock: 200,
       }
       t.expect(
-        fetchStateWithDcB->FetchState.getNextQuery,
+        fetchStateWithDcB->FetchState.getNextQuery(~chainTargetBlock=knownHeight, ~chainTargetItems=10_000.),
         ~message=`Create a new partition for the newly registered contract`,
       ).toEqual(Ready([partition2Query, queries->Array.getUnsafe(1)]))
 
       //Response with updated fetch state
       let fetchStateWithBothDcsAndQueryAResponse =
         fetchStateWithDcB->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query=queryA,
           ~latestFetchedBlock=getBlockData(~blockNumber=400),
           ~newItems=[],
         )
 
       t.expect(
-        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery,
+        fetchStateWithBothDcsAndQueryAResponse->FetchState.getNextQuery(
+          ~chainTargetBlock=knownHeight,
+          ~chainTargetItems=10_000.,
+        ),
         ~message=`We don't merge partition 2 to partition 1, since it already has end block`,
       ).toEqual(
         Ready([
-          partition2Query,
           {
-            // Partition responded with no items, so its density is 0 and the
-            // estimate is 0 (empty queries don't fill the buffer).
+            // Partition "1" is back in range now that its query resolved, so
+            // the even split is now 3-way instead of 2-way.
+            ...partition2Query,
+            itemsTarget: 3333,
+            itemsEst: 3333,
+          },
+          {
+            // Partition responded with no items, so it still has only one
+            // response (not two) — density isn't trusted yet, so it probes. It
+            // starts further ahead (block 401) than partition "2", so it covers
+            // less of the range to the target and gets a smaller probe.
             ...queryA,
             partitionId: "1",
-            estResponseSize: 0.,
+            itemsTarget: 1663,
+            itemsEst: 1663,
             toBlock: Some(500),
             fromBlock: 401,
           },
-          queries->Array.getUnsafe(1),
+          {
+            // Partition "0" starts even further ahead (block 501), so it covers
+            // the least range and gets the smallest probe.
+            ...queries->Array.getUnsafe(1),
+            itemsTarget: 831,
+            itemsEst: 831,
+          },
         ]),
       )
     },
@@ -3282,9 +3315,9 @@ describe("FetchState unit tests for specific cases", () => {
 describe("FetchState.sortForBatch", () => {
   let mkQuery = (fetchState: FetchState.t) => {
     {
-      ...defaultQuery,
       FetchState.partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
@@ -3295,12 +3328,11 @@ describe("FetchState.sortForBatch", () => {
 
   // Helper: create a fetch state with desired latestFetchedBlock and queue items via public API
   let makeFsWith = (~latestBlock: int, ~queueBlocks: array<int>): FetchState.t => {
-    let (fs0, indexingAddresses) = makeInitial(~knownHeight=10)
+    let (fs0, _) = makeInitial(~knownHeight=10)
     let query = mkQuery(fs0)
     fs0->FetchState.startFetchingQueries(~queries=[query])
     let fs =
       fs0->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query,
         ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
         ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
@@ -3354,14 +3386,14 @@ describe("FetchState.sortForBatch", () => {
 describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has knownHeight=0", t => {
     let (fetchState, _indexingAddresses) = makeInitial()
-    t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it(
     "Returns false when we just started the indexer and it has knownHeight=0, while start block is more than 0 + reorg threshold",
     t => {
       let (fetchState, _indexingAddresses) = makeInitial(~startBlock=6000)
-      t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+      t.expect({...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
     },
   )
 
@@ -3384,7 +3416,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=0,
       ~knownHeight=10,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns false when endBlock not reached and below head - blockLag", t => {
@@ -3406,7 +3438,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it("Returns true when endBlock not reached but latest >= head - blockLag", t => {
@@ -3428,7 +3460,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=59,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns true when no endBlock and latest >= head - blockLag (boundary)", t => {
@@ -3450,7 +3482,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns false when no endBlock and latest < head - blockLag", t => {
@@ -3472,11 +3504,39 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
-  it("Returns false when queue is not empty even if thresholds are met", t => {
-    // EndBlock reached but queue has items
+  it("With a tolerance, is ready within it below head - blockLag, false just beyond it", t => {
+    let isReady = (~knownHeight) => {
+      let (fs, _indexingAddresses) = makeFs(
+        ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+        ~addresses=[
+          {
+            Internal.address: mockAddress0,
+            contractName: "Gravatar",
+            registrationBlock: -1,
+          },
+        ],
+        // latestFullyFetchedBlock = startBlock - 1 = 99
+        ~startBlock=100,
+        ~endBlock=None,
+        ~maxAddrInPartition=3,
+        ~maxOnBlockBufferSize=targetBufferSize,
+        ~chainId,
+        ~blockLag=10,
+        ~knownHeight,
+      )
+      fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=100)
+    }
+    // frontier 99, ready cutoff = knownHeight - blockLag - tolerance: 209 -> 99, 210 -> 100
+    t.expect((isReady(~knownHeight=209), isReady(~knownHeight=210))).toEqual((true, false))
+  })
+
+  it("Does not apply the tolerance to a finite endBlock at or below the lagged head", t => {
+    // endBlock 100 sits below the lagged head (150), so it is an exact target.
+    // frontier 59 is within the tolerance of the lagged head (cutoff 50) but below
+    // the endBlock, so entry must wait for the endBlock rather than enter early.
     let (fs, _indexingAddresses) = makeFs(
       ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
       ~addresses=[
@@ -3486,16 +3546,46 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
           registrationBlock: -1,
         },
       ],
-      ~startBlock=6,
-      ~endBlock=Some(5),
+      // latestFullyFetchedBlock = startBlock - 1 = 59
+      ~startBlock=60,
+      ~endBlock=Some(100),
       ~maxAddrInPartition=3,
       ~maxOnBlockBufferSize=targetBufferSize,
       ~chainId,
       ~blockLag=0,
-      ~knownHeight=10,
+      ~knownHeight=150,
     )
-    let fsWithQueue = fs->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=6)])
-    t.expect(fsWithQueue->FetchState.isReadyToEnterReorgThreshold).toBe(false)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=100)).toBe(false)
+  })
+
+  it("Blocks on processable items, but not on items stuck above the frontier", t => {
+    // frontier (bufferBlockNumber) = 5, endBlock 5 reached.
+    let readyWithItemAt = itemBlockNumber => {
+      let (fs, _indexingAddresses) = makeFs(
+        ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+        ~addresses=[
+          {
+            Internal.address: mockAddress0,
+            contractName: "Gravatar",
+            registrationBlock: -1,
+          },
+        ],
+        ~startBlock=6,
+        ~endBlock=Some(5),
+        ~maxAddrInPartition=3,
+        ~maxOnBlockBufferSize=targetBufferSize,
+        ~chainId,
+        ~blockLag=0,
+        ~knownHeight=10,
+      )
+      fs
+      ->FetchState.updateInternal(~mutItems=[mockEvent(~blockNumber=itemBlockNumber)])
+      ->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)
+    }
+    // A processable item (<= frontier 5) still needs draining; an item stuck
+    // above the frontier (as behind a lagging partition's gap) is reorg-safe and
+    // must not defer entry.
+    t.expect((readyWithItemAt(5), readyWithItemAt(6))).toEqual((false, true))
   })
 
   it("Returns true when the queue is empty and threshold is more than current block height", t => {
@@ -3516,7 +3606,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=200,
       ~knownHeight=10,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold).toBe(true)
+    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 })
 
@@ -3595,11 +3685,11 @@ describe("Dynamic contracts with start blocks", () => {
 
 describe("FetchState progress tracking", () => {
   let makeFetchStateWith = (~latestBlock: int, ~queueBlocks: array<(int, int)>): FetchState.t => {
-    let (fs0, indexingAddresses) = makeInitial(~knownHeight=1000)
+    let (fs0, _) = makeInitial(~knownHeight=1000)
     let query = {
-      ...defaultQuery,
       FetchState.partitionId: "0",
-      estResponseSize: 5000.,
+      itemsTarget: 5000,
+      itemsEst: 5000,
       toBlock: None,
       isChunk: false,
       selection: fs0.normalSelection,
@@ -3608,7 +3698,6 @@ describe("FetchState progress tracking", () => {
     }
     fs0->FetchState.startFetchingQueries(~queries=[query])
     fs0->FetchState.handleQueryResult(
-      ~indexingAddresses,
       ~query,
       ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
       ~newItems=queueBlocks->Array.map(((b, l)) => mockEvent(~blockNumber=b, ~logIndex=l)),
@@ -3673,9 +3762,9 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let largeQueueEvents = Array.fromInitializer(~length=15, i => mockEvent(~blockNumber=20 - i))
 
       let query0 = {
-        ...defaultQuery,
         FetchState.partitionId: "0",
-        estResponseSize: 5000.,
+        itemsTarget: 5000,
+        itemsEst: 5000,
         toBlock: None,
         isChunk: false,
         selection: fetchStateWithTwoPartitions.normalSelection,
@@ -3686,7 +3775,6 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       fetchStateWithTwoPartitions->FetchState.startFetchingQueries(~queries=[query0])
       let fetchStateWithLargeQueue =
         fetchStateWithTwoPartitions->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query=query0,
           ~latestFetchedBlock={blockNumber: 30, blockTimestamp: 30 * 15},
           ~newItems=largeQueueEvents,
@@ -3699,7 +3787,10 @@ describe("FetchState proposes queries against the natural ceiling", () => {
         knownHeight: 30,
       }
 
-      switch fetchStateWithEndBlock->FetchState.getNextQuery {
+      switch fetchStateWithEndBlock->FetchState.getNextQuery(
+        ~chainTargetBlock=30,
+        ~chainTargetItems=10_000.,
+      ) {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
@@ -3710,7 +3801,10 @@ describe("FetchState proposes queries against the natural ceiling", () => {
 
       // Test case 2: endBlock=None -> Should use the open-ended head target
       let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
-      switch fetchStateNoEndBlock->FetchState.getNextQuery {
+      switch fetchStateNoEndBlock->FetchState.getNextQuery(
+        ~chainTargetBlock=30,
+        ~chainTargetItems=10_000.,
+      ) {
       | Ready([q]) =>
         t.expect(
           q.toBlock,
@@ -3721,9 +3815,9 @@ describe("FetchState proposes queries against the natural ceiling", () => {
 
       // Test case 3: Small queue -> Should also use the open-ended head target
       let query3 = {
-        ...defaultQuery,
         FetchState.partitionId: "0",
-        estResponseSize: 5000.,
+        itemsTarget: 5000,
+        itemsEst: 5000,
         toBlock: None,
         isChunk: false,
         selection: fetchState.normalSelection,
@@ -3734,14 +3828,16 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let fetchStateSmallQueue =
         fetchState
         ->FetchState.handleQueryResult(
-          ~indexingAddresses,
           ~query=query3,
           ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
           ~newItems=[mockEvent(~blockNumber=5)],
         )
         ->FetchState.updateKnownHeight(~knownHeight=30)
 
-      switch fetchStateSmallQueue->FetchState.getNextQuery {
+      switch fetchStateSmallQueue->FetchState.getNextQuery(
+        ~chainTargetBlock=30,
+        ~chainTargetItems=10_000.,
+      ) {
       | Ready([q]) => t.expect(q.toBlock, ~message="Should use None (fetch to head)").toBe(None)
       | _ => JsError.throwWithMessage("Expected Ready query")
       }
@@ -3797,7 +3893,8 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ).toEqual([onBlockRegistration])
 
       // Test that getNextQuery returns WaitingForNewBlock when knownHeight is 0
-      let nextQuery = fetchState->FetchState.getNextQuery
+      let nextQuery =
+        fetchState->FetchState.getNextQuery(~chainTargetBlock=0, ~chainTargetItems=10_000.)
       t.expect(
         nextQuery,
         ~message="Should return WaitingForNewBlock when knownHeight is 0",
@@ -3839,7 +3936,8 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ])
 
       // Test that getNextQuery returns NothingToQuery (no partitions to query)
-      let nextQuery2 = updatedFetchState->FetchState.getNextQuery
+      let nextQuery2 =
+        updatedFetchState->FetchState.getNextQuery(~chainTargetBlock=20, ~chainTargetItems=10_000.)
       t.expect(
         nextQuery2,
         ~message="Should return NothingToQuery when there are no partitions to query",
@@ -3848,13 +3946,17 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
   )
 })
 
-describe("Stale query response should not overwrite block range", () => {
-  // The default configuration with ability to overwrite some values
-  let getNextQuery = (fs, ~knownHeight=100000) =>
-    fs->FetchState.updateKnownHeight(~knownHeight)->FetchState.getNextQuery
+describe("Stale query response should not overwrite source range capacity", () => {
+  // The default configuration with ability to overwrite some values.
+  // chainTargetBlock is derived from the post-update knownHeight (see the
+  // other getNextQuery helper above for why).
+  let getNextQuery = (fs, ~knownHeight=100000, ~chainTargetItems=10_000.) => {
+    let updated = fs->FetchState.updateKnownHeight(~knownHeight)
+    updated->FetchState.getNextQuery(~chainTargetBlock=updated.knownHeight, ~chainTargetItems)
+  }
 
   it("Out-of-order parallel query responses should not degrade chunking heuristic", t => {
-    let (fetchState, indexingAddresses) = makeInitial(~knownHeight=100000)
+    let (fetchState, _) = makeInitial(~knownHeight=100000)
 
     // -- Query 1: uncapped query from block 0 --
     let q1 = switch fetchState->getNextQuery {
@@ -3864,27 +3966,30 @@ describe("Stale query response should not overwrite block range", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[q1])
 
     // Response arrives at block 500 (range = 501)
-    // shouldUpdateBlockRange: None toBlock => 500 < 100000 - 10 = true
+    // shouldUpdateSourceRangeCapacity: None toBlock => 500 < 100000 - 10 = true
     let fs1 =
       fetchState
       ->FetchState.updateKnownHeight(~knownHeight=100000)
       ->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=q1,
         ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
-        ~newItems=[],
+        ~newItems=[mockEvent(~blockNumber=100)],
       )
 
     let p1 = fs1.optimizedPartitions.entities->Dict.getUnsafe("0")
-    t.expect(p1.prevQueryRange, ~message="First query should set prevQueryRange=501").toBe(501)
+    t.expect(p1.sourceRangeCapacity, ~message="First query should set sourceRangeCapacity=501").toBe(501)
     t.expect(
-      p1.prevPrevQueryRange,
-      ~message="First query prevPrevQueryRange should still be 0",
+      p1.prevSourceRangeCapacity,
+      ~message="First query prevSourceRangeCapacity should still be 0",
     ).toBe(0)
     t.expect(
-      p1.latestBlockRangeUpdateBlock,
-      ~message="latestBlockRangeUpdateBlock should be 500 after first query",
+      p1.latestSourceRangeCapacityUpdateBlock,
+      ~message="latestSourceRangeCapacityUpdateBlock should be 500 after first query",
     ).toBe(500)
+    t.expect(
+      p1.eventDensity,
+      ~message="First response should seed event density without blending against an empty value",
+    ).toEqual(Some(1. /. 501.))
 
     // -- Query 2: uncapped query from block 501 --
     let q2 = switch fs1->getNextQuery {
@@ -3894,22 +3999,25 @@ describe("Stale query response should not overwrite block range", () => {
     fs1->FetchState.startFetchingQueries(~queries=[q2])
 
     // Response arrives at block 1000 (range = 500)
-    // shouldUpdateBlockRange: None toBlock => 1000 < 99990 = true
+    // shouldUpdateSourceRangeCapacity: None toBlock => 1000 < 99990 = true
     let fs2 =
       fs1->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=q2,
         ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000 * 15},
-        ~newItems=[],
+        ~newItems=[mockEvent(~blockNumber=600)],
       )
 
     let p2 = fs2.optimizedPartitions.entities->Dict.getUnsafe("0")
-    t.expect(p2.prevQueryRange, ~message="Second query should set prevQueryRange=500").toBe(500)
+    t.expect(p2.sourceRangeCapacity, ~message="Second query should set sourceRangeCapacity=500").toBe(500)
     t.expect(
-      p2.prevPrevQueryRange,
-      ~message="Second query should shift prevPrevQueryRange=501",
+      p2.prevSourceRangeCapacity,
+      ~message="Second query should shift prevSourceRangeCapacity=501",
     ).toBe(501)
-    t.expect(p2.latestBlockRangeUpdateBlock).toBe(1000)
+    t.expect(p2.latestSourceRangeCapacityUpdateBlock).toBe(1000)
+    t.expect(
+      p2.eventDensity,
+      ~message="Second response should blend the stored and observed densities 1:1",
+    ).toEqual(Some((1. /. 501. +. 1. /. 500.) /. 2.))
 
     // Now chunking is active: getMinHistoryRange = Some(min(500, 501)) = Some(500)
     // chunkSize = ceil(500 * 1.8) = 900. Chunks: [1001..1900], [1901..2800], ...
@@ -3927,12 +4035,12 @@ describe("Stale query response should not overwrite block range", () => {
 
     // -- Respond to the LATER chunk (B) first --
     // Partial response: latestFetchedBlock=2500 < toBlock=2800
-    // shouldUpdateBlockRange: 2500 > 1000 (latestBlockRangeUpdateBlock) = true,
+    // shouldUpdateSourceRangeCapacity: 2500 > 1000
+    //   (latestSourceRangeCapacityUpdateBlock) = true,
     //   then 2500 < 2800 = true (partial response)
     // blockRange = 2500 - 1901 + 1 = 600
     let fs3 =
       fs2->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=chunkB,
         ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
         ~newItems=[],
@@ -3940,17 +4048,17 @@ describe("Stale query response should not overwrite block range", () => {
 
     let p3 = fs3.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
-      (p3.prevQueryRange, p3.prevPrevQueryRange, p3.latestBlockRangeUpdateBlock),
-      ~message="Chunk B response should set prevQueryRange=600, shift prevPrevQueryRange=500, update latestBlockRangeUpdateBlock=2500",
+      (p3.sourceRangeCapacity, p3.prevSourceRangeCapacity, p3.latestSourceRangeCapacityUpdateBlock),
+      ~message="Chunk B response should set sourceRangeCapacity=600, shift prevSourceRangeCapacity=500, update latestSourceRangeCapacityUpdateBlock=2500",
     ).toEqual((600, 500, 2500))
 
     // -- Now respond to the EARLIER chunk (A) --
     // Partial response: latestFetchedBlock=1500 < toBlock=1900
-    // shouldUpdateBlockRange: 1500 > 2500 (latestBlockRangeUpdateBlock) = FALSE
-    // So prevQueryRange should NOT change
+    // shouldUpdateSourceRangeCapacity: 1500 > 2500
+    //   (latestSourceRangeCapacityUpdateBlock) = FALSE
+    // So sourceRangeCapacity should NOT change
     let fs4 =
       fs3->FetchState.handleQueryResult(
-        ~indexingAddresses,
         ~query=chunkA,
         ~latestFetchedBlock={blockNumber: 1500, blockTimestamp: 1500 * 15},
         ~newItems=[],
@@ -3958,8 +4066,943 @@ describe("Stale query response should not overwrite block range", () => {
 
     let p4 = fs4.optimizedPartitions.entities->Dict.getUnsafe("0")
     t.expect(
-      (p4.prevQueryRange, p4.prevPrevQueryRange, p4.latestBlockRangeUpdateBlock),
+      (p4.sourceRangeCapacity, p4.prevSourceRangeCapacity, p4.latestSourceRangeCapacityUpdateBlock),
       ~message="Earlier chunk A stale response should not overwrite range bookkeeping (still 600, 500, 2500)",
     ).toEqual((600, 500, 2500))
+  })
+})
+
+describe("FetchState.getNextQuery water-fill round is order-independent", () => {
+  // Partition "0" has a trusted density (2 responses) with a chunk cost
+  // (1800) that overshoots its round share (ipb=1000): forced to take at
+  // least one full chunk, it overshoots regardless of who's processed
+  // before/after it. Partition "1" has no signal, so it sizes exactly to
+  // whatever share it's given. Before the round-share fix, an earlier
+  // partition's overshoot shrank a shared running counter that capped
+  // whoever came after it in the same round — so which partition ran first
+  // changed the result (and could even push total consumption above
+  // rangeBudget). With the fix, every partition's share is ipb - reserved,
+  // fixed for the whole round, so the outcome doesn't depend on order.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makeTwoPartitionFetchState = (~order: array<string>): FetchState.t => {
+    let overshootPartition: FetchState.partition = {
+      id: "overshoot",
+      latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+      selection: normalSelection,
+      addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+      mergeBlock: None,
+      dynamicContract: None,
+      mutPendingQueries: [],
+      sourceRangeCapacity: 10,
+      prevSourceRangeCapacity: 10,
+      eventDensity: Some(100.), // density = 1000 / 10 = 100 items/block
+      latestSourceRangeCapacityUpdateBlock: 0,
+    }
+    let unknownPartition: FetchState.partition = {
+      id: "unknown",
+      latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+      selection: normalSelection,
+      addressesByContractName: Dict.fromArray([("MockContract", [mockAddress1])]),
+      mergeBlock: None,
+      dynamicContract: None,
+      mutPendingQueries: [],
+      sourceRangeCapacity: 0,
+      prevSourceRangeCapacity: 0,
+      eventDensity: None,
+      latestSourceRangeCapacityUpdateBlock: 0,
+    }
+    let byId = Dict.fromArray([
+      ("overshoot", overshootPartition),
+      ("unknown", unknownPartition),
+    ])
+    let partitions = order->Array.map(id => byId->Dict.getUnsafe(id))
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions,
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=2,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: None,
+      buffer: [],
+      normalSelection,
+      latestOnBlockBlockNumber: 0,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      contractConfigs: Dict.make(),
+      blockLag: 0,
+      onBlockRegistrations: [],
+      knownHeight: 10000,
+      firstEventBlock: Some(0),
+    }
+  }
+
+  let getItemsTargetByPartition = nextQuery =>
+    switch nextQuery {
+    | FetchState.Ready(queries) =>
+      queries->Array.map((q: FetchState.query) => (q.partitionId, q.itemsTarget))
+    | _ => []
+    }
+
+  it("gives the same per-partition totals regardless of which partition is processed first", t => {
+    let resultA =
+      makeTwoPartitionFetchState(~order=["overshoot", "unknown"])
+      ->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.)
+      ->getItemsTargetByPartition
+      ->Dict.fromArray
+
+    let resultB =
+      makeTwoPartitionFetchState(~order=["unknown", "overshoot"])
+      ->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.)
+      ->getItemsTargetByPartition
+      ->Dict.fromArray
+
+    t.expect(
+      (resultA, resultB),
+      ~message="Same totals whichever partition the round processes first",
+    ).toEqual((
+      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
+      Dict.fromArray([("overshoot", 1800), ("unknown", 1000)]),
+    ))
+  })
+})
+
+describe("FetchState.getNextQuery greedy budget pass fills partitions toward the target", () => {
+  // Two equal-density partitions, chunk cost 180 (density 10 × chunkSize 18).
+  // "capped" can only fetch one chunk (mergeBlock caps its range); "deep" has
+  // unbounded range but stops at the shared target. The greedy pass walks both,
+  // spending budget as it fills each toward the target and its range end.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makeChunkPartition = (~id, ~address, ~mergeBlock): FetchState.partition => {
+    id,
+    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock,
+    dynamicContract: None,
+    mutPendingQueries: [],
+    sourceRangeCapacity: 10,
+    prevSourceRangeCapacity: 10,
+    eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
+    latestSourceRangeCapacityUpdateBlock: 0,
+  }
+
+  let fetchState: FetchState.t = {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[
+        makeChunkPartition(~id="deep", ~address=mockAddress0, ~mergeBlock=None),
+        makeChunkPartition(~id="capped", ~address=mockAddress1, ~mergeBlock=Some(18)),
+      ],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=2,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  it("fills each partition toward the shared target, then stops at its range end", t => {
+    let byPartition = Dict.make()
+    // Target block 45 is reachable within the 900 budget, so "deep" stops at 45
+    // (last chunk trimmed to blocks 37-45 = 90 items) and "capped" fills its
+    // single chunk — both served, unlike an unreachable far target where the
+    // first partition would spend the whole budget alone.
+    switch fetchState->FetchState.getNextQuery(~chainTargetBlock=45, ~chainTargetItems=900.) {
+    | Ready(queries) =>
+      queries->Array.forEach((q: FetchState.query) =>
+        switch byPartition->Dict.get(q.partitionId) {
+        | Some(arr) => arr->Array.push((q.fromBlock, q.itemsTarget))->ignore
+        | None => byPartition->Dict.set(q.partitionId, [(q.fromBlock, q.itemsTarget)])
+        }
+      )
+    | _ => ()
+    }
+
+    t.expect(byPartition).toEqual(
+      Dict.fromArray([
+        ("deep", [(1, 180), (19, 180), (37, 90)]),
+        ("capped", [(1, 180)]),
+      ]),
+    )
+  })
+})
+
+describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
+  // Partition "1" already holds a 1500-item in-flight chunk, so the fresh
+  // budget is only chainTargetItems minus that reservation — new queries draw
+  // from what's left, not the full target.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makePartition = (
+    ~id,
+    ~address,
+    ~knownDensity,
+    ~pendingItemsTarget,
+    ~latestFetchedBlock=0,
+  ): FetchState.partition => {
+    id,
+    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: switch pendingItemsTarget {
+    | Some(itemsTarget) => [
+        {
+          fromBlock: 1,
+          toBlock: Some(100),
+          isChunk: true,
+          itemsTarget,
+          itemsEst: itemsTarget,
+          fetchedBlock: None,
+        },
+      ]
+    | None => []
+    },
+    sourceRangeCapacity: knownDensity ? 10 : 0,
+    prevSourceRangeCapacity: knownDensity ? 10 : 0,
+    eventDensity: knownDensity ? Some(10.) : None, // density = 100 / 10 = 10 items/block
+    latestSourceRangeCapacityUpdateBlock: 0,
+  }
+
+  let makeFetchState = (partitions): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions,
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=2,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 10000,
+    firstEventBlock: Some(0),
+  }
+
+  it("hands a known-density partition only the fresh budget, not the mean footprint", t => {
+    let fetchState = makeFetchState([
+      makePartition(~id="0", ~address=mockAddress0, ~knownDensity=true, ~pendingItemsTarget=None),
+      makePartition(
+        ~id="1",
+        ~address=mockAddress1,
+        ~knownDensity=true,
+        ~pendingItemsTarget=Some(1500),
+      ),
+    ])
+    let byPartition = Dict.make()
+    switch fetchState->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.) {
+    | Ready(queries) =>
+      queries->Array.forEach((q: FetchState.query) =>
+        switch byPartition->Dict.get(q.partitionId) {
+        | Some(arr) => arr->Array.push((q.fromBlock, q.itemsTarget))->ignore
+        | None => byPartition->Dict.set(q.partitionId, [(q.fromBlock, q.itemsTarget)])
+        }
+      )
+    | _ => ()
+    }
+
+    // Fresh budget = 2000 - 1500 reserved = 500. Level = 500 (partition "1"
+    // sits above it). Partition "0": 2 chunks fit the 500 budget + 1 forced
+    // chunk for the 140-item leftover — the only overshoot is the
+    // min-one-chunk quantization, not the reservation-inflated mean.
+    t.expect(byPartition).toEqual(Dict.fromArray([("0", [(1, 180), (19, 180), (37, 180)])]))
+  })
+
+  it(
+    "sizes an unknown-density probe to its even budget share, then fills chunks by fromBlock until the budget is spent",
+    t => {
+      let fetchState = makeFetchState([
+        makePartition(~id="0", ~address=mockAddress0, ~knownDensity=false, ~pendingItemsTarget=None),
+        makePartition(
+          ~id="1",
+          ~address=mockAddress1,
+          ~knownDensity=true,
+          ~pendingItemsTarget=Some(1500),
+        ),
+      ])
+
+      // Fresh budget = 2000 - 1500 reserved = 500, split across the 2 in-range
+      // partitions -> probe share 250. Candidates sort by fromBlock: partition
+      // "0"'s probe (block 1) is accepted first, then partition "1"'s chunks
+      // from block 101 — the second chunk tips the budget negative and ends the
+      // pass.
+      t.expect(
+        fetchState->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=2000.),
+      ).toEqual(
+        FetchState.Ready([
+          {
+            partitionId: "0",
+            fromBlock: 1,
+            toBlock: None,
+            isChunk: false,
+            itemsTarget: 250,
+            itemsEst: 250,
+            selection: normalSelection,
+            addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+          },
+          {
+            partitionId: "1",
+            fromBlock: 101,
+            toBlock: Some(118),
+            isChunk: true,
+            itemsTarget: 180,
+            itemsEst: 180,
+            selection: normalSelection,
+            addressesByContractName: Dict.fromArray([("MockContract", [mockAddress1])]),
+          },
+          {
+            partitionId: "1",
+            fromBlock: 119,
+            toBlock: Some(136),
+            isChunk: true,
+            itemsTarget: 180,
+            itemsEst: 180,
+            selection: normalSelection,
+            addressesByContractName: Dict.fromArray([("MockContract", [mockAddress1])]),
+          },
+        ]),
+      )
+    },
+  )
+
+  it("spreads a thin budget across unknown-density partitions as equal parallel probes", t => {
+    let fetchState = makeFetchState(
+      [mockAddress0, mockAddress1, mockAddress2]->Array.mapWithIndex((address, i) =>
+        makePartition(~id=i->Int.toString, ~address, ~knownDensity=false, ~pendingItemsTarget=None)
+      ),
+    )
+
+    // Fresh budget 300 across 3 unknown-density partitions -> each probes with
+    // its even share (100), all three in parallel this tick.
+    let makeProbe = (~id, ~address): FetchState.query => {
+      partitionId: id,
+      fromBlock: 1,
+      toBlock: None,
+      isChunk: false,
+      itemsTarget: 100,
+      itemsEst: 100,
+      selection: normalSelection,
+      addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    }
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=10000, ~chainTargetItems=300.),
+    ).toEqual(
+      FetchState.Ready([
+        makeProbe(~id="0", ~address=mockAddress0),
+        makeProbe(~id="1", ~address=mockAddress1),
+        makeProbe(~id="2", ~address=mockAddress2),
+      ]),
+    )
+  })
+
+  it("scales each open-ended probe by how much of the range to the target it still covers", t => {
+    let fetchState = makeFetchState([
+      // Frontier partition: covers the whole range to the target.
+      makePartition(~id="0", ~address=mockAddress0, ~knownDensity=false, ~pendingItemsTarget=None),
+      // Sits at block 50, so it covers only half the range and gets half as much.
+      makePartition(
+        ~id="1",
+        ~address=mockAddress1,
+        ~knownDensity=false,
+        ~pendingItemsTarget=None,
+        ~latestFetchedBlock=50,
+      ),
+    ])
+
+    // rangeToTarget = 100 - 0 = 100, rangeTargetDensity = 1000 / 100 = 10.
+    // Probe "0" (from block 1): 10 × (100 - 1 + 1) / 2 = 500.
+    // Probe "1" (from block 51): 10 × (100 - 51 + 1) / 2 = 250.
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=100, ~chainTargetItems=1000.),
+    ).toEqual(
+      FetchState.Ready([
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: None,
+          isChunk: false,
+          itemsTarget: 500,
+          itemsEst: 500,
+          selection: normalSelection,
+          addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+        },
+        {
+          partitionId: "1",
+          fromBlock: 51,
+          toBlock: None,
+          isChunk: false,
+          itemsTarget: 250,
+          itemsEst: 250,
+          selection: normalSelection,
+          addressesByContractName: Dict.fromArray([("MockContract", [mockAddress1])]),
+        },
+      ]),
+    )
+  })
+})
+
+describe("FetchState.getNextQuery target containment", () => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makePartition = (
+    ~latestFetchedBlock,
+    ~knownDensity,
+    ~mergeBlock=None,
+    ~mutPendingQueries=[],
+  ): FetchState.partition => {
+    id: "0",
+    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+    mergeBlock,
+    dynamicContract: None,
+    mutPendingQueries,
+    sourceRangeCapacity: knownDensity ? 10 : 0,
+    prevSourceRangeCapacity: knownDensity ? 10 : 0,
+    eventDensity: knownDensity ? Some(10.) : None, // density = 100 / 10 = 10 items/block
+    latestSourceRangeCapacityUpdateBlock: 0,
+  }
+
+  let makeFetchState = (partition): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[partition],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: partition.latestFetchedBlock.blockNumber,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 10000,
+    firstEventBlock: Some(0),
+  }
+
+  it("gates chunk starts at the target block even when a far mergeBlock allows more", t => {
+    // mergeBlock=1000 gives the partition a 1000-block hard range; the budget
+    // affords 10 chunks. Only chunks STARTING at or below chainTargetBlock=50
+    // may be emitted (chunkSize = ceil(10 * 1.8) = 18 -> starts 1, 19, 37);
+    // the last chunk keeps its full span past the target.
+    let fetchState = makeFetchState(
+      makePartition(~latestFetchedBlock=0, ~knownDensity=true, ~mergeBlock=Some(1000)),
+    )
+    let emitted = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=50,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.toBlock))
+    | _ => []
+    }
+    t.expect(emitted).toEqual([(1, Some(18)), (19, Some(36)), (37, Some(54))])
+  })
+
+  it("defers a gap past the target block, then fills it once the target reaches it", t => {
+    // Gap [101, 199] sits between the fetched frontier (100) and a pending
+    // chunk starting at 200.
+    let makeGappedFetchState = () =>
+      makeFetchState(
+        makePartition(
+          ~latestFetchedBlock=100,
+          ~knownDensity=false,
+          ~mutPendingQueries=[
+            {fromBlock: 200, toBlock: Some(219), isChunk: true, itemsTarget: 100, itemsEst: 100, fetchedBlock: None},
+          ],
+        ),
+      )
+    let emitted = (~chainTargetBlock) =>
+      switch makeGappedFetchState()->FetchState.getNextQuery(
+        ~chainTargetBlock,
+        ~chainTargetItems=10_000.,
+      ) {
+      | Ready(queries) =>
+        Some(queries->Array.map((q: FetchState.query) => (q.fromBlock, q.toBlock)))
+      | NothingToQuery => None
+      | WaitingForNewBlock => Some([(-1, None)])
+      }
+    t.expect(
+      (emitted(~chainTargetBlock=50), emitted(~chainTargetBlock=150)),
+      ~message="Target below the gap defers it; target inside the gap fills it",
+    ).toEqual((None, Some([(101, Some(199))])))
+  })
+
+  it("fills a gap behind a returned-but-unconsumed query even when its reservation would exhaust the budget", t => {
+    // Chunk [101, 200] already returned (fetchedBlock set) but is stuck behind
+    // the [51, 100] hole, so it lingers in mutPendingQueries. Its reservation
+    // was released on return, so counting it against the budget would starve the
+    // very gap-fill that lets it be consumed — a deadlock. itemsEst 1500 exceeds
+    // chainTargetItems 1000, so the old up-front subtraction zeroed the budget
+    // and dropped the gap; the fromBlock-ordered acceptance funds it instead.
+    let fetchState = makeFetchState(
+      makePartition(
+        ~latestFetchedBlock=50,
+        ~knownDensity=false,
+        ~mutPendingQueries=[
+          {
+            fromBlock: 101,
+            toBlock: Some(200),
+            isChunk: true,
+            itemsTarget: 1500,
+            itemsEst: 1500,
+            fetchedBlock: Some({blockNumber: 200, blockTimestamp: 0}),
+          },
+        ],
+      ),
+    )
+    let emitted = switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=1000.,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.toBlock))
+    | NothingToQuery => []
+    | WaitingForNewBlock => [(-1, None)]
+    }
+    t.expect(emitted).toEqual([(51, Some(100))])
+  })
+})
+
+describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => {
+  // Single partition with density 10 items/block and chunk history 10 ->
+  // chunkSize = ceil(10 * 1.8) = 18, so a chunk costs 180 items at multiplier
+  // 1, 270 at the 1.5x backfill headroom, 540 at the 3x realtime headroom.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+
+  let makeFetchState = (~eventDensity=Some(10.)): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[
+        {
+          id: "0",
+          latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+          selection: normalSelection,
+          addressesByContractName: Dict.fromArray([("MockContract", [mockAddress0])]),
+          mergeBlock: None,
+          dynamicContract: None,
+          mutPendingQueries: [],
+          sourceRangeCapacity: 10,
+          prevSourceRangeCapacity: 10,
+          eventDensity, // density = 100 / 10 = 10 items/block by default
+          latestSourceRangeCapacityUpdateBlock: 0,
+        },
+      ],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  let getChunks = (fetchState: FetchState.t, ~chainTargetItems, ~chunkItemsMultiplier=?) =>
+    switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100000,
+      ~chainTargetItems,
+      ~chunkItemsMultiplier?,
+    ) {
+    | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.itemsTarget))
+    | _ => []
+    }
+
+  it("sizes chunk itemsTarget with the chunk headroom multiplier", t => {
+    t.expect({
+      "backfill1_5x": makeFetchState()->getChunks(~chainTargetItems=270., ~chunkItemsMultiplier=1.5),
+      "realtime3x": makeFetchState()->getChunks(~chainTargetItems=270., ~chunkItemsMultiplier=3.),
+    }).toEqual({
+      // The 270-item budget is consumed in honest 180-item estimates: the
+      // first chunk leaves 90, which re-pours and forces a second full chunk.
+      // ceil(1.5 * 10 * 18) = 270 per chunk.
+      "backfill1_5x": [(1, 270), (19, 270)],
+      // ceil(3 * 10 * 18) = 540 per chunk.
+      "realtime3x": [(1, 540), (19, 540)],
+    })
+  })
+
+  it("emits chunks while the budget lasts, min one chunk per water-fill round", t => {
+    t.expect({
+      "budget400": makeFetchState()->getChunks(~chainTargetItems=400.),
+      "budget50": makeFetchState()->getChunks(~chainTargetItems=50.),
+    }).toEqual({
+      // 180 + 180 = 360 <= 400 in the first round; the 40-item leftover
+      // re-pours and forces one more full chunk, so no budget strands.
+      "budget400": [(1, 180), (19, 180), (37, 180)],
+      // The first chunk emits full-size regardless of budget (overshoot allowed).
+      "budget50": [(1, 180)],
+    })
+  })
+
+  it("floors bounded chunk caps at itemsTargetFloor, leaving open-ended probes untouched", t => {
+    let getQueries = (fetchState: FetchState.t, ~chainTargetItems) =>
+      switch fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=100000,
+        ~chainTargetItems,
+        ~itemsTargetFloor=1000,
+      ) {
+      | Ready(queries) => queries->Array.map((q: FetchState.query) => (q.fromBlock, q.itemsTarget))
+      | _ => []
+      }
+    t.expect({
+      "boundedChunks": makeFetchState()->getQueries(~chainTargetItems=400.),
+      "openProbe": makeFetchState(~eventDensity=None)->getQueries(~chainTargetItems=50.),
+    }).toEqual({
+      // A chunk's range is already the hard bound on its response, so the
+      // floor lifts the 180-item density cap to 1000 — a low density estimate
+      // must not shrink caps into self-truncated responses. itemsEst stays at
+      // the honest 180, so budget acceptance still emits the same 3 chunks.
+      "boundedChunks": [(1, 1000), (19, 1000), (37, 1000)],
+      // The open-ended probe's cap is its only response bound, so it keeps its
+      // budget-share size instead of being floored.
+      "openProbe": [(1, 50)],
+    })
+  })
+})
+
+describe("Response density and source range capacity update independently", () => {
+  // Source range capacity 300 with a pending chunk truncated at block 90: when
+  // the truncation was caused by our own itemsTarget cap it says nothing about
+  // server capacity, so the 300 history must survive. Its items/block ratio is
+  // still current density evidence and is blended 1:1 with the stored density.
+  // A sub-cap partial updates both signals.
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let addressesByContractName = Dict.fromArray([("MockContract", [mockAddress0])])
+
+  let makeFetchState = (~eventDensity=Some(1.), ~sourceRangeCapacity=300): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=[
+        {
+          id: "0",
+          latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+          selection: normalSelection,
+          addressesByContractName,
+          mergeBlock: None,
+          dynamicContract: None,
+          mutPendingQueries: [],
+          sourceRangeCapacity,
+          prevSourceRangeCapacity: sourceRangeCapacity,
+          eventDensity,
+          latestSourceRangeCapacityUpdateBlock: 0,
+        },
+      ],
+      ~maxAddrInPartition=2,
+      ~nextPartitionIndex=1,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  let chunkQuery: FetchState.query = {
+    partitionId: "0",
+    fromBlock: 1,
+    toBlock: Some(540),
+    isChunk: true,
+    itemsTarget: 3,
+    itemsEst: 3,
+    selection: normalSelection,
+    addressesByContractName,
+  }
+
+  let runPartialResponse = (~itemsCount, ~eventDensity=Some(1.)) => {
+    let fetchState = makeFetchState(~eventDensity)
+    fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query=chunkQuery,
+        ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
+        ~newItems=Array.fromInitializer(~length=itemsCount, i =>
+          mockEvent(~blockNumber=10, ~logIndex=i)
+        ),
+      )
+    let p = updated.optimizedPartitions.entities->Dict.getUnsafe("0")
+    (p->FetchState.getMinHistoryRange, p.eventDensity)
+  }
+
+  it("updates density on every response but preserves capacity on a cap hit", t => {
+    t.expect({
+      "capHit": runPartialResponse(~itemsCount=3),
+      "subCap": runPartialResponse(~itemsCount=2),
+    }).toEqual({
+      "capHit": (Some(300), Some((1. +. 3. /. 90.) /. 2.)),
+      "subCap": (Some(90), Some((1. +. 2. /. 90.) /. 2.)),
+    })
+  })
+
+  it("trusts cap-hit density before source capacity is known", t => {
+    let fetchState = makeFetchState(~eventDensity=None, ~sourceRangeCapacity=0)
+    fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query=chunkQuery,
+        ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
+        ~newItems=Array.fromInitializer(~length=3, i =>
+          mockEvent(~blockNumber=10, ~logIndex=i)
+        ),
+      )
+    let p = updated.optimizedPartitions.entities->Dict.getUnsafe("0")
+
+    t.expect((p->FetchState.getMinHistoryRange, p->FetchState.getTrustedDensity)).toEqual((
+      None,
+      Some(3. /. 90.),
+    ))
+  })
+
+  it("seeds the first observation and keeps zero as a real sample", t => {
+    t.expect({
+      "seedZero": runPartialResponse(~itemsCount=0, ~eventDensity=None),
+      "blendFromZero": runPartialResponse(~itemsCount=2, ~eventDensity=Some(0.)),
+    }).toEqual({
+      "seedZero": (Some(90), Some(0.)),
+      "blendFromZero": (Some(90), Some(1. /. 90.)),
+    })
+  })
+})
+
+describe("mergeIntoBuffer", () => {
+  it("merges an unsorted response into the sorted buffer and drops duplicates", t => {
+    let buffer = [mockEvent(~blockNumber=1), mockEvent(~blockNumber=3), mockEvent(~blockNumber=5)]
+    let newItems = [
+      mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=2),
+      mockEvent(~blockNumber=3), // duplicate of the buffer's block 3
+      mockEvent(~blockNumber=4), // duplicate within the response
+    ]
+    t.expect(buffer->FetchState.mergeIntoBuffer(newItems)).toEqual([
+      mockEvent(~blockNumber=1),
+      mockEvent(~blockNumber=2),
+      mockEvent(~blockNumber=3),
+      mockEvent(~blockNumber=4),
+      mockEvent(~blockNumber=5),
+    ])
+  })
+
+  it("keeps two registrations for one log (equal block+logIndex, distinct index)", t => {
+    let newItems = [
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
+    ]
+    t.expect([]->FetchState.mergeIntoBuffer(newItems)).toEqual([
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
+      mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
+    ])
+  })
+})
+
+describe("FetchState.getNextQuery caps per-chain concurrency", () => {
+  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let addressesByContractName = Dict.fromArray([("MockContract", [mockAddress0])])
+
+  let makePartition = (~idx, ~inFlight): FetchState.partition => {
+    id: idx->Int.toString,
+    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    selection: normalSelection,
+    addressesByContractName,
+    mergeBlock: None,
+    dynamicContract: None,
+    mutPendingQueries: inFlight
+      ? [
+          {
+            fromBlock: 1,
+            toBlock: None,
+            isChunk: false,
+            itemsTarget: 1,
+            itemsEst: 1,
+            fetchedBlock: None,
+          },
+        ]
+      : [],
+    sourceRangeCapacity: 0,
+    prevSourceRangeCapacity: 0,
+    eventDensity: None,
+    latestSourceRangeCapacityUpdateBlock: 0,
+  }
+
+  let makeFetchState = (~partitionsCount, ~inFlightCount): FetchState.t => {
+    optimizedPartitions: FetchState.OptimizedPartitions.make(
+      ~partitions=Array.fromInitializer(~length=partitionsCount, idx =>
+        makePartition(~idx, ~inFlight=idx < inFlightCount)
+      ),
+      ~maxAddrInPartition=1,
+      ~nextPartitionIndex=partitionsCount,
+      ~dynamicContracts=Utils.Set.make(),
+    ),
+    startBlock: 0,
+    endBlock: None,
+    buffer: [],
+    normalSelection,
+    latestOnBlockBlockNumber: 0,
+    maxOnBlockBufferSize: 10000,
+    chainId,
+    contractConfigs: Dict.make(),
+    blockLag: 0,
+    onBlockRegistrations: [],
+    knownHeight: 100000,
+    firstEventBlock: Some(0),
+  }
+
+  let countQueries = (fetchState: FetchState.t) =>
+    switch fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=100000,
+      ~chainTargetItems=1_000_000.,
+    ) {
+    | Ready(queries) => queries->Array.length
+    | _ => 0
+    }
+
+  it("accepts at most 100 queries counting in-flight ones", t => {
+    t.expect({
+      "freshOnly": makeFetchState(~partitionsCount=120, ~inFlightCount=0)->countQueries,
+      "withInFlight": makeFetchState(~partitionsCount=120, ~inFlightCount=30)->countQueries,
+      "underCap": makeFetchState(~partitionsCount=50, ~inFlightCount=0)->countQueries,
+      "atCap": makeFetchState(~partitionsCount=120, ~inFlightCount=100)->countQueries,
+    }).toEqual({
+      "freshOnly": 100,
+      "withInFlight": 70,
+      "underCap": 50,
+      "atCap": 0,
+    })
+  })
+
+  it("sizes probes by the full in-range count while admitting only up to the cap", t => {
+    let queries = switch makeFetchState(
+      ~partitionsCount=120,
+      ~inFlightCount=0,
+    )->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1_000_000.) {
+    | Ready(queries) => queries
+    | _ => []
+    }
+    // 10 items/block budget density over the 100k-block range, split across all
+    // 120 in-range partitions — an honest per-partition share for budget
+    // control — even though the concurrency cap admits only 100 queries.
+    t.expect({
+      "count": queries->Array.length,
+      "firstItemsTarget": (queries->Array.getUnsafe(0)).itemsTarget,
+    }).toEqual({
+      "count": 100,
+      "firstItemsTarget": 8333,
+    })
+  })
+
+  it("doesn't count fetched chunks against the partition pipeline cap", t => {
+    // A full 12-chunk pipeline where only the head chunk is still being
+    // fetched: the 11 fetched chunks parked behind it hold no slots, so the
+    // partition can still generate a query past the pipeline.
+    let mutPendingQueries: array<FetchState.pendingQuery> = Array.fromInitializer(~length=12, idx => {
+      FetchState.fromBlock: idx * 10 + 1,
+      toBlock: Some((idx + 1) * 10),
+      isChunk: true,
+      itemsTarget: 1,
+      itemsEst: 1,
+      fetchedBlock: idx === 0 ? None : Some({blockNumber: (idx + 1) * 10, blockTimestamp: 0}),
+    })
+    let fetchState = {
+      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[{...makePartition(~idx=0, ~inFlight=false), mutPendingQueries}],
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    t.expect(
+      fetchState->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1000.),
+    ).toEqual(
+      FetchState.Ready([
+        {
+          partitionId: "0",
+          fromBlock: 121,
+          toBlock: None,
+          isChunk: false,
+          selection: normalSelection,
+          itemsTarget: 999,
+          itemsEst: 999,
+          addressesByContractName,
+        },
+      ]),
+    )
+  })
+
+  it("re-sorts partitions when a response overtakes another partition", t => {
+    // Exercises the handleQueryResult fast path (no dynamic contracts): the
+    // responding partition jumps from block 0 to 100, past the partition
+    // sitting at 50, so idsInAscOrder must be reordered without a full remake.
+    let fetchState = {
+      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          makePartition(~idx=0, ~inFlight=false),
+          {
+            ...makePartition(~idx=1, ~inFlight=false),
+            latestFetchedBlock: {blockNumber: 50, blockTimestamp: 0},
+          },
+        ],
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=2,
+        ~dynamicContracts=Utils.Set.make(),
+      ),
+    }
+    let query: FetchState.query = {
+      partitionId: "0",
+      fromBlock: 1,
+      toBlock: None,
+      isChunk: false,
+      selection: normalSelection,
+      itemsTarget: 10,
+      itemsEst: 10,
+      addressesByContractName,
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
+    let updated =
+      fetchState->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock={blockNumber: 100, blockTimestamp: 0},
+        ~newItems=[],
+      )
+    t.expect(
+      updated.optimizedPartitions.idsInAscOrder,
+      ~message="partition 1 (still at block 50) must sort before partition 0 (now at 100)",
+    ).toEqual(["1", "0"])
   })
 })

@@ -1,0 +1,6 @@
+node_modules/
+
+# ReScript artifacts
+lib
+*.res.js
+*.res.mjs

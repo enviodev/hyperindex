@@ -1,4 +1,9 @@
-type sourceManagerStatus = Idle | WaitingForNewBlock | Querieng
+type sourceManagerStatus = Idle | WaitingForNewBlock | Querying
+
+// Cumulative per-method request count/time for a source, aggregated from the
+// requestStat arrays returned by its methods. Rendered into
+// envio_source_request_* by Metrics.renderSourceRequests.
+type requestStatAgg = {mutable count: int, mutable seconds: float}
 
 type sourceState = {
   source: Source.t,
@@ -9,6 +14,28 @@ type sourceState = {
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
+  requestStats: dict<requestStatAgg>,
+}
+
+let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.requestStat>) => {
+  requestStats->Array.forEach(({method, seconds}) => {
+    switch sourceState.requestStats->Utils.Dict.dangerouslyGetNonOption(method) {
+    | Some(agg) =>
+      agg.count = agg.count + 1
+      agg.seconds = agg.seconds +. seconds
+    | None => sourceState.requestStats->Dict.set(method, {count: 1, seconds})
+    }
+  })
+}
+
+// Flattened (source, method) aggregates for Metrics.renderSourceRequests to
+// inline into the /metrics response.
+type requestStatSample = {
+  sourceName: string,
+  chainId: int,
+  method: string,
+  count: int,
+  seconds: float,
 }
 
 // Encapsulates the fetching logic for a chain's sources.
@@ -17,6 +44,11 @@ type t = {
   sourcesState: array<sourceState>,
   mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
+  // Cumulative time spent in each status, rendered into the
+  // envio_indexing_idle/source_waiting/source_querying_seconds counters.
+  mutable idleSeconds: float,
+  mutable waitingForNewBlockSeconds: float,
+  mutable queryingSeconds: float,
   newBlockStallTimeout: int,
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
@@ -45,6 +77,70 @@ type t = {
 }
 
 let getActiveSource = sourceManager => sourceManager.activeSource
+
+let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    let chainId = sourceState.source.chain->ChainMap.Chain.toChainId
+    sourceState.requestStats->Utils.Dict.forEachWithKey((agg, method) => {
+      samples
+      ->Array.push({
+        sourceName: sourceState.source.name,
+        chainId,
+        method,
+        count: agg.count,
+        seconds: agg.seconds,
+      })
+      ->ignore
+    })
+  })
+  samples
+}
+
+// Per-source known heights for envio_source_known_height. Sources with no
+// observed height yet are skipped.
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: int,
+  height: int,
+}
+
+let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    if sourceState.knownHeight > 0 {
+      samples->Array.push({
+        sourceName: sourceState.source.name,
+        chainId: sourceState.source.chain->ChainMap.Chain.toChainId,
+        height: sourceState.knownHeight,
+      })
+    }
+  })
+  samples
+}
+
+// Each accessor adds the in-progress interval of the current status, so a
+// scrape during a long idle/wait/query isn't stale until the next transition.
+let idleSeconds = (sourceManager: t) =>
+  sourceManager.idleSeconds +.
+  switch sourceManager.status {
+  | Idle => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+let waitingForNewBlockSeconds = (sourceManager: t) =>
+  sourceManager.waitingForNewBlockSeconds +.
+  switch sourceManager.status {
+  | WaitingForNewBlock => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
+
+let queryingSeconds = (sourceManager: t) =>
+  sourceManager.queryingSeconds +.
+  switch sourceManager.status {
+  | Querying => sourceManager.statusStart->Performance.secondsSince
+  | _ => 0.
+  }
 
 // Partition queries currently in flight on this chain's sources. Summed across
 // chains by CrossChainState to enforce the indexer-wide concurrency budget.
@@ -175,10 +271,6 @@ let make = (
   | None =>
     JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
   }
-  Prometheus.IndexingConcurrency.set(
-    ~concurrency=0,
-    ~chainId=initialActiveSource.chain->ChainMap.Chain.toChainId,
-  )
   {
     sourcesState: sources->Array.map(source => {
       source,
@@ -187,6 +279,7 @@ let make = (
       pendingHeightResolvers: [],
       disabled: false,
       lastFailedAt: None,
+      requestStats: Dict.make(),
     }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
@@ -200,6 +293,9 @@ let make = (
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
+    idleSeconds: 0.,
+    waitingForNewBlockSeconds: 0.,
+    queryingSeconds: 0.,
     hasRealtime,
     committedRateLimitTimeMs: 0.0,
     rateLimitWaiters: 0,
@@ -209,15 +305,13 @@ let make = (
 }
 
 let trackNewStatus = (sourceManager: t, ~newStatus) => {
-  let promCounter = switch sourceManager.status {
-  | Idle => Prometheus.IndexingIdleTime.counter
-  | WaitingForNewBlock => Prometheus.IndexingSourceWaitingTime.counter
-  | Querieng => Prometheus.IndexingQueryTime.counter
+  let elapsed = sourceManager.statusStart->Performance.secondsSince
+  switch sourceManager.status {
+  | Idle => sourceManager.idleSeconds = sourceManager.idleSeconds +. elapsed
+  | WaitingForNewBlock =>
+    sourceManager.waitingForNewBlockSeconds = sourceManager.waitingForNewBlockSeconds +. elapsed
+  | Querying => sourceManager.queryingSeconds = sourceManager.queryingSeconds +. elapsed
   }
-  promCounter->Prometheus.SafeCounter.handleFloat(
-    ~labels=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-    ~value=sourceManager.statusStart->Performance.secondsSince,
-  )
   sourceManager.statusStart = Performance.now()
   sourceManager.status = newStatus
 }
@@ -260,20 +354,12 @@ let dispatch = async (
       // when they were admitted; here we just execute them.
       sourceManager.fetchingPartitionsCount =
         sourceManager.fetchingPartitionsCount + queries->Array.length
-      Prometheus.IndexingConcurrency.set(
-        ~concurrency=sourceManager.fetchingPartitionsCount,
-        ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-      )
-      sourceManager->trackNewStatus(~newStatus=Querieng)
+      sourceManager->trackNewStatus(~newStatus=Querying)
       let _ = await queries
       ->Array.map(q => {
         let promise = q->executeQuery
         let _ = promise->Promise.thenResolve(_ => {
           sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          Prometheus.IndexingConcurrency.set(
-            ~concurrency=sourceManager.fetchingPartitionsCount,
-            ~chainId=sourceManager.activeSource.chain->ChainMap.Chain.toChainId,
-          )
           if sourceManager.fetchingPartitionsCount === 0 {
             sourceManager->trackNewStatus(~newStatus=Idle)
           }
@@ -344,7 +430,9 @@ let getSourceNewHeight = async (
         let h = ref(initialHeight)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
           try {
-            h := (await source.getHeightOrThrow())
+            let res = await source.getHeightOrThrow()
+            sourceState->recordRequestStats(res.requestStats)
+            h := res.height
           } catch {
           | _ => ()
           }
@@ -363,7 +451,9 @@ let getSourceNewHeight = async (
     | None =>
       // No subscription, use REST polling
       try {
-        let height = await source.getHeightOrThrow()
+        let res = await source.getHeightOrThrow()
+        sourceState->recordRequestStats(res.requestStats)
+        let height = res.height
 
         newHeight := height
         if height <= knownHeight {
@@ -385,6 +475,9 @@ let getSourceNewHeight = async (
               }
             })
             sourceState.unsubscribe = Some(unsubscribe)
+            // Count a subscription (re)start rather than every pushed height —
+            // there's no request/response to time here.
+            sourceState->recordRequestStats([{Source.method: "heightSubscription", seconds: 0.}])
           | _ =>
             // Slowdown polling when the chain isn't progressing
             let pollingInterval = if reducedPolling {
@@ -411,13 +504,8 @@ let getSourceNewHeight = async (
     }
   }
 
-  // Update Prometheus only if height increased
-  if newHeight.contents > initialHeight {
-    Prometheus.SourceHeight.set(
-      ~sourceName=source.name,
-      ~chainId=source.chain->ChainMap.Chain.toChainId,
-      ~blockNumber=newHeight.contents,
-    )
+  if newHeight.contents > sourceState.knownHeight {
+    sourceState.knownHeight = newHeight.contents
   }
 
   newHeight.contents
@@ -680,17 +768,19 @@ let executeQuery = async (
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
-        // Ceil (not truncate) so a sub-1 estimate from a sparse partition over a
-        // small range doesn't round down to 0 and ask the backend to cap the
-        // response at nothing — 0 items is indistinguishable from "no signal".
-        ~itemsTarget={
-          let est = query.estResponseSize->Math.ceil->Float.toInt
-          est > 0 ? est : FetchState.minEstResponseSize->Float.toInt
-        },
+        ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,
       )
+      sourceState->recordRequestStats(response.requestStats)
       sourceState.lastFailedAt = None
+
+      // The response carries a fresh height for exactly this source, so during a
+      // long backfill (when the wait loop doesn't run) it keeps the per-source
+      // envio_source_known_height current.
+      if response.knownHeight > sourceState.knownHeight {
+        sourceState.knownHeight = response.knownHeight
+      }
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs}) =>
@@ -829,7 +919,8 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
 
     try {
       let res = await source.getBlockHashes(~blockNumbers, ~logger)
-      switch res {
+      sourceState->recordRequestStats(res.requestStats)
+      switch res.result {
       | Ok(data) =>
         sourceState.lastFailedAt = None
         responseRef := Some(data)

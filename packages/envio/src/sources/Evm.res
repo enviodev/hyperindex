@@ -10,7 +10,9 @@ type payload = {
   srcAddress: Address.t,
   logIndex: int,
   transaction?: Internal.eventTransaction,
-  block: Internal.eventBlock,
+  // HyperSync omits `block` (it lives raw in the per-chain store and is written
+  // onto the payload at batch prep); RPC/simulate build it inline.
+  block?: Internal.eventBlock,
 }
 external fromPayload: payload => Internal.eventPayload = "%identity"
 external toPayload: Internal.eventPayload => payload = "%identity"
@@ -26,6 +28,42 @@ let transactionFields =
 // One event's selected transaction fields → store selection bitmask. Computed
 // per event at config build and cached on the event config.
 let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+
+// Ordered block field names. The index of each is the field code shared with the
+// Rust store (`EvmBlockField`) — keep this order in sync.
+let blockFields = [
+  "number",
+  "timestamp",
+  "hash",
+  "parentHash",
+  "nonce",
+  "sha3Uncles",
+  "logsBloom",
+  "transactionsRoot",
+  "stateRoot",
+  "receiptsRoot",
+  "miner",
+  "difficulty",
+  "totalDifficulty",
+  "extraData",
+  "size",
+  "gasLimit",
+  "gasUsed",
+  "uncles",
+  "baseFeePerGas",
+  "blobGasUsed",
+  "excessBlobGas",
+  "parentBeaconBlockRoot",
+  "withdrawalsRoot",
+  "l1BlockNumber",
+  "sendCount",
+  "sendRoot",
+  "mixHash",
+]
+
+// One event's selected block fields → store selection bitmask. Computed per
+// event at config build and cached on the event config.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -52,8 +90,11 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // range chunk is validated by `eventBlockRangeSchema` in
   // `LogSelection.res` which rejects `_lte`/`_every` (use `onBlock` for
   // stride- and endBlock-based block handlers).
+  // `S.strict` on the inner object rejects unknown `block` fields (e.g. a
+  // `numbre` typo or `block: {timestamp: ...}`) instead of silently
+  // ignoring them.
   onEventBlockFilterSchema: S.object(s =>
-    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))))
+    s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))->S.strict))
   ),
   logger,
   // The payload carries `transaction` by batch prep (HyperSync) or inline
@@ -77,6 +118,14 @@ let make = (~logger: Pino.t): Ecosystem.t => {
       eventItem.onEventRegistration.eventConfig->(
         Utils.magic: Internal.eventConfig => Internal.evmEventConfig
       )
+    // Store-backed payloads get `block` written at batch prep and inline
+    // sources carry it from the start, with hash/timestamp always selected —
+    // so both are present by the time a raw event is built.
+    let header = switch payload.block {
+    | Some(block) => block->(Utils.magic: Internal.eventBlock => {"hash": string, "timestamp": int})
+    | None =>
+      JsError.throwWithMessage("Unexpected case: The event block is missing for a raw event")
+    }
     eventItem->RawEvent.make(
       ~block=payload.block,
       ~transaction=payload.transaction,
@@ -86,6 +135,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
         ? ()->(Utils.magic: unit => Internal.eventParams)
         : payload.params,
       ~srcAddress=payload.srcAddress,
+      ~blockHash=header["hash"],
+      ~blockTimestamp=header["timestamp"],
       ~cleanUpRawEventFieldsInPlace,
     )
   },

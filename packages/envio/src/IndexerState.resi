@@ -16,14 +16,6 @@ module EntityTables: {
   let get: (t, ~entityName: string) => InMemoryTable.Entity.t
 }
 
-type effectCacheInMemTable = {
-  mutable idsToStore: array<string>,
-  mutable invalidationsCount: int,
-  mutable dict: dict<Change.t<Internal.effectOutput>>,
-  mutable changesCount: float,
-  effect: Internal.effect,
-}
-
 type t
 
 let make: (
@@ -86,7 +78,7 @@ let config: t => Config.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
-let effects: t => dict<effectCacheInMemTable>
+let effectState: t => EffectState.t
 let committedCheckpointId: t => Internal.checkpointId
 let processedCheckpointId: t => Internal.checkpointId
 let processedBatches: t => array<Batch.t>
@@ -106,8 +98,30 @@ let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
 let isStopped: t => bool
 let epoch: t => int
-let pruneStaleEntityHistoryThrottler: t => Throttler.t
+let lastPrunedAtMillis: t => dict<float>
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
+
+// Read-only snapshot of every metric; the single window into the mutable
+// counters for the /metrics endpoint, the TUI and the console API.
+let toMetrics: t => Metrics.t
+
+// Metric counters.
+let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
+let recordHandlerDuration: (t, ~contract: string, ~event: string, ~duration: float) => unit
+let startPreloadHandler: (t, ~contract: string, ~event: string) => Performance.timeRef
+let endPreloadHandler: (t, Performance.timeRef, ~contract: string, ~event: string) => unit
+let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
+let endStorageLoad: (
+  t,
+  Performance.timeRef,
+  ~storage: string,
+  ~operation: string,
+  ~whereSize: int,
+  ~size: int,
+) => unit
+let recordStorageWrite: (t, ~storage: string, ~timeSeconds: float) => unit
+let recordHistoryPrune: (t, ~entityName: string, ~timeSeconds: float) => unit
+let recordRollbackSuccess: (t, ~timeSeconds: float, ~rollbackedProcessedEvents: float) => unit
 
 // Store domain operations.
 let queueProcessedBatch: (t, ~batch: Batch.t) => unit

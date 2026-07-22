@@ -8,6 +8,7 @@ let configAddresses: Config.chain => array<Internal.indexingAddress>
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=?,
   ~indexingAddresses: IndexingAddresses.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
@@ -17,6 +18,9 @@ let make: (
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
   ~transactionStore: TransactionStore.t=?,
+  ~chainDensity: option<float>=?,
+  ~blockStore: BlockStore.t=?,
+  ~reorgThresholdReadyTolerance: int=?,
   ~logger: Pino.t,
 ) => t
 
@@ -51,18 +55,38 @@ let pendingBudget: t => float
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 
+// Metric counters, rendered by Metrics at scrape time.
+let recordBlockRangeFetch: (
+  t,
+  ~totalTimeElapsed: float,
+  ~parsingTimeElapsed: float,
+  ~numEvents: int,
+  ~blockRangeSize: int,
+) => unit
+let recordReorgDetected: (t, ~blockNumber: int) => unit
+let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
+
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
-let getProgressPercentageAt: (t, ~blockNumber: int) => float
+let chainDensity: t => option<float>
+let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
-let isReadyToEnterReorgThreshold: t => bool
 
 // Fetch control.
-let getNextQuery: t => FetchState.nextQuery
+let targetBlock: (t, ~chainTargetItems: float) => int
+let blockAtProgress: (t, ~progress: float) => int
+let frontierProgress: t => float
+let getNextQuery: (
+  t,
+  ~chainTargetItems: float,
+  ~chunkItemsMultiplier: float=?,
+  ~itemsTargetFloor: int=?,
+  ~maxTargetBlock: int=?,
+) => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,
@@ -73,22 +97,7 @@ let dispatch: (
 ) => promise<unit>
 
 // Views.
-type chainData = {
-  chainId: float,
-  poweredByHyperSync: bool,
-  firstEventBlockNumber: option<int>,
-  latestProcessedBlock: option<int>,
-  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  numEventsProcessed: float,
-  latestFetchedBlockNumber: int,
-  @as("currentBlockHeight")
-  knownHeight: int,
-  numBatchesFetched: int,
-  startBlock: int,
-  endBlock: option<int>,
-  numAddresses: int,
-}
-let toChainData: t => chainData
+let toMetrics: t => Metrics.chainMetrics
 let toChainMetadata: t => InternalTable.Chains.metaFields
 let toChainBeforeBatch: t => Batch.chainBeforeBatch
 let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
@@ -101,6 +110,10 @@ let isReady: t => bool
 let isFetchingAtHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool
 
+// Drop over-fetched events an address-param filter rejects, before contract
+// registration runs on them. Uses the chain's current indexing addresses.
+let filterByClientAddress: (t, array<Internal.item>) => array<Internal.item>
+
 // State transitions. The chain state is mutated only through these.
 let handleQueryResult: (
   t,
@@ -110,11 +123,18 @@ let handleQueryResult: (
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
 ) => unit
-let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
+let materializeBatchItems: (
+  t,
+  ~items: array<Internal.item>,
+  ~ecosystem: Ecosystem.name,
+) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
-  ~page: option<TransactionStore.t>,
+  ~transactionStore: option<TransactionStore.t>,
+  ~blockStore: option<BlockStore.t>,
+  ~ecosystem: Ecosystem.name,
 ) => promise<unit>
 let registerReorgGuard: (
   t,
@@ -126,7 +146,7 @@ let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
-let applyBatchProgress: (t, ~batch: Batch.t) => unit
+let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: t => unit
 let rollback: (
   t,
