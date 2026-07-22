@@ -1,7 +1,7 @@
 use super::{
     perr, q, verr, ADirective, ASelSet, AType, AValue, AVarDef, Ctx, GResult, Json, NULL_LIT,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
 // Variables
@@ -83,8 +83,13 @@ pub(super) fn build_variables<'a>(
     Ok(vars)
 }
 
-pub(super) fn variable_prepass(ctx: &Ctx, set: &ASelSet) -> GResult<()> {
-    fn mark_value(ctx: &Ctx, v: &AValue) -> GResult<()> {
+pub(super) fn variable_prepass<'a>(ctx: &Ctx<'a>, set: &'a ASelSet) -> GResult<()> {
+    let mut visited: HashSet<&'a str> = HashSet::new();
+    walk(ctx, set, &mut visited)
+}
+
+fn walk<'a>(ctx: &Ctx<'a>, set: &'a ASelSet, visited: &mut HashSet<&'a str>) -> GResult<()> {
+    fn mark_value<'a>(ctx: &Ctx<'a>, v: &'a AValue) -> GResult<()> {
         match v {
             q::Value::Variable(name) => {
                 if !ctx.vars.contains_key(name.as_str()) {
@@ -106,7 +111,7 @@ pub(super) fn variable_prepass(ctx: &Ctx, set: &ASelSet) -> GResult<()> {
         }
         Ok(())
     }
-    fn mark_directives(ctx: &Ctx, dirs: &[ADirective]) -> GResult<()> {
+    fn mark_directives<'a>(ctx: &Ctx<'a>, dirs: &'a [ADirective]) -> GResult<()> {
         for d in dirs {
             for (_, v) in &d.arguments {
                 mark_value(ctx, v)?;
@@ -121,17 +126,21 @@ pub(super) fn variable_prepass(ctx: &Ctx, set: &ASelSet) -> GResult<()> {
                     mark_value(ctx, v)?;
                 }
                 mark_directives(ctx, &f.directives)?;
-                variable_prepass(ctx, &f.selection_set)?;
+                walk(ctx, &f.selection_set, visited)?;
             }
             q::Selection::FragmentSpread(spread) => {
                 mark_directives(ctx, &spread.directives)?;
-                if let Some(frag) = ctx.fragments.get(spread.fragment_name.as_str()) {
-                    variable_prepass(ctx, &frag.selection_set)?;
+                // A fragment already fully walked cannot mark anything new;
+                // skipping it also keeps a chain of double spreads linear.
+                if visited.insert(spread.fragment_name.as_str()) {
+                    if let Some(frag) = ctx.fragments.get(spread.fragment_name.as_str()) {
+                        walk(ctx, &frag.selection_set, visited)?;
+                    }
                 }
             }
             q::Selection::InlineFragment(inline) => {
                 mark_directives(ctx, &inline.directives)?;
-                variable_prepass(ctx, &inline.selection_set)?;
+                walk(ctx, &inline.selection_set, visited)?;
             }
         }
     }

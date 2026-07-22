@@ -69,6 +69,10 @@ tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-native-certs = "0.8"
+lru = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+subtle = "2.6"
 tokio-postgres-rustls = { version = "0.14", default-features = false, features = [
   "native-certs",
   "ring",

@@ -22,6 +22,7 @@ type addon = {
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   parseConfigYaml: (string, parseConfigYamlOptions) => string,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  requestShutdown: unit => unit,
   @as("EvmHypersyncClient")
   evmHypersyncClient: evmHypersyncClientCtor,
   @as("EvmRpcClient")
@@ -209,15 +210,33 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 // A supplied schema is authoritative; omitted or blank schema text means an empty schema.
 let parseConfigYaml = (~schema=?, ~env=?, ~files=?, ~isRescript=false, yaml) => {
   let addon = getAddon()
-  addon.parseConfigYaml(yaml, {
-    ?schema,
-    ?env,
-    ?files,
-    isRescript,
-  })
+  addon.parseConfigYaml(
+    yaml,
+    {
+      ?schema,
+      ?env,
+      ?files,
+      isRescript,
+    },
+  )
 }
+
+let runWithShutdownSignals = %raw(`function(run, requestShutdown) {
+  var onShutdown = function() { requestShutdown(); };
+  process.once("SIGINT", onShutdown);
+  process.once("SIGTERM", onShutdown);
+  return run().finally(function() {
+    process.off("SIGINT", onShutdown);
+    process.off("SIGTERM", onShutdown);
+  });
+}`)
 
 let runCli = args => {
   let addon = getAddon()
-  addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
+  let invoke = () => addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
+  if args->Array.some(arg => arg === "serve") {
+    runWithShutdownSignals(invoke, () => addon.requestShutdown())
+  } else {
+    invoke()
+  }
 }

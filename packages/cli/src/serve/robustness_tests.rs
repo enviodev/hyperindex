@@ -11,7 +11,9 @@
 //!   never change a cached plan's result type);
 //! - a frozen (SIGSTOP'd) Postgres cannot hang requests beyond the
 //!   client-side query timeout;
-//! - the shutdown signal actually stops the server;
+//! - the shutdown signal actually stops the server, and active WebSocket
+//!   subscriptions get a `complete` frame plus a 1001 close instead of a
+//!   dropped socket;
 //! - a null `arguments` on an aggregate bool_exp predicate is a validation
 //!   error for every op except `count` (whose `arguments` list is genuinely
 //!   nullable), instead of reaching SQL generation and producing invalid
@@ -25,11 +27,13 @@
 //!   poll loop forever;
 //! - `envio serve` started before Postgres is reachable retries within its
 //!   startup budget and becomes healthy once Postgres comes up.
+//! - startup failures name the unreachable endpoint, rejected credentials,
+//!   or missing database and point to the exact environment variables to fix.
 
-use super::env_config::ServeEnv;
+use super::env_config::{PgSslMode, ServeEnv};
 use super::model::ServerModel;
 use super::project_schema::ProjectSchema;
-use super::test_support::{docker_available, free_port, TestPg};
+use super::test_support::{free_port, skip_without_docker, TestPg};
 use super::{http, pg_catalog, ServeState};
 use crate::project_paths::ParsedProjectPaths;
 use futures_util::{SinkExt, StreamExt};
@@ -44,7 +48,7 @@ fn test_env(pg_port: u16) -> ServeEnv {
         pg_password: "testing".to_string(),
         pg_database: "envio-dev".to_string(),
         pg_schema: "public".to_string(),
-        pg_ssl: false,
+        pg_ssl: PgSslMode::Disable,
         admin_secret: "testing".to_string(),
         response_limit: None,
         aggregate_entities: vec![],
@@ -55,6 +59,13 @@ fn test_env(pg_port: u16) -> ServeEnv {
         startup_retry_budget_ms: 60_000,
         healthz_timeout_ms: 2_000,
         ws_ping_interval_ms: 15_000,
+        ws_connection_init_timeout_ms: 3_000,
+        ws_max_connections: 1_000,
+        ws_max_operations_per_connection: 50,
+        ws_max_operations: 1_000,
+        ws_max_concurrent_polls: 6,
+        ws_poll_interval_ms: 1_000,
+        ws_max_message_bytes: 1024 * 1024,
     }
 }
 
@@ -118,6 +129,13 @@ async fn boot(
         query_timeout,
         healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
+        ws_connection_init_timeout: Duration::from_millis(env.ws_connection_init_timeout_ms),
+        ws_max_connections: env.ws_max_connections,
+        ws_max_operations_per_connection: env.ws_max_operations_per_connection,
+        ws_max_operations: env.ws_max_operations,
+        ws_max_concurrent_polls: env.ws_max_concurrent_polls,
+        ws_poll_interval: Duration::from_millis(env.ws_poll_interval_ms),
+        ws_max_message_bytes: env.ws_max_message_bytes,
     });
 
     let port = {
@@ -190,8 +208,7 @@ const SIMPLE_QUERY: &str = "{ SimpleEntity(order_by: {id: asc}, limit: 1) { id }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn postgres_outage_errors_cleanly_and_recovers_without_restart() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -249,8 +266,7 @@ async fn postgres_outage_errors_cleanly_and_recovers_without_restart() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn table_recreate_does_not_poison_statement_cache() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -295,8 +311,7 @@ async fn table_recreate_does_not_poison_statement_cache() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn frozen_postgres_is_bounded_by_the_client_query_timeout() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -329,8 +344,7 @@ async fn frozen_postgres_is_bounded_by_the_client_query_timeout() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_signal_stops_the_server() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -358,8 +372,7 @@ async fn shutdown_signal_stops_the_server() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -468,7 +481,566 @@ async fn aggregate_bool_exp_null_arguments_errors_cleanly() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn http_transport_surface_edge_cases() {
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let client = reqwest::Client::new();
+
+    // GET /v1/graphql without WebSocket upgrade headers: axum's upgrade
+    // extractor rejects it (serve-defined behavior, pinned here — Hasura
+    // serves GraphiQL on plain GET instead).
+    let res = client
+        .get(format!("{base}/v1/graphql"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap();
+    let get_status = res.status().as_u16();
+    let get_body = res.text().await.unwrap();
+
+    let unknown_path_status = client
+        .get(format!("{base}/definitely/not/a/route"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+
+    // >2MB body trips the explicit request-body limit before GraphQL parsing
+    // (serve-defined behavior, pinned independently of axum defaults).
+    let oversized = format!(
+        "{{\"query\": \"{{ SimpleEntity {{ id }} }}\", \"pad\": \"{}\"}}",
+        "a".repeat(3 * 1024 * 1024)
+    );
+    let res = client
+        .post(format!("{base}/v1/graphql"))
+        .header("content-type", "application/json")
+        .body(oversized)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .unwrap();
+    let oversized_status = res.status().as_u16();
+    let oversized_body = res.text().await.unwrap();
+
+    assert_eq!(
+        (
+            get_status,
+            get_body,
+            unknown_path_status,
+            oversized_status,
+            oversized_body
+        ),
+        (
+            400,
+            "Connection header did not include 'upgrade'".to_string(),
+            404,
+            413,
+            "Failed to buffer the request body: length limit exceeded".to_string()
+        )
+    );
+}
+
 const SUBSCRIBE_QUERY: &str = "subscription { SimpleEntity(order_by: {id: asc}, limit: 1) { id } }";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_connection_init_deadline_is_not_extended_by_ping_traffic() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.ws_connection_init_timeout_ms = 250;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+
+    let close_code = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut ping = tokio::time::interval(Duration::from_millis(40));
+        loop {
+            tokio::select! {
+                _ = ping.tick() => {
+                    ws.send(TMessage::Text(
+                        serde_json::json!({"type": "ping"}).to_string().into()
+                    )).await.expect("ping send");
+                }
+                message = ws.next() => match message {
+                    Some(Ok(TMessage::Close(frame))) => {
+                        return frame.map(|f| u16::from(f.code));
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) | None => return None,
+                }
+            }
+        }
+    })
+    .await
+    .expect("uninitialized websocket should be closed");
+
+    assert_eq!(close_code, Some(4408));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_operation_limit_rejects_before_starting_more_work() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.ws_max_operations_per_connection = 1;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+
+    for id in ["one", "two"] {
+        ws.send(TMessage::Text(
+            serde_json::json!({
+                "id": id,
+                "type": "subscribe",
+                "payload": { "query": SUBSCRIBE_QUERY }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+        if id == "one" {
+            let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("first operation should start")
+                .unwrap()
+                .unwrap();
+            assert!(matches!(first, TMessage::Text(_)));
+        }
+    }
+
+    let close_code = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(TMessage::Close(frame))) => {
+                    return frame.map(|f| u16::from(f.code));
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => return None,
+            }
+        }
+    })
+    .await
+    .expect("operation overflow should close the socket");
+    assert_eq!(close_code, Some(1008));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_global_operation_limit_applies_across_connections() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.ws_max_operations_per_connection = 1;
+    env.ws_max_operations = 1;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let port = server.port;
+    let connect = move || async move {
+        let mut request = format!("ws://127.0.0.1:{port}/v1/graphql")
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            HeaderValue::from_static("graphql-transport-ws"),
+        );
+        tokio_tungstenite::connect_async(request)
+            .await
+            .expect("websocket handshake")
+            .0
+    };
+    let mut first = connect().await;
+    let mut second = connect().await;
+    for ws in [&mut first, &mut second] {
+        ws.send(TMessage::Text(
+            serde_json::json!({"type": "connection_init"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+    }
+
+    first
+        .send(TMessage::Text(
+            serde_json::json!({
+                "id": "one",
+                "type": "subscribe",
+                "payload": { "query": SUBSCRIBE_QUERY }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let _first_result = tokio::time::timeout(Duration::from_secs(5), first.next())
+        .await
+        .expect("first global operation should start")
+        .unwrap()
+        .unwrap();
+
+    second
+        .send(TMessage::Text(
+            serde_json::json!({
+                "id": "two",
+                "type": "subscribe",
+                "payload": { "query": SUBSCRIBE_QUERY }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let close_code = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match second.next().await {
+                Some(Ok(TMessage::Close(frame))) => {
+                    return frame.map(|f| u16::from(f.code));
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => return None,
+            }
+        }
+    })
+    .await
+    .expect("global operation overflow should close the second socket");
+    assert_eq!(close_code, Some(1013));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn identical_live_queries_share_one_postgres_poll_loop() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.ws_poll_interval_ms = 200;
+    // The view preserves SimpleEntity's API but advances a sequence whenever
+    // its id is read. With `limit: 1`, that gives a precise database-side
+    // count of live-query polls without relying on timing-sensitive server
+    // instrumentation.
+    let server = boot(
+        env,
+        Some(Duration::from_secs(20)),
+        Some(
+            r#"
+            ALTER TABLE public."SimpleEntity" RENAME TO "SimpleEntity_backing";
+            CREATE SEQUENCE public.live_query_poll_count;
+            CREATE VIEW public."SimpleEntity" AS
+            SELECT
+              id || CASE WHEN nextval('public.live_query_poll_count') > 0 THEN '' ELSE NULL END AS id,
+              value
+            FROM public."SimpleEntity_backing";
+            "#,
+        ),
+    )
+    .await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+
+    let query = "subscription { SimpleEntity(limit: 1) { id } }";
+    for id in ["one", "two"] {
+        ws.send(TMessage::Text(
+            serde_json::json!({
+                "id": id,
+                "type": "subscribe",
+                "payload": { "query": query }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    }
+    for _ in 0..2 {
+        let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("both subscribers receive the shared initial result")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(frame, TMessage::Text(_)));
+    }
+
+    let read_count = || async {
+        server
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one("SELECT last_value FROM public.live_query_poll_count", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+    };
+    let before = read_count().await;
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    let polls = read_count().await - before;
+
+    assert!(
+        (2..=5).contains(&polls),
+        "two identical subscribers should produce one ~200ms poll loop, got {polls} database polls"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_query_cohort_joiner_waits_for_a_fresh_poll() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    // Make a scheduled poll impossible during the assertion window. A
+    // joining subscriber must request one shared refresh rather than replay
+    // the cohort's cached pre-insert payload.
+    env.ws_poll_interval_ms = 30_000;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+
+    let query = r#"subscription { SimpleEntity(where: {id: {_eq: "cohort-fresh"}}) { id value } }"#;
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "first",
+            "type": "subscribe",
+            "payload": { "query": query }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("first subscriber receives the initial result")
+        .unwrap()
+        .unwrap();
+    let TMessage::Text(first) = first else {
+        panic!("expected text data frame");
+    };
+    let first: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(
+        first["payload"]["data"]["SimpleEntity"],
+        serde_json::json!([])
+    );
+
+    server
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            r#"INSERT INTO public."SimpleEntity" (id, value) VALUES ('cohort-fresh', 'new')"#,
+            &[],
+        )
+        .await
+        .unwrap();
+
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "joiner",
+            "type": "subscribe",
+            "payload": { "query": query }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let joined = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = ws.next().await.expect("websocket remains open").unwrap();
+            let TMessage::Text(text) = message else {
+                continue;
+            };
+            let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if frame["id"] == "joiner" {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("joiner should receive a fresh shared poll without waiting 30 seconds");
+    assert_eq!(
+        joined["payload"]["data"]["SimpleEntity"],
+        serde_json::json!([{"id": "cohort-fresh", "value": "new"}]),
+        "a new subscriber must not receive the cohort's cached pre-subscription payload"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_global_connection_limit_rejects_before_upgrade() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.ws_max_connections = 1;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let request = || {
+        let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            HeaderValue::from_static("graphql-transport-ws"),
+        );
+        request
+    };
+    let (_first, _) = tokio_tungstenite::connect_async(request())
+        .await
+        .expect("first websocket handshake");
+    let error = tokio_tungstenite::connect_async(request())
+        .await
+        .expect_err("second websocket should be rejected before upgrade");
+    let status = match error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => response.status().as_u16(),
+        other => panic!("expected HTTP rejection, got {other}"),
+    };
+    assert_eq!(status, 503);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_message_limit_is_explicitly_enforced() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut env = test_env(pg.port);
+    env.ws_max_message_bytes = 128;
+    let server = boot(env, Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+
+    ws.send(TMessage::Text("x".repeat(129).into()))
+        .await
+        .unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .expect("oversized websocket message should close promptly");
+    assert!(
+        matches!(&closed, Some(Ok(TMessage::Close(_))) | Some(Err(_)) | None),
+        "oversized frame must close instead of reaching the GraphQL protocol handler: {closed:?}"
+    );
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn black_holed_websocket_client_is_closed_within_30s() {
@@ -476,8 +1048,7 @@ async fn black_holed_websocket_client_is_closed_within_30s() {
     use tokio_tungstenite::tungstenite::http::HeaderValue;
     use tokio_tungstenite::tungstenite::Message as TMessage;
 
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -567,9 +1138,101 @@ async fn black_holed_websocket_client_is_closed_within_30s() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn shutdown_closes_websocket_subscriptions_cleanly() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+    let mut server = boot(test_env(pg.port), Some(Duration::from_secs(20)), None).await;
+
+    let mut request = format!("ws://127.0.0.1:{}/v1/graphql", server.port)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("websocket handshake");
+
+    ws.send(TMessage::Text(
+        serde_json::json!({"type": "connection_init"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let _ack = ws.next().await.expect("connection_ack frame").unwrap();
+    ws.send(TMessage::Text(
+        serde_json::json!({
+            "id": "1",
+            "type": "subscribe",
+            "payload": { "query": SUBSCRIBE_QUERY }
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("subscription should push an initial live-query result")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(first, TMessage::Text(_)));
+
+    server.shutdown.take().unwrap().send(()).unwrap();
+
+    // Well before the 25s drain timeout, the server must send `complete`
+    // for the active subscription and then a 1001 (going away) close.
+    let started = Instant::now();
+    let (saw_complete, close_code) = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut saw_complete = false;
+        loop {
+            match ws.next().await {
+                Some(Ok(TMessage::Text(text))) => {
+                    let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if frame["type"] == "complete" && frame["id"] == "1" {
+                        saw_complete = true;
+                    }
+                }
+                Some(Ok(TMessage::Close(frame))) => {
+                    return (saw_complete, frame.map(|f| u16::from(f.code)));
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => return (saw_complete, None),
+            }
+        }
+    })
+    .await
+    .expect("server should close the websocket before the drain timeout");
+
+    assert_eq!(
+        (
+            saw_complete,
+            close_code,
+            started.elapsed() < Duration::from_secs(10)
+        ),
+        (true, Some(u16::from(CloseCode::Away)), true),
+        "shutdown should complete active operations and close with 1001"
+    );
+
+    let serve_result = tokio::time::timeout(Duration::from_secs(15), &mut server.handle)
+        .await
+        .expect("server task should stop after connections close")
+        .expect("serve task should not panic");
+    assert!(serve_result.is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn aggregate_selection_count_null_args_errors_cleanly() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -627,8 +1290,7 @@ async fn aggregate_selection_count_null_args_errors_cleanly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn json_field_null_path_errors_cleanly() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     let pg = TestPg::start();
@@ -661,8 +1323,7 @@ async fn json_field_null_path_errors_cleanly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
-    if !docker_available() {
-        eprintln!("skipping: docker is not available");
+    if skip_without_docker() {
         return;
     }
     // Reserve the address but do not start Postgres on it yet -- then start
@@ -704,6 +1365,13 @@ async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
         query_timeout: Some(Duration::from_secs(20)),
         healthz_timeout: Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: Duration::from_millis(env.ws_ping_interval_ms),
+        ws_connection_init_timeout: Duration::from_millis(env.ws_connection_init_timeout_ms),
+        ws_max_connections: env.ws_max_connections,
+        ws_max_operations_per_connection: env.ws_max_operations_per_connection,
+        ws_max_operations: env.ws_max_operations,
+        ws_max_concurrent_polls: env.ws_max_concurrent_polls,
+        ws_poll_interval: Duration::from_millis(env.ws_poll_interval_ms),
+        ws_max_message_bytes: env.ws_max_message_bytes,
     });
 
     let http_port = {
@@ -739,4 +1407,70 @@ async fn serve_becomes_healthy_once_postgres_starts_within_the_retry_budget() {
         (true, true),
         "serve should recover once Postgres starts within the retry budget and become healthy"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_startup_errors_are_actionable() {
+    // Connection refusal needs no container and must identify the endpoint
+    // and the configuration knobs instead of exposing only a driver chain.
+    let mut unreachable = test_env(free_port());
+    unreachable.startup_retry_budget_ms = 0;
+    let pool = unreachable.make_pg_pool().unwrap();
+    let error = super::wait_for_pg(&pool, &unreachable.pg_schema, 0)
+        .await
+        .err()
+        .expect("unreachable PostgreSQL should fail");
+    let message = super::postgres_startup_error(&unreachable, error).to_string();
+    assert!(message.contains(&format!(
+        "Cannot connect to PostgreSQL at localhost:{}/envio-dev",
+        unreachable.pg_port
+    )));
+    assert!(message.contains("ENVIO_PG_HOST"));
+    assert!(message.contains("ENVIO_PG_PORT"));
+    assert!(message.contains("ENVIO_PG_DATABASE"));
+
+    if skip_without_docker() {
+        return;
+    }
+    let pg = TestPg::start();
+
+    let mut bad_password = test_env(pg.port);
+    bad_password.pg_password = "incorrect".to_string();
+    bad_password.startup_retry_budget_ms = 20_000;
+    let pool = bad_password.make_pg_pool().unwrap();
+    let error = super::wait_for_pg(
+        &pool,
+        &bad_password.pg_schema,
+        bad_password.startup_retry_budget_ms,
+    )
+    .await
+    .err()
+    .expect("wrong PostgreSQL password should fail");
+    let message = super::postgres_startup_error(&bad_password, error).to_string();
+    assert!(
+        message.contains("rejected the credentials for user \"postgres\""),
+        "unexpected error: {message}"
+    );
+    assert!(message.contains("ENVIO_PG_USER"));
+    assert!(message.contains("ENVIO_PG_PASSWORD"));
+    assert!(!message.contains("incorrect"));
+
+    let mut missing_database = test_env(pg.port);
+    missing_database.pg_database = "missing_envio_database".to_string();
+    missing_database.startup_retry_budget_ms = 20_000;
+    let pool = missing_database.make_pg_pool().unwrap();
+    let error = super::wait_for_pg(
+        &pool,
+        &missing_database.pg_schema,
+        missing_database.startup_retry_budget_ms,
+    )
+    .await
+    .err()
+    .expect("missing PostgreSQL database should fail");
+    let message = super::postgres_startup_error(&missing_database, error).to_string();
+    assert!(
+        message.contains("database \"missing_envio_database\" does not exist"),
+        "unexpected error: {message}"
+    );
+    assert!(message.contains("ENVIO_PG_DATABASE"));
 }

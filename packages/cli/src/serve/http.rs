@@ -4,9 +4,9 @@
 use super::exec::{self, GraphQLRequest, Schemas};
 use super::gql::schema_build::Role;
 use super::ServeState;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -19,6 +19,18 @@ use std::time::Duration;
 pub struct AppState {
     pub serve: Arc<ServeState>,
     pub schemas: Arc<Schemas>,
+    /// Flips to true on the shutdown signal so long-lived WebSocket
+    /// connections can close cleanly instead of being dropped at the drain
+    /// timeout.
+    pub shutdown: tokio::sync::watch::Receiver<bool>,
+    /// Admission controls shared by every WebSocket connection handled by
+    /// this server instance.
+    pub ws_connection_slots: Arc<tokio::sync::Semaphore>,
+    pub ws_operation_slots: Arc<tokio::sync::Semaphore>,
+    pub ws_poll_slots: Arc<tokio::sync::Semaphore>,
+    /// Exact live-query cohorts shared across all sockets. A cohort owns one
+    /// poll loop and fans changed results out to every matching subscriber.
+    pub(crate) live_queries: super::ws::LiveQueryRegistry,
 }
 
 /// How long in-flight requests get to finish after a shutdown signal
@@ -27,6 +39,9 @@ pub struct AppState {
 /// just under Kubernetes' default 30s termination grace period so slow
 /// but legitimate queries get most of the available window.
 const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+/// Keep the historical axum behavior, but make it an intentional API and
+/// security boundary rather than inheriting a dependency default.
+const GRAPHQL_HTTP_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 pub async fn serve(
     state: Arc<ServeState>,
@@ -35,32 +50,39 @@ pub async fn serve(
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
     let schemas = Arc::new(Schemas::build(&state.model));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let app_state = AppState {
+        ws_connection_slots: Arc::new(tokio::sync::Semaphore::new(state.ws_max_connections)),
+        ws_operation_slots: Arc::new(tokio::sync::Semaphore::new(state.ws_max_operations)),
+        ws_poll_slots: Arc::new(tokio::sync::Semaphore::new(state.ws_max_concurrent_polls)),
+        live_queries: super::ws::LiveQueryRegistry::default(),
         serve: state,
         schemas,
+        shutdown: shutdown_rx.clone(),
     };
 
     let app = Router::new()
-        .route("/v1/graphql", post(graphql_handler).get(ws_or_get_handler))
+        .route(
+            "/v1/graphql",
+            post(graphql_handler)
+                .get(ws_or_get_handler)
+                .layer(DefaultBodyLimit::max(GRAPHQL_HTTP_BODY_LIMIT)),
+        )
         .route("/healthz", get(healthz))
         .route("/hasura/healthz", get(healthz))
         .route("/livez", get(livez))
         .with_state(app_state)
         .into_make_service();
 
-    let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .context("Invalid host/port")?;
-    let listener = bind_with_keepalive(addr).context("Failed binding the serve listener")?;
-    println!("envio serve: GraphQL API at http://{addr}/v1/graphql");
+    let (addr, listener) = bind_listener(host, port)?;
+    tracing::info!("envio serve: GraphQL API at http://{addr}/v1/graphql");
 
-    let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         shutdown.await;
-        let _ = tx.send(true);
+        let _ = shutdown_tx.send(true);
     });
-    let mut graceful_rx = rx.clone();
-    let mut drain_rx = rx;
+    let mut graceful_rx = shutdown_rx.clone();
+    let mut drain_rx = shutdown_rx;
     tokio::select! {
         r = axum::serve(listener, app).with_graceful_shutdown(async move {
             let _ = graceful_rx.changed().await;
@@ -69,10 +91,39 @@ pub async fn serve(
             let _ = drain_rx.changed().await;
             tokio::time::sleep(SHUTDOWN_DRAIN_TIMEOUT).await;
         } => {
-            println!("envio serve: drain timeout reached, closing remaining connections");
+            tracing::warn!("envio serve: drain timeout reached, closing remaining connections");
         }
     }
     Ok(())
+}
+
+fn bind_listener(host: &str, port: u16) -> anyhow::Result<(SocketAddr, tokio::net::TcpListener)> {
+    let addr: SocketAddr = format!("{host}:{port}").parse().map_err(|_| {
+        anyhow!(
+            "Invalid serve host \"{host}\". Use an IP address such as 127.0.0.1 \
+             (local only) or 0.0.0.0 (all interfaces)."
+        )
+    })?;
+    match bind_with_keepalive(addr) {
+        Ok(listener) => Ok((addr, listener)),
+        Err(error) if error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::AddrInUse)
+        }) => {
+            let alternative = if port == u16::MAX { 8081 } else { port + 1 };
+            Err(anyhow!(
+                "Port {port} is already in use on {host}, so envio serve could not start.\n\
+                 To fix this either:\n  \
+                 1. Stop the process using the port: lsof -ti :{port} | xargs kill\n  \
+                 2. Use a different port: envio serve --port {alternative}\n     \
+                    or: ENVIO_SERVE_PORT={alternative} envio serve"
+            ))
+        }
+        Err(error) => Err(error).context(format!(
+            "Failed binding envio serve to {addr}. Check that the host is available and the process has permission to listen on port {port}"
+        )),
+    }
 }
 
 /// How long a connection can sit idle before the kernel starts probing it,
@@ -135,30 +186,59 @@ async fn livez() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-/// Resolve the request's role from headers, mirroring Hasura:
-/// - correct admin secret -> admin (or the role named in X-Hasura-Role)
+/// Compares a client-supplied admin secret without leaking match length
+/// through timing. A length mismatch still rejects (length isn't secret),
+/// but equal-length comparison never early-exits on content.
+pub fn admin_secret_matches(provided: &str, expected: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    provided.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
+/// Resolve the request's role from header values, mirroring Hasura:
+/// - correct admin secret -> admin (or the role named in X-Hasura-Role;
+///   a role that isn't in the metadata — anything but `admin`/`public`
+///   here — is an access-denied error, like Hasura v2)
 /// - wrong admin secret -> HTTP 200 with an access-denied GraphQL error
 ///   (verified live — Hasura never uses 401 for this)
 /// - no secret -> the unauthorized role (public)
+pub fn resolve_role_values(
+    provided_secret: Option<&str>,
+    requested_role: Option<&str>,
+    admin_secret: &str,
+) -> Result<Role, exec::error::GraphQLError> {
+    match provided_secret {
+        None => Ok(Role::Public),
+        Some(s) if admin_secret_matches(s, admin_secret) => match requested_role {
+            None | Some("admin") => Ok(Role::Admin),
+            Some("public") => Ok(Role::Public),
+            Some(other) => {
+                tracing::debug!(role = other, "rejecting request for unknown x-hasura-role");
+                Err(exec::error::GraphQLError {
+                    message: "your requested role is not in allowed roles".to_string(),
+                    path: "$".to_string(),
+                    code: exec::error::CODE_ACCESS_DENIED,
+                    status: 200,
+                })
+            }
+        },
+        Some(_) => {
+            tracing::debug!("rejecting request with wrong x-hasura-admin-secret");
+            Err(exec::error::GraphQLError::access_denied())
+        }
+    }
+}
+
 pub fn resolve_role(
     headers: &HeaderMap,
     admin_secret: &str,
 ) -> Result<Role, exec::error::GraphQLError> {
-    let provided = headers
-        .get("x-hasura-admin-secret")
-        .and_then(|v| v.to_str().ok());
-    match provided {
-        None => Ok(Role::Public),
-        Some(s) if s == admin_secret => {
-            let role_header = headers.get("x-hasura-role").and_then(|v| v.to_str().ok());
-            match role_header {
-                None | Some("admin") => Ok(Role::Admin),
-                Some("public") => Ok(Role::Public),
-                Some(_) => Ok(Role::Public),
-            }
-        }
-        Some(_) => Err(exec::error::GraphQLError::access_denied()),
-    }
+    resolve_role_values(
+        headers
+            .get("x-hasura-admin-secret")
+            .and_then(|v| v.to_str().ok()),
+        headers.get("x-hasura-role").and_then(|v| v.to_str().ok()),
+        admin_secret,
+    )
 }
 
 async fn graphql_handler(
@@ -238,7 +318,8 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
             )),
         };
 
-    let value: serde_json::Value = match serde_json::from_str(text) {
+    let (value, number_originals) =
+        match exec::validate::json_numbers::parse_value_preserving_numbers(text) {
         Ok(v) => v,
         // Lone-surrogate escapes decode to invalid UTF-8 in Hasura's
         // text pipeline; it reports them as a UTF-8 decoding failure.
@@ -317,10 +398,21 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
         }
     };
 
+    // Variable numbers that don't round-trip through serde_json's f64
+    // (e.g. >19-digit integers) are re-read from the raw body text with
+    // sentinel substitution so their exact text reaches SQL parameters,
+    // as Hasura's arbitrary-precision Scientific does.
+    let variable_number_originals = if matches!(variables, Some(serde_json::Value::Object(_))) {
+        number_originals
+    } else {
+        Default::default()
+    };
+
     Ok(GraphQLRequest {
         query: Some(query),
         variables,
         operation_name,
+        variable_number_originals,
     })
 }
 
@@ -331,4 +423,228 @@ async fn ws_or_get_handler(
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> axum::response::Response {
     super::ws::handle_upgrade(state, headers, ws)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn occupied_port_error_has_recovery_commands() {
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let error = bind_listener("127.0.0.1", port).unwrap_err().to_string();
+        assert!(error.contains(&format!("Port {port} is already in use")));
+        assert!(error.contains(&format!("lsof -ti :{port} | xargs kill")));
+        assert!(error.contains(&format!("envio serve --port {}", port + 1)));
+        assert!(error.contains(&format!("ENVIO_SERVE_PORT={}", port + 1)));
+    }
+
+    #[test]
+    fn invalid_host_error_names_valid_alternatives() {
+        let error = bind_listener("not a socket address", 8080)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Invalid serve host \"not a socket address\""));
+        assert!(error.contains("127.0.0.1"));
+        assert!(error.contains("0.0.0.0"));
+    }
+
+    // Error shapes mirror Hasura's, matching the em-* error-matrix corpus
+    // (e.g. em-body-lone-surrogate-in-query pins the invalid-json path).
+    #[test]
+    fn request_body_decoding_errors() {
+        let decode = |body: &str| {
+            decode_request_body(body.as_bytes())
+                .map(|_| unreachable!("expected a decode error for {body:?}"))
+                .unwrap_err()
+        };
+        let shape = |e: exec::error::GraphQLError| (e.message, e.path, e.code, e.status);
+        assert_eq!(
+            [
+                decode("not json"),
+                decode("[1,2]"),
+                decode("\"query\""),
+                decode("42"),
+                decode("{}"),
+                decode("{\"query\": 5}"),
+                decode("{\"query\": \"{ x }\", \"variables\": \"v\"}"),
+                decode("{\"query\": \"{ x }\", \"variables\": [1]}"),
+            ]
+            .map(shape),
+            [
+                (
+                    "expected ident at line 1 column 2".to_string(),
+                    "$".to_string(),
+                    "invalid-json",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Array".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered String".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Number".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, key \"query\" not found".to_string(),
+                    "$".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing Text failed, expected String, but encountered Number".to_string(),
+                    "$.query".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing HashMap failed, expected Object, but encountered String".to_string(),
+                    "$.variables".to_string(),
+                    "parse-failed",
+                    200
+                ),
+                (
+                    "parsing HashMap failed, expected Object, but encountered Array".to_string(),
+                    "$.variables".to_string(),
+                    "parse-failed",
+                    200
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn variable_number_metadata_is_decoder_owned() {
+        let request =
+            decode_request_body(br#"{"query":"q","variables":{"big":99999999999999999999999}}"#)
+                .unwrap();
+        let variables = request.variables.as_ref().unwrap();
+        let bits = variables["big"].as_f64().unwrap().to_bits();
+        assert_eq!(
+            request
+                .variable_number_originals
+                .get(&bits)
+                .map(String::as_str),
+            Some("99999999999999999999999")
+        );
+
+        let spoofed = decode_request_body(
+            br#"{"query":"q","variables":{"v":1.5,"\u0001variable number originals":{"4609434218613702656":"999999999999999999"}}}"#,
+        )
+        .unwrap();
+        assert!(spoofed.variable_number_originals.is_empty());
+        assert!(spoofed
+            .variables
+            .unwrap()
+            .get("\u{1}variable number originals")
+            .is_some());
+    }
+
+    #[test]
+    fn out_of_f64_range_variable_numbers_are_preserved() {
+        let request = decode_request_body(
+            br#"{"query":"query($n: numeric!, $j: jsonb!) { x }","variables":{"n":1e400,"j":{"nested":-9e999}}}"#,
+        )
+        .expect("arbitrary-precision JSON numbers are valid Hasura inputs");
+        let variables = request.variables.as_ref().unwrap();
+        let n_bits = variables["n"].as_f64().unwrap().to_bits();
+        let nested_bits = variables["j"]["nested"].as_f64().unwrap().to_bits();
+        assert_eq!(
+            (
+                request
+                    .variable_number_originals
+                    .get(&n_bits)
+                    .map(String::as_str),
+                request
+                    .variable_number_originals
+                    .get(&nested_bits)
+                    .map(String::as_str),
+            ),
+            (Some("1e400"), Some("-9e999"))
+        );
+
+        let malformed =
+            decode_request_body(br#"{"query":"query($n: numeric!) { x }","variables":{"n":1e}}"#)
+                .err()
+                .expect("malformed JSON must still be rejected");
+        assert_eq!(malformed.code, "invalid-json");
+    }
+
+    #[test]
+    fn admin_secret_comparison() {
+        assert_eq!(
+            [
+                admin_secret_matches("secret", "secret"),
+                admin_secret_matches("secreT", "secret"),
+                admin_secret_matches("secret-longer", "secret"),
+                admin_secret_matches("", "secret"),
+                admin_secret_matches("", ""),
+            ],
+            [true, false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn role_resolution() {
+        let resolve =
+            |secret: Option<&str>, role: Option<&str>| resolve_role_values(secret, role, "s3cret");
+        let tag = |r: Result<Role, exec::error::GraphQLError>| match r {
+            Ok(Role::Admin) => "admin",
+            Ok(Role::Public) => "public",
+            Err(_) => "err",
+        };
+        assert_eq!(
+            [
+                resolve(None, None),
+                resolve(None, Some("admin")),
+                resolve(Some("s3cret"), None),
+                resolve(Some("s3cret"), Some("admin")),
+                resolve(Some("s3cret"), Some("public")),
+            ]
+            .map(tag),
+            ["public", "public", "admin", "admin", "public"]
+        );
+
+        let wrong_secret = resolve(Some("nope"), None).unwrap_err();
+        assert_eq!(
+            (
+                wrong_secret.message.as_str(),
+                wrong_secret.code,
+                wrong_secret.status
+            ),
+            (
+                "invalid \"x-hasura-admin-secret\"/\"x-hasura-access-key\"",
+                "access-denied",
+                200
+            )
+        );
+
+        // A role outside the metadata (only admin/public exist) with a
+        // valid secret is access-denied, not a silent public downgrade.
+        let unknown_role = resolve(Some("s3cret"), Some("editor")).unwrap_err();
+        assert_eq!(
+            (
+                unknown_role.message.as_str(),
+                unknown_role.code,
+                unknown_role.status
+            ),
+            (
+                "your requested role is not in allowed roles",
+                "access-denied",
+                200
+            )
+        );
+    }
 }

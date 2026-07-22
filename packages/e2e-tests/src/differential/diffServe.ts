@@ -7,7 +7,7 @@
  *          [--phase default|limited] [--filter substr] [--verbose N]
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { allCases } from "./corpus/index.js";
 import type { Phase } from "./corpus.js";
 import { serveUrl } from "./env.js";
@@ -43,6 +43,9 @@ function firstDiff(a: unknown, b: unknown, path = "$"): string | undefined {
   if (Array.isArray(a) !== Array.isArray(b)) {
     return `${path}: array-vs-object mismatch`;
   }
+  if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) {
+    return `${path}: array length oracle=${a.length} serve=${b.length}`;
+  }
   const ao = a as Record<string, unknown>;
   const bo = b as Record<string, unknown>;
   const keys = new Set([...Object.keys(ao), ...Object.keys(bo)]);
@@ -64,6 +67,24 @@ async function main() {
 
   let pass = 0;
   const failures: { name: string; detail: string }[] = [];
+
+  // A removed/renamed corpus case must not leave its stale snapshot behind
+  // silently — only meaningful on an unfiltered run, where the full case
+  // list for the phase is known.
+  if (!filter) {
+    const caseNames = new Set(cases.map((c) => c.name));
+    const orphans = (await readdir(snapshotsDir))
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => f.slice(0, -".json".length))
+      .filter((name) => !caseNames.has(name))
+      .sort();
+    for (const name of orphans) {
+      failures.push({
+        name,
+        detail: "orphan snapshot: no corpus case with this name in this phase",
+      });
+    }
+  }
 
   const diffOne = async (corpusCase: (typeof cases)[number]) => {
     let oracle: Snapshot;
@@ -109,7 +130,7 @@ async function main() {
       }
     })
   );
-  failures.sort((a, b) => (a.name < b.name ? -1 : 1));
+  failures.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
   console.log(`\n${pass}/${cases.length} passed (phase=${phase})`);
   if (failures.length > 0) {

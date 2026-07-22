@@ -89,6 +89,30 @@ or late-run p99 more than `--p99-drift-multiplier` (default 2x) worse than
 an early stabilized window. See the flag list in `soakLoad.ts`'s module
 doc comment for the full set of thresholds/knobs.
 
+## Needs a live-Hasura re-record
+
+Fixture/schema changes invalidate ALL recorded snapshots (including
+introspection), so the items below batch into one re-record session against
+live Hasura v2.43 (`pnpm record:differential` after the fixture edits):
+
+- **`column_name_format: snake_case` fixture coverage** — serve supports the
+  snake_case column-name mode but the fixture only exercises the default
+  camelCase naming; add a snake_case-configured schema variant and corpus
+  cases so naming-mode parity is snapshot-verified.
+- **`envio_effect_*` table in the fixture** — effect-cache tables get a
+  public/admin visibility split distinct from entity tables; add one to
+  `schema.sql` and record corpus cases for both roles to pin that split.
+- **Byte-level (non-JSON-normalized) snapshot recording** — snapshots are
+  stored as re-serialized parsed JSON, which hides float-formatting
+  differences (e.g. `1.0` vs `1`); record raw response bytes alongside so
+  float-formatting parity is verifiable.
+- **GET /v1/graphql corpus cases** — Hasura answers plain GET (GraphiQL /
+  query-over-GET) while serve currently 400s without upgrade headers; record
+  Hasura's GET behavior so the intended parity target is pinned.
+- **Auth-matrix corpus cases** — only public/admin/admin-wrong are covered;
+  record combinations of `X-Hasura-Role` with and without a valid admin
+  secret (and unknown roles) to pin the full role-resolution matrix.
+
 ## Regenerating the fixture schema
 
 When the generated DDL changes (packages/envio/src/db/*), re-run:

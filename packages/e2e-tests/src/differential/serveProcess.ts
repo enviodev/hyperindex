@@ -9,6 +9,11 @@ export interface ServeProcess {
   logs: string[];
 }
 
+export interface ServeExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
 const projectDir = fileURLToPath(
   new URL("../../../../scenarios/test_codegen/", import.meta.url)
 );
@@ -16,10 +21,14 @@ const projectDir = fileURLToPath(
 // local workspace link both work.
 const envioBin = createRequire(import.meta.url).resolve("envio/bin.mjs");
 
-export async function startServe(options: TrackOptions): Promise<ServeProcess> {
+export function spawnServe(
+  options: TrackOptions,
+  port = servePort,
+  envOverrides: NodeJS.ProcessEnv = {}
+): ServeProcess {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    ENVIO_SERVE_PORT: String(servePort),
+    ENVIO_SERVE_PORT: String(port),
   };
   if (options.responseLimit !== undefined) {
     env.ENVIO_HASURA_RESPONSE_LIMIT = String(options.responseLimit);
@@ -33,15 +42,49 @@ export async function startServe(options: TrackOptions): Promise<ServeProcess> {
   } else {
     delete env.ENVIO_HASURA_PUBLIC_AGGREGATE;
   }
+  Object.assign(env, envOverrides);
 
   const child = spawn(
     process.execPath,
-    [envioBin, "serve", "--port", String(servePort)],
+    [envioBin, "serve", "--port", String(port)],
     { cwd: projectDir, env, stdio: ["ignore", "pipe", "pipe"] }
   );
   const logs: string[] = [];
   child.stdout?.on("data", (d) => logs.push(d.toString()));
   child.stderr?.on("data", (d) => logs.push(d.toString()));
+  return { child, logs };
+}
+
+export function waitForServeExit(
+  serve: ServeProcess,
+  timeoutMs: number
+): Promise<ServeExit> {
+  if (serve.child.exitCode !== null || serve.child.signalCode !== null) {
+    return Promise.resolve({
+      code: serve.child.exitCode,
+      signal: serve.child.signalCode,
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `envio serve did not exit within ${timeoutMs}ms:\n${serve.logs.join("")}`
+          )
+        ),
+      timeoutMs
+    );
+    serve.child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
+  });
+}
+
+export async function startServe(options: TrackOptions): Promise<ServeProcess> {
+  const serve = spawnServe(options);
+  const { child, logs } = serve;
 
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -52,7 +95,7 @@ export async function startServe(options: TrackOptions): Promise<ServeProcess> {
     }
     try {
       const res = await fetch(`${serveUrl}/healthz`);
-      if (res.ok) return { child, logs };
+      if (res.ok) return serve;
     } catch {
       // not up yet
     }

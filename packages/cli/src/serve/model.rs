@@ -103,6 +103,9 @@ pub struct Column {
     /// Actual database column name.
     pub db_name: String,
     pub pg_type: String,
+    /// Namespace owning `pg_type`; kept separate because GraphQL exposes
+    /// the bare type name while SQL casts must qualify custom types.
+    pub pg_type_schema: String,
     pub scalar: Scalar,
     pub is_array: bool,
     pub nullable: bool,
@@ -169,13 +172,14 @@ pub struct ServerModel {
     pub tables: Vec<Table>,
     pub pg_schema: String,
     pub response_limit: Option<u32>,
-    /// Pg enum types reachable from exposed columns: name -> labels.
-    pub enums: HashMap<String, Vec<String>>,
 }
 
 impl ServerModel {
     pub fn table(&self, name: &str) -> Option<&Table> {
-        self.tables.iter().find(|t| t.name == name)
+        self.tables
+            .binary_search_by(|t| t.name.as_str().cmp(name))
+            .ok()
+            .map(|i| &self.tables[i])
     }
 
     pub fn build(
@@ -199,6 +203,7 @@ impl ServerModel {
                             api_name: c.name.clone(),
                             db_name: c.name.clone(),
                             pg_type: c.pg_type.clone(),
+                            pg_type_schema: c.pg_type_schema.clone(),
                             scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
                             is_array: c.is_array,
                             nullable: c.nullable,
@@ -214,10 +219,12 @@ impl ServerModel {
             }
         }
 
+        let mut skipped_entities: Vec<&str> = Vec::new();
         for entity in &project.entities {
             let Some(rel) = catalog.relations.get(&entity.name) else {
                 // Entity present in schema.graphql but not migrated into the
                 // DB — Hasura tracking would have failed for it; skip.
+                skipped_entities.push(&entity.name);
                 continue;
             };
 
@@ -238,23 +245,18 @@ impl ServerModel {
                     api_by_db.insert(db, (api, None));
                 }
             }
-            for (field_name, desc) in &entity.field_descriptions {
-                // Plain scalar fields: original or snake_case column name.
-                if let Some(db) = resolve_db_column(field_name, "", rel.columns.iter()) {
+            // Every db-backed field maps to a column named either exactly
+            // like the field (`column_name_format: original`) or its
+            // snake_case (`column_name_format: snake_case`); the api name is
+            // always the original field name, matching Table.res's
+            // getApiFieldName / Hasura.res's custom_name renames.
+            for field in &entity.scalar_fields {
+                if let Some(db) = resolve_db_column(&field.name, "", rel.columns.iter()) {
                     api_by_db
                         .entry(db)
-                        .or_insert((field_name.clone(), Some(desc.clone())));
+                        .or_insert((field.name.clone(), field.description.clone()));
                 }
             }
-            // Scalar fields renamed by snake_case without descriptions:
-            // detect via project schema field names vs db columns. The
-            // project schema only carries relationship fields and described
-            // fields explicitly; for everything else api == db unless the
-            // snake_case of some original field matches. Hasura only knows
-            // renames the indexer computed — which exist exactly when the
-            // db column differs from the schema field name.
-            // (Handled implicitly: when column_name_format is original,
-            // api == db for all scalar columns.)
 
             let columns = rel
                 .columns
@@ -268,6 +270,7 @@ impl ServerModel {
                         api_name,
                         db_name: c.name.clone(),
                         pg_type: c.pg_type.clone(),
+                        pg_type_schema: c.pg_type_schema.clone(),
                         scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
                         is_array: c.is_array,
                         nullable: c.nullable,
@@ -351,6 +354,7 @@ impl ServerModel {
                             api_name: c.name.clone(),
                             db_name: c.name.clone(),
                             pg_type: c.pg_type.clone(),
+                            pg_type_schema: c.pg_type_schema.clone(),
                             scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
                             is_array: c.is_array,
                             nullable: c.nullable,
@@ -372,13 +376,291 @@ impl ServerModel {
             ));
         }
 
+        if !skipped_entities.is_empty() {
+            tracing::warn!(
+                "Skipping entities from schema.graphql with no table in the database: {} — run migrations to expose them",
+                skipped_entities.join(", ")
+            );
+        }
+
         tables.sort_by(|a, b| a.name.cmp(&b.name));
 
-        Ok(ServerModel {
+        {
+            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for t in &tables {
+                if !seen.insert(&t.name) {
+                    return Err(anyhow!(
+                        "Table name collision: entity \"{}\" in schema.graphql conflicts with an internal indexer table of the same name. Rename the entity.",
+                        t.name
+                    ));
+                }
+            }
+        }
+
+        let model = ServerModel {
             tables,
             pg_schema: env.pg_schema.clone(),
             response_limit: env.response_limit,
-            enums: catalog.enums,
-        })
+        };
+
+        // The admin registry contains every type any role can see; a clean
+        // admin build guarantees both roles are collision-free.
+        super::gql::schema_build::check_type_collisions(&model)?;
+
+        Ok(model)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serve::env_config::{PgSslMode, ServeEnv};
+    use crate::serve::pg_catalog::{self, Catalog, Relation, RelationKind};
+    use crate::serve::project_schema::ProjectSchema;
+
+    fn test_env() -> ServeEnv {
+        ServeEnv {
+            pg_host: "localhost".to_string(),
+            pg_port: 5432,
+            pg_user: "postgres".to_string(),
+            pg_password: "testing".to_string(),
+            pg_database: "envio-dev".to_string(),
+            pg_schema: "public".to_string(),
+            pg_ssl: PgSslMode::Disable,
+            admin_secret: "testing".to_string(),
+            response_limit: None,
+            aggregate_entities: vec![],
+            query_timeout_ms: None,
+            pool_wait_timeout_ms: None,
+            connect_timeout_ms: None,
+            pool_max_size: 2,
+            startup_retry_budget_ms: 0,
+            healthz_timeout_ms: 1_000,
+            ws_ping_interval_ms: 15_000,
+            ws_connection_init_timeout_ms: 3_000,
+            ws_max_connections: 1_000,
+            ws_max_operations_per_connection: 50,
+            ws_max_operations: 1_000,
+            ws_max_concurrent_polls: 1,
+            ws_poll_interval_ms: 1_000,
+            ws_max_message_bytes: 1024 * 1024,
+        }
+    }
+
+    fn relation(name: &str, columns: &[&str]) -> Relation {
+        Relation {
+            name: name.to_string(),
+            kind: RelationKind::Table,
+            columns: columns
+                .iter()
+                .map(|c| pg_catalog::Column {
+                    name: c.to_string(),
+                    pg_type: "text".to_string(),
+                    pg_type_schema: "pg_catalog".to_string(),
+                    is_array: false,
+                    nullable: false,
+                    is_enum: false,
+                })
+                .collect(),
+            primary_key: vec!["id".to_string()],
+        }
+    }
+
+    fn catalog(relations: Vec<Relation>) -> Catalog {
+        Catalog {
+            relations: relations.into_iter().map(|r| (r.name.clone(), r)).collect(),
+        }
+    }
+
+    const SCHEMA: &str = r#"
+type User {
+  id: ID!
+  "user balance"
+  tokenBalance: BigInt!
+  bestGravatar: Gravatar
+  tokens: [Token!]! @derivedFrom(field: "tokenOwner")
+}
+type Gravatar {
+  id: ID!
+}
+type Token {
+  id: ID!
+  tokenOwner: User!
+}
+"#;
+
+    fn build(schema: &str, catalog: Catalog) -> anyhow::Result<ServerModel> {
+        ServerModel::build(ProjectSchema::parse(schema).unwrap(), catalog, &test_env())
+    }
+
+    fn build_err(schema: &str, catalog: Catalog) -> String {
+        match build(schema, catalog) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected build to fail"),
+        }
+    }
+
+    fn user_shape(model: &ServerModel) -> Vec<(String, String, Option<String>)> {
+        model
+            .table("User")
+            .unwrap()
+            .columns
+            .iter()
+            .map(|c| (c.api_name.clone(), c.db_name.clone(), c.description.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn snake_case_format_exposes_original_field_names() {
+        let model = build(
+            SCHEMA,
+            catalog(vec![
+                relation("User", &["id", "token_balance", "best_gravatar_id"]),
+                relation("Gravatar", &["id"]),
+                relation("Token", &["id", "token_owner_id"]),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                user_shape(&model),
+                model
+                    .table("User")
+                    .unwrap()
+                    .object_relationships
+                    .iter()
+                    .map(|r| (r.name.clone(), r.local_db_column.clone()))
+                    .collect::<Vec<_>>(),
+                model
+                    .table("User")
+                    .unwrap()
+                    .array_relationships
+                    .iter()
+                    .map(|r| (r.name.clone(), r.remote_db_column.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                vec![
+                    ("id".to_string(), "id".to_string(), None),
+                    (
+                        "tokenBalance".to_string(),
+                        "token_balance".to_string(),
+                        Some("user balance".to_string())
+                    ),
+                    (
+                        "bestGravatar_id".to_string(),
+                        "best_gravatar_id".to_string(),
+                        None
+                    ),
+                ],
+                vec![("bestGravatar".to_string(), "best_gravatar_id".to_string())],
+                vec![("tokens".to_string(), "token_owner_id".to_string())],
+            )
+        );
+    }
+
+    #[test]
+    fn original_format_keeps_db_names() {
+        let model = build(
+            SCHEMA,
+            catalog(vec![
+                relation("User", &["id", "tokenBalance", "bestGravatar_id"]),
+                relation("Gravatar", &["id"]),
+                relation("Token", &["id", "tokenOwner_id"]),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            user_shape(&model),
+            vec![
+                ("id".to_string(), "id".to_string(), None),
+                (
+                    "tokenBalance".to_string(),
+                    "tokenBalance".to_string(),
+                    Some("user balance".to_string())
+                ),
+                (
+                    "bestGravatar_id".to_string(),
+                    "bestGravatar_id".to_string(),
+                    None
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn entity_named_like_internal_table_fails() {
+        let err = build_err(
+            "type raw_events { id: ID! }",
+            catalog(vec![relation("raw_events", &["id"])]),
+        );
+        assert!(
+            err.contains("Table name collision") && err.contains("raw_events"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_database_explains_how_to_create_tables() {
+        let err = build_err("type User { id: ID! }", catalog(vec![]));
+        assert!(
+            err.contains("No tables to serve"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("envio local db-migrate setup"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn entity_colliding_with_generated_type_fails() {
+        let err = build_err(
+            "type User { id: ID! }\ntype User_aggregate { id: ID! }",
+            catalog(vec![
+                relation("User", &["id"]),
+                relation("User_aggregate", &["id"]),
+            ]),
+        );
+        assert!(
+            err.contains("type name collision") && err.contains("User_aggregate"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn entity_colliding_with_builtin_names_fails() {
+        for name in ["Int", "order_by", "query_root"] {
+            let err = build_err(
+                &format!("type {name} {{ id: ID! }}"),
+                catalog(vec![relation(name, &["id"])]),
+            );
+            assert!(
+                err.contains("collision") && err.contains(name),
+                "unexpected error for {name}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn collision_free_schema_builds() {
+        let model = build(
+            SCHEMA,
+            catalog(vec![
+                relation("User", &["id", "tokenBalance", "bestGravatar_id"]),
+                relation("Gravatar", &["id"]),
+                relation("Token", &["id", "tokenOwner_id"]),
+                relation("raw_events", &["id"]),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            model
+                .tables
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Gravatar", "Token", "User", "raw_events"]
+        );
     }
 }

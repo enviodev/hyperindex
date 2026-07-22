@@ -57,9 +57,18 @@ pub fn parse_config_yaml(
     ))
 }
 
+/// Requests graceful shutdown of a Rust-owned long-running command. Node
+/// installs the process signal handlers because libuv owns SIGINT/SIGTERM in
+/// the CLI host; Tokio's OS signal future alone is not notified reliably when
+/// it runs inside the NAPI async runtime.
+#[napi_derive::napi]
+pub fn request_shutdown() {
+    crate::serve::request_shutdown();
+}
+
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
 /// Rust has handled the command end-to-end (help/version, codegen, init,
-/// stop, docker up/down). The Node process then exits with code 0.
+/// serve, stop, docker up/down). The Node process then exits with code 0.
 #[napi_derive::napi]
 pub async fn run_cli(
     args: Vec<String>,

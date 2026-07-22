@@ -17,6 +17,11 @@ export default defineCases([
     variables: { f: 0.5 },
   },
   {
+    name: "vr-error-float8-variable-overflow",
+    query: `query ($f: float8!) { EntityWithAllNonArrayTypes(where: {float_: {_lt: $f}}, order_by: {id: asc}) { id } }`,
+    rawVariables: `{"f":1e400}`,
+  },
+  {
     // Hasura accepts a JSON string for a float8 variable.
     name: "vr-var-float8-string-coerced",
     query: `query ($f: float8!) { EntityWithAllNonArrayTypes(where: {float_: {_eq: $f}}, order_by: {id: asc}) { id float_ } }`,
@@ -48,6 +53,16 @@ export default defineCases([
     name: "vr-var-numeric-decimal-number",
     query: `query ($n: numeric!) { EntityWithAllNonArrayTypes(where: {bigDecimal: {_eq: $n}}, order_by: {id: asc}) { id bigDecimal } }`,
     variables: { n: 1.25 },
+  },
+  {
+    name: "vr-var-numeric-overflow-number",
+    query: `query ($n: numeric!) { Token(where: {tokenId: {_eq: $n}}, order_by: {id: asc}) { id tokenId } }`,
+    rawVariables: `{"n":1e400}`,
+  },
+  {
+    name: "vr-var-jsonb-nested-overflow-number",
+    query: `query ($j: jsonb!) { EntityWithAllTypes(where: {json: {_contains: $j}}, order_by: {id: asc}) { id } }`,
+    rawVariables: `{"j":{"nested":-9e999}}`,
   },
   {
     name: "vr-var-timestamptz-string",

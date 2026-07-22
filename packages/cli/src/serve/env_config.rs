@@ -3,14 +3,18 @@
 //! project-root `.env` file, `devFallback` defaults apply only when
 //! NODE_ENV != "production", plain fallbacks always apply.
 //!
-//! TLS (`ENVIO_PG_SSL_MODE`): when enabled, the Postgres connection is
-//! always encrypted and the server certificate is always verified against
-//! the platform's trusted root CA store -- equivalent to `sslmode=verify-full`.
-//! There is no toggle to accept an unverified/self-signed certificate.
-//! Connecting to a Postgres instance behind a private CA (common for
-//! self-hosted deployments) isn't supported yet; that would need a new env
-//! var (e.g. `ENVIO_PG_SSL_CA_CERT_PATH`) to add a CA to the trust store,
-//! not a "trust everything" escape hatch.
+//! TLS (`ENVIO_PG_SSL_MODE`) follows libpq's sslmode values:
+//! - `disable` (or `false`, or unset): plaintext, no TLS.
+//! - `allow`/`prefer`: TLS if the server supports it, falling back to
+//!   plaintext otherwise; the server certificate is NOT verified.
+//! - `require`: TLS mandatory, but the server certificate is NOT verified
+//!   (libpq's semantic — works with self-signed certificates).
+//! - `verify-ca`/`verify-full` (or `true`, or any other value, for backward
+//!   compatibility): TLS mandatory and the server certificate is verified
+//!   against the platform's trusted root CA store. Note `verify-ca` is
+//!   served as `verify-full` (chain AND hostname verification): rustls's
+//!   verifier doesn't offer chain-only verification, so `verify-ca` is
+//!   strictly stricter here than libpq's.
 
 use crate::project_paths::ParsedProjectPaths;
 use crate::utils::dotenv::{self, EnvMap};
@@ -24,7 +28,7 @@ pub struct ServeEnv {
     pub pg_password: String,
     pub pg_database: String,
     pub pg_schema: String,
-    pub pg_ssl: bool,
+    pub pg_ssl: PgSslMode,
     pub admin_secret: String,
     pub response_limit: Option<u32>,
     pub aggregate_entities: Vec<String>,
@@ -43,15 +47,39 @@ pub struct ServeEnv {
     pub pool_max_size: usize,
     /// ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS. Total wall-clock budget for
     /// retrying pool creation/introspection with exponential backoff when
-    /// Postgres isn't reachable yet at boot. 0 disables retrying (fail
-    /// immediately, the pre-existing behavior).
+    /// Postgres isn't reachable yet at boot. 0 disables retries.
     pub startup_retry_budget_ms: u64,
     /// ENVIO_SERVE_HEALTHZ_TIMEOUT_MS. Bounds the /healthz DB probe.
     pub healthz_timeout_ms: u64,
     /// ENVIO_SERVE_WS_PING_INTERVAL_MS. How often idle WebSocket connections
     /// are pinged; a connection that sends no pong/traffic within 2x this
-    /// interval is treated as dead and closed.
+    /// interval is treated as dead and closed. Hasura's seconds-based
+    /// HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE is accepted as a fallback.
     pub ws_ping_interval_ms: u64,
+    /// ENVIO_SERVE_WS_CONNECTION_INIT_TIMEOUT_MS. Maximum time between the
+    /// WebSocket upgrade and a valid connection_init message. Hasura's
+    /// seconds-based HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT is
+    /// accepted as a fallback.
+    pub ws_connection_init_timeout_ms: u64,
+    /// ENVIO_SERVE_WS_MAX_CONNECTIONS. Hard process-wide cap on upgraded
+    /// WebSocket connections, including connections still waiting for init.
+    pub ws_max_connections: usize,
+    /// ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION. Active GraphQL
+    /// operations allowed on one socket.
+    pub ws_max_operations_per_connection: usize,
+    /// ENVIO_SERVE_WS_MAX_OPERATIONS. Process-wide active WebSocket operation
+    /// cap. This bounds work even when an attacker spreads it across sockets.
+    pub ws_max_operations: usize,
+    /// ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS. Maximum subscription polls that
+    /// may use the shared Postgres pool at once.
+    pub ws_max_concurrent_polls: usize,
+    /// ENVIO_SERVE_WS_POLL_INTERVAL_MS. Refetch interval for live and
+    /// streaming subscriptions. Also accepts Hasura's live-query interval
+    /// setting as a compatibility fallback.
+    pub ws_poll_interval_ms: u64,
+    /// ENVIO_SERVE_WS_MAX_MESSAGE_BYTES. Applied explicitly as both the axum
+    /// WebSocket message and frame limit.
+    pub ws_max_message_bytes: usize,
 }
 
 /// deadpool_postgres::Config defaults to `cpu_core_count * 2` with no upper
@@ -96,14 +124,41 @@ impl EnvReader {
     }
 }
 
-/// The `postgres` npm package (used by the JS-side indexer for this same
-/// env var) treats `require`/`allow`/`prefer` as "encrypt but don't verify
-/// the certificate" and reserves verification for `verify-full`. `envio
-/// serve` does not replicate that distinction: any non-`false` value here
-/// gets the same fully-verified connection described on
-/// `ServeEnv::make_pg_pool`.
-fn parse_pg_ssl(raw: Option<&str>) -> bool {
-    raw.map(|v| v != "false").unwrap_or(false)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PgSslMode {
+    Disable,
+    /// libpq `allow`/`prefer`: TLS if offered, plaintext fallback, no
+    /// certificate verification.
+    Prefer,
+    /// libpq `require`: TLS mandatory, no certificate verification.
+    Require,
+    /// libpq `verify-full` (also serving `verify-ca`, strictly — see the
+    /// module doc): TLS mandatory, chain + hostname verification against
+    /// the platform root CA store.
+    VerifyFull,
+}
+
+impl PgSslMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PgSslMode::Disable => "disable",
+            PgSslMode::Prefer => "prefer",
+            PgSslMode::Require => "require",
+            PgSslMode::VerifyFull => "verify-full",
+        }
+    }
+}
+
+/// Unrecognized non-`false` values fall through to `VerifyFull`, preserving
+/// the historical "any non-false value enables verified TLS" behavior for
+/// configs written before the libpq mode names were supported.
+fn parse_pg_ssl(raw: Option<&str>) -> PgSslMode {
+    match raw {
+        None | Some("false") | Some("disable") => PgSslMode::Disable,
+        Some("allow") | Some("prefer") => PgSslMode::Prefer,
+        Some("require") => PgSslMode::Require,
+        Some(_) => PgSslMode::VerifyFull,
+    }
 }
 
 /// Millisecond-duration env vars share one convention: unset uses the
@@ -123,6 +178,65 @@ fn parse_timeout_ms(
             )),
         },
     }
+}
+
+/// For bounds where 0 has no meaningful interpretation (a 0ms WS ping
+/// interval would dead-check-close every connection instantly; a 0ms healthz
+/// probe always fails): unset uses the default, 0 is a config error.
+fn parse_positive_ms(raw: Option<String>, name: &str, default: u64) -> anyhow::Result<u64> {
+    match raw {
+        None => Ok(default),
+        Some(v) => match v.parse::<u64>() {
+            Ok(0) => Err(anyhow!(
+                "Invalid {name}: must be greater than 0 milliseconds"
+            )),
+            Ok(n) => Ok(n),
+            Err(_) => Err(anyhow!(
+                "Invalid {name}: expected milliseconds as an integer"
+            )),
+        },
+    }
+}
+
+fn parse_startup_retry_budget_ms(raw: Option<String>) -> anyhow::Result<u64> {
+    Ok(parse_timeout_ms(raw, "ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS", Some(60_000))?.unwrap_or(0))
+}
+
+fn parse_positive_usize(raw: Option<String>, name: &str, default: usize) -> anyhow::Result<usize> {
+    match raw {
+        None => Ok(default),
+        Some(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| anyhow!("Invalid {name}: must be a positive integer")),
+    }
+}
+
+fn parse_ms_with_seconds_fallback(
+    milliseconds: Option<String>,
+    seconds: Option<String>,
+    milliseconds_name: &str,
+    seconds_name: &str,
+    default_ms: u64,
+) -> anyhow::Result<u64> {
+    if milliseconds.is_some() {
+        return parse_positive_ms(milliseconds, milliseconds_name, default_ms);
+    }
+    let Some(value) = seconds else {
+        return Ok(default_ms);
+    };
+    let seconds = value
+        .parse::<u64>()
+        .map_err(|_| anyhow!("Invalid {seconds_name}: expected seconds as an integer"))?;
+    if seconds == 0 {
+        return Err(anyhow!(
+            "Invalid {seconds_name}: must be greater than 0 seconds"
+        ));
+    }
+    seconds
+        .checked_mul(1_000)
+        .ok_or_else(|| anyhow!("Invalid {seconds_name}: duration is too large"))
 }
 
 impl ServeEnv {
@@ -155,6 +269,37 @@ impl ServeEnv {
             ),
             None => None,
         };
+
+        let pool_max_size = parse_positive_usize(
+            r.var("ENVIO_SERVE_POOL_MAX_SIZE"),
+            "ENVIO_SERVE_POOL_MAX_SIZE",
+            default_pool_max_size(),
+        )?;
+        let ws_max_operations_per_connection = parse_positive_usize(
+            r.var("ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION"),
+            "ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION",
+            50,
+        )?;
+        let ws_max_operations = parse_positive_usize(
+            r.var("ENVIO_SERVE_WS_MAX_OPERATIONS"),
+            "ENVIO_SERVE_WS_MAX_OPERATIONS",
+            1_000,
+        )?;
+        if ws_max_operations_per_connection > ws_max_operations {
+            return Err(anyhow!(
+                "ENVIO_SERVE_WS_MAX_OPERATIONS_PER_CONNECTION cannot exceed ENVIO_SERVE_WS_MAX_OPERATIONS"
+            ));
+        }
+        let ws_max_concurrent_polls = parse_positive_usize(
+            r.var("ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS"),
+            "ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS",
+            pool_max_size.saturating_sub(2).max(1),
+        )?;
+        if pool_max_size > 1 && ws_max_concurrent_polls >= pool_max_size {
+            return Err(anyhow!(
+                "ENVIO_SERVE_WS_MAX_CONCURRENT_POLLS must be smaller than ENVIO_SERVE_POOL_MAX_SIZE so HTTP retains database capacity"
+            ));
+        }
 
         Ok(ServeEnv {
             pg_host: r.var_dev_fallback("ENVIO_PG_HOST", "localhost")?,
@@ -190,42 +335,56 @@ impl ServeEnv {
                 "ENVIO_SERVE_CONNECT_TIMEOUT_MS",
                 Some(10_000),
             )?,
-            pool_max_size: match r.var("ENVIO_SERVE_POOL_MAX_SIZE") {
-                None => default_pool_max_size(),
-                Some(v) => v
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|n| *n > 0)
-                    .ok_or_else(|| anyhow!("Invalid ENVIO_SERVE_POOL_MAX_SIZE"))?,
-            },
-            startup_retry_budget_ms: match r.var("ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS") {
-                None => 60_000,
-                Some(v) => v
-                    .parse::<u64>()
-                    .context("Invalid ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS")?,
-            },
-            healthz_timeout_ms: match r.var("ENVIO_SERVE_HEALTHZ_TIMEOUT_MS") {
-                None => 2_000,
-                Some(v) => v
-                    .parse::<u64>()
-                    .context("Invalid ENVIO_SERVE_HEALTHZ_TIMEOUT_MS")?,
-            },
-            ws_ping_interval_ms: match r.var("ENVIO_SERVE_WS_PING_INTERVAL_MS") {
-                None => 10_000,
-                Some(v) => v
-                    .parse::<u64>()
-                    .context("Invalid ENVIO_SERVE_WS_PING_INTERVAL_MS")?,
-            },
+            pool_max_size,
+            startup_retry_budget_ms: parse_startup_retry_budget_ms(
+                r.var("ENVIO_SERVE_STARTUP_RETRY_BUDGET_MS"),
+            )?,
+            healthz_timeout_ms: parse_positive_ms(
+                r.var("ENVIO_SERVE_HEALTHZ_TIMEOUT_MS"),
+                "ENVIO_SERVE_HEALTHZ_TIMEOUT_MS",
+                2_000,
+            )?,
+            ws_ping_interval_ms: parse_ms_with_seconds_fallback(
+                r.var("ENVIO_SERVE_WS_PING_INTERVAL_MS"),
+                r.var("HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE"),
+                "ENVIO_SERVE_WS_PING_INTERVAL_MS",
+                "HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE",
+                10_000,
+            )?,
+            ws_connection_init_timeout_ms: parse_ms_with_seconds_fallback(
+                r.var("ENVIO_SERVE_WS_CONNECTION_INIT_TIMEOUT_MS"),
+                r.var("HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT"),
+                "ENVIO_SERVE_WS_CONNECTION_INIT_TIMEOUT_MS",
+                "HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT",
+                3_000,
+            )?,
+            ws_max_connections: parse_positive_usize(
+                r.var("ENVIO_SERVE_WS_MAX_CONNECTIONS"),
+                "ENVIO_SERVE_WS_MAX_CONNECTIONS",
+                1_000,
+            )?,
+            ws_max_operations_per_connection,
+            ws_max_operations,
+            ws_max_concurrent_polls,
+            ws_poll_interval_ms: parse_positive_ms(
+                r.var("ENVIO_SERVE_WS_POLL_INTERVAL_MS")
+                    .or_else(|| r.var("HASURA_GRAPHQL_LIVE_QUERIES_MULTIPLEXED_REFETCH_INTERVAL")),
+                "ENVIO_SERVE_WS_POLL_INTERVAL_MS",
+                1_000,
+            )?,
+            ws_max_message_bytes: parse_positive_usize(
+                r.var("ENVIO_SERVE_WS_MAX_MESSAGE_BYTES"),
+                "ENVIO_SERVE_WS_MAX_MESSAGE_BYTES",
+                1024 * 1024,
+            )?,
         })
     }
 
     /// The config.yaml `schema` field default and resolution live in
     /// project_schema.rs; this reader is only env vars.
     ///
-    /// When `pg_ssl` is set, the connection is encrypted and the server
-    /// certificate is verified against the platform's trusted root CA store
-    /// (see `native_root_certs`) -- there is no way to opt out of
-    /// verification, matching Postgres's `sslmode=verify-full`.
+    /// TLS behavior per `pg_ssl` mode is described on the module doc and
+    /// `PgSslMode`.
     pub fn make_pg_pool(&self) -> anyhow::Result<deadpool_postgres::Pool> {
         let mut cfg = deadpool_postgres::Config::new();
         cfg.host = Some(self.pg_host.clone());
@@ -253,22 +412,29 @@ impl ServeEnv {
         pool_cfg.timeouts.create = self.connect_timeout_ms.map(Duration::from_millis);
         cfg.pool = Some(pool_cfg);
 
-        if self.pg_ssl {
-            // deadpool_postgres::Config defaults to SslMode::Prefer, which
-            // silently falls back to plaintext if the server refuses TLS.
-            // Require makes that fallback a hard connection error instead.
-            cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
-            let roots = native_root_certs()?;
-            return make_tls_pool(&cfg, roots);
+        match self.pg_ssl {
+            PgSslMode::Disable => {
+                let pool = cfg
+                    .create_pool(
+                        Some(deadpool_postgres::Runtime::Tokio1),
+                        tokio_postgres::NoTls,
+                    )
+                    .context("Failed creating Postgres connection pool")?;
+                Ok(pool)
+            }
+            PgSslMode::Prefer => {
+                cfg.ssl_mode = Some(deadpool_postgres::SslMode::Prefer);
+                make_tls_pool(&cfg, no_verify_tls_config())
+            }
+            PgSslMode::Require => {
+                cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
+                make_tls_pool(&cfg, no_verify_tls_config())
+            }
+            PgSslMode::VerifyFull => {
+                cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
+                make_tls_pool(&cfg, verified_tls_config(native_root_certs()?))
+            }
         }
-
-        let pool = cfg
-            .create_pool(
-                Some(deadpool_postgres::Runtime::Tokio1),
-                tokio_postgres::NoTls,
-            )
-            .context("Failed creating Postgres connection pool")?;
-        Ok(pool)
     }
 }
 
@@ -288,21 +454,98 @@ fn native_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     Ok(roots)
 }
 
-/// Builds a pool whose connections are verified against `roots`. Split out
-/// from `make_pg_pool` so tests can exercise a real TLS handshake against a
-/// throwaway CA instead of the machine's real trust store.
+// rustls 0.23 needs a process-wide crypto provider installed before any
+// ClientConfig can be built. install_default() errors if one is already
+// installed (e.g. by another TLS client sharing this process) -- that's
+// fine, we only need *a* provider present, not necessarily this call's.
+fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+fn verified_tls_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
+    ensure_crypto_provider();
+    rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
+
+/// Encryption-without-authentication, for the libpq `allow`/`prefer`/
+/// `require` modes: any server certificate (self-signed, expired, wrong
+/// hostname) is accepted, but the TLS record layer -- including handshake
+/// signature checks binding the session to the presented key -- still runs
+/// normally. Never used for `verify-ca`/`verify-full`.
+fn no_verify_tls_config() -> rustls::ClientConfig {
+    ensure_crypto_provider();
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .expect("crypto provider installed above")
+        .clone();
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyServerCert { provider }))
+        .with_no_client_auth()
+}
+
+#[derive(Debug)]
+struct AcceptAnyServerCert {
+    provider: std::sync::Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyServerCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    // Handshake signatures are still verified against the presented
+    // certificate's key: skipping *identity* verification must not also
+    // skip proof that the peer holds the key it presented.
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Split out from `make_pg_pool` so tests can exercise a real TLS handshake
+/// against a throwaway CA instead of the machine's real trust store.
 fn make_tls_pool(
     cfg: &deadpool_postgres::Config,
-    roots: rustls::RootCertStore,
+    tls_config: rustls::ClientConfig,
 ) -> anyhow::Result<deadpool_postgres::Pool> {
-    // rustls 0.23 needs a process-wide crypto provider installed before any
-    // ClientConfig can be built. install_default() errors if one is already
-    // installed (e.g. by another TLS client sharing this process) -- that's
-    // fine, we only need *a* provider present, not necessarily this call's.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let tls_config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
     let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
     cfg.create_pool(Some(deadpool_postgres::Runtime::Tokio1), tls)
         .context("Failed creating Postgres TLS connection pool")
@@ -334,17 +577,107 @@ mod tests {
 
     #[test]
     fn parse_pg_ssl_env_var() {
+        use PgSslMode::*;
         assert_eq!(
             [
                 parse_pg_ssl(None),
                 parse_pg_ssl(Some("false")),
-                parse_pg_ssl(Some("true")),
+                parse_pg_ssl(Some("disable")),
+                parse_pg_ssl(Some("allow")),
+                parse_pg_ssl(Some("prefer")),
                 parse_pg_ssl(Some("require")),
+                parse_pg_ssl(Some("verify-ca")),
                 parse_pg_ssl(Some("verify-full")),
+                parse_pg_ssl(Some("true")),
                 parse_pg_ssl(Some("")),
+                parse_pg_ssl(Some("bogus")),
             ],
-            [false, false, true, true, true, true],
+            [
+                Disable, Disable, Disable, Prefer, Prefer, Require, VerifyFull, VerifyFull,
+                VerifyFull, VerifyFull, VerifyFull,
+            ],
         );
+    }
+
+    #[test]
+    fn parse_positive_ms_rejects_zero() {
+        assert_eq!(
+            [
+                parse_positive_ms(None, "X", 7).ok(),
+                parse_positive_ms(Some("42".to_string()), "X", 7).ok(),
+                parse_positive_ms(Some("0".to_string()), "X", 7).ok(),
+                parse_positive_ms(Some("nope".to_string()), "X", 7).ok(),
+            ],
+            [Some(7), Some(42), None, None],
+        );
+        assert_eq!(
+            parse_positive_ms(Some("0".to_string()), "ENVIO_SERVE_WS_PING_INTERVAL_MS", 7)
+                .unwrap_err()
+                .to_string(),
+            "Invalid ENVIO_SERVE_WS_PING_INTERVAL_MS: must be greater than 0 milliseconds"
+        );
+    }
+
+    #[test]
+    fn startup_retry_budget_accepts_zero_as_fail_fast() {
+        assert_eq!(
+            [
+                parse_startup_retry_budget_ms(None).ok(),
+                parse_startup_retry_budget_ms(Some("42".to_string())).ok(),
+                parse_startup_retry_budget_ms(Some("0".to_string())).ok(),
+                parse_startup_retry_budget_ms(Some("nope".to_string())).ok(),
+            ],
+            [Some(60_000), Some(42), Some(0), None],
+        );
+    }
+
+    #[test]
+    fn parse_positive_usize_rejects_zero_and_invalid_values() {
+        assert_eq!(
+            [
+                parse_positive_usize(None, "X", 7).ok(),
+                parse_positive_usize(Some("42".to_string()), "X", 7).ok(),
+                parse_positive_usize(Some("0".to_string()), "X", 7).ok(),
+                parse_positive_usize(Some("-1".to_string()), "X", 7).ok(),
+                parse_positive_usize(Some("nope".to_string()), "X", 7).ok(),
+            ],
+            [Some(7), Some(42), None, None, None],
+        );
+    }
+
+    #[test]
+    fn hasura_websocket_seconds_fallback_converts_to_milliseconds() {
+        assert_eq!(
+            parse_ms_with_seconds_fallback(
+                None,
+                Some("3".to_string()),
+                "ENVIO_MS",
+                "HASURA_SECONDS",
+                7,
+            )
+            .unwrap(),
+            3_000
+        );
+        assert_eq!(
+            parse_ms_with_seconds_fallback(
+                Some("25".to_string()),
+                Some("3".to_string()),
+                "ENVIO_MS",
+                "HASURA_SECONDS",
+                7,
+            )
+            .unwrap(),
+            25,
+            "Envio's millisecond setting has precedence"
+        );
+        assert!(parse_ms_with_seconds_fallback(
+            None,
+            Some("0".to_string()),
+            "ENVIO_MS",
+            "HASURA_SECONDS",
+            7,
+        )
+        .is_err());
     }
 
     #[test]
@@ -368,10 +701,7 @@ mod tests {
     /// Skips (doesn't fail) if Docker isn't available in this environment.
     #[test]
     fn tls_connection_verifies_server_certificate() {
-        if !docker_available() {
-            eprintln!(
-                "skipping tls_connection_verifies_server_certificate: docker is not available"
-            );
+        if super::super::test_support::skip_without_docker() {
             return;
         }
 
@@ -388,7 +718,8 @@ mod tests {
             cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
 
             let trusted_roots = load_pem_roots(&container.ca_cert_pem);
-            let pool = make_tls_pool(&cfg, trusted_roots).expect("pool construction");
+            let pool =
+                make_tls_pool(&cfg, verified_tls_config(trusted_roots)).expect("pool construction");
             // pg_isready accepting TCP doesn't guarantee the TLS listener
             // is immediately ready to complete a handshake under load; a
             // couple of retries absorbs that startup race without masking
@@ -413,21 +744,25 @@ mod tests {
             assert_eq!(row.get::<_, i32>(0), 1);
 
             let system_roots = native_root_certs().expect("system CA store should load");
-            let pool = make_tls_pool(&cfg, system_roots).expect("pool construction");
+            let pool =
+                make_tls_pool(&cfg, verified_tls_config(system_roots)).expect("pool construction");
             let connect_result = pool.get().await;
             assert!(
                 connect_result.is_err(),
                 "connecting to a self-signed cert absent from the system trust store must fail"
             );
-        });
-    }
 
-    fn docker_available() -> bool {
-        Command::new("docker")
-            .arg("info")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            // `require` semantics: TLS is used but the untrusted certificate
+            // is accepted, so the same server that verify-full just rejected
+            // is reachable.
+            let pool = make_tls_pool(&cfg, no_verify_tls_config()).expect("pool construction");
+            let client = pool
+                .get()
+                .await
+                .expect("sslmode=require must accept a self-signed certificate");
+            let row = client.query_one("select 1", &[]).await.expect("query");
+            assert_eq!(row.get::<_, i32>(0), 1);
+        });
     }
 
     fn load_pem_roots(pem: &str) -> rustls::RootCertStore {
