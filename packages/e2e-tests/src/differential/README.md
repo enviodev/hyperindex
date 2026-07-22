@@ -59,10 +59,11 @@ both engines. Prefer `diffServe.ts` for iteration; run this before a PR.
 
 Also needs Hasura only once — see `bench.ts`'s module doc comment. In
 short: `--record-baseline` captures Hasura's per-case timing + resource
-usage to `fixtures/differential/hasura-baseline.json` (committed; re-run
-after a real perf-relevant Postgres/dataset change, not after every Rust
-edit); the default mode benchmarks only `envio serve` against that stored
-baseline, so Hasura/Docker can stay stopped while iterating on Rust.
+usage to `fixtures/differential/hasura-baseline.json` (git-ignored and
+machine-specific — record it once locally, and re-run after a real
+perf-relevant Postgres/dataset change, not after every Rust edit); the
+default mode benchmarks only `envio serve` against that stored baseline,
+so Hasura/Docker can stay stopped while iterating on Rust.
 `bench.ts` measures timing only — always confirm correctness with
 `diffServe.ts` on the small dataset separately.
 
