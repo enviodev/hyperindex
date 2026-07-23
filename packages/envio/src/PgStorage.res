@@ -849,9 +849,24 @@ let rec writeBatch = async (
     let specificError = ref(None)
 
     let rawEvents = if config.enableRawEvents {
+      // A single on-chain log fans out to one item per matching registration;
+      // `raw_events` records the log itself, so dedupe by its coordinate
+      // (chain, block, logIndex) to keep one row per log.
+      let seenLogCoordinates = Utils.Set.make()
       let rows = batch.items->Array.filterMap(item =>
         switch item {
-        | Internal.Event(_) => Some(config.ecosystem.toRawEvent(item->Internal.castUnsafeEventItem))
+        | Internal.Event(_) =>
+          let coordinate = `${item
+            ->Internal.getItemChainId
+            ->Int.toString}-${item
+            ->Internal.getItemBlockNumber
+            ->Int.toString}-${item->Internal.getItemLogIndex->Int.toString}`
+          if seenLogCoordinates->Utils.Set.has(coordinate) {
+            None
+          } else {
+            seenLogCoordinates->Utils.Set.add(coordinate)->ignore
+            Some(config.ecosystem.toRawEvent(item->Internal.castUnsafeEventItem))
+          }
         | Internal.Block(_) => None
         }
       )
