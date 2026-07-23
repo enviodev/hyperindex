@@ -335,7 +335,7 @@ impl ServeEnv {
             use_prepared_statements: r
                 .var("ENVIO_SERVE_USE_PREPARED_STATEMENTS")
                 .or_else(|| r.var("HASURA_GRAPHQL_USE_PREPARED_STATEMENTS"))
-                .map_or(true, |v| {
+                .is_none_or(|v| {
                     !matches!(
                         v.trim().to_ascii_lowercase().as_str(),
                         "false" | "f" | "no" | "n" | "0"

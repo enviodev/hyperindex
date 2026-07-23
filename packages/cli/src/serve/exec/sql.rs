@@ -192,52 +192,77 @@ async fn run_root_query(
 }
 
 /// Substitutes `$1`, `$2`, … placeholders in a compiled statement with their
-/// text parameters as SQL literals: `NULL` for an absent value, otherwise a
-/// single-quoted string with embedded quotes doubled (the same escaping
-/// `Sql::string_lit` uses, valid under the default standard_conforming_strings
-/// the codebase already relies on). Only `$`-then-digits runs are touched, and
-/// the compiler never emits a bare `$<digit>` except as a placeholder, so this
-/// cannot disturb surrounding SQL.
+/// text parameters as SQL literals: `NULL` for an absent value, otherwise an
+/// escaped string (see `push_sql_literal`).
+///
+/// A `$<digit>` run is only a placeholder outside string/identifier quoting;
+/// the same sequence can legitimately appear *inside* a quoted identifier
+/// (e.g. `ENVIO_PG_SCHEMA=tenant$1` → `"tenant$1"`) or a string constant, so
+/// quoted regions are skipped whole. The generated SQL only ever uses `'…'`
+/// and `"…"` quoting (no dollar-quoting or comments), each escaping an inner
+/// quote by doubling it.
 fn inline_params(sql: &str, params: &[Option<String>]) -> String {
     let mut out = String::with_capacity(sql.len() + params.len() * 8);
     let bytes = sql.as_bytes();
     let mut copied = 0;
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'$' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
-            out.push_str(&sql[copied..i]);
-            let mut j = i + 1;
-            let mut n = 0usize;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                n = n
-                    .saturating_mul(10)
-                    .saturating_add((bytes[j] - b'0') as usize);
-                j += 1;
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == quote {
+                        // A doubled quote is an escaped quote, not the end.
+                        if bytes.get(i + 1) == Some(&quote) {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
             }
-            match n.checked_sub(1).and_then(|idx| params.get(idx)) {
-                Some(Some(value)) => push_sql_literal(&mut out, value),
-                Some(None) => out.push_str("NULL"),
-                // A placeholder with no bound value can't be produced by the
-                // compiler; leave it verbatim rather than guess.
-                None => out.push_str(&sql[i..j]),
+            b'$' if bytes.get(i + 1).is_some_and(u8::is_ascii_digit) => {
+                out.push_str(&sql[copied..i]);
+                let mut j = i + 1;
+                let mut n = 0usize;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    n = n
+                        .saturating_mul(10)
+                        .saturating_add((bytes[j] - b'0') as usize);
+                    j += 1;
+                }
+                match n.checked_sub(1).and_then(|idx| params.get(idx)) {
+                    Some(Some(value)) => push_sql_literal(&mut out, value),
+                    Some(None) => out.push_str("NULL"),
+                    // A placeholder with no bound value can't be produced by
+                    // the compiler; leave it verbatim rather than guess.
+                    None => out.push_str(&sql[i..j]),
+                }
+                i = j;
+                copied = j;
             }
-            i = j;
-            copied = j;
-        } else {
-            i += 1;
+            _ => i += 1,
         }
     }
     out.push_str(&sql[copied..]);
     out
 }
 
+/// A text parameter as a Postgres string literal in escape-string form
+/// (`E'…'`), escaping both single quotes and backslashes. `E'…'` keeps the
+/// escaping unambiguous regardless of the session's
+/// `standard_conforming_strings` setting — which serve can't assume when the
+/// connection is handed out by a shared pooler.
 fn push_sql_literal(out: &mut String, value: &str) {
-    out.push('\'');
+    out.push_str("E'");
     for c in value.chars() {
-        if c == '\'' {
-            out.push('\'');
+        match c {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
         }
-        out.push(c);
     }
     out.push('\'');
 }
@@ -1813,22 +1838,24 @@ mod tests {
     }
 
     #[test]
-    fn inline_params_substitutes_literals_null_and_escapes() {
+    fn inline_params_substitutes_escapes_and_skips_quotes() {
         let params = vec![
             Some("abc".to_string()),
             None,
             Some("O'Brien".to_string()),
-            Some("{\"a\",\"b\"}".to_string()),
+            Some("c:\\x".to_string()),
         ];
-        // Placeholders replaced by index; NULL for absent; quotes doubled;
-        // `$10` parsed as one index (not `$1` then `0`); a `$` not followed by
-        // a digit is left alone; multibyte text between placeholders survives.
+        // Placeholders replaced by index; NULL for absent; values rendered as
+        // E'…' with both `'` and `\` escaped; a `$` not followed by a digit is
+        // left alone; and a `$<digit>` inside a quoted identifier or string
+        // constant (or a multibyte literal) is NOT a placeholder — one assert
+        // pins the whole rendering.
         assert_eq!(
             inline_params(
-                "SELECT (($1)::text), (($2)::text), (($3)::text), (($4)::text[]), $x, 'π' -- $1",
+                r#"(($1)::text) NULL=$2 (($3)::text) (($4)::text) $x "tenant$1" 'a$1' 'π'"#,
                 &params,
             ),
-            "SELECT (('abc')::text), ((NULL)::text), (('O''Brien')::text), (('{\"a\",\"b\"}')::text[]), $x, 'π' -- 'abc'"
+            r#"((E'abc')::text) NULL=NULL ((E'O\'Brien')::text) ((E'c:\\x')::text) $x "tenant$1" 'a$1' 'π'"#
         );
     }
 
@@ -1837,7 +1864,7 @@ mod tests {
         let params: Vec<Option<String>> = (1..=11).map(|n| Some(n.to_string())).collect();
         // `$1` and `$11` must resolve to different params despite the shared
         // prefix; a single assert pins the whole rendering.
-        assert_eq!(inline_params("$1 $11 $2", &params), "'1' '11' '2'");
+        assert_eq!(inline_params("$1 $11 $2", &params), r"E'1' E'11' E'2'");
     }
 
     fn col(alias: &str, column: &str, scalar: Scalar, pg_type: &str) -> ir::SelItem {
