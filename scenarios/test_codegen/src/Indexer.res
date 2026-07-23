@@ -1068,40 +1068,6 @@ let contractName = "Gravatar"
     type onEventWhere = onEventWhereArgs => onEventWhereResult
   }
 
-  module MultiHandlerOrder = {
-
-    let name = "MultiHandlerOrder"
-    let contractName = contractName
-    type params = {value: bigint}
-    /** Event params with all fields optional. Missing fields use default values. */
-    type paramsConstructor = {value?: bigint}
-    type block = Block.t
-    type transaction = Transaction.t
-
-    type event = {
-      /** The name of the contract that emitted this event. */
-      contractName: string,
-      /** The name of the event. */
-      eventName: string,
-      /** The parameters or arguments associated with this event. */
-      params: params,
-      /** The unique identifier of the blockchain network where this event occurred. */
-      chainId: chainId,
-      /** The address of the contract that emitted this event. */
-      srcAddress: Address.t,
-      /** The index of this event's log within the block. */
-      logIndex: int,
-      /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
-      transaction: transaction,
-      /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
-      block: block,
-    }
-
-    type whereParams = {}
-
-    type onEventWhere = Internal.noOnEventWhere
-  }
-
   type rec eventIdentity<'event, 'paramsConstructor, 'where> =
     | @as("CustomSelection") CustomSelection: eventIdentity<CustomSelection.event, CustomSelection.paramsConstructor, CustomSelection.onEventWhere>
     | @as("EmptyEvent") EmptyEvent: eventIdentity<EmptyEvent.event, EmptyEvent.paramsConstructor, EmptyEvent.onEventWhere>
@@ -1113,7 +1079,6 @@ let contractName = "Gravatar"
     | @as("NewGravatar") NewGravatar: eventIdentity<NewGravatar.event, NewGravatar.paramsConstructor, NewGravatar.onEventWhere>
     | @as("UpdatedGravatar") UpdatedGravatar: eventIdentity<UpdatedGravatar.event, UpdatedGravatar.paramsConstructor, UpdatedGravatar.onEventWhere>
     | @as("FactoryEvent") FactoryEvent: eventIdentity<FactoryEvent.event, FactoryEvent.paramsConstructor, FactoryEvent.onEventWhere>
-    | @as("MultiHandlerOrder") MultiHandlerOrder: eventIdentity<MultiHandlerOrder.event, MultiHandlerOrder.paramsConstructor, MultiHandlerOrder.onEventWhere>
 }
 
 module NftFactory = {

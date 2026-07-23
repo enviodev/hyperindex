@@ -924,28 +924,6 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where:
   }
 });
 
-// Two handlers on one event, used to assert dispatch order. Both write
-// SimulateTestEvent with an id suffixed by the registration order, so the
-// order of `result.changes[0].SimulateTestEvent.sets` reveals the dispatch
-// order: (blockNumber, logIndex, registration index). The first-registered
-// handler gets the lower index and must run first for each log.
-indexer.onEvent({ contract: "Gravatar", event: "MultiHandlerOrder" }, async ({ event, context }) => {
-  context.SimulateTestEvent.set({
-    id: `${event.block.number}_${event.logIndex}_a`,
-    blockNumber: event.block.number,
-    logIndex: event.logIndex,
-    timestamp: event.block.timestamp,
-  });
-});
-indexer.onEvent({ contract: "Gravatar", event: "MultiHandlerOrder" }, async ({ event, context }) => {
-  context.SimulateTestEvent.set({
-    id: `${event.block.number}_${event.logIndex}_b`,
-    blockNumber: event.block.number,
-    logIndex: event.logIndex,
-    timestamp: event.block.timestamp,
-  });
-});
-
 // Handler for testing simulate block/logIndex behavior
 indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, context }) => {
   context.SimulateTestEvent.set({
@@ -956,9 +934,15 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
   });
 });
 
-// No-op handler so Noop.EmptyEvent (the only event on chain 1) can be processed
-// and simulated without writing any entity — used by the multichain ordering test.
-indexer.onEvent({ contract: "Noop", event: "EmptyEvent" }, async () => {});
+// No-op handler so Noop.EmptyEvent can be processed and simulated without
+// writing any entity — used by the multichain ordering test. Pinned to chain 1:
+// Noop is also configured on chain 137 (with an address), and registering it
+// there would add an extra fetch partition that the rollback/reorg tests (which
+// expect a single partition per chain) don't account for.
+indexer.onEvent(
+  { contract: "Noop", event: "EmptyEvent", where: ({ chain }) => chain.id === 1 },
+  async () => {},
+);
 
 // Regression test for https://github.com/enviodev/hyperindex/issues/538:
 // the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
