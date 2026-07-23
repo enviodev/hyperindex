@@ -66,6 +66,11 @@ export function checkHandlerTypes(typesDts: string, handlers: string): string[] 
   ]);
 
   const host = ts.createCompilerHost(compilerOptions, true);
+  // Anchor resolution to this package so `types: ["node"]` (and any other
+  // type-root lookup) finds envio-tests' `@types/node` regardless of which
+  // package's cwd launched the test — otherwise a caller without `@types/node`
+  // reachable from its cwd gets a spurious global TS2688.
+  host.getCurrentDirectory = () => helpersDir;
   const baseReadFile = host.readFile.bind(host);
   const baseFileExists = host.fileExists.bind(host);
   const baseGetSourceFile = host.getSourceFile.bind(host);
