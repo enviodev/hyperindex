@@ -10,18 +10,22 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
-type parseConfigYamlOptions = {
+type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
   files?: dict<string>,
-  isRescript?: bool,
+  withIndexerTypes?: bool,
+}
+
+type fromUserApiResult = {
+  config: string,
+  indexerTypes: Null.t<string>,
 }
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
-  parseConfigYaml: (string, parseConfigYamlOptions) => string,
-  generateIndexerTypes: (string, parseConfigYamlOptions) => string,
+  fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
@@ -208,30 +212,18 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 
 // Pure config entry point: no cwd, config file, schema file, .env, or process env lookup.
 // A supplied schema is authoritative; omitted or blank schema text means an empty schema.
-let parseConfigYaml = (~schema=?, ~env=?, ~files=?, ~isRescript=false, yaml) => {
+// With `withIndexerTypes`, the single parse also returns the generated
+// `.envio/types.d.ts`, so callers can type-check handlers against the config's
+// `indexer` surface without re-parsing.
+let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) => {
   let addon = getAddon()
-  addon.parseConfigYaml(
+  addon.fromUserApi(
     yaml,
     {
       ?schema,
       ?env,
       ?files,
-      isRescript,
-    },
-  )
-}
-
-// Generates the `.envio/types.d.ts` contents for an inline config, so callers
-// can type-check handlers against the config's generated `indexer` surface.
-let generateIndexerTypes = (~schema=?, ~env=?, ~files=?, yaml) => {
-  let addon = getAddon()
-  addon.generateIndexerTypes(
-    yaml,
-    {
-      ?schema,
-      ?env,
-      ?files,
-      isRescript: false,
+      withIndexerTypes,
     },
   )
 }

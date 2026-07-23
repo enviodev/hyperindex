@@ -41,7 +41,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
     t.expect(config.name).toBe("mock-handlers")
   })
 
-  it("throws on handlers that reference a nonexistent event", t => {
+  it("throws the exact diagnostic on a nonexistent event", t => {
     t.expect(
       () =>
         InternalTestIndexer.fromUserApi(
@@ -52,6 +52,6 @@ indexer.onEvent({ contract: "Token", event: "Nonexistent" }, async () => {});
 `,
           ~configYaml=yaml,
         )->ignore,
-    ).toThrowError("Handler type errors")
+    ).toThrowError(`Type '"Nonexistent"' is not assignable to type '"Transfer"'`)
   })
 })
