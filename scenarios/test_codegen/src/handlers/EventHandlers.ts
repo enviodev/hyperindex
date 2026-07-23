@@ -129,40 +129,6 @@ expectType<
   >
 >(true);
 
-// Type-only surface checks for the registration API. Guarded by `if (0)` so
-// tsc validates them but they never execute: invalid contract/event combos must
-// stay compile errors, and these must not register real handlers.
-if (0) {
-  indexer.onEvent(
-    // @ts-expect-error - "BadContract" is not a configured contract
-    { contract: "BadContract", event: "X" },
-    async () => {},
-  );
-  indexer.onEvent(
-    // @ts-expect-error - "BadEvent" is not an event of Gravatar
-    { contract: "Gravatar", event: "BadEvent" },
-    async () => {},
-  );
-  indexer.onEvent(
-    { contract: "Gravatar", event: "NewGravatar" },
-    async ({ event }) => {
-      expectType<TypeEqual<typeof event.params.displayName, string>>(true);
-    },
-  );
-  indexer.contractRegister(
-    { contract: "NftFactory", event: "SimpleNftCreated" },
-    async ({ event, context }) => {
-      expectType<
-        TypeEqual<typeof event.params.contractAddress, `0x${string}`>
-      >(true);
-      context.chain.SimpleNft.add(event.params.contractAddress);
-      context.chain.NftFactory.add(event.params.contractAddress);
-      // @ts-expect-error - UnknownContract is not configured
-      context.chain.UnknownContract.add(event.params.contractAddress);
-    },
-  );
-}
-
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
@@ -188,7 +154,8 @@ indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ eve
   S.assertOrThrow(event.block, blockSchema)!;
   deepEqual(context.chain.id, event.chainId);
 
-  // Type checking for custom field selection is done in CustomSelection.test.ts
+  // Type checking for custom field selection lives in
+  // packages/envio-tests/test/TypeScriptApiTypes_test.res
 
   // Test chain field accessibility in TypeScript
   expectType<
@@ -1044,69 +1011,3 @@ indexer.onBlock(
   { name: "test_onblock_skip_all", where: () => false },
   async () => {},
 );
-
-// Type-level regression guards for `where.block` on EVM. Declared as an
-// unreached function so `tsc --noEmit` checks the types without runtime
-// re-registering events. The `@ts-expect-error` assertions catch the
-// class of bug where `EvmOnEventWhere` might get wired through the wrong
-// filter shape (e.g. Fuel's `block.height`) — a regression would flip
-// the directive from "expected" to "unused", failing the build.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function _typeCheckEvmWhereBlockShape() {
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: { block: { number: { _gte: 1 } } },
-    },
-    async () => {},
-  );
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: {
-        block: {
-          // @ts-expect-error EVM keys block by `number`, not `height`.
-          height: { _gte: 1 },
-        },
-      },
-    },
-    async () => {},
-  );
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: {
-        block: {
-          number: {
-            // @ts-expect-error Only `_gte` is supported on event filters.
-            _lte: 1,
-          },
-        },
-      },
-    },
-    async () => {},
-  );
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: {
-        block: {
-          number: {
-            // @ts-expect-error Only `_gte` is supported on event filters.
-            _every: 100,
-          },
-        },
-      },
-    },
-    async () => {},
-  );
-}
-
