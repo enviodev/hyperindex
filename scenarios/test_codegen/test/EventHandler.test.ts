@@ -1290,6 +1290,44 @@ describe("Use Envio test framework to test event handlers", () => {
     ]);
   });
 
+  // Two handlers registered on one event (Gravatar.MultiHandlerOrder) must both
+  // run, ordered by (blockNumber, logIndex, registration index). Each handler
+  // writes SimulateTestEvent with an id suffixed `_a`/`_b` in registration
+  // order, so the `sets` order (which preserves dispatch order) reveals it: for
+  // each log the first-registered handler (`_a`) runs before `_b`, and logs run
+  // in (block, logIndex) order.
+  it("dispatches multiple handlers on one event in (block, logIndex, registration) order", async () => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1337: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            { contract: "Gravatar", event: "MultiHandlerOrder", block: { number: 1 } },
+            { contract: "Gravatar", event: "MultiHandlerOrder", block: { number: 1 } },
+            { contract: "Gravatar", event: "MultiHandlerOrder", block: { number: 2 } },
+          ],
+        },
+      },
+    });
+
+    // Committed batches are in ascending block order; flatten their sets to
+    // read the full cross-block dispatch order in one value.
+    const dispatched = result.changes.flatMap(
+      (c) => c.SimulateTestEvent?.sets ?? [],
+    );
+    assert.deepEqual(dispatched, [
+      { id: "1_0_a", blockNumber: 1, logIndex: 0, timestamp: 0 },
+      { id: "1_0_b", blockNumber: 1, logIndex: 0, timestamp: 0 },
+      { id: "1_1_a", blockNumber: 1, logIndex: 1, timestamp: 0 },
+      { id: "1_1_b", blockNumber: 1, logIndex: 1, timestamp: 0 },
+      { id: "2_2_a", blockNumber: 2, logIndex: 2, timestamp: 0 },
+      { id: "2_2_b", blockNumber: 2, logIndex: 2, timestamp: 0 },
+    ]);
+  });
+
   it("simulate passes block timestamp to event", async () => {
     const indexer = createTestIndexer();
 

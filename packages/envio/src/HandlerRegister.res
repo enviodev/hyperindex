@@ -35,6 +35,11 @@ type pendingOnEventRegistration = {
   handler: option<Internal.handler>,
   contractRegister: option<Internal.contractRegister>,
   eventOptions: option<Internal.eventOptions<JSON.t>>,
+  // Per-chain registration resolved lazily and cached here, keyed by chain id.
+  // Building invokes the user's `where` callback, so caching keeps that to
+  // exactly once per chain even though registrations are materialized many
+  // times (registration-time validation, `finishRegistration`, simulate).
+  resolvedByChainId: dict<Internal.onEventRegistration>,
 }
 
 // Registration intents live in the process-wide `EnvioGlobal` record so they
@@ -183,6 +188,43 @@ let sameEventAndFilter = (
   | Fuel | Svm => true
   }
 
+// Resolve one intent into this chain's registration, building it (and invoking
+// the user's `where` callback) exactly once per chain and caching the result on
+// the intent. Returns None when the chain doesn't define the intent's event.
+let resolveIntentForChain = (
+  ~config: Config.t,
+  ~chainConfig: Config.chain,
+  intent: pendingOnEventRegistration,
+): option<Internal.onEventRegistration> => {
+  let key = chainConfig.id->Int.toString
+  switch intent.resolvedByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(_) as cached => cached
+  | None =>
+    switch chainConfig.contracts->Array.find(c => c.name === intent.contractName) {
+    | None => None
+    | Some(contract) =>
+      switch contract.events->Array.find(e => e.name === intent.eventName) {
+      | None => None
+      | Some(eventConfig) =>
+        let isWildcard = intent.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+        let where = intent.eventOptions->Option.flatMap(v => v.where)
+        let reg = buildOnEventRegistrationWith(
+          ~config,
+          ~chainId=chainConfig.id,
+          ~eventConfig,
+          ~isWildcard,
+          ~handler=intent.handler,
+          ~contractRegister=intent.contractRegister,
+          ~where,
+          ~startBlock=?contract.startBlock,
+        )
+        intent.resolvedByChainId->Dict.set(key, reg)
+        Some(reg)
+      }
+    }
+  }
+}
+
 // Resolve the chain-independent intents into this chain's registrations, then
 // merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
@@ -192,34 +234,13 @@ let sameEventAndFilter = (
 let resolveChainRegistrations = (~config: Config.t, ~chainConfig: Config.chain): array<
   Internal.onEventRegistration,
 > => {
-  let chainId = chainConfig.id
   let resolved: array<Internal.onEventRegistration> = []
-  pendingOnEventRegistrations->Array.forEach(intent => {
-    chainConfig.contracts->Array.forEach(contract => {
-      if contract.name === intent.contractName {
-        switch contract.events->Array.find(e => e.name === intent.eventName) {
-        | None => ()
-        | Some(eventConfig) =>
-          let isWildcard = intent.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
-          let where = intent.eventOptions->Option.flatMap(v => v.where)
-          resolved
-          ->Array.push(
-            buildOnEventRegistrationWith(
-              ~config,
-              ~chainId,
-              ~eventConfig,
-              ~isWildcard,
-              ~handler=intent.handler,
-              ~contractRegister=intent.contractRegister,
-              ~where,
-              ~startBlock=?contract.startBlock,
-            ),
-          )
-          ->ignore
-        }
-      }
-    })
-  })
+  pendingOnEventRegistrations->Array.forEach(intent =>
+    switch resolveIntentForChain(~config, ~chainConfig, intent) {
+    | Some(reg) => resolved->Array.push(reg)->ignore
+    | None => ()
+    }
+  )
 
   let merged: ref<array<Internal.onEventRegistration>> = ref([])
   resolved->Array.forEach((reg: Internal.onEventRegistration) => {
@@ -264,43 +285,19 @@ let resolveChainRegistrations = (~config: Config.t, ~chainConfig: Config.chain):
 let isDroppedByWhere = (~config: Config.t, reg: Internal.onEventRegistration) =>
   config.ecosystem.name === Evm && (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
 
-// Resolve the intent against every chain that defines its event and discard the
-// results, so a broken `where` (bad filter, unknown indexed param) throws at the
-// user's registration call site instead of being deferred to
-// `finishRegistration` — even when only a later chain's resolution is invalid.
-// `config` may be a narrowed TestIndexer chain subset; if no chain defines the
-// event there's nothing to validate.
-let validateIntentWhere = (~config: Config.t, intent: pendingOnEventRegistration) => {
-  let isWildcard = intent.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
-  let where = intent.eventOptions->Option.flatMap(v => v.where)
-  config.chainMap
+let addIntent = (registration: activeRegistration, intent: pendingOnEventRegistration) => {
+  // Resolve against every chain the config defines now, populating the intent's
+  // per-chain cache. This runs the user's `where` callback once per chain and
+  // surfaces a broken filter (bad filter, unknown indexed param) at the
+  // registration call site — even when only a later chain's resolution is
+  // invalid — instead of deferring the error to `finishRegistration`. `config`
+  // may be a narrowed TestIndexer chain subset; chains missing here resolve
+  // (and cache) lazily when `finishRegistration`/simulate first sees them.
+  registration.config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig =>
-    chainConfig.contracts->Array.forEach(contract =>
-      if contract.name === intent.contractName {
-        switch contract.events->Array.find(e => e.name === intent.eventName) {
-        | Some(eventConfig) =>
-          let _ = buildOnEventRegistrationWith(
-            ~config,
-            ~chainId=chainConfig.id,
-            ~eventConfig,
-            ~isWildcard,
-            ~handler=intent.handler,
-            ~contractRegister=intent.contractRegister,
-            ~where,
-            ~startBlock=?contract.startBlock,
-          )
-        | None => ()
-        }
-      }
-    )
+    resolveIntentForChain(~config=registration.config, ~chainConfig, intent)->ignore
   )
-}
-
-let addIntent = (registration: activeRegistration, intent: pendingOnEventRegistration) => {
-  // Validate before storing so a broken `where` never leaves a poisoned intent
-  // in the global store.
-  validateIntentWhere(~config=registration.config, intent)
   pendingOnEventRegistrations->Array.push(intent)->ignore
 }
 
@@ -317,6 +314,7 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions) => {
       handler: Some(newHandler),
       contractRegister: None,
       eventOptions,
+      resolvedByChainId: Dict.make(),
     })
   })
 }
@@ -339,6 +337,7 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
       handler: None,
       contractRegister: Some(newContractRegister),
       eventOptions,
+      resolvedByChainId: Dict.make(),
     })
   })
 }

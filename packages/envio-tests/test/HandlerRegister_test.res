@@ -269,6 +269,24 @@ describe("HandlerRegister multiple registrations", () => {
     ).toEqual([(Some("h1"), None, 0), (Some("h2"), None, 1)])
   })
 
+  it("invokes a `where` callback once per chain, even across repeated finishes", t => {
+    // The `where` callback is resolved once per chain and cached on the intent,
+    // so re-materializing registrations (finishRegistration, simulate) must not
+    // call it again.
+    let calls = ref(0)
+    let h1 = makeHandler()
+    let whereFn = _ => {
+      calls := calls.contents + 1
+      true
+    }
+    HandlerRegister.resetOnEventRegistrations()
+    HandlerRegister.startRegistration(~config)
+    setHandler(~eventOptions={where: whereFn->Obj.magic}, h1)
+    let _ = HandlerRegister.finishRegistration(~config)
+    let _ = HandlerRegister.finishRegistration(~config)
+    t.expect(calls.contents).toBe(1)
+  })
+
   it("excludes a where:false event but backfills a handler-less event for raw events", t => {
     // Transfer's handler opts out of the chain via `where: false` → excluded
     // entirely (no raw-events registration). Approval has no handler → with raw

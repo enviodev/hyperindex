@@ -886,6 +886,28 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where:
   }
 });
 
+// Two handlers on one event, used to assert dispatch order. Both write
+// SimulateTestEvent with an id suffixed by the registration order, so the
+// order of `result.changes[0].SimulateTestEvent.sets` reveals the dispatch
+// order: (blockNumber, logIndex, registration index). The first-registered
+// handler gets the lower index and must run first for each log.
+indexer.onEvent({ contract: "Gravatar", event: "MultiHandlerOrder" }, async ({ event, context }) => {
+  context.SimulateTestEvent.set({
+    id: `${event.block.number}_${event.logIndex}_a`,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    timestamp: event.block.timestamp,
+  });
+});
+indexer.onEvent({ contract: "Gravatar", event: "MultiHandlerOrder" }, async ({ event, context }) => {
+  context.SimulateTestEvent.set({
+    id: `${event.block.number}_${event.logIndex}_b`,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    timestamp: event.block.timestamp,
+  });
+});
+
 // Handler for testing simulate block/logIndex behavior
 indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, context }) => {
   context.SimulateTestEvent.set({
