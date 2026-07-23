@@ -868,6 +868,10 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       fail("Should have thrown");
     }
 
+    case "throwInHandler": {
+      throw new Error("Error from handler");
+    }
+
     // Reproduction for https://github.com/enviodev/hyperindex/issues/1199:
     // getWhere on a linkedEntity field (db column name `<field>_id`) must
     // resolve the field schema in the in-memory TestIndexer. Production
