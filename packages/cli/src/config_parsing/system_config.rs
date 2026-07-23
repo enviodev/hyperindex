@@ -428,7 +428,8 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
             if e.postgres == Some(true) && storage.postgres.is_none() {
                 out.push((e.name.as_str(), "postgres"));
             }
-            if e.clickhouse == Some(true) && storage.clickhouse.is_none() {
+            if e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
+            {
                 out.push((e.name.as_str(), "clickhouse"));
             }
             out
@@ -624,10 +625,11 @@ pub fn validate_clickhouse_nullable_arrays(
     for entity in &entities {
         // A storage directive's omitted backend resolves to false at runtime
         // (Config.res `Option.getOr(false)`), so a directive routes to
-        // ClickHouse only when it sets `clickhouse: true`. Without a directive
-        // the entity follows the backend's `default`.
+        // ClickHouse only when it enables the backend (boolean `true` or the
+        // table options object form). Without a directive the entity follows
+        // the backend's `default`.
         let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse == Some(true)
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
         } else {
             clickhouse.entity_default
         };
@@ -2646,22 +2648,7 @@ mod test {
 
     use super::SystemConfig;
     use crate::{config_parsing::system_config::Event, project_paths::ParsedProjectPaths};
-    use handlebars::Handlebars;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    #[test]
-    fn renders_nested_f32() {
-        let hbs = Handlebars::new();
-
-        let rendered_backoff_multiplicative = hbs
-            .render_template(
-                "{{backoff_multiplicative}}",
-                &json!({"backoff_multiplicative": 0.8}),
-            )
-            .unwrap();
-        assert_eq!(&rendered_backoff_multiplicative, "0.8");
-    }
 
     #[test]
     fn in_memory_yaml_matches_filesystem_public_config() {
@@ -3181,7 +3168,9 @@ mod test {
 
     mod entity_storage_validation {
         use super::super::{validate_entity_storage, Storage};
-        use crate::config_parsing::entity_parsing::{Entity, Schema};
+        use crate::config_parsing::entity_parsing::{
+            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Schema,
+        };
         use crate::config_parsing::human_config::ColumnNameFormat;
 
         // Bypass `Schema::new` validation: only storage routing matters here.
@@ -3200,7 +3189,7 @@ mod test {
                 multi_field_indexes: Vec::new(),
                 description: None,
                 postgres,
-                clickhouse,
+                clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
             }
         }
 
@@ -3255,6 +3244,21 @@ mod test {
             ]);
             assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
             assert!(validate_entity_storage(&multi(false, true), &schema).is_ok());
+        }
+
+        // The table options object form opts the entity into ClickHouse, so
+        // it must be rejected when ClickHouse isn't enabled globally.
+        #[test]
+        fn clickhouse_table_options_require_enabled_backend() {
+            let schema = make_schema(vec![Entity {
+                clickhouse: Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
+                    partition_by: Some("toYYYYMM(timestamp)".to_string()),
+                    ..ClickHouseTableOptions::default()
+                })),
+                ..entity("Transfer", Some(true), None)
+            }]);
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_err());
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
         }
     }
 

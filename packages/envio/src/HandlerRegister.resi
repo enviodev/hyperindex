@@ -9,6 +9,17 @@ let isPendingRegistration: unit => bool
 let finishRegistration: (~config: Config.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
 
+type eventIdValidator
+let makeEventIdValidator: unit => eventIdValidator
+let validateEventIdOrThrow: (
+  eventIdValidator,
+  ~eventId: string,
+  ~contractName: string,
+  ~eventName: string,
+  ~isWildcard: bool,
+  ~chainId: int,
+) => unit
+
 let buildOnEventRegistration: (
   ~config: Config.t,
   ~chainId: int,

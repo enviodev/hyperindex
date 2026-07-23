@@ -179,7 +179,7 @@ type svmBlockField =
 let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
 let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 
-// Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
+// Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
     [
@@ -720,11 +720,20 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+// Raw ClickHouse expressions/field names from the entity's
+// @storage(clickhouse: {...}) directive, applied to the history table DDL.
+type clickhouseTableOptions = {
+  partitionBy?: string,
+  orderBy?: array<string>,
+  ttl?: string,
+}
+
 // Per-entity storage resolved at parse time against the global storage
 // config. Downstream PG/CH consumers just check the matching boolean.
 type entityStorage = {
   postgres: bool,
   clickhouse: bool,
+  clickhouseOptions?: clickhouseTableOptions,
 }
 
 type genericEntityConfig<'entity> = {

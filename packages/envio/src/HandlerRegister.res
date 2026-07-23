@@ -588,6 +588,55 @@ let registerOnBlock = (
   })
 }
 
+// Per-eventId dispatch validation state: two events on one contract can't
+// share a dispatch id, and only one wildcard may claim it — Rust-side routing
+// fans a log/receipt/instruction out by these ids, so a collision would
+// double-deliver. Scoped per chain (a fresh validator per chain iteration).
+type eventIdValidator = {
+  contractNamesByEventId: dict<Utils.Set.t<string>>,
+  wildcardEventIds: Utils.Set.t<string>,
+}
+
+let makeEventIdValidator = (): eventIdValidator => {
+  contractNamesByEventId: Dict.make(),
+  wildcardEventIds: Utils.Set.make(),
+}
+
+let validateEventIdOrThrow = (
+  validator: eventIdValidator,
+  ~eventId,
+  ~contractName,
+  ~eventName,
+  ~isWildcard,
+  ~chainId,
+) => {
+  let chainSuffix = `on chain ${chainId->Int.toString}`
+  let contractNames = switch validator.contractNamesByEventId->Utils.Dict.dangerouslyGetNonOption(
+    eventId,
+  ) {
+  | Some(contractNames) => contractNames
+  | None => {
+      let contractNames = Utils.Set.make()
+      validator.contractNamesByEventId->Dict.set(eventId, contractNames)
+      contractNames
+    }
+  }
+  if contractNames->Utils.Set.has(contractName) {
+    JsError.throwWithMessage(
+      `Duplicate event detected: ${eventName} for contract ${contractName} ${chainSuffix}`,
+    )
+  }
+  if isWildcard && validator.wildcardEventIds->Utils.Set.has(eventId) {
+    JsError.throwWithMessage(
+      `Another event is already registered with the same signature that would interfere with wildcard filtering: ${eventName} for contract ${contractName} ${chainSuffix}`,
+    )
+  }
+  if isWildcard {
+    validator.wildcardEventIds->Utils.Set.add(eventId)->ignore
+  }
+  contractNames->Utils.Set.add(contractName)->ignore
+}
+
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch getActiveRegistration() {
   | Some(r) => {
@@ -600,11 +649,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
         let key = chainConfig.id->Int.toString
         let pending = r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key)
 
-        // We don't need the router itself, but only validation logic,
-        // since now event router is created for selection of events
-        // and validation doesn't work correctly in routers.
-        // Ideally to split it into two different parts.
-        let eventRouter = EventRouter.empty()
+        let eventIdValidator = makeEventIdValidator()
 
         let onEventRegistrations: array<Internal.onEventRegistration> = []
 
@@ -622,17 +667,30 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                     ),
                 )
 
-              // Should validate the events
-              eventRouter->EventRouter.addOrThrow(
-                eventConfig.id,
-                (),
+              // SVM dispatch is keyed by (programId, discriminator), not the
+              // discriminator alone — `eventConfig.id` is only the
+              // discriminator (or "none"). Scope the SVM validation key by
+              // programId so two wildcard handlers on different programs that
+              // share a discriminator aren't rejected as a false collision
+              // (Rust routing already scopes matches by program_id).
+              let eventId = switch config.ecosystem.name {
+              | Svm =>
+                let svmEventConfig =
+                  eventConfig->(
+                    Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+                  )
+                `${svmEventConfig.programId->SvmTypes.Pubkey.toString}_${eventConfig.id}`
+              | Evm | Fuel => eventConfig.id
+              }
+              eventIdValidator->validateEventIdOrThrow(
+                ~eventId,
                 ~contractName,
-                ~chain=ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id),
                 ~eventName,
                 ~isWildcard=switch registration {
                 | Some(registration) => registration.isWildcard
                 | None => isWildcard(~contractName, ~eventName)
                 },
+                ~chainId=chainConfig.id,
               )
 
               let registration = switch registration {

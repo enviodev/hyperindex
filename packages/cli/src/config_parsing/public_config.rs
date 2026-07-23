@@ -1,5 +1,5 @@
 use super::{
-    entity_parsing::IndexFieldDirection,
+    entity_parsing::{self, IndexFieldDirection},
     field_types,
     human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
@@ -93,7 +93,42 @@ struct EntityStorageJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     postgres: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    clickhouse: Option<bool>,
+    clickhouse: Option<EntityClickHouseStorageJson>,
+}
+
+// Mirrors the two forms of the directive's `clickhouse` arg: a boolean or a
+// table options object (implying the backend is enabled).
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum EntityClickHouseStorageJson {
+    Enabled(bool),
+    Options(EntityClickHouseOptionsJson),
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EntityClickHouseOptionsJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    partition_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_by: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<String>,
+}
+
+impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJson {
+    fn from(storage: &entity_parsing::ClickHouseEntityStorage) -> Self {
+        match storage {
+            entity_parsing::ClickHouseEntityStorage::Enabled(enabled) => Self::Enabled(*enabled),
+            entity_parsing::ClickHouseEntityStorage::Options(options) => {
+                Self::Options(EntityClickHouseOptionsJson {
+                    partition_by: options.partition_by.clone(),
+                    order_by: options.order_by.clone(),
+                    ttl: options.ttl.clone(),
+                })
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -764,7 +799,7 @@ impl SystemConfig {
                 let storage = if entity.has_storage_directive() {
                     Some(EntityStorageJson {
                         postgres: entity.postgres,
-                        clickhouse: entity.clickhouse,
+                        clickhouse: entity.clickhouse.as_ref().map(Into::into),
                     })
                 } else {
                     let postgres_default = cfg.storage.postgres.is_some_and(|b| b.entity_default);
@@ -783,7 +818,8 @@ impl SystemConfig {
                         // directive and a config-level default doesn't diff.
                         Some(EntityStorageJson {
                             postgres: postgres_default.then_some(true),
-                            clickhouse: clickhouse_default.then_some(true),
+                            clickhouse: clickhouse_default
+                                .then_some(EntityClickHouseStorageJson::Enabled(true)),
                         })
                     }
                 };

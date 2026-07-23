@@ -3291,6 +3291,39 @@ mod test {
         );
     }
 
+    // The `@storage(clickhouse: {...})` table options object is mirrored
+    // into the entity storage JSON, while the boolean form keeps its shape.
+    #[test]
+    fn internal_config_json_mirrors_clickhouse_table_options() {
+        let json = get_internal_config_json_helper("config-clickhouse-options.yaml");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let entity_storages: Vec<(&str, Option<serde_json::Value>)> = parsed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap(), e.get("storage").cloned()))
+            .collect();
+        assert_eq!(
+            entity_storages,
+            vec![
+                (
+                    "Account",
+                    Some(serde_json::json!({"postgres": true, "clickhouse": true}))
+                ),
+                (
+                    "Transfer",
+                    Some(serde_json::json!({
+                        "clickhouse": {
+                            "partitionBy": "toYYYYMM(timestamp)",
+                            "orderBy": ["timestamp"],
+                            "ttl": "timestamp + INTERVAL 2 YEAR"
+                        }
+                    }))
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn envio_types_dts_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
