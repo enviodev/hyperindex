@@ -4,7 +4,5 @@
 let indexer: unknown = Main.getGlobalIndexer()
 
 let createTestIndexer: unit => unknown = () => {
-  TestIndexer.makeCreateTestIndexer(~config=Config.load())()->(
-    Utils.magic: TestIndexer.t<'a> => unknown
-  )
+  TestIndexer.createTestIndexer()->(Utils.magic: TestIndexer.t<'a> => unknown)
 }
