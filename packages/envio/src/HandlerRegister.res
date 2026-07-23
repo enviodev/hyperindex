@@ -395,31 +395,40 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
         let key = chainId->Int.toString
 
         let builtRegs = resolveChainRegistrations(~config, ~chainConfig)
-        let registeredKeys = Utils.Set.make()
+        // Registrations whose `where` opts out of this chain are dropped from
+        // normal fetching/dispatch. `intentKeys` still records them so a
+        // `where: false` event isn't reported as handler-less below.
+        let survivingRegs = builtRegs->Array.filter(reg => !isDroppedByWhere(~config, reg))
+        let intentKeys = Utils.Set.make()
         builtRegs->Array.forEach(reg =>
-          registeredKeys
+          intentKeys
+          ->Utils.Set.add(
+            getKey(~contractName=reg.eventConfig.contractName, ~eventName=reg.eventConfig.name),
+          )
+          ->ignore
+        )
+        let survivingKeys = Utils.Set.make()
+        survivingRegs->Array.forEach(reg =>
+          survivingKeys
           ->Utils.Set.add(
             getKey(~contractName=reg.eventConfig.contractName, ~eventName=reg.eventConfig.name),
           )
           ->ignore
         )
 
-        // Events with no handler/contractRegister aren't fetched or dispatched
+        // An event with no surviving registration isn't fetched or dispatched
         // unless raw events are enabled, in which case a bare registration is
-        // added to fetch them. Otherwise they're reported once below. Runs
-        // before the where-empty drop so a `where: false` event still counts as
-        // registered (and doesn't get a bare raw-event registration).
+        // added to fetch every log for `raw_events` — this includes events that
+        // opted out via `where: false`, whose logs are still captured raw even
+        // though their handler doesn't run here. Events with no handler at all
+        // (and raw events off) are reported once below; a `where: false` event
+        // has a handler, so it's skipped from that report via `intentKeys`.
         let rawEventRegs = []
         chainConfig.contracts->Array.forEach(contract => {
           contract.events->Array.forEach(
             eventConfig => {
-              if (
-                !(
-                  registeredKeys->Utils.Set.has(
-                    getKey(~contractName=contract.name, ~eventName=eventConfig.name),
-                  )
-                )
-              ) {
+              let eventKey = getKey(~contractName=contract.name, ~eventName=eventConfig.name)
+              if !(survivingKeys->Utils.Set.has(eventKey)) {
                 if config.enableRawEvents {
                   rawEventRegs
                   ->Array.push(
@@ -435,7 +444,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                     ),
                   )
                   ->ignore
-                } else {
+                } else if !(intentKeys->Utils.Set.has(eventKey)) {
                   let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
                     contract.name,
                   ) {
@@ -453,17 +462,15 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
           )
         })
 
-        // Drop registrations whose `where` opts out of this chain, then assign
-        // each survivor its chain-scoped index by position.
+        // Assign each surviving/raw-event registration its chain-scoped index
+        // by position.
         let onEventRegistrations: array<Internal.onEventRegistration> = []
-        builtRegs
+        survivingRegs
         ->Array.concat(rawEventRegs)
         ->Array.forEach(reg => {
-          if !isDroppedByWhere(~config, reg) {
-            onEventRegistrations
-            ->Array.push({...reg, index: onEventRegistrations->Array.length})
-            ->ignore
-          }
+          onEventRegistrations
+          ->Array.push({...reg, index: onEventRegistrations->Array.length})
+          ->ignore
         })
 
         registrationsByChainId->Dict.set(

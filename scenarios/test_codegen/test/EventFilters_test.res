@@ -481,16 +481,20 @@ describe("Test eventFilters", () => {
     t.expect(eventConfig.handler->Option.isSome).toBe(true)
   })
 
-  it("Where returning false drops the chain's registration entirely", t => {
+  it("Where returning false keeps only a bare raw-events registration", t => {
     // WithExcessField's where returns `false` for chain 100 and a filter for
-    // chain 137 — the finished registrations must include it only on 137.
-    let hasEvent = chainId =>
+    // chain 137. On 137 its handler registration is kept; on 100 the handler
+    // opts out, but raw_events is enabled (config.yaml), so the event is still
+    // fetched via a bare (handler-less) registration for `raw_events`.
+    let handlerPresence = chainId =>
       switch registrationsByChainId->Dict.get(chainId) {
       | Some({HandlerRegister.onEventRegistrations: regs}) =>
-        regs->Array.some(reg => reg.eventConfig.name === "WithExcessField")
-      | None => false
+        regs
+        ->Array.find(reg => reg.eventConfig.name === "WithExcessField")
+        ->Option.map(reg => reg.handler->Option.isSome)
+      | None => None
       }
-    t.expect((hasEvent("137"), hasEvent("100"))).toEqual((true, false))
+    t.expect((handlerPresence("137"), handlerPresence("100"))).toEqual((Some(true), Some(false)))
   })
 
   it("Fails on filter with excess field at registration time", t => {

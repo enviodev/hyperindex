@@ -50,6 +50,26 @@ chains:
         address: "0x1111111111111111111111111111111111111111"
 `).config
 
+// raw_events enabled, single chain. Used to verify a `where: false` event is
+// still captured for raw events via a bare (handler-less) registration.
+let configWithRawEvents = MockIndexerConfig.parseYaml(`
+name: handler-register-raw-events
+raw_events: true
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+`).config
+
 // Each handler/contractRegister is a distinct function so registrations can be
 // identified by reference in assertions.
 let makeHandler = (): Internal.handler => %raw(`() => Promise.resolve()`)
@@ -229,5 +249,19 @@ describe("HandlerRegister multiple registrations", () => {
     t.expect(
       registrations137->describeRegistrations(~chainKey="137", ~labels=[(h1, "h1")], ~crLabels=[]),
     ).toEqual([(Some("h1"), None, 0)])
+  })
+
+  it("captures raw events for a where:false event via a bare registration", t => {
+    // The handler opts out of the chain with `where: false`, so its handler is
+    // dropped — but with raw events enabled the event's logs are still fetched
+    // via a bare (handler-less) registration.
+    let h1 = makeHandler()
+    HandlerRegister.resetOnEventRegistrations()
+    HandlerRegister.startRegistration(~config=configWithRawEvents)
+    setHandler(~eventOptions={where: %raw(`() => false`)}, h1)
+    let registrations = HandlerRegister.finishRegistration(~config=configWithRawEvents)
+    t.expect(
+      registrations->describeRegistrations(~labels=[(h1, "h1")], ~crLabels=[]),
+    ).toEqual([(None, None, 0)])
   })
 })
