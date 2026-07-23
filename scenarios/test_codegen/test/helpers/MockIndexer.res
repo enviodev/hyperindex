@@ -37,7 +37,7 @@ module InMemoryStore = {
     inMemTable->InMemoryTable.Entity.set(
       ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
       Set({
-        entityId: (entity: Internal.entity).id,
+        entityId: (entity: Internal.entity).id->EntityId.unsafeOfString,
         checkpointId: 0n,
         entity,
       }),
@@ -621,7 +621,7 @@ module Indexer = {
                 S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
-                    entityId: s.field("id", S.string),
+                    entityId: s.field("id", ec.table->Table.getIdSchema),
                     checkpointId: s.field(
                       EntityHistory.checkpointIdFieldName,
                       EntityHistory.unsafeCheckpointIdSchema,
@@ -632,7 +632,10 @@ module Indexer = {
             ),
           )
           ->Array.toSorted((a, b) => {
-            switch String.compare(a->Change.getEntityId, b->Change.getEntityId) {
+            switch String.compare(
+              (a->Change.getEntityId)->EntityId.toKey,
+              (b->Change.getEntityId)->EntityId.toKey,
+            ) {
             | 0. =>
               Float.compare(
                 a->Change.getCheckpointId->BigInt.toFloat,

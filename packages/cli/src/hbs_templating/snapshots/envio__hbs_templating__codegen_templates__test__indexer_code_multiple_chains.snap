@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3088
 expression: project_template.indexer_code
 ---
 /**

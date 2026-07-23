@@ -158,7 +158,10 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
         ~fields=dataFields->Array.concat([checkpointIdField, actionField]),
       )
 
-      let setChangeSchema = EntityHistory.makeSetUpdateSchema(entityConfig.schema)
+      let setChangeSchema = EntityHistory.makeSetUpdateSchema(
+        ~idSchema=entityConfig.table->Table.getIdSchema,
+        entityConfig.schema,
+      )
 
       {
         EntityHistory.table,
@@ -355,8 +358,8 @@ let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
   `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1;`
 }
 
-let makeDeleteByIdsQuery = (~pgSchema, ~tableName) => {
-  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+let makeDeleteByIdsQuery = (~pgSchema, ~tableName, ~idPgType) => {
+  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::${idPgType}[]);`
 }
 
 let makeLoadAllQuery = (~pgSchema, ~tableName) => {
@@ -744,18 +747,26 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids: array<EntityId.t>, ~table: Table.table) => {
+  // A JSON array of the serialized ids. For a single id the query binds it as
+  // `$1` directly (the array is the positional-params array); for many it binds
+  // the whole array to `$1` behind an `ANY(...)`.
+  let idsJson = table->Table.encodeIdsToJson(ids)
   switch await (
     switch ids {
     | [_] =>
       sql->Postgres.preparedUnsafe(
         makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
-        ids->Obj.magic,
+        idsJson->Obj.magic,
       )
     | _ =>
       sql->Postgres.preparedUnsafe(
-        makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
-        [ids]->Obj.magic,
+        makeDeleteByIdsQuery(
+          ~pgSchema,
+          ~tableName=table.tableName,
+          ~idPgType=table->Table.getIdPgFieldType(~pgSchema),
+        ),
+        [idsJson]->Obj.magic,
       )
     }
   ) {
@@ -811,9 +822,11 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
     ~isNullable=false,
   )
 
+  let idPgType = entityConfig.table->Table.getIdPgFieldType(~pgSchema)
+
   `INSERT INTO "${pgSchema}"."${historyTableName}" (${allHistoryFieldNamesStr})
 SELECT ${selectPartsStr}
-FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+FROM UNNEST($1::${idPgType}[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 let executeSet = (
@@ -912,17 +925,21 @@ let rec writeBatch = async (
       // Single pass over the change log: track each id's latest change (the last
       // one seen) and, when saving history, fan every non-diff change out to the
       // history-table batches.
+      // Keyed/deduped in memory by the id's string key (toKey), while the
+      // batches sent to SQL keep the real id values so they serialize with the
+      // id column's type.
       let latestChangeById = Dict.make()
       let orderedIds = []
       changes->Array.forEach(change => {
         let entityId = change->Change.getEntityId
-        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityId)->Option.isNone {
+        let entityKey = entityId->EntityId.toKey
+        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
           orderedIds->Array.push(entityId)
         }
-        latestChangeById->Dict.set(entityId, change)
+        latestChangeById->Dict.set(entityKey, change)
         if shouldSaveHistory {
           if Some(change->Change.getCheckpointId) === diffCheckpointId {
-            idsWithDiff->Utils.Set.add(entityId)->ignore
+            idsWithDiff->Utils.Set.add(entityKey)->ignore
           } else {
             switch change {
             | Delete({entityId, checkpointId}) =>
@@ -936,13 +953,14 @@ let rec writeBatch = async (
 
       let backfillHistoryIds = Utils.Set.make()
       orderedIds->Array.forEach(entityId => {
-        switch latestChangeById->Dict.getUnsafe(entityId) {
+        let entityKey = entityId->EntityId.toKey
+        switch latestChangeById->Dict.getUnsafe(entityKey) {
         | Set({entity}) => entitiesToSet->Array.push(entity)
         | Delete({entityId}) => idsToDelete->Array.push(entityId)
         }
 
         // An id needs a history backfill iff none of its changes is the diff.
-        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityId)) {
+        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
           backfillHistoryIds->Utils.Set.add(entityId)->ignore
         }
       })
@@ -962,7 +980,7 @@ let rec writeBatch = async (
               await EntityHistory.backfillHistory(
                 sql,
                 ~pgSchema,
-                ~entityName=entityConfig.name,
+                ~table=entityConfig.table,
                 ~entityIndex=entityConfig.index,
                 ~ids=backfillHistoryIds->Utils.Set.toArray,
               )
@@ -974,7 +992,7 @@ let rec writeBatch = async (
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
                   (
-                    batchDeleteEntityIds,
+                    entityConfig.table->Table.encodeIdsToJson(batchDeleteEntityIds),
                     batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
                   )->Obj.magic,
                 )

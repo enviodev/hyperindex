@@ -150,18 +150,16 @@ expression: json
         },
         {
           "name": "related",
-          "type": "entity",
-          "linkedEntity": "RelatedEntity",
-          "entity": "RelatedEntity"
+          "type": "string",
+          "linkedEntity": "RelatedEntity"
         },
         {
           "name": "optionalRelated",
           "postgresDbName": "optional_related_id",
           "clickhouseDbName": "optional_related_id",
-          "type": "entity",
+          "type": "string",
           "isNullable": true,
-          "linkedEntity": "RelatedEntity",
-          "entity": "RelatedEntity"
+          "linkedEntity": "RelatedEntity"
         },
         {
           "name": "tags",

@@ -30,12 +30,14 @@ let unsafeCheckpointIdSchema =
     serializer: bigint => bigint->BigInt.toString,
   })
 
-let makeSetUpdateSchema: S.t<'entity> => S.t<Change.t<'entity>> = entitySchema => {
+let makeSetUpdateSchema = (~idSchema: S.t<EntityId.t>, entitySchema: S.t<'entity>): S.t<
+  Change.t<'entity>,
+> => {
   S.object(s => {
     s.tag(changeFieldName, RowAction.SET)
     Change.Set({
       checkpointId: s.field(checkpointIdFieldName, unsafeCheckpointIdSchema),
-      entityId: s.field(Table.idFieldName, S.string),
+      entityId: s.field(Table.idFieldName, idSchema),
       entity: s.flatten(entitySchema),
     })
   })
@@ -118,10 +120,10 @@ let pruneStaleEntityHistory = (
 
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0
-let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex) => {
+let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex, ~idPgType) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   `WITH target_ids AS (
-  SELECT UNNEST($1::${(Text: Postgres.columnType :> string)}[]) AS id
+  SELECT UNNEST($1::${idPgType}[]) AS id
 ),
 missing_history AS (
   SELECT e.*
@@ -135,11 +137,18 @@ SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${cha
 FROM missing_history;`
 }
 
-let backfillHistory = (sql, ~pgSchema, ~entityName, ~entityIndex, ~ids: array<string>) => {
+let backfillHistory = (
+  sql,
+  ~pgSchema,
+  ~table: Table.table,
+  ~entityIndex,
+  ~ids: array<EntityId.t>,
+) => {
+  let idPgType = table->Table.getIdPgFieldType(~pgSchema)
   sql
   ->Postgres.preparedUnsafe(
-    makeBackfillHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
-    [ids]->Obj.magic,
+    makeBackfillHistoryQuery(~entityName=table.tableName, ~entityIndex, ~pgSchema, ~idPgType),
+    [table->Table.encodeIdsToJson(ids)]->Obj.magic,
   )
   ->Utils.Promise.ignoreValue
 }
