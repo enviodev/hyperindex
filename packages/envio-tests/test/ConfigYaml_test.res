@@ -479,7 +479,26 @@ chains:
 })
 
 describe("system config validation errors", () => {
-  it("rejects two events on one contract that the indexer can't tell apart", t => {
+  it("rejects two differently-named events that share a dispatch signature", t => {
+    expectParseError(
+      t,
+      `
+name: duplicate-event
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+        name: Transfer2
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Config parse error: Failed parsing globally defined contract: Contract Token has two events the indexer can't tell apart: "Transfer" and "Transfer2". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
+    )
+  })
+
+  it("rejects a byte-identical duplicate event, pointing at removal", t => {
     expectParseError(
       t,
       `
@@ -493,7 +512,25 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed parsing globally defined contract: Contract Token has two events the indexer can't tell apart: Transfer and Transfer. Please remove one of them.",
+      `Config parse error: Failed parsing globally defined contract: Contract Token defines the event "Transfer" more than once. Please remove the duplicate.`,
+    )
+  })
+
+  it("rejects two events with the same name but different signatures, suggesting the name alias", t => {
+    expectParseError(
+      t,
+      `
+name: overloaded-event
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address from)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Config parse error: Failed parsing globally defined contract: Contract Token has two events named "Transfer". Give one of them a unique name with the "name" field so the generated code and the indexer's routing can tell them apart.`,
     )
   })
 
@@ -856,6 +893,33 @@ chains:
     t.expect(chain.contracts->Array.length).toBe(2)
   })
 
+  it("allows two same-named overloads once a name alias disambiguates them", t => {
+    // Two events resolving to the name "Transfer" would clash, but the alias on
+    // one gives them distinct names (and their signatures differ, so no dispatch
+    // collision either).
+    let {config} = MockIndexerConfig.parseYaml(`
+name: aliased-overload
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address from)
+        name: TransferSimple
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x1111111111111111111111111111111111111111"
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let contract = chain.contracts->Array.getUnsafe(0)
+    t.expect(contract.events->Array.map(e => e.name)).toEqual(["TransferSimple", "Transfer"])
+  })
+
   it("parses a minimal Fuel config through the public boundary", t => {
     let {config} = MockIndexerConfig.parseYaml(`
 name: fuel-config
@@ -1075,7 +1139,7 @@ chains:
             - {name: Transfer, discriminator: "0x0f"}
             - {name: Withdraw, discriminator: "0x0F"}
 `,
-      "Config parse error: Contract Program has two events the indexer can't tell apart: Transfer and Withdraw. Please remove one of them.",
+      `Config parse error: Contract Program has two events the indexer can't tell apart: "Transfer" and "Withdraw". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
     ),
     (
       "rejects invalid discriminators",

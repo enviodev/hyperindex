@@ -129,6 +129,40 @@ expectType<
   >
 >(true);
 
+// Type-only surface checks for the registration API. Guarded by `if (0)` so
+// tsc validates them but they never execute: invalid contract/event combos must
+// stay compile errors, and these must not register real handlers.
+if (0) {
+  indexer.onEvent(
+    // @ts-expect-error - "BadContract" is not a configured contract
+    { contract: "BadContract", event: "X" },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - "BadEvent" is not an event of Gravatar
+    { contract: "Gravatar", event: "BadEvent" },
+    async () => {},
+  );
+  indexer.onEvent(
+    { contract: "Gravatar", event: "NewGravatar" },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.params.displayName, string>>(true);
+    },
+  );
+  indexer.contractRegister(
+    { contract: "NftFactory", event: "SimpleNftCreated" },
+    async ({ event, context }) => {
+      expectType<
+        TypeEqual<typeof event.params.contractAddress, `0x${string}`>
+      >(true);
+      context.chain.SimpleNft.add(event.params.contractAddress);
+      context.chain.NftFactory.add(event.params.contractAddress);
+      // @ts-expect-error - UnknownContract is not configured
+      context.chain.UnknownContract.add(event.params.contractAddress);
+    },
+  );
+}
+
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
@@ -834,6 +868,10 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       fail("Should have thrown");
     }
 
+    case "throwInHandler": {
+      throw new Error("Error from handler");
+    }
+
     // Reproduction for https://github.com/enviodev/hyperindex/issues/1199:
     // getWhere on a linkedEntity field (db column name `<field>_id`) must
     // resolve the field schema in the in-memory TestIndexer. Production
@@ -917,6 +955,10 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
     timestamp: event.block.timestamp,
   });
 });
+
+// No-op handler so Noop.EmptyEvent (the only event on chain 1) can be processed
+// and simulated without writing any entity — used by the multichain ordering test.
+indexer.onEvent({ contract: "Noop", event: "EmptyEvent" }, async () => {});
 
 // Regression test for https://github.com/enviodev/hyperindex/issues/538:
 // the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
