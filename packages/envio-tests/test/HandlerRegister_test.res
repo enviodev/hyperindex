@@ -5,7 +5,7 @@ open Vitest
 // into a handler registration (either order) when their filters match, and
 // unlimited wildcard registrations are allowed.
 
-let config = MockIndexerConfig.parseYaml(`
+let config = InternalTestIndexer.fromUserApi(~configYaml=`
 name: handler-register-test
 contracts:
   - name: ERC20
@@ -30,7 +30,7 @@ chains:
 
 // Single chain 137 (narrowing target). Used with `configMultichain` to verify
 // that one registration resolved for the full chain set narrows to each chain.
-let config137 = MockIndexerConfig.parseYaml(`
+let config137 = InternalTestIndexer.fromUserApi(~configYaml=`
 name: handler-register-test-137
 contracts:
   - name: ERC20
@@ -51,7 +51,7 @@ chains:
 // The full chain set (1 + 137). Handlers register against this; a
 // `finishRegistration` for either `config` (chain 1) or `config137` (chain 137)
 // narrows to that chain (mirrors MockIndexer registering once, narrowing per run).
-let configMultichain = MockIndexerConfig.parseYaml(`
+let configMultichain = InternalTestIndexer.fromUserApi(~configYaml=`
 name: handler-register-multichain
 contracts:
   - name: ERC20
@@ -80,7 +80,7 @@ chains:
 // raw_events enabled, single chain. Used to verify that a `where: false` event
 // is excluded entirely while a handler-less event still gets a bare raw-events
 // registration.
-let configWithRawEvents = MockIndexerConfig.parseYaml(`
+let configWithRawEvents = InternalTestIndexer.fromUserApi(~configYaml=`
 name: handler-register-raw-events
 raw_events: true
 contracts:

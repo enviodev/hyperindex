@@ -867,7 +867,7 @@ describe("config YAML success cases", () => {
   it("allows distinct events on one contract and the same event across contracts", t => {
     // Distinct signatures on one contract are fine, and the same event on two
     // different contracts is allowed — routing scopes matches by contract.
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: distinct-and-cross-contract-events
 contracts:
   - name: ERC20
@@ -897,7 +897,7 @@ chains:
     // Two events resolving to the name "Transfer" would clash, but the alias on
     // one gives them distinct names (and their signatures differ, so no dispatch
     // collision either).
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: aliased-overload
 contracts:
   - name: Token
