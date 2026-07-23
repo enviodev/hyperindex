@@ -493,7 +493,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "the indexer can't tell apart",
+      "Config parse error: Failed parsing globally defined contract: Contract Token has two events the indexer can't tell apart: Transfer and Transfer. Please remove one of them.",
     )
   })
 
@@ -1075,7 +1075,7 @@ chains:
             - {name: Transfer, discriminator: "0x0f"}
             - {name: Withdraw, discriminator: "0x0F"}
 `,
-      "the indexer can't tell apart",
+      "Config parse error: Contract Program has two events the indexer can't tell apart: Transfer and Withdraw. Please remove one of them.",
     ),
     (
       "rejects invalid discriminators",
