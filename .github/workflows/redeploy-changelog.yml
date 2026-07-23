@@ -22,6 +22,8 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event.release.draft == false
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       # Refresh on every stable release, patches included, since the changelog
       # lists them all. A release qualifies when the tag is a clean "X.Y.Z"
@@ -31,7 +33,6 @@ jobs:
       - name: Classify release
         id: classify
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           version="${TAG#v}"
@@ -54,7 +55,6 @@ jobs:
           # fine-grained PAT (or GitHub App token) with "contents: write" on
           # enviodev/ui as this secret.
           GH_TOKEN: ${{ secrets.CHANGELOG_DISPATCH_TOKEN }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           # jq builds the JSON so the tag can never be read as shell.
           jq -n --arg tag "$TAG" \
