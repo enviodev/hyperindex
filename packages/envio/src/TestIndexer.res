@@ -549,12 +549,7 @@ let getRegistrations = (~config) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
-    let promise = HandlerLoader.registerAllHandlers(~config)->Promise.thenResolve(registrations => {
-      // Reopen the registration API for tests that call indexer.onEvent /
-      // contractRegister after a run has captured its registrations.
-      HandlerRegister.clearActiveRegistration()
-      registrations
-    })
+    let promise = HandlerLoader.registerAllHandlers(~config)
     registrationsRef := Some(promise)
     promise
   }
@@ -851,28 +846,23 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
               }
             }
             try {
-              // Run inside the handler scope so a handler that calls
-              // indexer.onEvent throws, as in production, without finishing the
-              // process-global registration the test itself uses.
-              await HandlerRegister.runInHandlerScope(() =>
-                Promise.make((resolve, reject) => {
-                  let indexerState = IndexerState.makeFromDbState(
-                    ~config=runConfig,
-                    ~persistence,
-                    ~initialState,
-                    ~registrationsByChainId,
-                    ~exitAfterFirstEventBlock,
-                    ~onError=errHandler => {
-                      errHandler->ErrorHandling.log
-                      reject(errHandler.exn->Utils.prettifyExn)
-                    },
-                    // Caught up: resolve the run instead of exiting the process.
-                    ~onExit=() => resolve(),
-                  )
-                  indexerStateRef := Some(indexerState)
-                  indexerState->IndexerLoop.start
-                })
-              )
+              await Promise.make((resolve, reject) => {
+                let indexerState = IndexerState.makeFromDbState(
+                  ~config=runConfig,
+                  ~persistence,
+                  ~initialState,
+                  ~registrationsByChainId,
+                  ~exitAfterFirstEventBlock,
+                  ~onError=errHandler => {
+                    errHandler->ErrorHandling.log
+                    reject(errHandler.exn->Utils.prettifyExn)
+                  },
+                  // Caught up: resolve the run instead of exiting the process.
+                  ~onExit=() => resolve(),
+                )
+                indexerStateRef := Some(indexerState)
+                indexerState->IndexerLoop.start
+              })
               await cleanup()
             } catch {
             | exn =>

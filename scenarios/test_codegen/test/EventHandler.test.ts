@@ -1787,44 +1787,10 @@ describe("onEvent / contractRegister types", () => {
     type _userOnCr = EvmContractRegisterContext["User"];
   });
 
-  it("indexer.onEvent rejects invalid contract/event combinations", () => {
-    indexer.onEvent(
-      // @ts-expect-error - "BadContract" is not a configured contract
-      { contract: "BadContract", event: "X" },
-      async () => {},
-    );
-
-    indexer.onEvent(
-      // @ts-expect-error - "BadEvent" is not an event of Gravatar
-      { contract: "Gravatar", event: "BadEvent" },
-      async () => {},
-    );
-
-    // Valid combination should compile (no @ts-expect-error)
-    indexer.onEvent(
-      { contract: "Gravatar", event: "NewGravatar" },
-      async ({ event }) => {
-        expectType<TypeEqual<typeof event.params.displayName, string>>(true);
-      },
-    );
-  });
-
-  it("indexer.contractRegister exposes context.chain.ContractName.add()", () => {
-    indexer.contractRegister(
-      { contract: "NftFactory", event: "SimpleNftCreated" },
-      async ({ event, context }) => {
-        // event is typed
-        expectType<
-          TypeEqual<typeof event.params.contractAddress, `0x${string}`>
-        >(true);
-        // chain.ContractName.add(address) is available
-        context.chain.SimpleNft.add(event.params.contractAddress);
-        context.chain.NftFactory.add(event.params.contractAddress);
-        // @ts-expect-error - UnknownContract is not configured
-        context.chain.UnknownContract.add(event.params.contractAddress);
-      },
-    );
-  });
+  // `indexer.onEvent` / `indexer.contractRegister` type-surface checks live in
+  // `src/handlers/EventHandlers.ts` (compile-time only): the registration API
+  // throws once handlers are registered, so they can't run as post-registration
+  // test cases here.
 
   it("EvmOnEventHandler defaults to union of all events", () => {
     // Without args, the handler accepts the union of all EVM events
