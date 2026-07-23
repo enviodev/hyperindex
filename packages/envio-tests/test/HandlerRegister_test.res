@@ -28,10 +28,8 @@ chains:
         address: "0x2222222222222222222222222222222222222222"
 `).config
 
-// Same contracts/events as `config` but a different chain id. Used to verify
-// that registration intents are chain-independent: registering under `config`
-// (chain 1) still materializes registrations when `finishRegistration` runs
-// for chain 137 (mirrors TestIndexer narrowing `chainMap` per run).
+// Single chain 137 (narrowing target). Used with `configMultichain` to verify
+// that one registration resolved for the full chain set narrows to each chain.
 let config137 = MockIndexerConfig.parseYaml(`
 name: handler-register-test-137
 contracts:
@@ -40,6 +38,35 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
+  - id: 137
+    rpc:
+      url: https://polygon.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+`).config
+
+// The full chain set (1 + 137). Handlers register against this; a
+// `finishRegistration` for either `config` (chain 1) or `config137` (chain 137)
+// narrows to that chain (mirrors MockIndexer registering once, narrowing per run).
+let configMultichain = MockIndexerConfig.parseYaml(`
+name: handler-register-multichain
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Approval(address indexed owner, address indexed spender, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
   - id: 137
     rpc:
       url: https://polygon.com
@@ -238,19 +265,20 @@ describe("HandlerRegister multiple registrations", () => {
     )).toEqual(([(Some("h1"), None, 0)], [(Some("h2"), None, 1)]))
   })
 
-  it("materializes registrations for a chain not present during registration", t => {
-    // Register under `config` (chain 1), then finish for `config137` (chain 137)
-    // without re-registering — intents are chain-independent, so chain 137 must
-    // still get the handler (the TestIndexer chainMap-narrowing case).
+  it("narrows one registration to each requested chain", t => {
+    // Register once against the full set (chains 1 + 137), then finish for each
+    // chain separately without re-registering — both must materialize the
+    // handler (the MockIndexer register-once, narrow-per-run case).
     let h1 = makeHandler()
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~config=configMultichain)
     setHandler(h1)
-    let _ = HandlerRegister.finishRegistration(~config)
+    let registrations1 = HandlerRegister.finishRegistration(~config)
     let registrations137 = HandlerRegister.finishRegistration(~config=config137)
-    t.expect(
+    t.expect((
+      registrations1->describeRegistrations(~chainKey="1", ~labels=[(h1, "h1")], ~crLabels=[]),
       registrations137->describeRegistrations(~chainKey="137", ~labels=[(h1, "h1")], ~crLabels=[]),
-    ).toEqual([(Some("h1"), None, 0)])
+    )).toEqual(([(Some("h1"), None, 0)], [(Some("h1"), None, 0)]))
   })
 
   it("replays pre-registered handlers in source order, not reversed", t => {

@@ -1,7 +1,7 @@
-// Per-chain onEventRegistrations built from the event definitions in
-// `Config.t` plus whatever handler/contractRegister/eventOptions got
-// registered for them, and the onBlock registrations collected during
-// registration.
+// Per-chain onEvent + onBlock registrations. Used both as the live registration
+// store (`activeRegistration`, where onEvent regs are raw: registration order,
+// unmerged, unindexed, `where:false` ones kept) and as the finished output of
+// `finishRegistration` (merged, backfilled, indexed).
 type chainRegistrations = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
@@ -10,57 +10,23 @@ type chainRegistrations = {
 // The finished registration state returned by `finishRegistration`.
 type registrationsByChainId = dict<chainRegistrations>
 
-// onBlock registrations collected per chain while registration is active.
-// onEvent intents are chain-independent and resolved per config at
-// `finishRegistration`, so nothing for them lives here.
-type pendingChainRegistrations = {
-  onBlockRegistrations: array<Internal.onBlockRegistration>,
-}
-
+// The one registration, resolved once and reused. Handlers register into it at
+// `onEvent`/`onBlock` call time (resolving for every chain in `config`, which is
+// the full chain set), and it persists in `EnvioGlobal` across the many
+// `finishRegistration` calls a single isolate makes (handler modules are
+// import-cached and register only once). `finishRegistration` reads it and
+// builds a fresh per-config output, never mutating the store.
 type activeRegistration = {
   config: Config.t,
-  registrationsByChainId: dict<pendingChainRegistrations>,
+  registrationsByChainId: dict<chainRegistrations>,
   mutable finished: bool,
 }
-
-// One `indexer.onEvent` / `.contractRegister` call as a chain-independent
-// intent: the handler (xor contractRegister) plus its raw `where`/wildcard
-// options. Resolved into per-chain `Internal.onEventRegistration`s at
-// `finishRegistration`. Chain-independent so a single isolate can materialize
-// registrations for different configs (TestIndexer narrows `chainMap` per
-// `process()` call, and handler modules — import-cached — register only once).
-type pendingOnEventRegistration = {
-  contractName: string,
-  eventName: string,
-  handler: option<Internal.handler>,
-  contractRegister: option<Internal.contractRegister>,
-  eventOptions: option<Internal.eventOptions<JSON.t>>,
-  // Per-chain registration resolved lazily and cached here, keyed by chain id.
-  // Building invokes the user's `where` callback, so caching keeps that to
-  // exactly once per chain even though registrations are materialized many
-  // times (registration-time validation, `finishRegistration`, simulate).
-  resolvedByChainId: dict<Internal.onEventRegistration>,
-}
-
-// Registration intents live in the process-wide `EnvioGlobal` record so they
-// survive an import-cached re-registration cycle (handler modules run once;
-// `finishRegistration` may run many times, per config).
-let pendingOnEventRegistrations =
-  EnvioGlobal.value.pendingOnEventRegistrations->(
-    Utils.magic: array<unknown> => array<pendingOnEventRegistration>
-  )
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
 // Test-only: reset to fresh-import state so a new registration cycle starts
-// empty — clear the intent store and the active registration (production starts
-// each isolate empty and registers once).
+// empty (production starts each isolate empty and registers once).
 let resetOnEventRegistrations = () => {
-  pendingOnEventRegistrations->Array.splice(
-    ~start=0,
-    ~remove=pendingOnEventRegistrations->Array.length,
-    ~insert=[],
-  )
   EnvioGlobal.value.activeRegistration = None
 }
 
@@ -93,27 +59,36 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
+// Idempotent: handlers register once (import-cached), so the first call builds
+// the registration and every later call reuses it. `config` must be the full
+// chain set — registrations resolve for all its chains here, and
+// `finishRegistration` later narrows to whatever config it's given.
 let startRegistration = (~config: Config.t) => {
-  let r = {
-    config,
-    registrationsByChainId: Dict.make(),
-    finished: false,
+  switch getActiveRegistration() {
+  | Some(_) => ()
+  | None =>
+    let r = {
+      config,
+      registrationsByChainId: Dict.make(),
+      finished: false,
+    }
+    EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
+    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
+    // multiple handlers on one event this replay order is the dispatch order, so
+    // it must not reverse (which `Array.pop` would).
+    let queued = preRegistered->Array.copy
+    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
+    queued->Array.forEach(fn => fn(r))
   }
-  EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
-  // Replay pre-registered callbacks in source (FIFO) order, then clear. For
-  // multiple handlers on one event this replay order is the dispatch order, so
-  // it must not reverse (which `Array.pop` would).
-  let queued = preRegistered->Array.copy
-  preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
-  queued->Array.forEach(fn => fn(r))
 }
 
-let getPendingChainRegistrations = (r: activeRegistration, ~chainId: int) => {
+let getChainRegistrations = (r: activeRegistration, ~chainId: int): chainRegistrations => {
   let key = chainId->Int.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(pending) => pending
+  | Some(existing) => existing
   | None =>
-    let fresh = {
+    let fresh: chainRegistrations = {
+      onEventRegistrations: [],
       onBlockRegistrations: [],
     }
     r.registrationsByChainId->Dict.set(key, fresh)
@@ -188,60 +163,15 @@ let sameEventAndFilter = (
   | Fuel | Svm => true
   }
 
-// Resolve one intent into this chain's registration, building it (and invoking
-// the user's `where` callback) exactly once per chain and caching the result on
-// the intent. Returns None when the chain doesn't define the intent's event.
-let resolveIntentForChain = (
-  ~config: Config.t,
-  ~chainConfig: Config.chain,
-  intent: pendingOnEventRegistration,
-): option<Internal.onEventRegistration> => {
-  let key = chainConfig.id->Int.toString
-  switch intent.resolvedByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
-  | Some(_) as cached => cached
-  | None =>
-    switch chainConfig.contracts->Array.find(c => c.name === intent.contractName) {
-    | None => None
-    | Some(contract) =>
-      switch contract.events->Array.find(e => e.name === intent.eventName) {
-      | None => None
-      | Some(eventConfig) =>
-        let isWildcard = intent.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
-        let where = intent.eventOptions->Option.flatMap(v => v.where)
-        let reg = buildOnEventRegistrationWith(
-          ~config,
-          ~chainId=chainConfig.id,
-          ~eventConfig,
-          ~isWildcard,
-          ~handler=intent.handler,
-          ~contractRegister=intent.contractRegister,
-          ~where,
-          ~startBlock=?contract.startBlock,
-        )
-        intent.resolvedByChainId->Dict.set(key, reg)
-        Some(reg)
-      }
-    }
-  }
-}
-
-// Resolve the chain-independent intents into this chain's registrations, then
-// merge each contractRegister into a matching handler registration (either
+// Merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
 // dispatch order follows handler registration order). Two handlers (or two
-// contractRegisters) for one event never merge. Shared by `finishRegistration`
-// and simulate so both see the same registrations.
-let resolveChainRegistrations = (~config: Config.t, ~chainConfig: Config.chain): array<
+// contractRegisters) for one event never merge. Operates on the raw per-chain
+// registrations stored at `onEvent` time; shared by `finishRegistration` and
+// simulate so both see the same registrations.
+let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config: Config.t): array<
   Internal.onEventRegistration,
 > => {
-  let resolved: array<Internal.onEventRegistration> = []
-  pendingOnEventRegistrations->Array.forEach(intent =>
-    switch resolveIntentForChain(~config, ~chainConfig, intent) {
-    | Some(reg) => resolved->Array.push(reg)->ignore
-    | None => ()
-    }
-  )
-
   let merged: ref<array<Internal.onEventRegistration>> = ref([])
   resolved->Array.forEach((reg: Internal.onEventRegistration) => {
     if reg.handler->Option.isSome {
@@ -285,20 +215,46 @@ let resolveChainRegistrations = (~config: Config.t, ~chainConfig: Config.chain):
 let isDroppedByWhere = (~config: Config.t, reg: Internal.onEventRegistration) =>
   config.ecosystem.name === Evm && (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
 
-let addIntent = (registration: activeRegistration, intent: pendingOnEventRegistration) => {
-  // Resolve against every chain the config defines now, populating the intent's
-  // per-chain cache. This runs the user's `where` callback once per chain and
-  // surfaces a broken filter (bad filter, unknown indexed param) at the
-  // registration call site — even when only a later chain's resolution is
-  // invalid — instead of deferring the error to `finishRegistration`. `config`
-  // may be a narrowed TestIndexer chain subset; chains missing here resolve
-  // (and cache) lazily when `finishRegistration`/simulate first sees them.
+// Resolve one `onEvent`/`contractRegister` call into a registration for every
+// chain in the config (the full chain set) and store it in registration order.
+// Building runs the user's `where` callback here — once per chain — so a broken
+// filter throws at the call site. A chain that doesn't define the event is
+// skipped.
+let addOnEventRegistration = (
+  registration: activeRegistration,
+  ~contractName,
+  ~eventName,
+  ~handler: option<Internal.handler>,
+  ~contractRegister: option<Internal.contractRegister>,
+  ~eventOptions: option<Internal.eventOptions<JSON.t>>,
+) => {
+  let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
+  let where = eventOptions->Option.flatMap(v => v.where)
   registration.config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig =>
-    resolveIntentForChain(~config=registration.config, ~chainConfig, intent)->ignore
+    switch chainConfig.contracts->Array.find(c => c.name === contractName) {
+    | None => ()
+    | Some(contract) =>
+      switch contract.events->Array.find(e => e.name === eventName) {
+      | None => ()
+      | Some(eventConfig) =>
+        let reg = buildOnEventRegistrationWith(
+          ~config=registration.config,
+          ~chainId=chainConfig.id,
+          ~eventConfig,
+          ~isWildcard,
+          ~handler,
+          ~contractRegister,
+          ~where,
+          ~startBlock=?contract.startBlock,
+        )
+        (registration->getChainRegistrations(~chainId=chainConfig.id)).onEventRegistrations
+        ->Array.push(reg)
+        ->ignore
+      }
+    }
   )
-  pendingOnEventRegistrations->Array.push(intent)->ignore
 }
 
 let setHandler = (~contractName, ~eventName, handler, ~eventOptions) => {
@@ -308,14 +264,13 @@ let setHandler = (~contractName, ~eventName, handler, ~eventOptions) => {
       eventOptions->Option.map(v =>
         v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
       )
-    registration->addIntent({
-      contractName,
-      eventName,
-      handler: Some(newHandler),
-      contractRegister: None,
-      eventOptions,
-      resolvedByChainId: Dict.make(),
-    })
+    registration->addOnEventRegistration(
+      ~contractName,
+      ~eventName,
+      ~handler=Some(newHandler),
+      ~contractRegister=None,
+      ~eventOptions,
+    )
   })
 }
 
@@ -331,25 +286,41 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
       eventOptions->Option.map(v =>
         v->(Utils.magic: Internal.eventOptions<'where> => Internal.eventOptions<JSON.t>)
       )
-    registration->addIntent({
-      contractName,
-      eventName,
-      handler: None,
-      contractRegister: Some(newContractRegister),
-      eventOptions,
-      resolvedByChainId: Dict.make(),
-    })
+    registration->addOnEventRegistration(
+      ~contractName,
+      ~eventName,
+      ~handler=None,
+      ~contractRegister=Some(newContractRegister),
+      ~eventOptions,
+    )
   })
 }
+
+// Raw onEvent registrations stored for a chain (empty if the chain has none).
+let storedOnEventRegistrations = (r: activeRegistration, ~chainId: int): array<
+  Internal.onEventRegistration,
+> =>
+  switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->Int.toString) {
+  | Some(chainRegs) => chainRegs.onEventRegistrations
+  | None => []
+  }
 
 // True when any registration for the event is a wildcard. Used by simulate to
 // decide whether a src address needs deriving.
 let isWildcard = (~contractName, ~eventName) =>
-  pendingOnEventRegistrations->Array.some(p =>
-    p.contractName === contractName &&
-    p.eventName === eventName &&
-    p.eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
-  )
+  switch getActiveRegistration() {
+  | Some(r) =>
+    r.registrationsByChainId
+    ->Dict.valuesToArray
+    ->Array.some(chainRegs =>
+      chainRegs.onEventRegistrations->Array.some(reg =>
+        reg.eventConfig.contractName === contractName &&
+        reg.eventConfig.name === eventName &&
+        reg.isWildcard
+      )
+    )
+  | None => false
+  }
 
 // Every registration for one event on a chain, so simulate fans a simulated
 // event out to each the way real routing does. Falls back to a bare
@@ -360,9 +331,12 @@ let getSimulateOnEventRegistrations = (
   ~chainId: int,
   ~eventConfig: Internal.eventConfig,
 ): array<Internal.onEventRegistration> => {
-  let chainConfig = config.chainMap->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId))
+  let stored = switch getActiveRegistration() {
+  | Some(r) => r->storedOnEventRegistrations(~chainId)
+  | None => []
+  }
   let matching =
-    resolveChainRegistrations(~config, ~chainConfig)->Array.filter(reg =>
+    mergeRegistrations(stored, ~config)->Array.filter(reg =>
       reg.eventConfig.contractName === eventConfig.contractName &&
         reg.eventConfig.name === eventConfig.name
     )
@@ -395,7 +369,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
         let chainId = chainConfig.id
         let key = chainId->Int.toString
 
-        let builtRegs = resolveChainRegistrations(~config, ~chainConfig)
+        let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
         let registeredKeys = Utils.Set.make()
         builtRegs->Array.forEach(reg =>
           registeredKeys
@@ -472,10 +446,12 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
           key,
           {
             onEventRegistrations,
+            // Copy so a consumer appending to the output (e.g. simulate source
+            // registration) never mutates the persistent store.
             onBlockRegistrations: switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
               key,
             ) {
-            | Some(pending) => pending.onBlockRegistrations
+            | Some(chainRegs) => chainRegs.onBlockRegistrations->Array.copy
             | None => []
             },
           },
@@ -661,12 +637,12 @@ let registerOnBlock = (
           }
         | None => ()
         }
-        let pending = registration->getPendingChainRegistrations(~chainId)
-        pending.onBlockRegistrations
+        let chainRegs = registration->getChainRegistrations(~chainId)
+        chainRegs.onBlockRegistrations
         ->Array.push(
           (
             {
-              index: pending.onBlockRegistrations->Array.length,
+              index: chainRegs.onBlockRegistrations->Array.length,
               name,
               startBlock: range._gte,
               endBlock: range._lte,
