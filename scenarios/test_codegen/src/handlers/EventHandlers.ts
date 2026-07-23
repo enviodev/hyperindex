@@ -956,6 +956,10 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
   });
 });
 
+// No-op handler so Noop.EmptyEvent (the only event on chain 1) can be processed
+// and simulated without writing any entity — used by the multichain ordering test.
+indexer.onEvent({ contract: "Noop", event: "EmptyEvent" }, async () => {});
+
 // Regression test for https://github.com/enviodev/hyperindex/issues/538:
 // the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
 // and the handler must see it as a named record so that `.name` / `.email`

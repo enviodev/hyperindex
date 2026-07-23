@@ -1030,9 +1030,9 @@ describe("Use Envio test framework to test event handlers", () => {
         1: {
           startBlock: 1,
           endBlock: 100,
-          simulate: [
-            { contract: "Noop", event: "EmptyEvent" },
-          ],
+          // Noop.EmptyEvent is the only event on chain 1; it has a no-op handler
+          // so the chain processes an event without writing any entity.
+          simulate: [{ contract: "Noop", event: "EmptyEvent" }],
         },
       },
     });
@@ -1064,6 +1064,30 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       ],
     });
+  });
+
+  // Simulating an event that has no registered handler is almost always a
+  // mistake (a typo'd event, or forgetting to write the handler), so it fails
+  // loudly rather than silently processing nothing. TestEventWithReservedKeyword
+  // is defined on Gravatar (chain 1337) but has no handler.
+  it("throws when simulating an event with no registered handler", async () => {
+    const indexer = createTestIndexer();
+
+    await assert.rejects(
+      () =>
+        indexer.process({
+          chains: {
+            1337: {
+              startBlock: 1,
+              endBlock: 100,
+              simulate: [
+                { contract: "Gravatar", event: "TestEventWithReservedKeyword" },
+              ],
+            },
+          },
+        }),
+      /no handler runs for event "TestEventWithReservedKeyword" on contract "Gravatar"/
+    );
   });
 
   // Regression for https://github.com/enviodev/hyperindex/issues/538: a struct
