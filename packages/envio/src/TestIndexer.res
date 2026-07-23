@@ -369,8 +369,9 @@ let parseBlockRange = (
 // The store owns its entities. Copy on the boundary with user code — both when
 // handing one out (get/getAll/getOrThrow) and when taking one in (set) — so a
 // user mutating a returned entity, or an object they passed to `set`, can't
-// corrupt the in-memory store. Shallow is enough: entity fields are immutable
-// scalar values (string/bigint/BigDecimal), matching InMemoryTable.
+// corrupt the in-memory store. The copy is shallow (matching InMemoryTable):
+// scalar fields (string/bigint/BigDecimal) are immutable, but array-valued
+// fields still share the backing array, so in-place mutation of those leaks.
 let copyEntity = (entity: Internal.entity): Internal.entity =>
   entity
   ->(Utils.magic: Internal.entity => dict<unknown>)
@@ -505,15 +506,15 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
-      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+      "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
   getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) =>
     JsError.throwWithMessage(
-      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+      "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
   getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
     JsError.throwWithMessage(
-      "TestIndexer: Rollback is not supported. Set rollbackOnReorg to false in config.",
+      "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
   close: async () => (),
 }
@@ -740,12 +741,10 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
             Int.compare(aId, bId)
           })
 
-          // Parse and validate the block ranges upfront before starting any workers.
+          // Parse and validate the block ranges upfront before running any chain.
           let chainEntries = sortedChainKeys->Array.map(chainIdStr => {
             let rawChainConfig = rawChains->Dict.getUnsafe(chainIdStr)
-            let chainId = switch chainIdStr->Int.fromString {
-            | Some(id) => id
-            | None =>
+            if chainIdStr->Int.fromString->Option.isNone {
               JsError.throwWithMessage(
                 `Invalid chain ID "${chainIdStr}": expected a numeric chain ID`,
               )
@@ -756,7 +755,7 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
               ~rawChainConfig,
               ~progressBlock=state.progressBlockByChain->Dict.get(chainIdStr),
             )
-            (chainIdStr, chainId, rawChainConfig, processChainConfig)
+            (chainIdStr, rawChainConfig, processChainConfig)
           })
 
           // Reset processChanges for this run
@@ -764,7 +763,6 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
 
           let runChainInProcess = async ((
             chainIdStr,
-            _chainId,
             rawChainConfig: rawChainConfig,
             processChainConfig,
           )) => {
