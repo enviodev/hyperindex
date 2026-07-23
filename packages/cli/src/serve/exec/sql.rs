@@ -47,13 +47,68 @@ fn sql_hash(sql: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
+/// One root-field result row, from whichever execution path ran it. Both
+/// variants borrow their backing buffer, so callers read column text without
+/// an owning copy — large list responses are tens of MB (see `execute_root`).
+enum RootRow {
+    /// Prepared path: binary-protocol row from `query_raw`.
+    Prepared(tokio_postgres::Row),
+    /// Pooler-safe path: text-protocol row from `simple_query`.
+    Simple(tokio_postgres::SimpleQueryRow),
+}
+
+impl RootRow {
+    fn column_count(&self) -> usize {
+        match self {
+            RootRow::Prepared(r) => r.columns().len(),
+            RootRow::Simple(r) => r.columns().len(),
+        }
+    }
+
+    /// The `::text`-cast `"root"` column, never SQL NULL by construction.
+    fn text(&self, i: usize) -> GResult<&str> {
+        match self {
+            RootRow::Prepared(r) => r.try_get::<_, &str>(i).map_err(decode_error),
+            RootRow::Simple(r) => match r.try_get(i).map_err(decode_error)? {
+                Some(s) => Ok(s),
+                None => Err(decode_null()),
+            },
+        }
+    }
+
+    /// A `_stream` cursor column, which is genuinely nullable.
+    fn opt_text(&self, i: usize) -> GResult<Option<&str>> {
+        match self {
+            RootRow::Prepared(r) => r.try_get::<_, Option<&str>>(i).map_err(decode_error),
+            RootRow::Simple(r) => r.try_get(i).map_err(decode_error),
+        }
+    }
+}
+
+fn decode_error(e: tokio_postgres::Error) -> GraphQLError {
+    tracing::warn!(error = %e, "envio serve: root value decode failed");
+    internal_db_error()
+}
+
+fn decode_null() -> GraphQLError {
+    tracing::warn!("envio serve: root value unexpectedly NULL");
+    internal_db_error()
+}
+
 /// Runs `sql`/`params` (as compiled by `compile_root`) and returns the
 /// single output row every root-field query produces.
+///
+/// With prepared statements (the default) the plan is cached per pooled
+/// connection. Without them, the text parameters are inlined and the
+/// statement runs as one text-protocol `simple_query` — no server-side
+/// prepared statement and a single round trip — so it stays correct through a
+/// transaction-mode connection pooler (which may route each statement to a
+/// different backend), at the cost of re-parsing and re-planning every query.
 async fn run_root_query(
     state: &Arc<ServeState>,
     sql: &str,
     params: &[Option<String>],
-) -> GResult<tokio_postgres::Row> {
+) -> GResult<RootRow> {
     let started = Instant::now();
     // Pool failures (connect refused, wait timeout) get the same
     // postgres-error code as connection-level query failures so
@@ -68,27 +123,51 @@ async fn run_root_query(
             status: 200,
         }
     })?;
-    if client.statement_cache.size() >= STATEMENT_CACHE_CAP {
-        client.statement_cache.clear();
-    }
-    // All parameters are bound as text and cast in the SQL itself
-    // (`($1)::numeric`), which keeps runtime coercion errors identical to
-    // Hasura's inlined-literal form.
-    let types = vec![Type::TEXT; params.len()];
-    let stmt = client
-        .prepare_typed_cached(sql, &types)
-        .await
-        .map_err(|e| pg_error(e, sql))?;
-    let row_stream = client
-        .query_raw(&stmt, params.iter().map(|p| p as &(dyn ToSql + Sync)))
-        .await
-        .map_err(|e| pg_error(e, sql))?;
-    // Every compiled statement is expected to produce exactly one row, but
-    // read only the first one off the wire instead of buffering a Vec: a
-    // statement that unexpectedly degenerates to per-row output must not
-    // buffer the whole table in memory.
-    futures_util::pin_mut!(row_stream);
-    let row = row_stream.try_next().await.map_err(|e| pg_error(e, sql))?;
+
+    // Every compiled statement is expected to produce exactly one row.
+    let row = if state.use_prepared_statements {
+        if client.statement_cache.size() >= STATEMENT_CACHE_CAP {
+            client.statement_cache.clear();
+        }
+        // Parameters are bound as text and cast in the SQL itself
+        // (`($1)::numeric`), which keeps runtime coercion errors identical to
+        // the inlined-literal form below (and to Hasura).
+        let types = vec![Type::TEXT; params.len()];
+        let stmt = client
+            .prepare_typed_cached(sql, &types)
+            .await
+            .map_err(|e| pg_error(e, sql))?;
+        let row_stream = client
+            .query_raw(&stmt, params.iter().map(|p| p as &(dyn ToSql + Sync)))
+            .await
+            .map_err(|e| pg_error(e, sql))?;
+        // Read only the first row off the wire instead of buffering a Vec: a
+        // statement that unexpectedly degenerates to per-row output must not
+        // buffer the whole table in memory.
+        futures_util::pin_mut!(row_stream);
+        row_stream
+            .try_next()
+            .await
+            .map_err(|e| pg_error(e, sql))?
+            .map(RootRow::Prepared)
+    } else {
+        // Inline the text parameters as SQL literals and run one text-protocol
+        // query: no Parse/Bind of a named prepared statement, so a
+        // transaction-mode pooler can't strand the statement on a backend the
+        // execute never reaches.
+        let inlined = inline_params(sql, params);
+        client
+            .simple_query(&inlined)
+            .await
+            .map_err(|e| pg_error(e, sql))?
+            .into_iter()
+            .find_map(|message| match message {
+                tokio_postgres::SimpleQueryMessage::Row(r) => Some(r),
+                _ => None,
+            })
+            .map(RootRow::Simple)
+    };
+
     let elapsed = started.elapsed();
     if elapsed >= slow_query_threshold() {
         tracing::warn!(
@@ -112,6 +191,57 @@ async fn run_root_query(
     }
 }
 
+/// Substitutes `$1`, `$2`, … placeholders in a compiled statement with their
+/// text parameters as SQL literals: `NULL` for an absent value, otherwise a
+/// single-quoted string with embedded quotes doubled (the same escaping
+/// `Sql::string_lit` uses, valid under the default standard_conforming_strings
+/// the codebase already relies on). Only `$`-then-digits runs are touched, and
+/// the compiler never emits a bare `$<digit>` except as a placeholder, so this
+/// cannot disturb surrounding SQL.
+fn inline_params(sql: &str, params: &[Option<String>]) -> String {
+    let mut out = String::with_capacity(sql.len() + params.len() * 8);
+    let bytes = sql.as_bytes();
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+            out.push_str(&sql[copied..i]);
+            let mut j = i + 1;
+            let mut n = 0usize;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                n = n
+                    .saturating_mul(10)
+                    .saturating_add((bytes[j] - b'0') as usize);
+                j += 1;
+            }
+            match n.checked_sub(1).and_then(|idx| params.get(idx)) {
+                Some(Some(value)) => push_sql_literal(&mut out, value),
+                Some(None) => out.push_str("NULL"),
+                // A placeholder with no bound value can't be produced by the
+                // compiler; leave it verbatim rather than guess.
+                None => out.push_str(&sql[i..j]),
+            }
+            i = j;
+            copied = j;
+        } else {
+            i += 1;
+        }
+    }
+    out.push_str(&sql[copied..]);
+    out
+}
+
+fn push_sql_literal(out: &mut String, value: &str) {
+    out.push('\'');
+    for c in value.chars() {
+        if c == '\'' {
+            out.push('\'');
+        }
+        out.push(c);
+    }
+    out.push('\'');
+}
+
 /// Executes one table root field, appending the JSON fragment for its value
 /// (e.g. `[{"id":"..."}]`, `{"aggregate":{"count":3}}`, or `null`) to `out`.
 ///
@@ -127,11 +257,7 @@ pub async fn execute_root(
 ) -> GResult<()> {
     let compiled = compile_root_full(&state.model.pg_schema, root);
     let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
-    let text: &str = row.try_get(0).map_err(|e| {
-        tracing::warn!(error = %e, "envio serve: root value decode failed");
-        internal_db_error()
-    })?;
-    out.push_str(text);
+    out.push_str(row.text(0)?);
     Ok(())
 }
 
@@ -143,11 +269,7 @@ pub async fn execute_root_compiled(
     compiled: &CompiledRoot,
 ) -> GResult<String> {
     let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
-    let text: &str = row.try_get(0).map_err(|e| {
-        tracing::warn!(error = %e, "envio serve: live-query root value decode failed");
-        internal_db_error()
-    })?;
-    Ok(text.to_string())
+    Ok(row.text(0)?.to_string())
 }
 
 /// Like `execute_root`, but for an already-compiled `_stream` root: also
@@ -169,22 +291,15 @@ pub async fn execute_stream_compiled(
     out: &mut String,
 ) -> GResult<Option<Vec<Option<String>>>> {
     let row = run_root_query(state, sql, params).await?;
-    let root_text: &str = row.try_get(0).map_err(|e| {
-        tracing::warn!(error = %e, "envio serve: stream root value decode failed");
-        internal_db_error()
-    })?;
+    let root_text = row.text(0)?;
     out.push_str(root_text);
     if root_text == "[]" {
         return Ok(None);
     }
 
-    let mut cursor_values = Vec::with_capacity(row.len().saturating_sub(1));
-    for i in 1..row.len() {
-        let v = row.try_get::<_, Option<&str>>(i).map_err(|e| {
-            tracing::warn!(error = %e, "envio serve: stream cursor value decode failed");
-            internal_db_error()
-        })?;
-        cursor_values.push(v.map(str::to_string));
+    let mut cursor_values = Vec::with_capacity(row.column_count().saturating_sub(1));
+    for i in 1..row.column_count() {
+        cursor_values.push(row.opt_text(i)?.map(str::to_string));
     }
     Ok(Some(cursor_values))
 }
@@ -1695,6 +1810,34 @@ mod tests {
     fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Option<String>>) {
         let c = compile_root_full(pg_schema, root);
         (c.sql, c.params)
+    }
+
+    #[test]
+    fn inline_params_substitutes_literals_null_and_escapes() {
+        let params = vec![
+            Some("abc".to_string()),
+            None,
+            Some("O'Brien".to_string()),
+            Some("{\"a\",\"b\"}".to_string()),
+        ];
+        // Placeholders replaced by index; NULL for absent; quotes doubled;
+        // `$10` parsed as one index (not `$1` then `0`); a `$` not followed by
+        // a digit is left alone; multibyte text between placeholders survives.
+        assert_eq!(
+            inline_params(
+                "SELECT (($1)::text), (($2)::text), (($3)::text), (($4)::text[]), $x, 'π' -- $1",
+                &params,
+            ),
+            "SELECT (('abc')::text), ((NULL)::text), (('O''Brien')::text), (('{\"a\",\"b\"}')::text[]), $x, 'π' -- 'abc'"
+        );
+    }
+
+    #[test]
+    fn inline_params_multi_digit_index() {
+        let params: Vec<Option<String>> = (1..=11).map(|n| Some(n.to_string())).collect();
+        // `$1` and `$11` must resolve to different params despite the shared
+        // prefix; a single assert pins the whole rendering.
+        assert_eq!(inline_params("$1 $11 $2", &params), "'1' '11' '2'");
     }
 
     fn col(alias: &str, column: &str, scalar: Scalar, pg_type: &str) -> ir::SelItem {

@@ -429,6 +429,7 @@ mod tests {
             pg_ssl: PgSslMode::Disable,
             admin_secret: "testing".to_string(),
             cors: crate::serve::env_config::CorsConfig::AllowAll,
+            use_prepared_statements: true,
             response_limit: None,
             aggregate_entities: vec![],
             query_timeout_ms: None,

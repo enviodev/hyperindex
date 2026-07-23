@@ -34,6 +34,12 @@ pub struct ServeEnv {
     /// HASURA_GRAPHQL_CORS_DOMAIN / HASURA_GRAPHQL_DISABLE_CORS: permissive
     /// (reflect any Origin) by default.
     pub cors: CorsConfig,
+    /// ENVIO_SERVE_USE_PREPARED_STATEMENTS (Hasura's
+    /// HASURA_GRAPHQL_USE_PREPARED_STATEMENTS as a fallback). When false,
+    /// every query is re-parsed and re-planned instead of reusing a
+    /// per-connection cached plan — required to run behind a transaction-mode
+    /// connection pooler, at the cost of per-query planning. Default true.
+    pub use_prepared_statements: bool,
     pub response_limit: Option<u32>,
     pub aggregate_entities: Vec<String>,
     /// ENVIO_SERVE_QUERY_TIMEOUT_MS. Bounds every query both server-side
@@ -326,6 +332,15 @@ impl ServeEnv {
                 r.var("ENVIO_SERVE_CORS_DOMAIN")
                     .or_else(|| r.var("HASURA_GRAPHQL_CORS_DOMAIN")),
             )?,
+            use_prepared_statements: r
+                .var("ENVIO_SERVE_USE_PREPARED_STATEMENTS")
+                .or_else(|| r.var("HASURA_GRAPHQL_USE_PREPARED_STATEMENTS"))
+                .map_or(true, |v| {
+                    !matches!(
+                        v.trim().to_ascii_lowercase().as_str(),
+                        "false" | "f" | "no" | "n" | "0"
+                    )
+                }),
             response_limit,
             aggregate_entities: parse_aggregate_entities(
                 r.var("ENVIO_HASURA_PUBLIC_AGGREGATE").as_deref(),

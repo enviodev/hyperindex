@@ -63,6 +63,7 @@ pub struct ServeState {
     pub pool: deadpool_postgres::Pool,
     pub admin_secret: String,
     pub cors: env_config::CorsConfig,
+    pub use_prepared_statements: bool,
     /// Client-side bound on a whole operation's execution (every root
     /// field's pool wait + prepare + query). The server-side
     /// statement_timeout normally fires first; this is the backstop for a
@@ -128,6 +129,7 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
         pool,
         admin_secret: env.admin_secret.clone(),
         cors: env.cors.clone(),
+        use_prepared_statements: env.use_prepared_statements,
         // +5s slack so the server-side statement_timeout (clean SQLSTATE
         // 57014 cancellation) wins whenever Postgres is still responsive.
         query_timeout: env
