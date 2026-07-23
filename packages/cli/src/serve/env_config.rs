@@ -35,16 +35,21 @@ pub struct ServeEnv {
     /// (reflect any Origin) by default.
     pub cors: CorsConfig,
     /// ENVIO_SERVE_USE_PREPARED_STATEMENTS (Hasura's
-    /// HASURA_GRAPHQL_USE_PREPARED_STATEMENTS as a fallback). When false,
-    /// every query is re-parsed and re-planned instead of reusing a
-    /// per-connection cached plan — required to run behind a transaction-mode
-    /// connection pooler, at the cost of per-query planning. Default true.
+    /// HASURA_GRAPHQL_USE_PREPARED_STATEMENTS as a fallback), default true to
+    /// match Hasura. When false, queries run through the extended protocol's
+    /// unnamed statement and the connection carries no startup `options` GUCs,
+    /// so `serve` works behind a transaction-mode connection pooler that
+    /// rejects both named prepared statements and the `options` packet — at
+    /// the cost of re-parsing and re-planning every query.
     pub use_prepared_statements: bool,
     pub response_limit: Option<u32>,
     pub aggregate_entities: Vec<String>,
     /// ENVIO_SERVE_QUERY_TIMEOUT_MS. Bounds every query both server-side
     /// (statement_timeout) and client-side (tokio timeout with slack, so a
     /// frozen/unreachable Postgres can't hang requests forever). 0 disables.
+    /// The server-side half is skipped without prepared statements, where no
+    /// startup `options` can be pinned (see `make_pg_pool`); the client-side
+    /// bound still applies.
     pub query_timeout_ms: Option<u64>,
     /// ENVIO_SERVE_POOL_WAIT_TIMEOUT_MS. Bounds how long a request waits for
     /// a free pooled connection before erroring instead of queuing without
@@ -327,20 +332,20 @@ impl ServeEnv {
             pg_ssl: parse_pg_ssl(r.var("ENVIO_PG_SSL_MODE").as_deref()),
             admin_secret: r.var_dev_fallback("HASURA_GRAPHQL_ADMIN_SECRET", "testing")?,
             cors: parse_cors(
-                r.var("ENVIO_SERVE_DISABLE_CORS")
-                    .or_else(|| r.var("HASURA_GRAPHQL_DISABLE_CORS")),
+                parse_bool_env(
+                    "ENVIO_SERVE_DISABLE_CORS",
+                    r.var("ENVIO_SERVE_DISABLE_CORS")
+                        .or_else(|| r.var("HASURA_GRAPHQL_DISABLE_CORS")),
+                )?,
                 r.var("ENVIO_SERVE_CORS_DOMAIN")
                     .or_else(|| r.var("HASURA_GRAPHQL_CORS_DOMAIN")),
             )?,
-            use_prepared_statements: r
-                .var("ENVIO_SERVE_USE_PREPARED_STATEMENTS")
-                .or_else(|| r.var("HASURA_GRAPHQL_USE_PREPARED_STATEMENTS"))
-                .is_none_or(|v| {
-                    !matches!(
-                        v.trim().to_ascii_lowercase().as_str(),
-                        "false" | "f" | "no" | "n" | "0"
-                    )
-                }),
+            use_prepared_statements: parse_bool_env(
+                "ENVIO_SERVE_USE_PREPARED_STATEMENTS",
+                r.var("ENVIO_SERVE_USE_PREPARED_STATEMENTS")
+                    .or_else(|| r.var("HASURA_GRAPHQL_USE_PREPARED_STATEMENTS")),
+            )?
+            .unwrap_or(true),
             response_limit,
             aggregate_entities: parse_aggregate_entities(
                 r.var("ENVIO_HASURA_PUBLIC_AGGREGATE").as_deref(),
@@ -417,16 +422,21 @@ impl ServeEnv {
         cfg.user = Some(self.pg_user.clone());
         cfg.password = Some(self.pg_password.clone());
         cfg.dbname = Some(self.pg_database.clone());
-        // Serialization parity depends on ISO datestyle and UTC output for
-        // timestamptz values; pin them per connection. statement_timeout
-        // makes Postgres itself cancel over-budget queries (SQLSTATE 57014)
-        // — the client-side wrap in exec::sql only fires when the server
-        // can't respond at all (frozen/unreachable).
-        let mut options = "-c TimeZone=UTC -c DateStyle=ISO".to_string();
-        if let Some(ms) = self.query_timeout_ms {
-            options.push_str(&format!(" -c statement_timeout={ms}"));
+        // These GUCs are pinned via the startup `options` packet, which a
+        // transaction-mode pooler rejects. The non-prepared path exists to run
+        // behind such a pooler, so there we send no options and inherit the
+        // database's own settings — as Hasura does, which never pins them
+        // either. In the default path we keep them: ISO datestyle and UTC
+        // output for timestamptz parity, and statement_timeout so Postgres
+        // itself cancels over-budget queries (SQLSTATE 57014) — the client-side
+        // wrap in exec::sql only fires when the server can't respond at all.
+        if self.use_prepared_statements {
+            let mut options = "-c TimeZone=UTC -c DateStyle=ISO".to_string();
+            if let Some(ms) = self.query_timeout_ms {
+                options.push_str(&format!(" -c statement_timeout={ms}"));
+            }
+            cfg.options = Some(options);
         }
-        cfg.options = Some(options);
         cfg.connect_timeout = self.connect_timeout_ms.map(Duration::from_millis);
         // Unbounded pool waits turn a wedged Postgres into a permanently
         // hung server: once every connection is checked out by a stuck
@@ -685,21 +695,31 @@ fn parse_origin_pattern(entry: &str) -> Option<OriginPattern> {
     Some(OriginPattern { scheme, host, port })
 }
 
-fn is_truthy(raw: &str) -> bool {
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "true" | "t" | "yes" | "y" | "1"
-    )
+/// Parses a boolean environment variable, accepting every form the prior serve
+/// parsers did (EnvSafe's `true`/`t`/`1` and `false`/`f`/`0`, plus the
+/// `yes`/`y` and `no`/`n` spellings the old CORS/prepared-statement parsing
+/// took; case-insensitive, trimmed) so existing configs keep working. Anything
+/// else — including a typo like `flase` — errors at startup instead of silently
+/// picking a default. Unset stays `None`.
+fn parse_bool_env(name: &str, raw: Option<String>) -> anyhow::Result<Option<bool>> {
+    match raw {
+        None => Ok(None),
+        Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+            "true" | "t" | "yes" | "y" | "1" => Ok(Some(true)),
+            "false" | "f" | "no" | "n" | "0" => Ok(Some(false)),
+            other => Err(anyhow!(
+                "Invalid boolean for {name}: \"{other}\" \
+                 (expected true/t/yes/y/1 or false/f/no/n/0)"
+            )),
+        },
+    }
 }
 
 /// Resolves the CORS policy the same way Hasura does: an explicit
 /// disable-cors flag wins, an unset (or `*`) domain list is permissive, and
 /// any other domain list restricts to those origins.
-fn parse_cors(
-    disable_raw: Option<String>,
-    domain_raw: Option<String>,
-) -> anyhow::Result<CorsConfig> {
-    if disable_raw.as_deref().is_some_and(is_truthy) {
+fn parse_cors(disable: Option<bool>, domain_raw: Option<String>) -> anyhow::Result<CorsConfig> {
+    if disable == Some(true) {
         return Ok(CorsConfig::Disabled);
     }
     let Some(domain_raw) = domain_raw else {
@@ -795,7 +815,7 @@ mod tests {
                 parse_cors(None, Some("  ,  ".to_string())).unwrap(),
                 parse_cors(None, Some("https://a.com, *".to_string())).unwrap(),
                 // disable-cors wins over any domain list.
-                parse_cors(Some("true".to_string()), Some("https://a.com".to_string())).unwrap(),
+                parse_cors(Some(true), Some("https://a.com".to_string())).unwrap(),
             ]
             .map(|c| match c {
                 CorsConfig::AllowAll => "all",
@@ -804,10 +824,43 @@ mod tests {
             }),
             ["all", "all", "all", "all", "disabled"],
         );
-        assert!(is_allow_all(
-            &parse_cors(Some("false".to_string()), None).unwrap()
-        ));
+        assert!(is_allow_all(&parse_cors(Some(false), None).unwrap()));
         assert!(parse_cors(None, Some("not-a-url".to_string())).is_err());
+    }
+
+    #[test]
+    fn parse_bool_env_accepts_prior_aliases_and_rejects_typos() {
+        let get = |raw: Option<&str>| parse_bool_env("X", raw.map(str::to_string));
+        assert_eq!(
+            [
+                get(None).unwrap(),
+                get(Some("true")).unwrap(),
+                get(Some("  T ")).unwrap(),
+                get(Some("YES")).unwrap(),
+                get(Some("y")).unwrap(),
+                get(Some("1")).unwrap(),
+                get(Some("false")).unwrap(),
+                get(Some("f")).unwrap(),
+                get(Some("no")).unwrap(),
+                get(Some("n")).unwrap(),
+                get(Some("0")).unwrap(),
+            ],
+            [
+                None,
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false)
+            ],
+        );
+        assert!(get(Some("flase")).is_err());
+        assert!(get(Some("2")).is_err());
     }
 
     #[test]

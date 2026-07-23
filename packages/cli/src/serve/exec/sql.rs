@@ -47,51 +47,8 @@ fn sql_hash(sql: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
-/// One root-field result row, from whichever execution path ran it. Both
-/// variants borrow their backing buffer, so callers read column text without
-/// an owning copy — large list responses are tens of MB (see `execute_root`).
-enum RootRow {
-    /// Prepared path: binary-protocol row from `query_raw`.
-    Prepared(tokio_postgres::Row),
-    /// Pooler-safe path: text-protocol row from `simple_query`.
-    Simple(tokio_postgres::SimpleQueryRow),
-}
-
-impl RootRow {
-    fn column_count(&self) -> usize {
-        match self {
-            RootRow::Prepared(r) => r.columns().len(),
-            RootRow::Simple(r) => r.columns().len(),
-        }
-    }
-
-    /// The `::text`-cast `"root"` column, never SQL NULL by construction.
-    fn text(&self, i: usize) -> GResult<&str> {
-        match self {
-            RootRow::Prepared(r) => r.try_get::<_, &str>(i).map_err(decode_error),
-            RootRow::Simple(r) => match r.try_get(i).map_err(decode_error)? {
-                Some(s) => Ok(s),
-                None => Err(decode_null()),
-            },
-        }
-    }
-
-    /// A `_stream` cursor column, which is genuinely nullable.
-    fn opt_text(&self, i: usize) -> GResult<Option<&str>> {
-        match self {
-            RootRow::Prepared(r) => r.try_get::<_, Option<&str>>(i).map_err(decode_error),
-            RootRow::Simple(r) => r.try_get(i).map_err(decode_error),
-        }
-    }
-}
-
 fn decode_error(e: tokio_postgres::Error) -> GraphQLError {
     tracing::warn!(error = %e, "envio serve: root value decode failed");
-    internal_db_error()
-}
-
-fn decode_null() -> GraphQLError {
-    tracing::warn!("envio serve: root value unexpectedly NULL");
     internal_db_error()
 }
 
@@ -99,16 +56,18 @@ fn decode_null() -> GraphQLError {
 /// single output row every root-field query produces.
 ///
 /// With prepared statements (the default) the plan is cached per pooled
-/// connection. Without them, the text parameters are inlined and the
-/// statement runs as one text-protocol `simple_query` — no server-side
-/// prepared statement and a single round trip — so it stays correct through a
-/// transaction-mode connection pooler (which may route each statement to a
-/// different backend), at the cost of re-parsing and re-planning every query.
+/// connection. Without them, the statement runs through the extended
+/// protocol's unnamed statement (`query_typed_raw`): one Parse/Bind/Execute
+/// with no server-side *named* statement to strand, so it stays correct
+/// through a transaction-mode connection pooler (which may route each
+/// statement to a different backend), at the cost of re-parsing and
+/// re-planning every query. Parameters travel out-of-band in both paths —
+/// never inlined into SQL text.
 async fn run_root_query(
     state: &Arc<ServeState>,
     sql: &str,
     params: &[Option<String>],
-) -> GResult<RootRow> {
+) -> GResult<tokio_postgres::Row> {
     let started = Instant::now();
     // Pool failures (connect refused, wait timeout) get the same
     // postgres-error code as connection-level query failures so
@@ -145,27 +104,24 @@ async fn run_root_query(
         // statement that unexpectedly degenerates to per-row output must not
         // buffer the whole table in memory.
         futures_util::pin_mut!(row_stream);
-        row_stream
-            .try_next()
-            .await
-            .map_err(|e| pg_error(e, sql))?
-            .map(RootRow::Prepared)
+        row_stream.try_next().await.map_err(|e| pg_error(e, sql))?
     } else {
-        // Inline the text parameters as SQL literals and run one text-protocol
-        // query: no Parse/Bind of a named prepared statement, so a
-        // transaction-mode pooler can't strand the statement on a backend the
-        // execute never reaches.
-        let inlined = inline_params(sql, params);
-        client
-            .simple_query(&inlined)
+        // Unnamed extended-protocol statement: no named prepared statement to
+        // strand on a backend the execute never reaches, so a transaction-mode
+        // pooler can't split Parse/Bind from Execute. Parameters are bound as
+        // text and cast in the SQL itself, exactly as the prepared path above.
+        let row_stream = client
+            .query_typed_raw(
+                sql,
+                params
+                    .iter()
+                    .map(|p| (p as &(dyn ToSql + Sync), Type::TEXT)),
+            )
             .await
-            .map_err(|e| pg_error(e, sql))?
-            .into_iter()
-            .find_map(|message| match message {
-                tokio_postgres::SimpleQueryMessage::Row(r) => Some(r),
-                _ => None,
-            })
-            .map(RootRow::Simple)
+            .map_err(|e| pg_error(e, sql))?;
+        // Same first-row-only read as the prepared path: never buffer a table.
+        futures_util::pin_mut!(row_stream);
+        row_stream.try_next().await.map_err(|e| pg_error(e, sql))?
     };
 
     let elapsed = started.elapsed();
@@ -191,82 +147,6 @@ async fn run_root_query(
     }
 }
 
-/// Substitutes `$1`, `$2`, … placeholders in a compiled statement with their
-/// text parameters as SQL literals: `NULL` for an absent value, otherwise an
-/// escaped string (see `push_sql_literal`).
-///
-/// A `$<digit>` run is only a placeholder outside string/identifier quoting;
-/// the same sequence can legitimately appear *inside* a quoted identifier
-/// (e.g. `ENVIO_PG_SCHEMA=tenant$1` → `"tenant$1"`) or a string constant, so
-/// quoted regions are skipped whole. The generated SQL only ever uses `'…'`
-/// and `"…"` quoting (no dollar-quoting or comments), each escaping an inner
-/// quote by doubling it.
-fn inline_params(sql: &str, params: &[Option<String>]) -> String {
-    let mut out = String::with_capacity(sql.len() + params.len() * 8);
-    let bytes = sql.as_bytes();
-    let mut copied = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            quote @ (b'\'' | b'"') => {
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == quote {
-                        // A doubled quote is an escaped quote, not the end.
-                        if bytes.get(i + 1) == Some(&quote) {
-                            i += 2;
-                            continue;
-                        }
-                        i += 1;
-                        break;
-                    }
-                    i += 1;
-                }
-            }
-            b'$' if bytes.get(i + 1).is_some_and(u8::is_ascii_digit) => {
-                out.push_str(&sql[copied..i]);
-                let mut j = i + 1;
-                let mut n = 0usize;
-                while j < bytes.len() && bytes[j].is_ascii_digit() {
-                    n = n
-                        .saturating_mul(10)
-                        .saturating_add((bytes[j] - b'0') as usize);
-                    j += 1;
-                }
-                match n.checked_sub(1).and_then(|idx| params.get(idx)) {
-                    Some(Some(value)) => push_sql_literal(&mut out, value),
-                    Some(None) => out.push_str("NULL"),
-                    // A placeholder with no bound value can't be produced by
-                    // the compiler; leave it verbatim rather than guess.
-                    None => out.push_str(&sql[i..j]),
-                }
-                i = j;
-                copied = j;
-            }
-            _ => i += 1,
-        }
-    }
-    out.push_str(&sql[copied..]);
-    out
-}
-
-/// A text parameter as a Postgres string literal in escape-string form
-/// (`E'…'`), escaping both single quotes and backslashes. `E'…'` keeps the
-/// escaping unambiguous regardless of the session's
-/// `standard_conforming_strings` setting — which serve can't assume when the
-/// connection is handed out by a shared pooler.
-fn push_sql_literal(out: &mut String, value: &str) {
-    out.push_str("E'");
-    for c in value.chars() {
-        match c {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            _ => out.push(c),
-        }
-    }
-    out.push('\'');
-}
-
 /// Executes one table root field, appending the JSON fragment for its value
 /// (e.g. `[{"id":"..."}]`, `{"aggregate":{"count":3}}`, or `null`) to `out`.
 ///
@@ -282,7 +162,7 @@ pub async fn execute_root(
 ) -> GResult<()> {
     let compiled = compile_root_full(&state.model.pg_schema, root);
     let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
-    out.push_str(row.text(0)?);
+    out.push_str(row.try_get::<_, &str>(0).map_err(decode_error)?);
     Ok(())
 }
 
@@ -294,7 +174,7 @@ pub async fn execute_root_compiled(
     compiled: &CompiledRoot,
 ) -> GResult<String> {
     let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
-    Ok(row.text(0)?.to_string())
+    Ok(row.try_get::<_, &str>(0).map_err(decode_error)?.to_string())
 }
 
 /// Like `execute_root`, but for an already-compiled `_stream` root: also
@@ -316,15 +196,19 @@ pub async fn execute_stream_compiled(
     out: &mut String,
 ) -> GResult<Option<Vec<Option<String>>>> {
     let row = run_root_query(state, sql, params).await?;
-    let root_text = row.text(0)?;
+    let root_text: &str = row.try_get(0).map_err(decode_error)?;
     out.push_str(root_text);
     if root_text == "[]" {
         return Ok(None);
     }
 
-    let mut cursor_values = Vec::with_capacity(row.column_count().saturating_sub(1));
-    for i in 1..row.column_count() {
-        cursor_values.push(row.opt_text(i)?.map(str::to_string));
+    let mut cursor_values = Vec::with_capacity(row.len().saturating_sub(1));
+    for i in 1..row.len() {
+        cursor_values.push(
+            row.try_get::<_, Option<&str>>(i)
+                .map_err(decode_error)?
+                .map(str::to_string),
+        );
     }
     Ok(Some(cursor_values))
 }
@@ -1835,36 +1719,6 @@ mod tests {
     fn compile_root(pg_schema: &str, root: &ir::TableRoot) -> (String, Vec<Option<String>>) {
         let c = compile_root_full(pg_schema, root);
         (c.sql, c.params)
-    }
-
-    #[test]
-    fn inline_params_substitutes_escapes_and_skips_quotes() {
-        let params = vec![
-            Some("abc".to_string()),
-            None,
-            Some("O'Brien".to_string()),
-            Some("c:\\x".to_string()),
-        ];
-        // Placeholders replaced by index; NULL for absent; values rendered as
-        // E'…' with both `'` and `\` escaped; a `$` not followed by a digit is
-        // left alone; and a `$<digit>` inside a quoted identifier or string
-        // constant (or a multibyte literal) is NOT a placeholder — one assert
-        // pins the whole rendering.
-        assert_eq!(
-            inline_params(
-                r#"(($1)::text) NULL=$2 (($3)::text) (($4)::text) $x "tenant$1" 'a$1' 'π'"#,
-                &params,
-            ),
-            r#"((E'abc')::text) NULL=NULL ((E'O\'Brien')::text) ((E'c:\\x')::text) $x "tenant$1" 'a$1' 'π'"#
-        );
-    }
-
-    #[test]
-    fn inline_params_multi_digit_index() {
-        let params: Vec<Option<String>> = (1..=11).map(|n| Some(n.to_string())).collect();
-        // `$1` and `$11` must resolve to different params despite the shared
-        // prefix; a single assert pins the whole rendering.
-        assert_eq!(inline_params("$1 $11 $2", &params), r"E'1' E'11' E'2'");
     }
 
     fn col(alias: &str, column: &str, scalar: Scalar, pg_type: &str) -> ir::SelItem {
