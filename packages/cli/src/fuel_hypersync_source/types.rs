@@ -1,45 +1,40 @@
 use anyhow::{Context, Result};
 use hyperfuel_client::{ArrowBatch, ArrowResponse};
-use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use polars_arrow::array::{BinaryArray, Int64Array, StaticArray, UInt64Array, UInt8Array};
 
 #[napi(object)]
-pub struct QueryResponse {
-    pub archive_height: Option<i64>,
-    pub next_block: i64,
-    pub total_execution_time: i64,
-    pub data: QueryResponseData,
+#[derive(Clone)]
+pub struct Block {
+    pub id: String,
+    pub height: i64,
+    pub time: i64,
 }
 
-#[napi(object)]
-pub struct QueryResponseData {
-    pub receipts: Vec<Receipt>,
-    pub blocks: Vec<Block>,
-}
-
-#[napi(object)]
-pub struct Receipt {
+/// The page's receipt rows, decoded from Arrow but not yet routed — `get_event_items`
+/// turns each one into zero or more `EventItem`s. Numeric u64 columns stay raw
+/// here; they become JS BigInts only on the routed items.
+pub(crate) struct RawReceipt {
     pub receipt_index: i64,
     pub root_contract_id: Option<String>,
     pub tx_id: String,
     pub block_height: i64,
-    pub receipt_type: i64,
+    pub receipt_type: u8,
     pub data: Option<String>,
-    pub rb: Option<BigInt>,
-    pub val: Option<BigInt>,
+    pub rb: Option<u64>,
+    pub val: Option<u64>,
     pub sub_id: Option<String>,
-    pub amount: Option<BigInt>,
+    pub amount: Option<u64>,
     pub asset_id: Option<String>,
     pub to: Option<String>,
     pub to_address: Option<String>,
 }
 
-#[napi(object)]
-pub struct Block {
-    pub id: String,
-    pub height: i64,
-    pub time: i64,
+pub(crate) struct RawResponse {
+    pub archive_height: Option<i64>,
+    pub next_block: i64,
+    pub receipts: Vec<RawReceipt>,
+    pub blocks: Vec<Block>,
 }
 
 /// `MissingFields` is the shape the JS side recognizes (via the JSON payload
@@ -69,17 +64,13 @@ fn u64_at(arr: &Option<&UInt64Array>, idx: usize) -> Option<u64> {
     arr.and_then(|a| a.get(idx))
 }
 
-fn bigint_at(arr: &Option<&UInt64Array>, idx: usize) -> Option<BigInt> {
-    u64_at(arr, idx).map(BigInt::from)
-}
-
 fn i64_field(arr: &Option<&UInt64Array>, idx: usize, name: &str) -> Result<Option<i64>> {
     u64_at(arr, idx)
         .map(|v| v.try_into().with_context(|| format!("{name} overflow")))
         .transpose()
 }
 
-fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Receipt>, ConvertError> {
+pub(crate) fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<RawReceipt>, ConvertError> {
     let mut out = Vec::new();
     for batch in batches {
         let receipt_index = batch.column::<UInt64Array>("receipt_index").ok();
@@ -120,17 +111,17 @@ fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Receipt>, ConvertEr
                 return Err(ConvertError::MissingFields(missing));
             }
 
-            out.push(Receipt {
+            out.push(RawReceipt {
                 receipt_index: receipt_index_val.unwrap(),
                 root_contract_id: hex_at(&root_contract_id, idx),
                 tx_id: tx_id_val.unwrap(),
                 block_height: block_height_val.unwrap(),
-                receipt_type: receipt_type_val.unwrap() as i64,
+                receipt_type: receipt_type_val.unwrap(),
                 data: hex_at(&data, idx),
-                rb: bigint_at(&rb, idx),
-                val: bigint_at(&val, idx),
+                rb: u64_at(&rb, idx),
+                val: u64_at(&val, idx),
                 sub_id: hex_at(&sub_id, idx),
-                amount: bigint_at(&amount, idx),
+                amount: u64_at(&amount, idx),
                 asset_id: hex_at(&asset_id, idx),
                 to: hex_at(&to, idx),
                 to_address: hex_at(&to_address, idx),
@@ -140,7 +131,7 @@ fn receipts_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Receipt>, ConvertEr
     Ok(out)
 }
 
-fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ConvertError> {
+pub(crate) fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ConvertError> {
     let mut out = Vec::new();
     for batch in batches {
         let id = batch.column::<BinaryArray<i32>>("id").ok();
@@ -175,8 +166,8 @@ fn blocks_from_arrow(batches: &[ArrowBatch]) -> Result<Vec<Block>, ConvertError>
     Ok(out)
 }
 
-pub(crate) fn convert_response(res: ArrowResponse) -> Result<QueryResponse, ConvertError> {
-    Ok(QueryResponse {
+pub(crate) fn convert_response(res: ArrowResponse) -> Result<RawResponse, ConvertError> {
+    Ok(RawResponse {
         archive_height: res
             .archive_height
             .map(i64::try_from)
@@ -188,15 +179,8 @@ pub(crate) fn convert_response(res: ArrowResponse) -> Result<QueryResponse, Conv
             .try_into()
             .context("convert next_block")
             .map_err(ConvertError::Other)?,
-        total_execution_time: res
-            .total_execution_time
-            .try_into()
-            .context("convert total_execution_time")
-            .map_err(ConvertError::Other)?,
-        data: QueryResponseData {
-            receipts: receipts_from_arrow(&res.data.receipts)?,
-            blocks: blocks_from_arrow(&res.data.blocks)?,
-        },
+        receipts: receipts_from_arrow(&res.data.receipts)?,
+        blocks: blocks_from_arrow(&res.data.blocks)?,
     })
 }
 
@@ -269,8 +253,8 @@ mod tests {
                 r.receipt_type,
                 r.root_contract_id.as_deref(),
                 r.data.as_deref(),
-                r.rb.as_ref().map(|b| b.get_u64().1),
-                r.val.as_ref().map(|b| b.get_u64().1),
+                r.rb,
+                r.val,
             ),
             (
                 1,

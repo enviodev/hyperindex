@@ -467,9 +467,7 @@ mod tests {
     fn registration_rejects_zero_topics() {
         let mut reg = value_reg(0, "C", false, VALID_SIGHASH);
         reg.topic_count = 0;
-        let err = Decoder::from_registrations(&[reg], false)
-            .err()
-            .unwrap();
+        let err = Decoder::from_registrations(&[reg], false).err().unwrap();
         assert!(format!("{err:#}").contains("topic_count must be 1..=4"));
     }
 
@@ -477,9 +475,7 @@ mod tests {
     fn registration_rejects_five_topics() {
         let mut reg = value_reg(0, "C", false, VALID_SIGHASH);
         reg.topic_count = 5;
-        let err = Decoder::from_registrations(&[reg], false)
-            .err()
-            .unwrap();
+        let err = Decoder::from_registrations(&[reg], false).err().unwrap();
         assert!(format!("{err:#}").contains("topic_count must be 1..=4"));
     }
 

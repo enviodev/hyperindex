@@ -1006,8 +1006,8 @@ OptimizedPartitions.t => {
 
           // Addresses with different start blocks within range share a partition;
           // events before each address's effectiveStartBlock are dropped on the
-          // client side (EventRouter for the srcAddress, the event's
-          // clientAddressFilter for address-valued params).
+          // client side (the event's clientAddressFilter for address-valued
+          // params).
           if shouldJoinCurrentStartBlock {
             addressesRef :=
               addressesRef.contents->Array.concat(byStartBlock->Dict.getUnsafe(nextStartBlockKey))
@@ -1411,7 +1411,7 @@ let registerDynamicContracts = (
 // Drop events an address-param filter rejects. A merged partition may
 // over-fetch a wildcard event whose indexed address param references an
 // address registered after the log's block; `clientAddressFilter` is the
-// param-level analogue of EventRouter's srcAddress effectiveStartBlock check.
+// param-level analogue of the srcAddress effectiveStartBlock check.
 let filterByClientAddress = (
   items: array<Internal.item>,
   ~indexingAddresses: IndexingAddresses.t,

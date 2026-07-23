@@ -12,10 +12,6 @@ pub struct SvmClientConfig {
     pub max_num_retries: Option<i64>,
     pub retry_base_ms: Option<i64>,
     pub retry_ceiling_ms: Option<i64>,
-    /// Per-program Borsh schema descriptors (JSON, one per program). Built into
-    /// decoders at client creation; the client decodes each returned
-    /// instruction whose `program_id` matches one of them, attaching `decoded`.
-    pub program_schemas: Option<Vec<String>>,
 }
 
 impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
