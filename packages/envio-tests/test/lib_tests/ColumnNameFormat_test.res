@@ -1,6 +1,6 @@
 open Vitest
 
-let config = MockIndexerFixture.fromYaml(
+let config = InternalTestIndexer.fromUserApi(
   ~schema=`
 type Snapshot {
   id: ID!
@@ -12,7 +12,7 @@ type User {
   id: ID!
 }
 `,
-  `
+  ~configYaml=`
 name: column-names
 storage:
   postgres:
@@ -30,14 +30,14 @@ chains:
 `,
 ).config
 
-let reverseFormatConfig = MockIndexerFixture.fromYaml(
+let reverseFormatConfig = InternalTestIndexer.fromUserApi(
   ~schema=`
 type Token {
   id: ID!
   tokenId: Int!
 }
 `,
-  `
+  ~configYaml=`
 name: reverse-column-names
 storage:
   postgres:

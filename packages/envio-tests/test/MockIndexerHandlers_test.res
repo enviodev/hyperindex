@@ -21,9 +21,9 @@ type Account {
 }
 `
 
-describe("MockIndexerFixture handler type-checking", () => {
+describe("InternalTestIndexer handler type-checking", () => {
   it("accepts handlers that match the generated indexer types", t => {
-    let {config} = MockIndexerFixture.fromYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema,
       ~handlers=`
 import { indexer } from "envio";
@@ -36,7 +36,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   context.Account.set({ id: event.params.to, balance: event.params.value });
 });
 `,
-      yaml,
+      ~configYaml=yaml,
     )
     t.expect(config.name).toBe("mock-handlers")
   })
@@ -44,13 +44,13 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   it("throws on handlers that reference a nonexistent event", t => {
     t.expect(
       () =>
-        MockIndexerFixture.fromYaml(
+        InternalTestIndexer.fromUserApi(
           ~schema,
           ~handlers=`
 import { indexer } from "envio";
 indexer.onEvent({ contract: "Token", event: "Nonexistent" }, async () => {});
 `,
-          yaml,
+          ~configYaml=yaml,
         )->ignore,
     ).toThrowError("Handler type errors")
   })

@@ -407,7 +407,7 @@ module Indexer = {
 
   let rec make = async (
     ~chains: array<chainConfig>,
-    // A config parsed through the user-facing pipeline (MockIndexerFixture.fromYaml).
+    // A config parsed through the user-facing pipeline (InternalTestIndexer.fromUserApi).
     // Defaults to the generated project config.
     ~config as customConfig: option<Config.t>=?,
     ~saveFullHistory=false,
