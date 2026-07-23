@@ -1,6 +1,6 @@
 use crate::{
     clap_definitions::CommandLineArgs, config_parsing::system_config::SystemConfig,
-    project_paths::ParsedProjectPaths,
+    hbs_templating::codegen_templates::ProjectTemplate, project_paths::ParsedProjectPaths,
 };
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
@@ -8,11 +8,22 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 #[napi_derive::napi(object)]
-pub struct ParseConfigYamlOptions {
+pub struct FromUserApiOptions {
     pub schema: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub files: Option<HashMap<String, String>>,
-    pub is_rescript: Option<bool>,
+    /// Also generate the `.envio/types.d.ts` contents, so a caller can
+    /// type-check handlers against the config's generated `indexer` surface.
+    pub with_indexer_types: Option<bool>,
+}
+
+#[napi_derive::napi(object)]
+pub struct FromUserApiResult {
+    /// The public config JSON, the same shape `get_config_json` returns.
+    pub config: String,
+    /// The generated `.envio/types.d.ts`, present only when
+    /// `with_indexer_types` was requested.
+    pub indexer_types: Option<String>,
 }
 
 fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result<String> {
@@ -37,24 +48,41 @@ pub fn get_config_json(
     serialize_config_result(SystemConfig::parse_from_project_files(&project_paths))
 }
 
-/// Parses an indexer config without consulting the filesystem or process
-/// environment. Schema text, interpolation variables, and ABI/IDL file bodies
-/// are supplied explicitly so callers can use this from any working directory.
+/// Parses an inline indexer config the way a user's project would, without
+/// consulting the filesystem or process environment. Schema text, interpolation
+/// variables, and ABI/IDL file bodies are supplied explicitly so callers can use
+/// this from any working directory. With `with_indexer_types`, also returns the
+/// generated `.envio/types.d.ts` — the same TypeScript production codegen writes
+/// — from the single parse, so a caller can type-check handlers against the
+/// config's `indexer` surface without re-parsing.
 #[napi_derive::napi]
-pub fn parse_config_yaml(
+pub fn from_user_api(
     yaml: String,
-    options: Option<ParseConfigYamlOptions>,
-) -> napi::Result<String> {
+    options: Option<FromUserApiOptions>,
+) -> napi::Result<FromUserApiResult> {
     let options = options.unwrap_or_default();
     let env = options.env.unwrap_or_default();
     let files = options.files.unwrap_or_default();
-    serialize_config_result(SystemConfig::parse_yaml(
-        &yaml,
-        options.schema.as_deref(),
-        &env,
-        &files,
-        options.is_rescript.unwrap_or(false),
-    ))
+    let config = SystemConfig::parse_yaml(&yaml, options.schema.as_deref(), &env, &files, false)
+        .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+
+    let config_json = config
+        .to_public_config_json(false)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))?;
+
+    let indexer_types = if options.with_indexer_types.unwrap_or(false) {
+        let template = ProjectTemplate::from_config(&config).map_err(|e| {
+            napi::Error::from_reason(format!("Failed generating indexer types: {e:#}"))
+        })?;
+        Some(template.indexer_types_dts().to_string())
+    } else {
+        None
+    };
+
+    Ok(FromUserApiResult {
+        config: config_json,
+        indexer_types,
+    })
 }
 
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when

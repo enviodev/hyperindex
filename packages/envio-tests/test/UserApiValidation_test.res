@@ -2,7 +2,7 @@ open Vitest
 
 let expectParseError = (t, ~schema=?, ~env=?, ~files=?, yaml, message) => {
   let actual = try {
-    MockIndexerConfig.parseYaml(~schema?, ~env?, ~files?, yaml)->ignore
+    InternalTestIndexer.fromUserApi(~schema?, ~env?, ~files?, ~configYaml=yaml)->ignore
     "the parse to fail, but it succeeded"
   } catch {
   | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
@@ -11,7 +11,7 @@ let expectParseError = (t, ~schema=?, ~env=?, ~files=?, yaml, message) => {
 }
 
 let parseAddressConfig = (~addressFormat="checksum", ~contractName="ERC20", address): Config.t =>
-  MockIndexerConfig.parseYaml(`
+  InternalTestIndexer.fromUserApi(~configYaml=`
 name: address-config
 address_format: ${addressFormat}
 contracts:
@@ -34,16 +34,16 @@ let firstContract = (config: Config.t): Config.contract => {
   chain.contracts->Array.getUnsafe(0)
 }
 
-describe("MockIndexerConfig.parseYaml", () => {
+describe("InternalTestIndexer.fromUserApi validation", () => {
   it("parses user YAML with explicit env and no project schema", t => {
     let env = Dict.fromArray([
       ("RPC_URL", "https://rpc.example.test"),
       ("START_BLOCK", "42"),
     ])
 
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~env,
-      `
+      ~configYaml=`
 name: in-memory
 chains:
   - id: 1
@@ -76,9 +76,9 @@ chains:
       ),
     ])
 
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      `
+      ~configYaml=`
 name: virtual-abi
 chains:
   - id: 1
@@ -198,7 +198,7 @@ chains:
   })
 
   it("allows the same address on different chains", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: multichain-address
 contracts:
   - name: AaveToken
@@ -220,7 +220,7 @@ chains:
   })
 
   it("parses entity and field descriptions from schema text", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
 """A user of the protocol"""
 type User {
@@ -236,7 +236,7 @@ type Token {
   owner: User!
 }
 `,
-      `
+      ~configYaml=`
 name: descriptions
 chains:
   - id: 1
@@ -262,12 +262,12 @@ chains:
   })
 
   it("resolves entity storage directives and config defaults together", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
 type User { id: ID! }
 type Snapshot @storage(clickhouse: true) { id: ID! }
 `,
-      `
+      ~configYaml=`
 name: storage-routing
 storage:
   postgres:
@@ -288,14 +288,14 @@ chains:
   })
 
   it("preserves per-backend column names across the public config boundary", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
 type User {
   id: ID!
   userId: BigInt!
 }
 `,
-      `
+      ~configYaml=`
 name: column-names
 storage:
   postgres:
@@ -921,7 +921,7 @@ chains:
   })
 
   it("parses a minimal Fuel config through the public boundary", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: fuel-config
 ecosystem: fuel
 chains:
@@ -934,7 +934,7 @@ chains:
   })
 
   it("parses a minimal SVM config through the public boundary", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: svm-config
 ecosystem: svm
 chains:
@@ -947,7 +947,7 @@ chains:
   })
 
   it("validates event field selections against only the chain that uses them", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: mixed-sync-sources
 chains:
   - id: 1
@@ -972,7 +972,7 @@ chains:
   })
 
   it("allows a global contract with HyperSync-only fields when unrelated chains use RPC", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: mixed-global-contract
 contracts:
   - name: HyperOnly
@@ -995,7 +995,7 @@ chains:
   })
 
   it("removes skipped chains from runtime config", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: chain-options
 chains:
   - id: 1
@@ -1011,7 +1011,7 @@ chains:
   })
 
   it("normalizes trailing slashes in HyperSync URLs", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: hypersync-url
 chains:
   - id: 1
@@ -1034,9 +1034,9 @@ chains:
         `{"contractName":"Token","abi":[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]}`,
       ),
     ])
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      `
+      ~configYaml=`
 name: nested-abi
 chains:
   - id: 1
@@ -1055,7 +1055,7 @@ chains:
   })
 
   it("accepts user event signatures with prefixes, tuple spacing, and trailing semicolons", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: event-signature-formatting
 contracts:
   - name: Shop
@@ -1074,9 +1074,9 @@ chains:
   })
 
   it("uses explicit schema text even when YAML names a nonexistent schema path", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`type Token { id: ID! }`,
-      `
+      ~configYaml=`
 name: explicit-schema
 schema: ./does-not-exist.graphql
 chains:
