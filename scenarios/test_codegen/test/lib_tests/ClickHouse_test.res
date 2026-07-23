@@ -256,7 +256,7 @@ ORDER BY (id, envio_checkpoint_id)`
     Async.it(
       "Should apply partitionBy, orderBy and ttl to the history table SQL",
       async t => {
-        let config = MockIndexerConfig.parseYaml(
+        let config = InternalTestIndexer.fromUserApi(
           ~schema=`
 type Transfer @storage(clickhouse: {
   partitionBy: "toYYYYMM(timestamp)",
@@ -268,7 +268,7 @@ type Transfer @storage(clickhouse: {
   amount: BigInt!
 }
 `,
-          `
+          ~configYaml=`
 name: clickhouse-options
 storage:
   postgres:
@@ -322,7 +322,7 @@ TTL \`timestamp\` + INTERVAL 2 YEAR`,
     Async.it(
       "Should resolve orderBy field names to renamed and linked-entity columns",
       async t => {
-        let config = MockIndexerConfig.parseYaml(
+        let config = InternalTestIndexer.fromUserApi(
           ~schema=`
 type Trade @storage(clickhouse: {orderBy: ["baseToken", "tradeTime"]}) {
   id: ID!
@@ -334,7 +334,7 @@ type Token @storage(clickhouse: true) {
   id: ID!
 }
 `,
-          `
+          ~configYaml=`
 name: clickhouse-order-by
 storage:
   postgres:
@@ -371,7 +371,7 @@ ORDER BY (\`base_token_id\`, \`trade_time\`, envio_checkpoint_id)`)
     Async.it(
       "Should resolve schema field names inside partitionBy and ttl expressions to columns",
       async t => {
-        let config = MockIndexerConfig.parseYaml(
+        let config = InternalTestIndexer.fromUserApi(
           ~schema=`
 type Trade @storage(clickhouse: {
   partitionBy: "toYYYYMM(tradeTime)",
@@ -386,7 +386,7 @@ type Token @storage(clickhouse: true) {
   id: ID!
 }
 `,
-          `
+          ~configYaml=`
 name: clickhouse-expression-columns
 storage:
   postgres:
