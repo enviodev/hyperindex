@@ -19,8 +19,8 @@ let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>
 
 // The first per-(event, chain) registration built from the event definition +
 // the registered handlers. Handlers must have been registered
-// (`HandlerLoader.registerAllHandlers`) before calling; throws when the event
-// has no registration that runs on the probe chain.
+// (`HandlerLoader.registerAllHandlers`) before calling; falls back to a bare
+// registration when the event has none.
 let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {
   | Some(c) => c

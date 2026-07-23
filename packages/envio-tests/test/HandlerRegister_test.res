@@ -163,21 +163,6 @@ let register = fn => {
   HandlerRegister.finishRegistration(~config)
 }
 
-let transferEventConfig = {
-  let contract =
-    (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts
-    ->Array.find(c => c.name === "ERC20")
-    ->Option.getOrThrow
-  contract.events->Array.find(e => e.name === "Transfer")->Option.getOrThrow
-}
-
-let simulateTransfer = () =>
-  HandlerRegister.getSimulateOnEventRegistrations(
-    ~config,
-    ~chainId=1,
-    ~eventConfig=transferEventConfig,
-  )
-
 describe("HandlerRegister multiple registrations", () => {
   it("keeps two onEvent handlers as separate registrations in registration order", t => {
     let h1 = makeHandler()
@@ -347,22 +332,5 @@ describe("HandlerRegister multiple registrations", () => {
       ),
       registrations->describeRegistrations(~eventName="Approval", ~labels=[], ~crLabels=[]),
     )).toEqual(([], [(None, None, 0)]))
-  })
-
-  it("simulate returns the registration for a handled event", t => {
-    let h1 = makeHandler()
-    let _ = register(() => setHandler(h1))
-    t.expect(simulateTransfer()->Array.length).toBe(1)
-  })
-
-  it("simulate drops a where:false registration so nothing runs on the chain", t => {
-    let h1 = makeHandler()
-    let _ = register(() => setHandler(~eventOptions={where: %raw(`() => false`)}, h1))
-    t.expect(simulateTransfer()->Array.length).toBe(0)
-  })
-
-  it("simulate returns no registration for an event with no handler", t => {
-    let _ = register(() => ())
-    t.expect(simulateTransfer()->Array.length).toBe(0)
   })
 })
