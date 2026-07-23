@@ -143,6 +143,29 @@ fn numeric_columns(table: &Table) -> Vec<&Column> {
         .collect()
 }
 
+/// Per-op aggregate column groups in Hasura's order: `max`/`min` over
+/// comparable columns, then the numeric ops over numeric columns. A group
+/// whose column set is empty is omitted entirely (Hasura emits no op field
+/// or per-op type for it). Shared by the `_aggregate_fields` and
+/// `_aggregate_order_by` builders, which differ only in the node shape each
+/// (op, columns) pair expands to.
+fn aggregate_op_groups(table: &Table) -> Vec<(&'static str, Vec<&Column>)> {
+    let mut groups: Vec<(&'static str, Vec<&Column>)> = Vec::new();
+    let min_max = min_max_columns(table);
+    if !min_max.is_empty() {
+        for op in ["max", "min"] {
+            groups.push((op, min_max.clone()));
+        }
+    }
+    let numeric = numeric_columns(table);
+    if !numeric.is_empty() {
+        for op in numeric_ops() {
+            groups.push((op, numeric.clone()));
+        }
+    }
+    groups
+}
+
 /// Tables that are the remote side of some array relationship visible to
 /// this role — they need `<T>_aggregate_order_by` (+ per-op order_by input
 /// types), regardless of allow_aggregations.
@@ -749,7 +772,6 @@ impl<'a> Builder<'a> {
             ],
         });
 
-        let numeric_cols = numeric_columns(table);
         let mut agg_fields: Vec<FieldDef> = vec![FieldDef {
             name: "count".to_string(),
             description: None,
@@ -766,11 +788,7 @@ impl<'a> Builder<'a> {
             ty: TypeRef::non_null(TypeRef::named("Int")),
             kind: FieldKind::AggregateCount,
         }];
-        for op in ["max", "min"] {
-            let cols = min_max_columns(table);
-            if cols.is_empty() {
-                continue;
-            }
+        for (op, cols) in aggregate_op_groups(table) {
             agg_fields.push(FieldDef {
                 name: op.to_string(),
                 description: None,
@@ -798,36 +816,6 @@ impl<'a> Builder<'a> {
                 fields: op_fields,
             });
         }
-        if !numeric_cols.is_empty() {
-            for op in numeric_ops() {
-                agg_fields.push(FieldDef {
-                    name: op.to_string(),
-                    description: None,
-                    args: vec![],
-                    ty: TypeRef::named(&format!("{t}_{op}_fields")),
-                    kind: FieldKind::AggregateOp { op: op.to_string() },
-                });
-                let mut op_fields: Vec<FieldDef> = numeric_cols
-                    .iter()
-                    .map(|c| FieldDef {
-                        name: c.api_name.clone(),
-                        description: c.description.clone(),
-                        args: vec![],
-                        ty: agg_op_result_type(op, c),
-                        kind: FieldKind::AggregateOpColumn {
-                            op: op.to_string(),
-                            column: c.api_name.clone(),
-                        },
-                    })
-                    .collect();
-                op_fields.sort_by(|a, b| a.name.cmp(&b.name));
-                self.add(TypeDef::Object {
-                    name: format!("{t}_{op}_fields"),
-                    description: Some(format!("aggregate {op} on columns")),
-                    fields: op_fields,
-                });
-            }
-        }
         agg_fields.sort_by(|a, b| a.name.cmp(&b.name));
         self.add(TypeDef::Object {
             name: format!("{t}_aggregate_fields"),
@@ -846,25 +834,19 @@ impl<'a> Builder<'a> {
             }
             return;
         }
-        let numeric_cols = numeric_columns(table);
-        let mm_cols = min_max_columns(table);
-
         let mut fields: Vec<InputValueDef> = vec![InputValueDef::new(
             "count",
             None,
             TypeRef::named("order_by"),
         )];
 
-        for op in ["max", "min"] {
-            if mm_cols.is_empty() {
-                continue;
-            }
+        for (op, cols) in aggregate_op_groups(table) {
             fields.push(InputValueDef::new(
                 op,
                 None,
                 TypeRef::named(&format!("{t}_{op}_order_by")),
             ));
-            let mut op_fields: Vec<InputValueDef> = mm_cols
+            let mut op_fields: Vec<InputValueDef> = cols
                 .iter()
                 .map(|c| InputValueDef::new(&c.api_name, None, TypeRef::named("order_by")))
                 .collect();
@@ -874,25 +856,6 @@ impl<'a> Builder<'a> {
                 description: Some(format!("order by {op}() on columns of table \"{t}\"")),
                 fields: op_fields,
             });
-        }
-        if !numeric_cols.is_empty() {
-            for op in numeric_ops() {
-                fields.push(InputValueDef::new(
-                    op,
-                    None,
-                    TypeRef::named(&format!("{t}_{op}_order_by")),
-                ));
-                let mut op_fields: Vec<InputValueDef> = numeric_cols
-                    .iter()
-                    .map(|c| InputValueDef::new(&c.api_name, None, TypeRef::named("order_by")))
-                    .collect();
-                op_fields.sort_by(|a, b| a.name.cmp(&b.name));
-                self.add(TypeDef::InputObject {
-                    name: format!("{t}_{op}_order_by"),
-                    description: Some(format!("order by {op}() on columns of table \"{t}\"")),
-                    fields: op_fields,
-                });
-            }
         }
         fields.sort_by(|a, b| a.name.cmp(&b.name));
         self.add(TypeDef::InputObject {

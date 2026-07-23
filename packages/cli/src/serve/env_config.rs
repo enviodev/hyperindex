@@ -129,7 +129,19 @@ impl EnvReader {
 
     /// Env.res `devFallback`: the default only applies outside production.
     fn var_dev_fallback(&self, name: &str, fallback: &str) -> anyhow::Result<String> {
-        match self.var(name) {
+        self.resolved_dev_fallback(self.var(name), name, fallback)
+    }
+
+    /// `var_dev_fallback` for a value already resolved from several env-var
+    /// aliases: outside production the fallback applies, but a missing value
+    /// in production is a hard error rather than a silent insecure default.
+    fn resolved_dev_fallback(
+        &self,
+        resolved: Option<String>,
+        name: &str,
+        fallback: &str,
+    ) -> anyhow::Result<String> {
+        match resolved {
             Some(v) => Ok(v),
             None if !self.is_production => Ok(fallback.to_string()),
             None => Err(anyhow!(
@@ -320,10 +332,12 @@ impl ServeEnv {
             pg_host: r.var_dev_fallback("ENVIO_PG_HOST", "localhost")?,
             pg_port,
             pg_user: r.var_dev_fallback("ENVIO_PG_USER", "postgres")?,
-            pg_password: r
-                .var("ENVIO_PG_PASSWORD")
-                .or_else(|| r.var("ENVIO_POSTGRES_PASSWORD"))
-                .unwrap_or_else(|| "testing".to_string()),
+            pg_password: r.resolved_dev_fallback(
+                r.var("ENVIO_PG_PASSWORD")
+                    .or_else(|| r.var("ENVIO_POSTGRES_PASSWORD")),
+                "ENVIO_PG_PASSWORD",
+                "testing",
+            )?,
             pg_database: r.var_dev_fallback("ENVIO_PG_DATABASE", "envio-dev")?,
             pg_schema: r
                 .var("ENVIO_PG_SCHEMA")
@@ -861,6 +875,36 @@ mod tests {
         );
         assert!(get(Some("flase")).is_err());
         assert!(get(Some("2")).is_err());
+    }
+
+    #[test]
+    fn credentials_require_explicit_value_in_production() {
+        let dev = EnvReader {
+            dotenv: None,
+            is_production: false,
+        };
+        let prod = EnvReader {
+            dotenv: None,
+            is_production: true,
+        };
+        // Outside production a missing password falls back; in production it
+        // is a hard error rather than a silent "testing" default.
+        assert_eq!(
+            dev.resolved_dev_fallback(None, "ENVIO_PG_PASSWORD", "testing")
+                .unwrap(),
+            "testing"
+        );
+        assert_eq!(
+            prod.resolved_dev_fallback(Some("secret".to_string()), "ENVIO_PG_PASSWORD", "testing")
+                .unwrap(),
+            "secret"
+        );
+        assert_eq!(
+            prod.resolved_dev_fallback(None, "ENVIO_PG_PASSWORD", "testing")
+                .unwrap_err()
+                .to_string(),
+            "Missing required environment variable ENVIO_PG_PASSWORD (required when NODE_ENV=production)"
+        );
     }
 
     #[test]

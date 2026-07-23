@@ -38,6 +38,17 @@ pub struct Column {
     pub is_enum: bool,
 }
 
+fn column_from_row(row: &tokio_postgres::Row) -> Result<Column, tokio_postgres::Error> {
+    Ok(Column {
+        name: row.try_get("column_name")?,
+        pg_type: row.try_get("pg_type")?,
+        pg_type_schema: row.try_get("pg_type_schema")?,
+        is_array: row.try_get("is_array")?,
+        nullable: row.try_get("nullable")?,
+        is_enum: row.try_get("is_enum")?,
+    })
+}
+
 pub async fn introspect(
     pool: &deadpool_postgres::Pool,
     pg_schema: &str,
@@ -120,14 +131,19 @@ pub async fn introspect(
                 columns: Vec::new(),
                 primary_key: Vec::new(),
             });
-        relation.columns.push(Column {
-            name: row.get("column_name"),
-            pg_type: row.get("pg_type"),
-            pg_type_schema: row.get("pg_type_schema"),
-            is_array: row.get("is_array"),
-            nullable: row.get("nullable"),
-            is_enum: row.get("is_enum"),
-        });
+        // pg_type/pg_type_schema/is_enum come from LEFT JOINs on the type
+        // catalog and are NULL only for a type that can't be resolved
+        // (e.g. a domain or array whose base/element type row is missing).
+        // Hasura refuses such a column as a source inconsistency; fail
+        // startup with a clear error rather than panicking in `Row::get`.
+        let column = column_from_row(&row).with_context(|| {
+            format!(
+                "Column \"{}\" of \"{pg_schema}\".\"{}\" has an unresolvable or unsupported type",
+                row.get::<_, String>("column_name"),
+                relation.name,
+            )
+        })?;
+        relation.columns.push(column);
     }
 
     for row in pk_rows {

@@ -1,6 +1,6 @@
 use super::coerce::coerce_bool_strict;
 use super::{q, verr, ADirective, ASelSet, AValue, Ctx, GResult, TypeRef};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
 // Selection walking: directives, fragments, field merging
@@ -22,16 +22,13 @@ fn eval_directives<'a>(ctx: &'a Ctx<'a>, dirs: &'a [ADirective], sel_path: &str)
     if dirs.is_empty() {
         return Ok(true);
     }
-    let mut seen: Vec<&str> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut dup_seen: HashSet<&str> = HashSet::new();
     let mut dups: Vec<&str> = Vec::new();
     for d in dirs {
         let name = d.name.as_str();
-        if seen.contains(&name) {
-            if !dups.contains(&name) {
-                dups.push(name);
-            }
-        } else {
-            seen.push(name);
+        if !seen.insert(name) && dup_seen.insert(name) {
+            dups.push(name);
         }
     }
     if !dups.is_empty() {
@@ -92,7 +89,10 @@ fn eval_directives<'a>(ctx: &'a Ctx<'a>, dirs: &'a [ADirective], sel_path: &str)
 /// Fragments are re-expanded at every spread site during flattening, so a
 /// chain of fragments each spread twice grows exponentially; this budget on
 /// processed selection items turns that into a graceful validation error.
-const MAX_SELECTIONS: usize = 50_000;
+/// It lives on `Ctx` and is shared across every `collect_fields` call of an
+/// operation — a per-call budget would reset at each relationship level and
+/// let field-nested fragment reuse blow up as (fanout)^depth.
+pub(super) const MAX_SELECTIONS: usize = 50_000;
 
 pub(super) fn collect_fields<'a>(
     ctx: &'a Ctx<'a>,
@@ -102,22 +102,12 @@ pub(super) fn collect_fields<'a>(
 ) -> GResult<Vec<Flat<'a>>> {
     let mut out: Vec<Flat<'a>> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
-    let mut budget = MAX_SELECTIONS;
     for set in sets {
-        collect_into(
-            ctx,
-            type_name,
-            set,
-            sel_path,
-            &mut out,
-            &mut index,
-            &mut budget,
-        )?;
+        collect_into(ctx, type_name, set, sel_path, &mut out, &mut index)?;
     }
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn collect_into<'a>(
     ctx: &'a Ctx<'a>,
     type_name: &str,
@@ -125,10 +115,9 @@ fn collect_into<'a>(
     sel_path: &str,
     out: &mut Vec<Flat<'a>>,
     index: &mut HashMap<String, usize>,
-    budget: &mut usize,
 ) -> GResult<()> {
     for item in &set.items {
-        if *budget == 0 {
+        if ctx.selection_budget.get() == 0 {
             return Err(verr(
                 sel_path,
                 format!(
@@ -136,7 +125,7 @@ fn collect_into<'a>(
                 ),
             ));
         }
-        *budget -= 1;
+        ctx.selection_budget.set(ctx.selection_budget.get() - 1);
         match item {
             q::Selection::Field(f) => {
                 if !eval_directives(ctx, &f.directives, sel_path)? {
@@ -203,15 +192,7 @@ fn collect_into<'a>(
                 // fragment silently, as Hasura does.
                 let q::TypeCondition::On(cond) = &frag.type_condition;
                 if cond == type_name {
-                    collect_into(
-                        ctx,
-                        type_name,
-                        &frag.selection_set,
-                        sel_path,
-                        out,
-                        index,
-                        budget,
-                    )?;
+                    collect_into(ctx, type_name, &frag.selection_set, sel_path, out, index)?;
                 }
             }
             q::Selection::InlineFragment(inline) => {
@@ -223,15 +204,7 @@ fn collect_into<'a>(
                     Some(q::TypeCondition::On(cond)) => cond == type_name,
                 };
                 if matches {
-                    collect_into(
-                        ctx,
-                        type_name,
-                        &inline.selection_set,
-                        sel_path,
-                        out,
-                        index,
-                        budget,
-                    )?;
+                    collect_into(ctx, type_name, &inline.selection_set, sel_path, out, index)?;
                 }
             }
         }
