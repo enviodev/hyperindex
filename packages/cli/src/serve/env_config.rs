@@ -695,19 +695,21 @@ fn parse_origin_pattern(entry: &str) -> Option<OriginPattern> {
     Some(OriginPattern { scheme, host, port })
 }
 
-/// Parses a boolean environment variable, accepting the same forms as the
-/// project's EnvSafe parser (`true`/`t`/`1`, `false`/`f`/`0`; case-insensitive,
-/// trimmed) so existing configs keep working. Anything else — including a typo
-/// like `flase` — errors at startup instead of silently picking a default.
-/// Unset stays `None`.
+/// Parses a boolean environment variable, accepting every form the prior serve
+/// parsers did (EnvSafe's `true`/`t`/`1` and `false`/`f`/`0`, plus the
+/// `yes`/`y` and `no`/`n` spellings the old CORS/prepared-statement parsing
+/// took; case-insensitive, trimmed) so existing configs keep working. Anything
+/// else — including a typo like `flase` — errors at startup instead of silently
+/// picking a default. Unset stays `None`.
 fn parse_bool_env(name: &str, raw: Option<String>) -> anyhow::Result<Option<bool>> {
     match raw {
         None => Ok(None),
         Some(v) => match v.trim().to_ascii_lowercase().as_str() {
-            "true" | "t" | "1" => Ok(Some(true)),
-            "false" | "f" | "0" => Ok(Some(false)),
+            "true" | "t" | "yes" | "y" | "1" => Ok(Some(true)),
+            "false" | "f" | "no" | "n" | "0" => Ok(Some(false)),
             other => Err(anyhow!(
-                "Invalid boolean for {name}: \"{other}\" (expected true/t/1 or false/f/0)"
+                "Invalid boolean for {name}: \"{other}\" \
+                 (expected true/t/yes/y/1 or false/f/no/n/0)"
             )),
         },
     }
@@ -827,16 +829,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_bool_env_accepts_envsafe_aliases_and_rejects_typos() {
+    fn parse_bool_env_accepts_prior_aliases_and_rejects_typos() {
         let get = |raw: Option<&str>| parse_bool_env("X", raw.map(str::to_string));
         assert_eq!(
             [
                 get(None).unwrap(),
                 get(Some("true")).unwrap(),
                 get(Some("  T ")).unwrap(),
+                get(Some("YES")).unwrap(),
+                get(Some("y")).unwrap(),
                 get(Some("1")).unwrap(),
-                get(Some("FALSE")).unwrap(),
+                get(Some("false")).unwrap(),
                 get(Some("f")).unwrap(),
+                get(Some("no")).unwrap(),
+                get(Some("n")).unwrap(),
                 get(Some("0")).unwrap(),
             ],
             [
@@ -844,6 +850,10 @@ mod tests {
                 Some(true),
                 Some(true),
                 Some(true),
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
                 Some(false),
                 Some(false),
                 Some(false)
