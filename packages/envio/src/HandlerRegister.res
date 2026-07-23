@@ -322,10 +322,11 @@ let isWildcard = (~contractName, ~eventName) =>
   | None => false
   }
 
-// Every registration for one event on a chain, so simulate fans a simulated
-// event out to each the way real routing does. Falls back to a bare
-// registration when the event has no handler/contractRegister, so a simulated
-// item still produces an item to run.
+// Every registration for one event on a chain that actually runs there, so
+// simulate fans a simulated event out to each the way real routing does.
+// Applies the same `where:false` drop as `finishRegistration`, so a
+// registration that opted out of this chain isn't simulated. Empty when the
+// event has no handler that runs here — the caller reports that.
 let getSimulateOnEventRegistrations = (
   ~config: Config.t,
   ~chainId: int,
@@ -335,26 +336,11 @@ let getSimulateOnEventRegistrations = (
   | Some(r) => r->storedOnEventRegistrations(~chainId)
   | None => []
   }
-  let matching =
-    mergeRegistrations(stored, ~config)->Array.filter(reg =>
-      reg.eventConfig.contractName === eventConfig.contractName &&
-        reg.eventConfig.name === eventConfig.name
-    )
-  if matching->Utils.Array.notEmpty {
-    matching
-  } else {
-    [
-      buildOnEventRegistrationWith(
-        ~config,
-        ~chainId,
-        ~eventConfig,
-        ~isWildcard=false,
-        ~handler=None,
-        ~contractRegister=None,
-        ~where=None,
-      ),
-    ]
-  }
+  mergeRegistrations(stored, ~config)->Array.filter(reg =>
+    reg.eventConfig.contractName === eventConfig.contractName &&
+    reg.eventConfig.name === eventConfig.name &&
+    !isDroppedByWhere(~config, reg)
+  )
 }
 
 let finishRegistration = (~config: Config.t): registrationsByChainId => {

@@ -345,11 +345,17 @@ let parse = (
       // address filter and `where` behave identically to real indexing — the
       // dead-input tracker relies on `clientAddressFilter` actually gating
       // unrouted items.
-      HandlerRegister.getSimulateOnEventRegistrations(
+      let simulateRegistrations = HandlerRegister.getSimulateOnEventRegistrations(
         ~config,
         ~chainId,
         ~eventConfig,
-      )->Array.forEach(reg => {
+      )
+      if simulateRegistrations->Utils.Array.isEmpty {
+        JsError.throwWithMessage(
+          `simulate: no handler is registered for event "${eventName}" on contract "${contractName}". Register a handler with indexer.onEvent before simulating this event.`,
+        )
+      }
+      simulateRegistrations->Array.forEach(reg => {
         // Append into the registration array that the chain state will own and
         // put that same registration object directly on the simulated item.
         let onEventRegistrationIndex = onEventRegistrations->Array.length

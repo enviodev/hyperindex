@@ -1926,11 +1926,38 @@ impl Contract {
             "event".to_string(),
         )?;
 
-        // Two event definitions on one contract that share a dispatch key are
+        // Codegen keys the generated event modules by name and routing looks
+        // events up by name, so two events on one contract can't share a name.
+        // Overloads (same name, different signature) are the usual cause — point
+        // at the `name` alias as the fix; a byte-identical copy just needs
+        // removing.
+        let mut seen_by_name: HashMap<&str, &Event> = HashMap::new();
+        for event in &events {
+            if let Some(existing) = seen_by_name.insert(&event.name, event) {
+                if existing.sighash == event.sighash {
+                    return Err(anyhow!(
+                        "Contract {name} defines the event \"{}\" more than once. \
+                         Please remove the duplicate.",
+                        event.name,
+                    ));
+                }
+                return Err(anyhow!(
+                    "Contract {name} has two events named \"{}\". Give one of them a \
+                     unique name with the \"name\" field so the generated code and \
+                     the indexer's routing can tell them apart.",
+                    event.name,
+                ));
+            }
+        }
+
+        // Two events on one contract that share a dispatch key are
         // indistinguishable at routing time — one log/instruction would decode
         // to both — so reject them here. The key mirrors the runtime `eventId`:
         // sighash plus indexed-topic count for EVM, the discriminator for SVM
-        // (already program-scoped, since these are one program's instructions).
+        // (already program-scoped, since these are one program's instructions),
+        // the sighash for Fuel (a `LogData` logId or a fixed `mint`/`burn`/…).
+        // Names are unique by the check above, so a collision here is always
+        // between two differently-named events.
         let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
         for event in &events {
             let dispatch_key = match &event.kind {
@@ -1946,9 +1973,6 @@ impl Contract {
                         .map(|d| d.to_lowercase())
                         .unwrap_or_else(|| "none".to_string()),
                 ),
-                // Fuel routing dispatches by sighash (a `LogData` logId, or a
-                // fixed value like `mint`/`burn`/`transfer`/`call`), so two
-                // events sharing it on one contract are indistinguishable too.
                 EventKind::Fuel(_) => Some(event.sighash.clone()),
             };
             if let Some(dispatch_key) = dispatch_key {
@@ -1956,8 +1980,10 @@ impl Contract {
                     seen_by_dispatch_key.insert(dispatch_key, event.name.clone())
                 {
                     return Err(anyhow!(
-                        "Contract {name} has two events the indexer can't tell apart: {existing} \
-                         and {}. Please remove one of them.",
+                        "Contract {name} has two events the indexer can't tell apart: \
+                         \"{existing}\" and \"{}\". They match the same on-chain data, so \
+                         the indexer can't decide which one a log belongs to. Please remove \
+                         one of them.",
                         event.name,
                     ));
                 }
