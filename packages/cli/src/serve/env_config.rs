@@ -695,17 +695,19 @@ fn parse_origin_pattern(entry: &str) -> Option<OriginPattern> {
     Some(OriginPattern { scheme, host, port })
 }
 
-/// Parses a boolean environment variable strictly: only `true`/`false`
-/// (case-insensitive, trimmed) are accepted, so a typo like `flase` errors at
-/// startup instead of silently falling back to a default. Unset stays `None`.
+/// Parses a boolean environment variable, accepting the same forms as the
+/// project's EnvSafe parser (`true`/`t`/`1`, `false`/`f`/`0`; case-insensitive,
+/// trimmed) so existing configs keep working. Anything else — including a typo
+/// like `flase` — errors at startup instead of silently picking a default.
+/// Unset stays `None`.
 fn parse_bool_env(name: &str, raw: Option<String>) -> anyhow::Result<Option<bool>> {
     match raw {
         None => Ok(None),
         Some(v) => match v.trim().to_ascii_lowercase().as_str() {
-            "true" => Ok(Some(true)),
-            "false" => Ok(Some(false)),
+            "true" | "t" | "1" => Ok(Some(true)),
+            "false" | "f" | "0" => Ok(Some(false)),
             other => Err(anyhow!(
-                "Invalid boolean for {name}: \"{other}\" (expected \"true\" or \"false\")"
+                "Invalid boolean for {name}: \"{other}\" (expected true/t/1 or false/f/0)"
             )),
         },
     }
@@ -825,18 +827,30 @@ mod tests {
     }
 
     #[test]
-    fn parse_bool_env_accepts_only_true_false() {
+    fn parse_bool_env_accepts_envsafe_aliases_and_rejects_typos() {
         let get = |raw: Option<&str>| parse_bool_env("X", raw.map(str::to_string));
         assert_eq!(
             [
                 get(None).unwrap(),
                 get(Some("true")).unwrap(),
-                get(Some("  FALSE ")).unwrap(),
+                get(Some("  T ")).unwrap(),
+                get(Some("1")).unwrap(),
+                get(Some("FALSE")).unwrap(),
+                get(Some("f")).unwrap(),
+                get(Some("0")).unwrap(),
             ],
-            [None, Some(true), Some(false)],
+            [
+                None,
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false)
+            ],
         );
-        assert!(get(Some("1")).is_err());
         assert!(get(Some("flase")).is_err());
+        assert!(get(Some("2")).is_err());
     }
 
     #[test]
