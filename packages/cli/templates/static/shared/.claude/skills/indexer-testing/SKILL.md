@@ -101,16 +101,14 @@ await indexer.EntityName.getAll();         // returns all entities of this type
 
 ## Test isolation
 
-Each `createTestIndexer()` gets its own isolated entity store, so independent
-indexers don't share entity state. Within one indexer, entity state and block
-progress persist across `process()` calls (each call continues where the last
-stopped).
+Each `createTestIndexer()` has its own entity store; within one indexer, entity
+state and block progress persist across `process()` calls (each continues where
+the last stopped).
 
-Tests run in-process (no per-test worker), so anything **module-level** in your
-handler code is shared across every indexer and every test in the file — and
-persists between them. This includes top-level `let`/`const` state, memoized
-clients, and effect caches. If a test depends on such state, reset it yourself
-(e.g. in a `beforeEach`); don't rely on `createTestIndexer()` to clear it.
+Tests run in-process, so **module-level** state in your handler code (top-level
+`let`/`const`, memoized clients, effect caches) is shared across every indexer
+and test in the file and persists between them. Reset it yourself (e.g. in a
+`beforeEach`) if a test depends on it.
 
 ## result.changes
 
