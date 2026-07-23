@@ -47,14 +47,17 @@ let pendingOnEventRegistrations =
 
 let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
-// Test-only: clear the intent store so a fresh registration cycle starts empty
-// (production starts each isolate empty and registers once).
-let resetOnEventRegistrations = () =>
+// Test-only: reset to fresh-import state so a new registration cycle starts
+// empty — clear the intent store and the active registration (production starts
+// each isolate empty and registers once).
+let resetOnEventRegistrations = () => {
   pendingOnEventRegistrations->Array.splice(
     ~start=0,
     ~remove=pendingOnEventRegistrations->Array.length,
     ~insert=[],
   )
+  EnvioGlobal.value.activeRegistration = None
+}
 
 let getActiveRegistration = () =>
   EnvioGlobal.value.activeRegistration->(Utils.magic: option<unknown> => option<activeRegistration>)
@@ -92,13 +95,12 @@ let startRegistration = (~config: Config.t) => {
     finished: false,
   }
   EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
-  while preRegistered->Array.length > 0 {
-    // Loop + cleanup in one go
-    switch preRegistered->Array.pop {
-    | Some(fn) => fn(r)
-    | None => ()
-    }
-  }
+  // Replay pre-registered callbacks in source (FIFO) order, then clear. For
+  // multiple handlers on one event this replay order is the dispatch order, so
+  // it must not reverse (which `Array.pop` would).
+  let queued = preRegistered->Array.copy
+  preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
+  queued->Array.forEach(fn => fn(r))
 }
 
 let getPendingChainRegistrations = (r: activeRegistration, ~chainId: int) => {

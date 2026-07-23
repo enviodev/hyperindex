@@ -474,6 +474,24 @@ chains:
 })
 
 describe("system config validation errors", () => {
+  it("rejects two events on one contract that the indexer can't tell apart", t => {
+    expectParseError(
+      t,
+      `
+name: duplicate-event
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    start_block: 0
+`,
+      "the indexer can't tell apart",
+    )
+  })
+
   it("preserves the root cause from nested Rust error contexts", t => {
     expectParseError(
       t,
@@ -804,6 +822,35 @@ chains:
 })
 
 describe("config YAML success cases", () => {
+  it("allows distinct events on one contract and the same event across contracts", t => {
+    // Distinct signatures on one contract are fine, and the same event on two
+    // different contracts is allowed — routing scopes matches by contract.
+    let {config} = MockIndexerConfig.parseYaml(`
+name: distinct-and-cross-contract-events
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Approval(address indexed owner, address indexed spender, uint256 value)
+  - name: ERC721
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+      - name: ERC721
+        address: "0x2222222222222222222222222222222222222222"
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.contracts->Array.length).toBe(2)
+  })
+
   it("parses a minimal Fuel config through the public boundary", t => {
     let {config} = MockIndexerConfig.parseYaml(`
 name: fuel-config
@@ -1013,6 +1060,17 @@ chains:
             - {name: Transfer, discriminator: "0x21"}
 `,
       "declares the instruction \"Transfer\" more than once",
+    ),
+    (
+      "rejects two instructions whose discriminators differ only in hex casing",
+      prefix ++ `
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: Transfer, discriminator: "0x0f"}
+            - {name: Withdraw, discriminator: "0x0F"}
+`,
+      "the indexer can't tell apart",
     ),
     (
       "rejects invalid discriminators",

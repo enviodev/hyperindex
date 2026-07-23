@@ -253,6 +253,22 @@ describe("HandlerRegister multiple registrations", () => {
     ).toEqual([(Some("h1"), None, 0)])
   })
 
+  it("replays pre-registered handlers in source order, not reversed", t => {
+    // Handlers imported before `startRegistration` are queued in `preRegistered`
+    // and replayed at start. That replay order is the dispatch order, so two
+    // handlers on one event must keep their source order (h1 before h2).
+    let h1 = makeHandler()
+    let h2 = makeHandler()
+    HandlerRegister.resetOnEventRegistrations()
+    setHandler(h1)
+    setHandler(h2)
+    HandlerRegister.startRegistration(~config)
+    let registrations = HandlerRegister.finishRegistration(~config)
+    t.expect(
+      registrations->describeRegistrations(~labels=[(h1, "h1"), (h2, "h2")], ~crLabels=[]),
+    ).toEqual([(Some("h1"), None, 0), (Some("h2"), None, 1)])
+  })
+
   it("excludes a where:false event but backfills a handler-less event for raw events", t => {
     // Transfer's handler opts out of the chain via `where: false` → excluded
     // entirely (no raw-events registration). Approval has no handler → with raw

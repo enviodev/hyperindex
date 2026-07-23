@@ -1936,9 +1936,12 @@ impl Contract {
                     let indexed_count = params.iter().filter(|p| p.indexed).count();
                     Some(format!("{}_{}", event.sighash, indexed_count))
                 }
+                // The router decodes the discriminator to bytes before matching,
+                // so `0x0f` and `0x0F` collide — lowercase before keying.
                 EventKind::Svm(svm) => Some(
                     svm.discriminator
-                        .clone()
+                        .as_ref()
+                        .map(|d| d.to_lowercase())
                         .unwrap_or_else(|| "none".to_string()),
                 ),
                 // Fuel routing dispatches by sighash (a `LogData` logId, or a
@@ -1951,9 +1954,8 @@ impl Contract {
                     seen_by_dispatch_key.insert(dispatch_key, event.name.clone())
                 {
                     return Err(anyhow!(
-                        "Duplicate event detected on contract {name}: {existing} and {} share the \
-                         same dispatch key, so they can't be told apart while indexing. Remove the \
-                         duplicate event.",
+                        "Contract {name} has two events the indexer can't tell apart: {existing} \
+                         and {}. Please remove one of them.",
                         event.name,
                     ));
                 }
@@ -2744,66 +2746,6 @@ mod test {
             filesystem.to_public_config_json(false).unwrap(),
             memory.to_public_config_json(false).unwrap(),
         );
-    }
-
-    #[test]
-    fn rejects_duplicate_event_on_same_contract() {
-        // Two events with the same signature on one contract are
-        // indistinguishable at routing time; parsing must reject them.
-        let yaml = r#"
-name: dup-event-test
-contracts:
-  - name: ERC20
-    events:
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-chains:
-  - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
-    start_block: 0
-    contracts:
-      - name: ERC20
-        address: "0x1111111111111111111111111111111111111111"
-"#;
-        let err = SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
-            .err()
-            .expect("expected a duplicate-event error");
-        assert!(
-            format!("{err:#}").contains("Duplicate event detected on contract ERC20"),
-            "unexpected error: {err:#}"
-        );
-    }
-
-    #[test]
-    fn allows_distinct_events_and_shared_signature_across_contracts() {
-        // Distinct signatures on one contract are fine, and the same signature
-        // on two different contracts is allowed (routing scopes by contract).
-        let yaml = r#"
-name: ok-events-test
-contracts:
-  - name: ERC20
-    events:
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-      - event: Approval(address indexed owner, address indexed spender, uint256 value)
-  - name: ERC721
-    events:
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-chains:
-  - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
-    start_block: 0
-    contracts:
-      - name: ERC20
-        address: "0x1111111111111111111111111111111111111111"
-      - name: ERC721
-        address: "0x2222222222222222222222222222222222222222"
-"#;
-        SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
-            .expect("config with distinct/cross-contract events should parse");
     }
 
     #[test]
