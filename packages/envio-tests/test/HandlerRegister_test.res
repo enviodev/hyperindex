@@ -50,8 +50,9 @@ chains:
         address: "0x1111111111111111111111111111111111111111"
 `).config
 
-// raw_events enabled, single chain. Used to verify a `where: false` event is
-// still captured for raw events via a bare (handler-less) registration.
+// raw_events enabled, single chain. Used to verify that a `where: false` event
+// is excluded entirely while a handler-less event still gets a bare raw-events
+// registration.
 let configWithRawEvents = MockIndexerConfig.parseYaml(`
 name: handler-register-raw-events
 raw_events: true
@@ -59,6 +60,7 @@ contracts:
   - name: ERC20
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 1
     rpc:
@@ -251,17 +253,22 @@ describe("HandlerRegister multiple registrations", () => {
     ).toEqual([(Some("h1"), None, 0)])
   })
 
-  it("captures raw events for a where:false event via a bare registration", t => {
-    // The handler opts out of the chain with `where: false`, so its handler is
-    // dropped — but with raw events enabled the event's logs are still fetched
-    // via a bare (handler-less) registration.
+  it("excludes a where:false event but backfills a handler-less event for raw events", t => {
+    // Transfer's handler opts out of the chain via `where: false` → excluded
+    // entirely (no raw-events registration). Approval has no handler → with raw
+    // events enabled it gets a bare (handler-less) registration.
     let h1 = makeHandler()
     HandlerRegister.resetOnEventRegistrations()
     HandlerRegister.startRegistration(~config=configWithRawEvents)
-    setHandler(~eventOptions={where: %raw(`() => false`)}, h1)
+    setHandler(~eventName="Transfer", ~eventOptions={where: %raw(`() => false`)}, h1)
     let registrations = HandlerRegister.finishRegistration(~config=configWithRawEvents)
-    t.expect(
-      registrations->describeRegistrations(~labels=[(h1, "h1")], ~crLabels=[]),
-    ).toEqual([(None, None, 0)])
+    t.expect((
+      registrations->describeRegistrations(
+        ~eventName="Transfer",
+        ~labels=[(h1, "h1")],
+        ~crLabels=[],
+      ),
+      registrations->describeRegistrations(~eventName="Approval", ~labels=[], ~crLabels=[]),
+    )).toEqual(([], [(None, None, 0)]))
   })
 })
