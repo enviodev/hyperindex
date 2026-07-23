@@ -34,7 +34,7 @@ let firstContract = (config: Config.t): Config.contract => {
   chain.contracts->Array.getUnsafe(0)
 }
 
-describe("InternalTestIndexer.fromUserApi", () => {
+describe("InternalTestIndexer.fromUserApi validation", () => {
   it("parses user YAML with explicit env and no project schema", t => {
     let env = Dict.fromArray([
       ("RPC_URL", "https://rpc.example.test"),

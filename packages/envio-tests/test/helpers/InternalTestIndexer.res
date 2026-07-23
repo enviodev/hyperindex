@@ -9,22 +9,23 @@ type parsed = {
 }
 
 // Parse the same YAML a user supplies, then cross the public JSON boundary used at runtime.
-// When `handlers` (TS source using `import {indexer} from "envio"`) is supplied, it's
-// type-checked against the config's generated types and any type error is thrown.
-let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~isRescript=false, ~configYaml): parsed => {
-  let publicConfigJson =
-    Core.parseConfigYaml(~schema?, ~env?, ~files?, ~isRescript, configYaml)->JSON.parseOrThrow
+// When `handlers` (TS source using `import {indexer} from "envio"`) is supplied, the same
+// parse also emits the generated types, and the handlers are type-checked against them;
+// any type error is thrown.
+let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~configYaml): parsed => {
+  let {config: configJson, indexerTypes} =
+    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes=handlers->Option.isSome, configYaml)
 
-  switch handlers {
-  | Some(handlers) =>
-    let typesDts = Core.generateIndexerTypes(~schema?, ~env?, ~files?, configYaml)
+  switch (handlers, indexerTypes->Null.toOption) {
+  | (Some(handlers), Some(typesDts)) =>
     switch checkHandlerTypes(typesDts, handlers) {
     | [] => ()
     | errors => JsError.throwWithMessage("Handler type errors:\n" ++ errors->Array.join("\n"))
     }
-  | None => ()
+  | _ => ()
   }
 
+  let publicConfigJson = configJson->JSON.parseOrThrow
   {
     publicConfigJson,
     config: Config.fromPublic(publicConfigJson),
