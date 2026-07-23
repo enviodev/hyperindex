@@ -387,10 +387,6 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
       let enumConfig = enumConfigsByName->Dict.get(enumName)->Option.getOrThrow
       (Table.Enum({config: enumConfig}), enumConfig.schema->S.toUnknown)
     }
-  | "entity" => {
-      let entityName = prop["entity"]->Option.getOrThrow
-      (Table.Entity({name: entityName}), S.string->S.toUnknown)
-    }
   | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
 

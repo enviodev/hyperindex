@@ -261,11 +261,14 @@ impl Schema {
                                     ))?,
                                     Some(field) => match field.field_type.get_underlying_scalar() {
                                         GqlScalar::Custom(name) if name == entity.name => (),
-                                        GqlScalar::ID | GqlScalar::String => (),
+                                        GqlScalar::ID
+                                        | GqlScalar::String
+                                        | GqlScalar::Int
+                                        | GqlScalar::BigInt(_) => (),
                                         _ => Err(anyhow!(
                                             "Derived field '{derived_from_field}' on entity \
-                                             '{name}' must either be an ID, String, or an Object \
-                                             relationship with Entity '{}'",
+                                             '{name}' must either be an ID, String, Int, BigInt, or \
+                                             an Object relationship with Entity '{}'",
                                             entity.name
                                         ))?,
                                     },
@@ -426,6 +429,42 @@ impl Entity {
                     "Found fields with duplicate names on Entity {name}: '{}'",
                     field.name
                 ));
+            }
+        }
+
+        // The `id` column and every foreign key that references it must share a
+        // type, and the storage/codegen layers only implement a fixed set of id
+        // scalars. Reject anything outside that set up front so the mismatch
+        // never reaches codegen.
+        if let Some(id_field) = fields.iter().find(|f| f.name == "id") {
+            match &id_field.field_type {
+                FieldType::DerivedFromField { .. } => {
+                    return Err(anyhow!(
+                        "The 'id' field on entity {name} cannot be a @derivedFrom field."
+                    ));
+                }
+                FieldType::RegularField { field_type, .. } => {
+                    if field_type.is_optional() {
+                        return Err(anyhow!(
+                            "The 'id' field on entity {name} must be non-nullable, e.g. 'id: ID!'."
+                        ));
+                    }
+                    if field_type.is_array() {
+                        return Err(anyhow!("The 'id' field on entity {name} cannot be a list."));
+                    }
+                    match field_type.get_underlying_scalar() {
+                        GqlScalar::ID
+                        | GqlScalar::String
+                        | GqlScalar::Int
+                        | GqlScalar::BigInt(_) => {}
+                        other => {
+                            return Err(anyhow!(
+                                "The 'id' field on entity {name} has unsupported type '{other}'. \
+                                 An entity id must be one of: ID, String, Int, BigInt."
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -595,6 +634,23 @@ impl Entity {
     /// Returns a field by name, if it exists.
     pub fn get_field(&self, name: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.name == name)
+    }
+
+    /// The scalar type of this entity's `id` field. Foreign keys that reference
+    /// this entity adopt this scalar, so the id and its `_id` columns stay the
+    /// same type. `Entity::new` validates the id is a supported non-derived
+    /// scalar, so this never resolves to a relation or derived field.
+    pub fn get_id_scalar(&self) -> anyhow::Result<GqlScalar> {
+        let id_field = self
+            .get_field("id")
+            .ok_or_else(|| anyhow!("Entity {} is missing an 'id' field", self.name))?;
+        match &id_field.field_type {
+            FieldType::RegularField { field_type, .. } => Ok(field_type.get_underlying_scalar()),
+            FieldType::DerivedFromField { .. } => Err(anyhow!(
+                "Entity {} has a derived 'id' field, which is unsupported",
+                self.name
+            )),
+        }
     }
 
     pub fn get_relationships(&self) -> Vec<Relationship> {
@@ -1843,7 +1899,12 @@ impl GqlScalar {
             }
             GqlScalar::Timestamp => PGPrimitive::Date,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
-                TypeDef::Entity(_) => PGPrimitive::Entity(name.clone()),
+                // A relation stores the referenced entity's id, so the foreign
+                // key column takes that id's Postgres type. `linked_entity`
+                // still marks it as a relation for the `_id` suffix and Hasura.
+                TypeDef::Entity(entity) => entity
+                    .get_id_scalar()?
+                    .to_underlying_postgres_primitive(schema)?,
                 TypeDef::Enum => PGPrimitive::Enum(name.clone()),
             },
         };
@@ -1863,7 +1924,9 @@ impl GqlScalar {
             GqlScalar::Boolean => TypeIdent::Bool,
             GqlScalar::Timestamp => TypeIdent::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
-                TypeDef::Entity(_) => TypeIdent::ID,
+                // A foreign key adopts the referenced entity's id type so the
+                // relation is keyed on matching types on both sides.
+                TypeDef::Entity(entity) => entity.get_id_scalar()?.to_rescript_type(schema)?,
                 TypeDef::Enum => TypeIdent::SchemaEnum(name.to_capitalized_options()),
             },
         };
@@ -1979,15 +2042,47 @@ mod tests {
 
     #[test]
     fn gql_type_to_rescript_type_entity() {
-        let test_entity_string = String::from("TestEntity");
-        let test_entity =
-            Entity::new(&test_entity_string, vec![], vec![], None, None, None).unwrap();
-        let schema = Schema::new(vec![test_entity], vec![]).unwrap();
-        let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
-            .to_rescript_type(&schema)
-            .expect("expected rescript type string");
+        // A relation resolves to the referenced entity's id rescript type. A
+        // String-id target yields `string`, an Int-id target yields `int`.
+        let schema_str = r#"
+type Referencer {
+  id: ID!
+  stringRelated: StringEntity
+  numericRelated: NumericEntity!
+}
 
-        assert_eq!(rescript_type.to_string(), "option<id>".to_owned());
+type StringEntity {
+  id: ID!
+}
+
+type NumericEntity {
+  id: Int!
+}
+        "#;
+        let schema = Schema::from_string(schema_str).unwrap();
+        let referencer = schema.entities.get("Referencer").unwrap();
+
+        // A String-id relation renders through the shared `id` alias, a numeric
+        // relation renders as the concrete scalar.
+        let string_related = referencer.get_field("stringRelated").unwrap();
+        assert_eq!(
+            string_related
+                .field_type
+                .to_rescript_type(&schema)
+                .unwrap()
+                .to_string(),
+            "option<id>".to_owned()
+        );
+
+        let numeric_related = referencer.get_field("numericRelated").unwrap();
+        assert_eq!(
+            numeric_related
+                .field_type
+                .to_rescript_type(&schema)
+                .unwrap()
+                .to_string(),
+            "int".to_owned()
+        );
     }
 
     #[test]
@@ -2195,15 +2290,24 @@ type TestEntity {
 type TestEntity {
   id: ID!
   relatedEntity: RelatedEntity!
+  numericRelated: NumericEntity!
 }
 
 type RelatedEntity {
   id: ID!
 }
+
+type NumericEntity {
+  id: Int!
+}
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
         let schema = Schema::from_document(gql_doc).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
+
+        // A foreign key adopts the referenced entity's id type. A String-id
+        // relation stays String, while an Int-id relation becomes Int32 — both
+        // still carry `linked_entity` for the `_id` naming and Hasura relation.
         let field = entity.get_field("relatedEntity").unwrap();
         let pg_field = field
             .get_postgres_field(&schema, entity)
@@ -2211,14 +2315,23 @@ type RelatedEntity {
             .unwrap();
 
         assert_eq!(pg_field.field_name, "relatedEntity");
-        assert_eq!(
-            pg_field.field_type,
-            PGPrimitive::Entity("RelatedEntity".to_string())
-        );
+        assert_eq!(pg_field.field_type, PGPrimitive::String);
         assert!(!pg_field.is_index);
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);
         assert_eq!(pg_field.linked_entity, Some("RelatedEntity".to_string()));
+
+        let numeric_field = entity.get_field("numericRelated").unwrap();
+        let numeric_pg_field = numeric_field
+            .get_postgres_field(&schema, entity)
+            .expect("Failed to get postgres field")
+            .unwrap();
+
+        assert_eq!(numeric_pg_field.field_type, PGPrimitive::Int32);
+        assert_eq!(
+            numeric_pg_field.linked_entity,
+            Some("NumericEntity".to_string())
+        );
     }
 
     #[test]

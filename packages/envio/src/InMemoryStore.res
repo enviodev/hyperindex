@@ -45,7 +45,10 @@ let setEffectOutput = (
   | Some(_) => ()
   | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
   }
-  inMemTable.dict->Dict.set(cacheKey, Set({entityId: cacheKey, entity: output, checkpointId}))
+  inMemTable.dict->Dict.set(
+    cacheKey,
+    Set({entityId: cacheKey->EntityId.unsafeOfString, entity: output, checkpointId}),
+  )
   if shouldCache {
     inMemTable.idsToStore->Array.push(cacheKey)->ignore
   }
@@ -58,7 +61,11 @@ let initEffectOutputFromDb = (inMemTable: EffectState.effectCacheInMemTable, ~ca
     inMemTable.changesCount = inMemTable.changesCount +. 1.
     inMemTable.dict->Dict.set(
       cacheKey,
-      Set({entityId: cacheKey, entity: output, checkpointId: Internal.loadedFromDbCheckpointId}),
+      Set({
+        entityId: cacheKey->EntityId.unsafeOfString,
+        entity: output,
+        checkpointId: Internal.loadedFromDbCheckpointId,
+      }),
     )
   }
 
@@ -115,7 +122,7 @@ let prepareRollbackDiff = async (
       entityTable->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Delete({
-          entityId,
+          entityId: entityId->EntityId.unsafeOfString,
           checkpointId: rollbackDiffCheckpointId,
         }),
       )
@@ -131,7 +138,7 @@ let prepareRollbackDiff = async (
       entityTable->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Set({
-          entityId: entity.id,
+          entityId: entity.id->EntityId.unsafeOfString,
           checkpointId: rollbackDiffCheckpointId,
           entity,
         }),
@@ -177,7 +184,7 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
           inMemTable->InMemoryTable.Entity.set(
             ~committedCheckpointId,
             Set({
-              entityId: entity.id,
+              entityId: entity.id->EntityId.unsafeOfString,
               checkpointId,
               entity: entity->InternalTable.EnvioAddresses.castToInternal,
             }),

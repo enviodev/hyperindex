@@ -728,9 +728,6 @@ impl SystemConfig {
                                 Primitive::Enum(name) => {
                                     ("enum".into(), Some(name.clone()), None, None, None)
                                 }
-                                Primitive::Entity(name) => {
-                                    ("entity".into(), None, Some(name.clone()), None, None)
-                                }
                             };
                         let db_name_for =
                             |backend: Option<system_config::StorageBackend>| match backend

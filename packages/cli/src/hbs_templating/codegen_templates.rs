@@ -88,6 +88,8 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
 fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     let mut code = String::new();
 
+    // The default id type. `ID!`/`String!` ids and the foreign keys that
+    // reference them render as this alias; numeric ids render as int/bigint.
     writeln!(code, "type id = string").unwrap();
 
     for entity in entities {
@@ -2307,18 +2309,16 @@ type testIndexer = {{
                         .iter()
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
+                            // Foreign keys take the referenced entity's id type
+                            // (already resolved into field_type), exposed under
+                            // the `_id` column name.
                             let ts_type = param.field_type.to_ts_type_string();
-                            let (field_name, field_type) = if param.is_entity_field {
-                                let base_type = if param.field_type.is_option() {
-                                    "string | undefined".to_string()
-                                } else {
-                                    "string".to_string()
-                                };
-                                (format!("{}_id", param.field_name.original), base_type)
+                            let field_name = if param.is_entity_field {
+                                format!("{}_id", param.field_name.original)
                             } else {
-                                (param.field_name.original.clone(), ts_type)
+                                param.field_name.original.clone()
                             };
-                            format!("    readonly \"{}\": {};", field_name, field_type)
+                            format!("    readonly \"{}\": {};", field_name, ts_type)
                         })
                         .collect();
                     format!(

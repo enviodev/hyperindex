@@ -360,7 +360,7 @@ type entityHandlerContext<'entity> = {
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
-  deleteUnsafe: string => unit,
+  deleteUnsafe: EntityId.t => unit,
 }
 
 type chainInfo = {
