@@ -353,6 +353,72 @@ let makeCreateHistoryTableQuery = (
     }
   })
 
+  let (partitionBy, orderBy, ttl) = switch entityConfig.storage.clickhouseOptions {
+  | Some(options) => (options.partitionBy, options.orderBy, options.ttl)
+  | None => (None, None, None)
+  }
+
+  // Schema field name -> ClickHouse column name, so @storage(clickhouse: {...})
+  // options can reference fields the way they're written in the schema and get
+  // renames (`column_name_format: snake_case`) and linked-entity `_id` suffixes
+  // resolved here.
+  let columnByFieldName = Dict.make()
+  entityConfig.table.fields->Array.forEach(field =>
+    switch field {
+    | Field(f) => columnByFieldName->Dict.set(f.fieldName, f->Table.getClickHouseDbFieldName)
+    | DerivedFrom(_) => ()
+    }
+  )
+
+  let orderByColumns = switch orderBy {
+  | Some(fieldNames) =>
+    // envio_checkpoint_id stays appended so the sorting key keeps a
+    // deterministic tie-break and the view's checkpoint dedup gets a clean
+    // ascending run per prefix. id is dropped: ClickHouse entities are
+    // read-only, so nothing looks history rows up by id.
+    let userColumns =
+      fieldNames
+      ->Array.map(fieldName =>
+        switch columnByFieldName->Dict.get(fieldName) {
+        | Some(column) => `\`${column}\``
+        | None =>
+          // Validated at codegen, so a miss means the schema and the
+          // persisted config diverged.
+          JsError.throwWithMessage(
+            `ClickHouse orderBy field "${fieldName}" is not defined on entity "${entityConfig.name}"`,
+          )
+        }
+      )
+      ->Array.joinUnsafe(", ")
+    `${userColumns}, ${EntityHistory.checkpointIdFieldName}`
+  | None => `${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName}`
+  }
+
+  // partitionBy/ttl are raw ClickHouse expressions. Rewrite any bare identifier
+  // that names an entity field to that field's ClickHouse column, leaving
+  // functions, keywords, numbers, string literals and already-backticked
+  // identifiers untouched (a quoted token never matches a bare field name).
+  let resolveExpressionColumns = expression =>
+    expression->String.replaceRegExpBy0Unsafe(/'[^']*'|`[^`]*`|[A-Za-z_][A-Za-z0-9_]*/g, (
+      ~match,
+      ~offset as _,
+      ~input as _,
+    ) =>
+      switch columnByFieldName->Dict.get(match) {
+      | Some(column) => `\`${column}\``
+      | None => match
+      }
+    )
+
+  let partitionByClause = switch partitionBy {
+  | Some(expression) => `\nPARTITION BY ${expression->resolveExpressionColumns}`
+  | None => ""
+  }
+  let ttlClause = switch ttl {
+  | Some(expression) => `\nTTL ${expression->resolveExpressionColumns}`
+  | None => ""
+  }
+
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
@@ -369,8 +435,8 @@ let makeCreateHistoryTableQuery = (
       ~isArray=false,
     )}
 )
-ENGINE = ${tableEngine}
-ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+ENGINE = ${tableEngine}${partitionByClause}
+ORDER BY (${orderByColumns})${ttlClause}`
 }
 
 // Generate CREATE TABLE query for checkpoints

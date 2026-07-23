@@ -10,16 +10,14 @@ use crate::{
         human_config::HumanConfig,
         system_config::{get_envio_version, SystemConfig},
     },
-    hbs_templating::{
-        contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
-        init_templates::InitTemplates,
-    },
+    hbs_templating::{contract_import_templates, init_templates::InitTemplates},
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
     utils::file_system,
 };
 use anyhow::{Context, Result};
 
+use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 
@@ -258,7 +256,7 @@ pub async fn run_init_args(
         _ => vec![],
     };
 
-    let hbs_template = InitTemplates::new(
+    let init_template = InitTemplates::new(
         init_config.name.clone(),
         &init_config.language,
         envio_version.clone(),
@@ -266,15 +264,14 @@ pub async fn run_init_args(
         extra_dependencies,
     );
 
-    let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
-
-    let hbs_generator = HandleBarsDirGenerator::new(
-        &init_shared_template_dir,
-        &hbs_template,
-        &parsed_project_paths.project_root,
-    );
-
-    hbs_generator.generate_hbs_templates()?;
+    let project_root = &parsed_project_paths.project_root;
+    fs::write(project_root.join(".env"), init_template.render_env())
+        .context("Failed writing .env")?;
+    fs::write(
+        project_root.join("package.json"),
+        init_template.render_package_json(),
+    )
+    .context("Failed writing package.json")?;
 
     println!("Project template ready");
     println!("Running codegen");
