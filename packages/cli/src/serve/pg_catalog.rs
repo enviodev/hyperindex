@@ -3,6 +3,7 @@
 
 use anyhow::Context;
 use std::collections::HashMap;
+use tokio_postgres::types::{ToSql, Type};
 
 pub struct Catalog {
     /// Tables and views in the target schema, keyed by relation name.
@@ -43,8 +44,14 @@ pub async fn introspect(
 ) -> anyhow::Result<Catalog> {
     let client = pool.get().await.context("Failed acquiring PG connection")?;
 
+    // Unnamed extended-protocol statements (`query_typed`), never named
+    // prepared ones: startup introspection must survive a transaction-mode
+    // pooler too, not just the root-query path. `$1` is bound as NAME to match
+    // the `nspname` column type exactly, as server type inference would.
+    let schema_param: &[(&(dyn ToSql + Sync), Type)] = &[(&pg_schema, Type::NAME)];
+
     let column_rows = client
-        .query(
+        .query_typed(
             r#"
             SELECT
               c.relname::text AS table_name,
@@ -75,13 +82,13 @@ pub async fn introspect(
             WHERE n.nspname = $1 AND c.relkind IN ('r', 'v', 'm')
             ORDER BY c.relname, a.attnum
             "#,
-            &[&pg_schema],
+            schema_param,
         )
         .await
         .context("Failed querying pg_catalog for columns")?;
 
     let pk_rows = client
-        .query(
+        .query_typed(
             r#"
             SELECT c.relname::text AS table_name, a.attname::text AS column_name, k.ordinality
             FROM pg_index i
@@ -92,7 +99,7 @@ pub async fn introspect(
             WHERE n.nspname = $1 AND i.indisprimary
             ORDER BY c.relname, k.ordinality
             "#,
-            &[&pg_schema],
+            schema_param,
         )
         .await
         .context("Failed querying pg_catalog for primary keys")?;
