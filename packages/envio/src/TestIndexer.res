@@ -366,6 +366,17 @@ let parseBlockRange = (
   {startBlock, endBlock}
 }
 
+// The store owns its entities. Copy on the boundary with user code — both when
+// handing one out (get/getAll/getOrThrow) and when taking one in (set) — so a
+// user mutating a returned entity, or an object they passed to `set`, can't
+// corrupt the in-memory store. Shallow is enough: entity fields are immutable
+// scalar values (string/bigint/BigDecimal), matching InMemoryTable.
+let copyEntity = (entity: Internal.entity): Internal.entity =>
+  entity
+  ->(Utils.magic: Internal.entity => dict<unknown>)
+  ->Utils.Dict.shallowCopy
+  ->(Utils.magic: dict<unknown> => Internal.entity)
+
 // Entity operations for direct manipulation outside of handlers
 let getEntityFromState = (
   ~state: testIndexerState,
@@ -379,7 +390,7 @@ let getEntityFromState = (
     )
   }
   let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-  entityDict->Dict.get(entityId)
+  entityDict->Dict.get(entityId)->Option.map(copyEntity)
 }
 
 let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
@@ -422,7 +433,7 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
       state.entities->Dict.set(entityConfig.name, dict)
       dict
     }
-    entityDict->Dict.set(entity.id, entity)
+    entityDict->Dict.set(entity.id, copyEntity(entity))
   }
 }
 
@@ -436,7 +447,7 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
       )
     }
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    Promise.resolve(entityDict->Dict.valuesToArray)
+    Promise.resolve(entityDict->Dict.valuesToArray->Array.map(copyEntity))
   }
 }
 
@@ -450,17 +461,20 @@ type entityOperations = {
 // Adapt the real storage interface to the in-memory entity store. In-process
 // there's no worker boundary, so entities are stored and loaded decoded — no
 // JSON serialization round-trip.
-let makeInMemoryStorage = (
-  ~state: testIndexerState,
-  ~getInitialState: unit => Persistence.initialState,
-): Persistence.storage => {
+let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
   isInitialized: async () => true,
+  // The runner injects the config-derived initial state by setting
+  // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
+  // so neither of these is reached.
   initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?, ~envioInfo as _) =>
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async () => getInitialState(),
+  resumeInitialState: async () =>
+    JsError.throwWithMessage(
+      "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
+    ),
   loadOrThrow: async (~filter, ~table: Table.table) =>
     state
     ->handleLoad(~tableName=table.tableName, ~filter)
@@ -535,12 +549,7 @@ let getRegistrations = (~config) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
-    let promise = HandlerLoader.registerAllHandlers(~config)->Promise.thenResolve(registrations => {
-      // Reopen the registration API for tests that call indexer.onEvent /
-      // contractRegister after a run has captured its registrations.
-      HandlerRegister.clearActiveRegistration()
-      registrations
-    })
+    let promise = HandlerLoader.registerAllHandlers(~config)
     registrationsRef := Some(promise)
     promise
   }
@@ -584,14 +593,10 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
       processChanges: [],
     }
 
-    // Per-instance in-memory storage over `state.entities`. `process()` runs are
-    // sequential within one indexer, so a single ref carries the current run's
-    // config-derived initial state; separate indexers get separate storages, so
-    // independent indexers run in parallel without shared mutable state.
-    let currentInitialState: ref<option<Persistence.initialState>> = ref(None)
-    let storage = makeInMemoryStorage(~state, ~getInitialState=() =>
-      currentInitialState.contents->Option.getOrThrow
-    )
+    // Per-instance in-memory storage over `state.entities`. Separate indexers
+    // get separate storages, so independent indexers run in parallel without
+    // shared mutable state.
+    let storage = makeInMemoryStorage(~state)
     let persistence = Persistence.make(
       ~userEntities=config.userEntities,
       ~allEnums=config.allEnums,
@@ -817,7 +822,6 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
             // Bypass Persistence.init: hand the loop the config-derived initial
             // state directly (never a real DB) and mark the storage Ready so
             // writes go through.
-            currentInitialState := Some(initialState)
             persistence.storageStatus = Ready(initialState)
 
             let indexerStateRef = ref(None)
@@ -831,34 +835,34 @@ let makeCreateTestIndexer = (~config: Config.t): (unit => t<'processConfig>) => 
                   indexerState->IndexerState.isProcessing ||
                     indexerState->IndexerState.writeFiber->Option.isSome
                 ) {
-                  await Utils.delay(0)
+                  switch indexerState->IndexerState.writeFiber {
+                  // Await the in-flight write directly; only fall back to a tick
+                  // yield while processing hasn't yet spawned a write fiber.
+                  | Some(fiber) => await fiber
+                  | None => await Utils.delay(0)
+                  }
                 }
               | None => ()
               }
             }
             try {
-              // Run inside the handler scope so a handler that calls
-              // indexer.onEvent throws, as in production, without finishing the
-              // process-global registration the test itself uses.
-              await HandlerRegister.runInHandlerScope(() =>
-                Promise.make((resolve, reject) => {
-                  let indexerState = IndexerState.makeFromDbState(
-                    ~config=runConfig,
-                    ~persistence,
-                    ~initialState,
-                    ~registrationsByChainId,
-                    ~exitAfterFirstEventBlock,
-                    ~onError=errHandler => {
-                      errHandler->ErrorHandling.log
-                      reject(errHandler.exn->Utils.prettifyExn)
-                    },
-                    // Caught up: resolve the run instead of exiting the process.
-                    ~onExit=() => resolve(),
-                  )
-                  indexerStateRef := Some(indexerState)
-                  indexerState->IndexerLoop.start
-                })
-              )
+              await Promise.make((resolve, reject) => {
+                let indexerState = IndexerState.makeFromDbState(
+                  ~config=runConfig,
+                  ~persistence,
+                  ~initialState,
+                  ~registrationsByChainId,
+                  ~exitAfterFirstEventBlock,
+                  ~onError=errHandler => {
+                    errHandler->ErrorHandling.log
+                    reject(errHandler.exn->Utils.prettifyExn)
+                  },
+                  // Caught up: resolve the run instead of exiting the process.
+                  ~onExit=() => resolve(),
+                )
+                indexerStateRef := Some(indexerState)
+                indexerState->IndexerLoop.start
+              })
               await cleanup()
             } catch {
             | exn =>

@@ -129,6 +129,40 @@ expectType<
   >
 >(true);
 
+// Type-only surface checks for the registration API. Guarded by `if (0)` so
+// tsc validates them but they never execute: invalid contract/event combos must
+// stay compile errors, and these must not register real handlers.
+if (0) {
+  indexer.onEvent(
+    // @ts-expect-error - "BadContract" is not a configured contract
+    { contract: "BadContract", event: "X" },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - "BadEvent" is not an event of Gravatar
+    { contract: "Gravatar", event: "BadEvent" },
+    async () => {},
+  );
+  indexer.onEvent(
+    { contract: "Gravatar", event: "NewGravatar" },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.params.displayName, string>>(true);
+    },
+  );
+  indexer.contractRegister(
+    { contract: "NftFactory", event: "SimpleNftCreated" },
+    async ({ event, context }) => {
+      expectType<
+        TypeEqual<typeof event.params.contractAddress, `0x${string}`>
+      >(true);
+      context.chain.SimpleNft.add(event.params.contractAddress);
+      context.chain.NftFactory.add(event.params.contractAddress);
+      // @ts-expect-error - UnknownContract is not configured
+      context.chain.UnknownContract.add(event.params.contractAddress);
+    },
+  );
+}
+
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
