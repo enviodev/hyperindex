@@ -97,7 +97,6 @@ let getErrorMessage = (exn: exn): option<string> =>
   | _ => None
   }
 
-
 // `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
 // payload describing the retry decision:
 // `{"kind":"Retry","attemptedToBlock":int,"errorMessage":string|null,
@@ -647,9 +646,7 @@ let make = (
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -839,6 +836,7 @@ let make = (
       partitionId,
       registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       addressesByContractName,
+      clientSideFilteredContracts: selection.clientSideFilteredContracts,
     }) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {
@@ -879,63 +877,64 @@ let make = (
         onEventRegistration.eventConfig->(
           Utils.magic: Internal.eventConfig => Internal.evmEventConfig
         )
+
       (
         async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
-                  log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
-                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
-                    ),
-                  ),
-                )) catch {
-                | TransactionDataNotFound({message}) =>
-                  let backoffMillis = switch retry {
-                  | 0 => 100
-                  | _ => 500 * retry
-                  }
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn: %raw(`null`),
-                        attemptedToBlock: toBlock,
-                        retry: WithBackoff({
-                          message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                          backoffMillis,
-                        }),
-                      }),
-                    ),
-                  )
-                | exn =>
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber: log.blockNumber,
-                        logIndex: log.logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                Internal.Event({
-                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-                  blockNumber: block->getBlockNumber,
-                  chain,
+          let (block, transaction) = try await Promise.all2((
+            log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
+            log->getEventTransactionOrThrow(
+              ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+              ),
+            ),
+          )) catch {
+          | TransactionDataNotFound({message}) =>
+            let backoffMillis = switch retry {
+            | 0 => 100
+            | _ => 500 * retry
+            }
+            throw(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: toBlock,
+                  retry: WithBackoff({
+                    message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                    backoffMillis,
+                  }),
+                }),
+              ),
+            )
+          | exn =>
+            throw(
+              Source.GetItemsError(
+                FailedGettingFieldSelection({
+                  message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                  exn,
+                  blockNumber: log.blockNumber,
                   logIndex: log.logIndex,
-                  transactionIndex: log.transactionIndex,
-                  payload: {
-                    contractName: eventConfig.contractName,
-                    eventName: eventConfig.name,
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded,
-                    block,
-                    transaction,
-                    srcAddress: log.address,
-                    logIndex: log.logIndex,
-                  }->Evm.fromPayload,
-                })
+                }),
+              ),
+            )
+          }
+
+          Internal.Event({
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+            blockNumber: block->getBlockNumber,
+            chain,
+            logIndex: log.logIndex,
+            transactionIndex: log.transactionIndex,
+            payload: {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              chainId: chain->ChainMap.Chain.toChainId,
+              params: decoded,
+              block,
+              transaction,
+              srcAddress: log.address,
+              logIndex: log.logIndex,
+            }->Evm.fromPayload,
+          })
         }
       )()
     })

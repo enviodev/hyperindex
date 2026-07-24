@@ -57,6 +57,7 @@ let decodeLogs = async (
         partitionId: "0",
         registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
         addressesByContractName,
+        clientSideFilteredContracts: None,
       })
       items
     },

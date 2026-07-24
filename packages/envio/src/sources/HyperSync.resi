@@ -35,6 +35,7 @@ module GetLogs: {
     ~maxNumLogs: int,
     ~registrationIndexes: array<int>,
     ~addressesByContractName: dict<array<Address.t>>,
+    ~clientSideFilteredContracts: option<array<string>>,
   ) => promise<logsQueryPage>
 }
 

@@ -1,6 +1,5 @@
 open Source
 
-
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
 // check so it can't silently drift away from what getHeightOrThrow guards on.
@@ -46,9 +45,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -110,6 +107,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~maxNumLogs=itemsTarget,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressesByContractName,
+      ~clientSideFilteredContracts=selection.clientSideFilteredContracts,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(
@@ -180,8 +178,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
     pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration =
-        onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
       ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
       ->ignore
