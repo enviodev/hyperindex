@@ -296,7 +296,9 @@ impl SvmHyperSyncClient {
                 .map_err(map_err)?,
             instructions: built.instruction_selections.clone(),
             field_selection,
-            max_num_instructions: usize::try_from(params.max_num_instructions).ok(),
+            max_num_instructions: params
+                .max_num_instructions
+                .and_then(|v| usize::try_from(v).ok()),
             ..Default::default()
         };
 
@@ -350,7 +352,8 @@ pub struct EventItemsQuery {
     pub from_slot: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_slot: Option<i64>,
-    pub max_num_instructions: i64,
+    /// `None` sends no server-side cap on the number of instructions returned.
+    pub max_num_instructions: Option<i64>,
     pub registration_indexes: Vec<i64>,
     pub addresses_by_contract_name: HashMap<String, Vec<String>>,
 }

@@ -38,7 +38,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ),
       ~fromBlock=12403138,
       ~toBlock=Some(12403139),
-      ~maxNumLogs=5000,
+      ~maxNumLogs=Some(5000),
       ~registrationIndexes=[0],
       ~addressesByContractName=Dict.make(),
       ~clientFilteredContracts=None,

@@ -768,7 +768,11 @@ let executeQuery = async (
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection,
-        ~itemsTarget=query.itemsTarget,
+        // Bounded chunk queries send no server cap: their toBlock is already the
+        // hard bound, and with client-side address filtering the server counts
+        // filtered-out items toward the cap, truncating the range short and
+        // opening gaps. Everything else keeps its cap.
+        ~itemsTarget=query.isChunk && query.toBlock->Option.isSome ? None : Some(query.itemsTarget),
         ~retry,
         ~logger,
       )

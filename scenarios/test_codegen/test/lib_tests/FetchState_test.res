@@ -4724,11 +4724,12 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
 })
 
 describe("Response density and source range capacity update independently", () => {
-  // Source range capacity 300 with a pending chunk truncated at block 90: when
-  // the truncation was caused by our own itemsTarget cap it says nothing about
-  // server capacity, so the 300 history must survive. Its items/block ratio is
-  // still current density evidence and is blended 1:1 with the stored density.
-  // A sub-cap partial updates both signals.
+  // Source range capacity 300 with a bounded query truncated at block 90: for a
+  // non-chunk query the truncation may be our own itemsTarget cap, which says
+  // nothing about server capacity, so the 300 history must survive. Bounded
+  // chunks send no cap, so their partial responses are always genuine capacity
+  // evidence. Either way the items/block ratio is current density evidence,
+  // blended 1:1 with the stored density.
   let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
   let addressesByContractName = Dict.fromArray([("MockContract", [mockAddress0])])
 
@@ -4769,23 +4770,25 @@ describe("Response density and source range capacity update independently", () =
     clientFilterAddressThreshold: None,
   }
 
-  let chunkQuery: FetchState.query = {
+  let makeQuery = (~isChunk): FetchState.query => {
     partitionId: "0",
     fromBlock: 1,
     toBlock: Some(540),
-    isChunk: true,
+    isChunk,
     itemsTarget: 3,
     itemsEst: 3,
     selection: normalSelection,
     addressesByContractName,
   }
+  let chunkQuery = makeQuery(~isChunk=true)
 
-  let runPartialResponse = (~itemsCount, ~eventDensity=Some(1.)) => {
+  let runPartialResponse = (~itemsCount, ~eventDensity=Some(1.), ~isChunk=true) => {
+    let query = makeQuery(~isChunk)
     let fetchState = makeFetchState(~eventDensity)
-    fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
+    fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updated =
       fetchState->FetchState.handleQueryResult(
-        ~query=chunkQuery,
+        ~query,
         ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
         ~newItems=Array.fromInitializer(~length=itemsCount, i =>
           mockEvent(~blockNumber=10, ~logIndex=i)
@@ -4796,13 +4799,24 @@ describe("Response density and source range capacity update independently", () =
   }
 
   it("updates density on every response but preserves capacity on a cap hit", t => {
+    // A non-chunk bounded query still sends its itemsTarget cap, so a response
+    // hitting it (itemsCount == itemsTarget) preserves the 300 capacity history.
     t.expect({
-      "capHit": runPartialResponse(~itemsCount=3),
-      "subCap": runPartialResponse(~itemsCount=2),
+      "capHit": runPartialResponse(~itemsCount=3, ~isChunk=false),
+      "subCap": runPartialResponse(~itemsCount=2, ~isChunk=false),
     }).toEqual({
       "capHit": (Some(300), Some((1. +. 3. /. 90.) /. 2.)),
       "subCap": (Some(90), Some((1. +. 2. /. 90.) /. 2.)),
     })
+  })
+
+  it("trusts a bounded chunk's partial response as capacity — it sends no cap", t => {
+    // Bounded chunks carry no server cap, so a partial response is genuine
+    // capacity evidence even when itemsCount reaches what a cap would have been.
+    t.expect(runPartialResponse(~itemsCount=3, ~isChunk=true)).toEqual((
+      Some(90),
+      Some((1. +. 3. /. 90.) /. 2.),
+    ))
   })
 
   it("trusts cap-hit density before source capacity is known", t => {

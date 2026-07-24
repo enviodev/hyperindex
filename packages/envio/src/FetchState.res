@@ -549,7 +549,9 @@ module OptimizedPartitions = {
             // Partial response is direct capacity evidence — unless it was
             // truncated by our own itemsTarget cap: that reflects the
             // reservation we asked for, not what the server could return.
-            itemsCount < query.itemsTarget
+            // Bounded chunks send no cap (see SourceManager), so their partial
+            // responses are always genuine source-capacity evidence.
+            query.isChunk || itemsCount < query.itemsTarget
           } else {
             // A full response updates only when the query's intended range
             // covers at least the partition's current chunk range — meaning it

@@ -100,7 +100,7 @@ let make = (
     let query: SvmHyperSyncClient.EventItems.query = {
       fromSlot: fromBlock,
       toSlot: toBlock,
-      maxNumInstructions: itemsTarget,
+      maxNumInstructions: ?itemsTarget,
       registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       addressesByContractName,
     }
