@@ -71,6 +71,15 @@ describe("Non-string entity id support", () => {
     )).toEqual(("Int32", "Decimal(20,0)"))
   })
 
+  it("degrades an unbounded BigInt id to a ClickHouse String column", t => {
+    // A BigInt without precision has no Decimal width, so ClickHouse falls back
+    // to String. This is expected (lexicographic ORDER BY) — pin it so the
+    // fallback isn't silently changed.
+    t.expect(
+      ClickHouse.getClickHouseFieldType(~fieldType=BigInt({}), ~isNullable=false, ~isArray=false),
+    ).toBe("String")
+  })
+
   it("serializes a history set update keeping the numeric id value", t => {
     let entitySchema =
       S.object(s =>
@@ -99,6 +108,29 @@ describe("Non-string entity id support", () => {
     )
   })
 })
+
+// Compile-time proof that the generated user-facing API keys each entity's
+// operations by its real id scalar. These functions are type-checked, never
+// run: `IntIdEntity` id is `int`, `BigIntIdEntity` id is `bigint`, and its
+// foreign key `numericRef_id` adopts the referenced `Int` id. Passing a string
+// where a numeric id is expected would fail to compile.
+let _handlerContextKeysOpsByIdScalar = async (context: Indexer.handlerContext) => {
+  context.\"IntIdEntity".set({id: 1, value: "x"})
+  let _: option<Indexer.Entities.IntIdEntity.t> = await context.\"IntIdEntity".get(1)
+  let _ = await context.\"IntIdEntity".getOrThrow(1)
+  context.\"IntIdEntity".deleteUnsafe(1)
+
+  context.\"BigIntIdEntity".set({id: 1n, numericRef_id: 2})
+  let _ = await context.\"BigIntIdEntity".get(1n)
+  context.\"BigIntIdEntity".deleteUnsafe(1n)
+}
+
+let _testIndexerKeysOpsByIdScalar = async (indexer: Indexer.testIndexer) => {
+  let _: option<Indexer.Entities.IntIdEntity.t> = await indexer.\"IntIdEntity".get(1)
+  let _ = await indexer.\"IntIdEntity".getOrThrow(1)
+  indexer.\"IntIdEntity".set({id: 1, value: "x"})
+  let _ = await indexer.\"BigIntIdEntity".get(1n)
+}
 
 // End-to-end coverage through the in-process test indexer + Postgres: a schema
 // with Int!/BigInt! ids and foreign keys referencing them, driven by a real
@@ -193,5 +225,83 @@ chains:
       [{id: 137}],
       [{id: "v1", chainId: 137, bigId: 999n}],
     ))
+  })
+})
+
+// A ClickHouse entity keyed by a BigInt id must set a numeric precision:
+// ClickHouse stores an unbounded (or over-precision) BigInt as a String, and an
+// id is the mandatory sort key, so it would order lexicographically.
+describe("ClickHouse BigInt id precision validation", () => {
+  let parseWithStorage = (~schema, ~storage) =>
+    InternalTestIndexer.fromUserApi(
+      ~schema,
+      ~configYaml=`
+name: ch-bigint-id
+storage:
+${storage}
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+    )
+
+  let bothBackends = "  postgres:\n    default: true\n  clickhouse: true"
+
+  // The full error a rejected parse throws. `toThrowErrorEqual` asserts the
+  // whole message (not a substring). The entity is named "Thing" in every case.
+  let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal."
+
+  it("rejects an unbounded BigInt id on a clickhouse entity", t => {
+    t.expect(() =>
+      parseWithStorage(
+        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! }`,
+        ~storage=bothBackends,
+      )->ignore
+    ).toThrowErrorEqual(expectedError)
+  })
+
+  it("rejects a BigInt id whose precision exceeds the ClickHouse Decimal ceiling", t => {
+    t.expect(() =>
+      parseWithStorage(
+        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 100) }`,
+        ~storage=bothBackends,
+      )->ignore
+    ).toThrowErrorEqual(expectedError)
+  })
+
+  it("rejects an unbounded BigInt id when clickhouse is the default backend", t => {
+    t.expect(() =>
+      parseWithStorage(
+        ~schema=`type Thing { id: BigInt! }`,
+        ~storage="  postgres:\n    default: true\n  clickhouse:\n    default: true",
+      )->ignore
+    ).toThrowErrorEqual(expectedError)
+  })
+
+  it("accepts a BigInt id with a numeric precision on a clickhouse entity", t => {
+    let {config} = parseWithStorage(
+      ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 20) }`,
+      ~storage=bothBackends,
+    )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+
+  it("accepts an Int id on a clickhouse entity", t => {
+    let {config} = parseWithStorage(
+      ~schema=`type Thing @storage(clickhouse: true) { id: Int! }`,
+      ~storage=bothBackends,
+    )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+
+  it("accepts an unbounded BigInt id on a postgres-only entity", t => {
+    let {config} = parseWithStorage(
+      ~schema=`type Thing { id: BigInt! }`,
+      ~storage="  postgres:\n    default: true",
+    )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
   })
 })

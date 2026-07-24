@@ -144,8 +144,8 @@ describe("EVM config YAML", () => {
 
   ["checksum", "lowercase"]->Array.forEach(addressFormat => {
     it(`rejects invalid addresses with address_format: ${addressFormat}`, t => {
-      t.expect(() => parseAddressConfig(~addressFormat, "0xfoo")->ignore).toThrowError(
-        `Contract "ERC20" on chain 1 has invalid address "0xfoo"`,
+      t.expect(() => parseAddressConfig(~addressFormat, "0xfoo")->ignore).toThrowErrorEqual(
+        `Config parse error: Contract "ERC20" on chain 1 has invalid address "0xfoo". Expected a 20-byte hex string starting with 0x.`,
       )
     })
   })

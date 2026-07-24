@@ -585,14 +585,18 @@ export type SvmOnSlotContext<Config extends IndexerConfigTypes = GlobalConfig> =
   BaseHandlerContext<Config, SvmChainIds<Config>>
 >;
 
+/** The entity's `id` type. `ID!`/`String!` ids are `string`; `Int!` is `number`
+ * and `BigInt!` is `bigint`, so id-keyed operations accept the real scalar. */
+type EntityId<Entity> = Entity extends { readonly id: infer Id } ? Id : string;
+
 /** Entity operations available in handler contexts. */
 type EntityOperations<Entity> = {
-  readonly get: (id: string) => Promise<Entity | undefined>;
-  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
+  readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
   readonly getOrCreate: (entity: Entity) => Promise<Entity>;
   readonly set: (entity: Entity) => void;
-  readonly deleteUnsafe: (id: string) => void;
+  readonly deleteUnsafe: (id: EntityId<Entity>) => void;
 };
 
 /** Contract registration handle. */
@@ -1528,9 +1532,9 @@ type ConfigEntities<Config extends IndexerConfigTypes = GlobalConfig> =
 /** Entity operations available on test indexer for direct entity manipulation. */
 type TestIndexerEntityOperations<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
-  readonly get: (id: string) => Promise<Entity | undefined>;
+  readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
   /** Get an entity by ID or throw if not found. */
-  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   /** Get all entities. */
   readonly getAll: () => Promise<Entity[]>;
   /** Set (create or update) an entity. */

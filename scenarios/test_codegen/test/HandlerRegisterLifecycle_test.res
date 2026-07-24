@@ -65,7 +65,7 @@ describe("HandlerRegister — every onEvent registers separately", () => {
           ~where=%raw(`{params: {nonExistingParam: "0x0000000000000000000000000000000000000000"}}`),
         ),
       )
-    ).toThrowError(
+    ).toThrowErrorEqual(
       `Invalid where configuration. The event doesn't have an indexed parameter "nonExistingParam" and can't use it for filtering`,
     )
   })
@@ -92,7 +92,7 @@ describe("HandlerRegister — onBlock validation at registration", () => {
         ~handler=noopBlockHandler,
         ~getChainsObject,
       )
-    ).toThrowError(
+    ).toThrowErrorEqual(
       `\`indexer.onBlock("badWhere")\` expected \`where\` to be a function or omitted, but got object.`,
     )
   })
@@ -105,7 +105,9 @@ describe("HandlerRegister — onBlock validation at registration", () => {
         ~handler=noopBlockHandler,
         ~getChainsObject,
       )
-    ).toThrowError(`\`indexer.onBlock("typoFilter")\` \`where\` returned an invalid filter`)
+    ).toThrowErrorEqual(
+      `\`indexer.onBlock("typoFilter")\` \`where\` returned an invalid filter: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key "_gt" on an object`,
+    )
   })
 
   it("throws when startBlock is below the chain start block", t => {
@@ -116,7 +118,7 @@ describe("HandlerRegister — onBlock validation at registration", () => {
         ~handler=noopBlockHandler,
         ~getChainsObject,
       )
-    ).toThrowError(
+    ).toThrowErrorEqual(
       `The start block for onBlock handler "tooEarly" is less than the chain start block (1). This is not supported yet.`,
     )
   })

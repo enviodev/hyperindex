@@ -112,7 +112,9 @@ describe("parseWhereOrThrow — static `where` with block filter (EVM)", () => {
       parseEvm(
         ~eventFilters=Some(%raw(`{block: {number: {_gte: 10, _lte: 200}}}`)),
       )->ignore
-    ).toThrowError("Only `_gte` is supported on event filters")
+    ).toThrowErrorEqual(
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key \"_lte\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 
   it("rejects `_every` on event filters", t => {
@@ -120,19 +122,25 @@ describe("parseWhereOrThrow — static `where` with block filter (EVM)", () => {
       parseEvm(
         ~eventFilters=Some(%raw(`{block: {number: {_gte: 10, _every: 5}}}`)),
       )->ignore
-    ).toThrowError("Only `_gte` is supported on event filters")
+    ).toThrowErrorEqual(
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key \"_every\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 
   it("rejects unknown top-level keys (typo catches)", t => {
     t.expect(() =>
       parseEvm(~eventFilters=Some(%raw(`{blocks: {number: {_gte: 10}}}`)))->ignore
-    ).toThrowError(`Unknown field "blocks"`)
+    ).toThrowErrorEqual(
+      `Invalid where configuration. Unknown field "blocks". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
+    )
   })
 
   it("rejects unknown fields inside `block` (typo catches)", t => {
     t.expect(() =>
       parseEvm(~eventFilters=Some(%raw(`{block: {numbre: {_gte: 10}}}`)))->ignore
-    ).toThrowError("`block` filter is invalid")
+    ).toThrowErrorEqual(
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at [\"block\"]. Reason: Encountered disallowed excess key \"numbre\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 })
 
@@ -174,7 +182,9 @@ describe("parseWhereOrThrow — Fuel block.height", () => {
   it("Fuel rejects `block.number` — the block filter is keyed by height", t => {
     t.expect(() =>
       parseFuel(~eventFilters=Some(%raw(`{block: {number: {_gte: 42}}}`)))->ignore
-    ).toThrowError("`block` filter is invalid")
+    ).toThrowErrorEqual(
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at [\"block\"]. Reason: Encountered disallowed excess key \"number\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 })
 

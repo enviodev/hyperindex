@@ -237,7 +237,7 @@ describe("EntityFilter.merge", () => {
         EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
         EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
       ]->EntityFilter.merge
-    ).toThrowError(
+    ).toThrowErrorEqual(
       "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
   })

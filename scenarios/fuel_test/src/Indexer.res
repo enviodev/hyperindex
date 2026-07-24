@@ -81,6 +81,7 @@ module Entities = {
   type id = string
 
   module User = {
+    type id = string
     type t = {id: id, greetings: array<string>, latestGreeting: string, numberOfGreetings: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("greetings") greetings?: Envio.whereOperator<array<string>>, @as("latestGreeting") latestGreeting?: Envio.whereOperator<string>, @as("numberOfGreetings") numberOfGreetings?: Envio.whereOperator<int>}

@@ -75,6 +75,7 @@ module Entities = {
   type id = string
 
   module SlotPing = {
+    type id = string
     type t = {id: id, slot: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("slot") slot?: Envio.whereOperator<int>}
