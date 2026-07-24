@@ -947,6 +947,12 @@ fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<(
 }
 
 impl ProjectTemplate {
+    /// The generated `.envio/types.d.ts` contents (the `declare module "envio"`
+    /// augmentation binding this config's chains/contracts/entities/enums).
+    pub fn indexer_types_dts(&self) -> &str {
+        &self.envio_types_dts
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.
@@ -1478,7 +1484,7 @@ switch chainId {{
             .map(|entity| {
                 format!(
                     "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
-                    entity.name.original,
+                    entity.name.capitalized,
                     entity.name.capitalized,
                     entity.name.capitalized,
                 )
@@ -1812,7 +1818,7 @@ type testIndexerEntityOperations<'entity> = {
             .map(|entity| {
                 format!(
                     "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
-                    entity.name.original, entity.name.capitalized,
+                    entity.name.capitalized, entity.name.capitalized,
                 )
             })
             .collect::<Vec<_>>()

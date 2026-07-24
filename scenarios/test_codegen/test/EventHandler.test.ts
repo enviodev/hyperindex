@@ -460,6 +460,36 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(users, [existingUser]);
   });
 
+  it("mutating entities across the set/get boundary doesn't corrupt the store", async () => {
+    const indexer = createTestIndexer();
+
+    const original: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    indexer.User.set(original);
+
+    // Mutating the object passed to set, or any entity handed back, must not
+    // leak into the in-memory store.
+    Object.assign(original, { address: "mutated-after-set" });
+    Object.assign(await indexer.User.getOrThrow("0"), { address: "mutated-after-getOrThrow" });
+    Object.assign((await indexer.User.get("0"))!, { address: "mutated-after-get" });
+    (await indexer.User.getAll()).forEach((u) => Object.assign(u, { address: "mutated-after-getAll" }));
+
+    assert.deepEqual(await indexer.User.getAll(), [
+      {
+        id: "0",
+        address: "existing",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ]);
+  });
+
   it("entity.getOrThrow throws if entity doesn't exist", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -746,109 +776,6 @@ describe("Use Envio test framework to test event handlers", () => {
       sets: [{ address: expectedChecksummedAddress, contract: "SimpleNft" }],
     });
   });
-
-  it("composes duplicate handlers with same options", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Process CustomSelection — original handler + composed handler should both run
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "CustomSelection",
-              transaction: { from: "0xfoo" },
-              block: { parentHash: "0xParentHash" },
-            },
-          ],
-        },
-      },
-    });
-
-    // Original handler sets entity with id = event.transaction.hash
-    // Composed handler sets entity with id = "composed-" + event.transaction.hash
-    const change = result.changes[0]?.CustomSelectionTestPass;
-    assert.equal(change?.sets?.length, 2, "Both original and composed handler should set entities");
-    assert.ok(
-      change?.sets?.some((e: { id: string }) => e.id.startsWith("composed-")),
-      "Composed handler should have set an entity with 'composed-' prefix"
-    );
-  });
-
-  it("composes duplicate contractRegister with same options", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Process FactoryEvent with composeContractRegister testCase —
-    // original contractRegister adds SimpleNft (via syncRegistration path),
-    // composed contractRegister adds NftFactory
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "composeContractRegister" },
-            },
-          ],
-        },
-      },
-    });
-
-    // The composed contractRegister should have registered NftFactory
-    const addresses = result.changes[0]?.addresses?.sets;
-    assert.ok(
-      addresses?.some((a: { contract: string }) => a.contract === "NftFactory"),
-      "Composed contractRegister should register NftFactory"
-    );
-  });
-
-  it("captured contractRegister add() throws after handler resolved", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Two sequential FactoryEvent events:
-    //   1. testCase "captureAdd"       — contractRegister handler stashes
-    //      context.chain.SimpleNft.add into a module-scoped variable.
-    //   2. testCase "callCapturedAdd"  — onEvent handler tries to call the
-    //      captured closure. By then the first event's contractRegister params
-    //      have isResolved=true, so the closure must throw. The handler
-    //      records the outcome via the CustomSelectionTestPass entity id.
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "captureAdd" },
-            },
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "callCapturedAdd" },
-            },
-          ],
-        },
-      },
-    });
-
-    const sets = result.changes[0]?.CustomSelectionTestPass?.sets ?? [];
-    assert.ok(
-      sets.some((e: { id: string }) => e.id === "captured-add-threw"),
-      `Captured contractRegister add() should throw after handler resolved. Got entity ids: ${sets.map((e: { id: string }) => e.id).join(", ")}`
-    );
-  });
-
   it("Should be able to run effect with cache", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -932,6 +859,30 @@ describe("Use Envio test framework to test event handlers", () => {
           },
         },
       }),
+    );
+  });
+
+  it("propagates a handler throw to the process() call site with its message", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "throwInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+      /Error from handler/,
     );
   });
 
@@ -1079,9 +1030,9 @@ describe("Use Envio test framework to test event handlers", () => {
         1: {
           startBlock: 1,
           endBlock: 100,
-          simulate: [
-            { contract: "Noop", event: "EmptyEvent" },
-          ],
+          // Noop.EmptyEvent is the only event on chain 1; it has a no-op handler
+          // so the chain processes an event without writing any entity.
+          simulate: [{ contract: "Noop", event: "EmptyEvent" }],
         },
       },
     });
@@ -1113,6 +1064,30 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       ],
     });
+  });
+
+  // Simulating an event that has no registered handler is almost always a
+  // mistake (a typo'd event, or forgetting to write the handler), so it fails
+  // loudly rather than silently processing nothing. TestEventWithReservedKeyword
+  // is defined on Gravatar (chain 1337) but has no handler.
+  it("throws when simulating an event with no registered handler", async () => {
+    const indexer = createTestIndexer();
+
+    await assert.rejects(
+      () =>
+        indexer.process({
+          chains: {
+            1337: {
+              startBlock: 1,
+              endBlock: 100,
+              simulate: [
+                { contract: "Gravatar", event: "TestEventWithReservedKeyword" },
+              ],
+            },
+          },
+        }),
+      /no handler runs for event "TestEventWithReservedKeyword" on contract "Gravatar"/
+    );
   });
 
   // Regression for https://github.com/enviodev/hyperindex/issues/538: a struct
@@ -1757,44 +1732,10 @@ describe("onEvent / contractRegister types", () => {
     type _userOnCr = EvmContractRegisterContext["User"];
   });
 
-  it("indexer.onEvent rejects invalid contract/event combinations", () => {
-    indexer.onEvent(
-      // @ts-expect-error - "BadContract" is not a configured contract
-      { contract: "BadContract", event: "X" },
-      async () => {},
-    );
-
-    indexer.onEvent(
-      // @ts-expect-error - "BadEvent" is not an event of Gravatar
-      { contract: "Gravatar", event: "BadEvent" },
-      async () => {},
-    );
-
-    // Valid combination should compile (no @ts-expect-error)
-    indexer.onEvent(
-      { contract: "Gravatar", event: "NewGravatar" },
-      async ({ event }) => {
-        expectType<TypeEqual<typeof event.params.displayName, string>>(true);
-      },
-    );
-  });
-
-  it("indexer.contractRegister exposes context.chain.ContractName.add()", () => {
-    indexer.contractRegister(
-      { contract: "NftFactory", event: "SimpleNftCreated" },
-      async ({ event, context }) => {
-        // event is typed
-        expectType<
-          TypeEqual<typeof event.params.contractAddress, `0x${string}`>
-        >(true);
-        // chain.ContractName.add(address) is available
-        context.chain.SimpleNft.add(event.params.contractAddress);
-        context.chain.NftFactory.add(event.params.contractAddress);
-        // @ts-expect-error - UnknownContract is not configured
-        context.chain.UnknownContract.add(event.params.contractAddress);
-      },
-    );
-  });
+  // `indexer.onEvent` / `indexer.contractRegister` type-surface checks live in
+  // `src/handlers/EventHandlers.ts` (compile-time only): the registration API
+  // throws once handlers are registered, so they can't run as post-registration
+  // test cases here.
 
   it("EvmOnEventHandler defaults to union of all events", () => {
     // Without args, the handler accepts the union of all EVM events

@@ -115,6 +115,11 @@ type t = {
   exitAfterFirstEventBlock: bool,
   // The single fatal-error handler.
   onError: ErrorHandling.t => unit,
+  // Invoked once when the indexer catches up and would otherwise exit the
+  // process. `None` keeps the production behavior (exit the process); the
+  // in-process test runner injects a callback that resolves its run promise
+  // instead, so a caught-up run doesn't kill the test process.
+  onExit: option<unit => unit>,
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
@@ -149,6 +154,7 @@ let make = (
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~onError: ErrorHandling.t => unit,
+  ~onExit=?,
 ) => {
   let chainMetaThrottler = {
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
@@ -196,6 +202,7 @@ let make = (
     keepProcessAlive: isDevelopmentMode || shouldUseTui,
     exitAfterFirstEventBlock,
     onError,
+    onExit,
     isStopped: false,
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
@@ -231,6 +238,7 @@ let makeFromDbState = (
   ~reducedPollingInterval=?,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~onError,
+  ~onExit=?,
 ) => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
@@ -282,6 +290,7 @@ let makeFromDbState = (
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
     ~onError,
+    ~onExit?,
   )
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
     state.effectState->EffectState.setUnregisteredCacheCount(~effectName, ~scope, ~count)
@@ -418,6 +427,7 @@ let indexerStartTime = (state: t) => state.indexerStartTime
 let loadManager = (state: t) => state.loadManager
 let keepProcessAlive = (state: t) => state.keepProcessAlive
 let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
+let onExit = (state: t) => state.onExit
 let isStopped = (state: t) => state.isStopped
 let epoch = (state: t) => state.epoch
 let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis

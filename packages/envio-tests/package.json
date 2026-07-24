@@ -10,8 +10,11 @@
   },
   "devDependencies": {
     "@rescript/runtime": "12.2.0",
+    "@types/node": "24.12.2",
     "rescript": "12.2.0",
     "rescript-schema": "9.5.1",
+    "ts-expect": "1.3.0",
+    "typescript": "6.0.3",
     "vitest": "4.1.0"
   },
   "dependencies": {

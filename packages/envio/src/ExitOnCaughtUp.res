@@ -10,8 +10,12 @@ let run = async (state: IndexerState.t) => {
     ->IndexerState.simulateDeadInputTracker
     ->Option.flatMap(SimulateDeadInputTracker.failureMessage) {
     | None =>
-      state->IndexerState.logger->Logging.childInfo("Exiting with success")
-      NodeJs.process->NodeJs.exitWithCode(Success)
+      switch state->IndexerState.onExit {
+      | Some(onExit) => onExit()
+      | None =>
+        state->IndexerState.logger->Logging.childInfo("Exiting with success")
+        NodeJs.process->NodeJs.exitWithCode(Success)
+      }
     | Some(message) => state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make(message)))
     }
   }

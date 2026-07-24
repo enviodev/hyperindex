@@ -1,10 +1,10 @@
 open Vitest
 
-// Covers the per-chain immediate resolution in `HandlerRegister`: duplicate
-// registrations are compared on the resolved `where` structure (not the
-// callback reference), invalid `where`/onBlock options throw at the user's
-// registration call site, and `preRegistered` callbacks replayed by
-// `startRegistration` run through the same code path.
+// Covers the per-chain immediate resolution in `HandlerRegister`: every
+// `onEvent` becomes its own registration (no composing, no duplicate error),
+// invalid `where`/onBlock options still throw at the user's registration call
+// site, and `preRegistered` callbacks replayed by `startRegistration` run
+// through the same code path.
 //
 // This file must not import the handler fixtures — it drives the global
 // registry lifecycle itself, relying on vitest's per-file isolation.
@@ -28,25 +28,21 @@ HandlerRegister.setHandler(
 )
 HandlerRegister.startRegistration(~config)
 
-describe("HandlerRegister — duplicate registrations compare resolved where", () => {
-  it("a distinct callback with an equal resolution composes instead of throwing", t => {
-    HandlerRegister.setHandler(
-      ~contractName="EventFiltersTest",
-      ~eventName="Transfer",
-      noopHandler,
-      ~eventOptions=eventOptions(
-        ~where=%raw(`({chain: _chain}) => ({params: {from: "0x0000000000000000000000000000000000000000"}})`),
-      ),
-    )
-    t.expect(
-      HandlerRegister.getHandler(
+describe("HandlerRegister — every onEvent registers separately", () => {
+  it("a second handler with an equal resolution registers without composing or throwing", t => {
+    t.expect(() =>
+      HandlerRegister.setHandler(
         ~contractName="EventFiltersTest",
         ~eventName="Transfer",
-      )->Option.isSome,
-    ).toBe(true)
+        noopHandler,
+        ~eventOptions=eventOptions(
+          ~where=%raw(`({chain: _chain}) => ({params: {from: "0x0000000000000000000000000000000000000000"}})`),
+        ),
+      )
+    ).not.toThrow()
   })
 
-  it("a callback with a different resolution throws at the registration call site", t => {
+  it("a handler with a different resolution registers separately without throwing", t => {
     t.expect(() =>
       HandlerRegister.setHandler(
         ~contractName="EventFiltersTest",
@@ -56,9 +52,7 @@ describe("HandlerRegister — duplicate registrations compare resolved where", (
           ~where=%raw(`({chain: _chain}) => ({params: {to: "0x0000000000000000000000000000000000000000"}})`),
         ),
       )
-    ).toThrowError(
-      "Cannot register a second handler with different options. Make sure all handlers for the same event use identical options (wildcard, where) for EventFiltersTest.Transfer",
-    )
+    ).not.toThrow()
   })
 
   it("an invalid where throws at the registration call site", t => {

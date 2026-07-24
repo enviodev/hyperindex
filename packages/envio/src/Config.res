@@ -999,10 +999,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
+  // Keyed by the capitalized entity name to match the handler-context
+  // accessor (`context.Pool_snapshots`) the generated types expose, while
+  // entityConfig.name stays the original schema name used for the physical
+  // Postgres/ClickHouse tables.
   let userEntitiesByName =
     userEntities
     ->Array.map(entityConfig => {
-      (entityConfig.name, entityConfig)
+      (entityConfig.name->Utils.String.capitalize, entityConfig)
     })
     ->Dict.fromArray
 

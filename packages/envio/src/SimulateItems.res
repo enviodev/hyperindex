@@ -339,46 +339,67 @@ let parse = (
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
 
-      // Build a real registration the same way `HandlerRegister.finishRegistration`
-      // does at startup (not a stub), so the address filter and `where`
-      // behave identically to real indexing — the dead-input tracker relies
-      // on `clientAddressFilter` actually gating unrouted items.
-      let onEventRegistration = HandlerRegister.buildOnEventRegistration(
-        ~config,
-        ~chainId,
-        ~eventConfig,
-      )
-      // Append into the registration array that the chain state will own and
-      // put that same registration object directly on the simulated item.
-      let onEventRegistrationIndex = onEventRegistrations->Array.length
-      let onEventRegistration = {...onEventRegistration, index: onEventRegistrationIndex}
-      onEventRegistrations->Array.push(onEventRegistration)->ignore
+      // Fan the simulated event out to every registration that would actually
+      // run here the way real routing does (one item per registration).
+      // Registrations are built the same way `HandlerRegister.finishRegistration`
+      // does at startup (not stubs), so the address filter and `where` behave
+      // identically to real indexing — the dead-input tracker relies on
+      // `clientAddressFilter` actually gating unrouted items. Drop registrations
+      // whose `where` excludes this chain (they wouldn't be fetched live), and
+      // ignore the bare handler-less fallback so a missing handler surfaces below
+      // instead of silently running nothing.
+      let liveRegistrations =
+        HandlerRegister.getSimulateOnEventRegistrations(
+          ~config,
+          ~chainId,
+          ~eventConfig,
+        )->Array.filter(reg =>
+          (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
+            !HandlerRegister.isDroppedByWhere(~config, reg)
+        )
+      if liveRegistrations->Utils.Array.isEmpty {
+        JsError.throwWithMessage(
+          `simulate: no handler runs for event "${eventName}" on contract "${contractName}"${switch config.chainMap
+            ->ChainMap.values
+            ->Array.length {
+            | 1 => ""
+            | _ => ` on chain ${chainId->Int.toString}`
+            }}. Register a handler with indexer.onEvent (and check any \`where\` filter isn't excluding this chain) before simulating it.`,
+        )
+      }
+      liveRegistrations->Array.forEach(reg => {
+        // Append into the registration array that the chain state will own and
+        // put that same registration object directly on the simulated item.
+        let onEventRegistrationIndex = onEventRegistrations->Array.length
+        let onEventRegistration = {...reg, index: onEventRegistrationIndex}
+        onEventRegistrations->Array.push(onEventRegistration)->ignore
 
-      items
-      ->Array.push(
-        Internal.Event({
-          onEventRegistration,
-          chain,
-          blockNumber,
-          logIndex,
-          // Simulate keeps the transaction inline on the payload, so the store
-          // key is unused.
-          transactionIndex: 0,
-          payload: (
-            {
-              contractName: eventConfig.contractName,
-              eventName: eventConfig.name,
-              params,
-              chainId,
-              srcAddress,
-              logIndex,
-              transaction,
-              block,
-            }: Evm.payload
-          )->Evm.fromPayload,
-        }),
-      )
-      ->ignore
+        items
+        ->Array.push(
+          Internal.Event({
+            onEventRegistration,
+            chain,
+            blockNumber,
+            logIndex,
+            // Simulate keeps the transaction inline on the payload, so the store
+            // key is unused.
+            transactionIndex: 0,
+            payload: (
+              {
+                contractName: eventConfig.contractName,
+                eventName: eventConfig.name,
+                params,
+                chainId,
+                srcAddress,
+                logIndex,
+                transaction,
+                block,
+              }: Evm.payload
+            )->Evm.fromPayload,
+          }),
+        )
+        ->ignore
+      })
 
     | _ =>
       JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)

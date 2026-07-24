@@ -30,6 +30,7 @@ let make: (
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
   ~onError: ErrorHandling.t => unit,
+  ~onExit: unit => unit=?,
 ) => t
 
 let makeFromDbState: (
@@ -43,6 +44,7 @@ let makeFromDbState: (
   ~reducedPollingInterval: int=?,
   ~targetBufferSize: int=?,
   ~onError: ErrorHandling.t => unit,
+  ~onExit: unit => unit=?,
 ) => t
 
 let unexpectedErrorMsg: string
@@ -97,6 +99,7 @@ let indexerStartTime: t => Date.t
 let loadManager: t => LoadManager.t
 let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
+let onExit: t => option<unit => unit>
 let isStopped: t => bool
 let epoch: t => int
 let lastPrunedAtMillis: t => dict<float>
