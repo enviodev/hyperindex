@@ -1,0 +1,25 @@
+#test schema for multi-storage configs (postgres + clickhouse)
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+type RelatedEntity @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  name: String!
+}
+
+type EmptyEntity @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  emptyField: ID!
+  status: Status!
+  optionalStatus: Status
+  related: RelatedEntity!
+  optionalRelated: RelatedEntity
+  tags: [String!]!
+}
+
+type UnannotatedEntity {
+  id: ID!
+}
