@@ -483,7 +483,8 @@ describe("Test eventFilters", () => {
 
   it("Where returning false drops the chain's registration entirely", t => {
     // WithExcessField's where returns `false` for chain 100 and a filter for
-    // chain 137 — the finished registrations must include it only on 137.
+    // chain 137 — the handler opted out of chain 100, so the event gets no
+    // registration there (not even a raw-events one), only on 137.
     let hasEvent = chainId =>
       switch registrationsByChainId->Dict.get(chainId) {
       | Some({HandlerRegister.onEventRegistrations: regs}) =>

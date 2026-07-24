@@ -1,6 +1,6 @@
 open Vitest
 
-// Covers `HandlerRegister.buildOnEventRegistration`: the handler-state fields
+// Covers the built onEvent registration: the handler-state fields
 // (`handler`, `contractRegister`, `isWildcard`) registered via
 // `indexer.onEvent` / `indexer.contractRegister` land on the built
 // registration, and `dependsOnAddresses` follows the shared

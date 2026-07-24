@@ -891,60 +891,6 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where:
   }
 });
 
-// Duplicate handler registration tests
-
-// Same options (no options) → should compose without error.
-// The composed handler sets an additional entity to prove it ran.
-indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
-  context.CustomSelectionTestPass.set({
-    id: "composed-" + event.transaction.hash,
-  });
-});
-
-// Same options → composed contractRegister registers an additional contract
-indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "composeContractRegister") {
-    context.chain.NftFactory.add(event.params.contract);
-  }
-});
-
-// Capture the inner add() closure in one contractRegister invocation, then try
-// to invoke the captured closure from a later onEvent handler (after the first
-// handler has resolved and params.isResolved === true). The call must throw —
-// this guards against the captured-add bypass where
-// `const add = context.chain.X.add` survives past handler resolution.
-// We signal success via the CustomSelectionTestPass entity so the test can
-// observe the outcome across the createTestIndexer worker boundary.
-let _capturedCrAdd: ((address: `0x${string}`) => void) | null = null;
-indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "captureAdd") {
-    _capturedCrAdd = context.chain.SimpleNft.add;
-  }
-});
-indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "callCapturedAdd" && _capturedCrAdd) {
-    const outcome = (() => {
-      try {
-        _capturedCrAdd!("0x1234567890123456789012345678901234567890");
-        return "captured-add-did-not-throw";
-      } catch {
-        return "captured-add-threw";
-      }
-    })();
-    context.CustomSelectionTestPass.set({
-      id: outcome,
-    });
-  }
-});
-
-// Different options → should throw
-export let mismatchedHandlerOptionsError: Error | undefined;
-try {
-  indexer.onEvent({ contract: "Gravatar", event: "CustomSelection", wildcard: true }, async () => {});
-} catch (e) {
-  mismatchedHandlerOptionsError = e as Error;
-}
-
 // Handler for testing simulate block/logIndex behavior
 indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, context }) => {
   context.SimulateTestEvent.set({
@@ -954,6 +900,16 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
     timestamp: event.block.timestamp,
   });
 });
+
+// No-op handler so Noop.EmptyEvent can be processed and simulated without
+// writing any entity — used by the multichain ordering test. Pinned to chain 1:
+// Noop is also configured on chain 137 (with an address), and registering it
+// there would add an extra fetch partition that the rollback/reorg tests (which
+// expect a single partition per chain) don't account for.
+indexer.onEvent(
+  { contract: "Noop", event: "EmptyEvent", where: ({ chain }) => chain.id === 1 },
+  async () => {},
+);
 
 // Regression test for https://github.com/enviodev/hyperindex/issues/538:
 // the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),

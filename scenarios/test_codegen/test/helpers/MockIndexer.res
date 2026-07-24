@@ -435,22 +435,21 @@ module Indexer = {
     | Some(_) => ()
     }
 
-    // Build the final per-test config (chain overrides, enableRawEvents, ...)
-    // before registering handlers: `HandlerRegister.finishRegistration` now
-    // builds each chain's onEventRegistrations (gated by `enableRawEvents`)
-    // from the config it's given, so registration must see the resolved
-    // config rather than the raw generated one.
-    let config = {
-      let config = switch customConfig {
-      | Some(config) => config
-      | None => Config.load()
-      }
+    // The full (un-narrowed) config. Handlers register against this so every
+    // chain resolves once; `finishRegistration` then narrows to the per-test
+    // `config` below.
+    let baseConfig = switch customConfig {
+    | Some(config) => config
+    | None => Config.load()
+    }
 
+    // Build the final per-test config (chain overrides, enableRawEvents, ...).
+    let config = {
       let chainMap =
         chains
         ->Array.map(chainConfig => {
           let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
-          let originalChainConfig = config.chainMap->ChainMap.get(chain)
+          let originalChainConfig = baseConfig.chainMap->ChainMap.get(chain)
           (
             chain,
             {
@@ -467,24 +466,26 @@ module Indexer = {
         ->ChainMap.fromArrayUnsafe
 
       {
-        ...config,
+        ...baseConfig,
         shouldRollbackOnReorg,
         shouldSaveFullHistory: saveFullHistory,
         enableRawEvents,
         chainMap,
-        batchSize: batchSize->Option.getOr(config.batchSize),
+        batchSize: batchSize->Option.getOr(baseConfig.batchSize),
         reorgThresholdReadyTolerance,
       }
     }
 
-    let registrationsByChainId = switch customConfig {
-    | None => await HandlerLoader.registerAllHandlers(~config)
+    // Register handlers once against the full chain set (idempotent +
+    // import-cached, so re-`make` reuses), then narrow to this run's chains.
+    switch customConfig {
+    | None => let _ = await HandlerLoader.registerAllHandlers(~config=baseConfig)
     | Some(_) =>
       // A supplied config has no handler files on disk; register inline
       // handlers (if any) through the same public registry lifecycle.
-      HandlerRegister.startRegistration(~config)
-      HandlerRegister.finishRegistration(~config)
+      HandlerRegister.startRegistration(~config=baseConfig)
     }
+    let registrationsByChainId = HandlerRegister.finishRegistration(~config)
     installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let sql = PgStorage.makeClient()
