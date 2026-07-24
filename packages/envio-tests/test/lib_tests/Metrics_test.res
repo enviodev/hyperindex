@@ -69,6 +69,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(0.),
+      scrapeTime: Date.fromTime(0.),
       targetBufferSize: 0,
       isInReorgThreshold: false,
       rollbackEnabled: false,
@@ -113,6 +114,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
+      scrapeTime: Date.fromTime(1700000123456.),
       targetBufferSize: 5000,
       isInReorgThreshold: true,
       rollbackEnabled: true,
@@ -302,6 +304,14 @@ envio_indexing_known_height{chainId="1"} 305
 # HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
 # TYPE envio_process_start_time_seconds gauge
 envio_process_start_time_seconds 1700000000
+
+# HELP envio_process_elapsed_seconds Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.
+# TYPE envio_process_elapsed_seconds gauge
+envio_process_elapsed_seconds 123.456
+
+# HELP envio_scrape_time_seconds Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.
+# TYPE envio_scrape_time_seconds gauge
+envio_scrape_time_seconds 1700000123.456
 
 # HELP envio_indexing_concurrency The number of executing concurrent queries to the chain data-source.
 # TYPE envio_indexing_concurrency gauge

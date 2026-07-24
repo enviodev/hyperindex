@@ -499,6 +499,7 @@ let toMetrics = (state: t): Metrics.t => {
   )
   {
     startTime: state.indexerStartTime,
+    scrapeTime: Date.make(),
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
     rollbackEnabled: state.config.shouldRollbackOnReorg,

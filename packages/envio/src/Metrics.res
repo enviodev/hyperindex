@@ -98,6 +98,9 @@ type sourceHeightMetrics = {
 
 type t = {
   startTime: Date.t,
+  // Wall clock when this snapshot was built, so a single scrape carries both its
+  // own timestamp and (via startTime) the elapsed run time.
+  scrapeTime: Date.t,
   targetBufferSize: int,
   isInReorgThreshold: bool,
   rollbackEnabled: bool,
@@ -365,6 +368,18 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="Start time of the process since unix epoch in seconds.",
     ~kind="gauge",
     ~value=metrics.startTime->Date.getTime /. 1000.,
+  )
+  b->single(
+    ~name="envio_process_elapsed_seconds",
+    ~help="Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.",
+    ~kind="gauge",
+    ~value=(metrics.scrapeTime->Date.getTime -. metrics.startTime->Date.getTime) /. 1000.,
+  )
+  b->single(
+    ~name="envio_scrape_time_seconds",
+    ~help="Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.",
+    ~kind="gauge",
+    ~value=metrics.scrapeTime->Date.getTime /. 1000.,
   )
   b->series(
     ~name="envio_indexing_concurrency",
