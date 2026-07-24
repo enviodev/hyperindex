@@ -1,0 +1,6 @@
+---
+source: packages/cli/src/hbs_templating/env_template.rs
+expression: "render(&Some(\"abc123\".to_string()))"
+---
+# To create or update a token visit https://envio.dev/app/api-tokens
+ENVIO_API_TOKEN="abc123"

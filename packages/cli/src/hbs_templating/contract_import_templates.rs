@@ -73,7 +73,7 @@ mod nested_params {
     }
 }
 
-use super::hbs_dir_generator::HandleBarsDirGenerator;
+use super::env_template;
 use crate::{
     cli_args::init_config::Language,
     config_parsing::{
@@ -813,11 +813,9 @@ impl AutoSchemaHandlerTemplate {
         project_root: &Path,
         is_fuel: bool,
     ) -> Result<()> {
-        let template_dirs = TemplateDirs::new();
+        use std::fs;
 
-        let shared_dir = template_dirs
-            .get_contract_import_shared_dir()
-            .context("Failed getting shared contract import templates")?;
+        let template_dirs = TemplateDirs::new();
 
         // Copy shared static content into the project root (not the generated folder)
         template_dirs
@@ -833,13 +831,39 @@ impl AutoSchemaHandlerTemplate {
         self.generate_test_files(lang, project_root, is_fuel)
             .context("Failed generating test files")?;
 
-        // Generate shared templates (schema.graphql, .env)
-        let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, project_root);
-        hbs_shared
-            .generate_hbs_templates()
-            .context("Failed generating shared contract import templates")?;
+        fs::write(
+            project_root.join("schema.graphql"),
+            self.render_schema_graphql(),
+        )
+        .context("Failed writing schema.graphql")?;
+        fs::write(project_root.join(".env"), self.render_env()).context("Failed writing .env")?;
 
         Ok(())
+    }
+
+    fn render_env(&self) -> String {
+        env_template::render(&self.envio_api_token)
+    }
+
+    fn render_schema_graphql(&self) -> String {
+        let mut out = String::new();
+        for contract in &self.imported_contracts {
+            for event in &contract.imported_events {
+                out.push_str(&format!(
+                    "type {}_{} {{\n",
+                    contract.name.capitalized, event.name
+                ));
+                out.push_str("  id: ID!\n");
+                for param in &event.params {
+                    out.push_str(&format!(
+                        "  {}: {}\n",
+                        param.entity_key.uncapitalized, param.graphql_type
+                    ));
+                }
+                out.push_str("}\n\n");
+            }
+        }
+        out
     }
 }
 
@@ -954,6 +978,12 @@ mod test {
 
         AutoSchemaHandlerTemplate::try_from(config, language, None)
             .expect("should be able to create template")
+    }
+
+    #[test]
+    fn schema_graphql_for_evm() {
+        let template = get_test_template_helper("config1.yaml", &Language::TypeScript);
+        insta::assert_snapshot!(template.render_schema_graphql());
     }
 
     #[test]

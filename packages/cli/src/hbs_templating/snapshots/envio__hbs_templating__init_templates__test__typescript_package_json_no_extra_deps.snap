@@ -1,0 +1,26 @@
+---
+source: packages/cli/src/hbs_templating/init_templates.rs
+expression: "template(false, \"latest\", vec![]).render_package_json()"
+---
+{
+  "name": "my-project",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "start": "envio start",
+    "test": "vitest run --test-timeout=20000"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "envio": "latest"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

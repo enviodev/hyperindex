@@ -2,7 +2,7 @@ open Vitest
 
 let expectParseError = (t, ~schema=?, ~env=?, ~files=?, yaml, message) => {
   let actual = try {
-    MockIndexerConfig.parseYaml(~schema?, ~env?, ~files?, yaml)->ignore
+    InternalTestIndexer.fromUserApi(~schema?, ~env?, ~files?, ~configYaml=yaml)->ignore
     "the parse to fail, but it succeeded"
   } catch {
   | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
@@ -11,7 +11,7 @@ let expectParseError = (t, ~schema=?, ~env=?, ~files=?, yaml, message) => {
 }
 
 let parseAddressConfig = (~addressFormat="checksum", ~contractName="ERC20", address): Config.t =>
-  MockIndexerConfig.parseYaml(`
+  InternalTestIndexer.fromUserApi(~configYaml=`
 name: address-config
 address_format: ${addressFormat}
 contracts:
@@ -34,16 +34,16 @@ let firstContract = (config: Config.t): Config.contract => {
   chain.contracts->Array.getUnsafe(0)
 }
 
-describe("MockIndexerConfig.parseYaml", () => {
+describe("InternalTestIndexer.fromUserApi validation", () => {
   it("parses user YAML with explicit env and no project schema", t => {
     let env = Dict.fromArray([
       ("RPC_URL", "https://rpc.example.test"),
       ("START_BLOCK", "42"),
     ])
 
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~env,
-      `
+      ~configYaml=`
 name: in-memory
 chains:
   - id: 1
@@ -76,9 +76,9 @@ chains:
       ),
     ])
 
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      `
+      ~configYaml=`
 name: virtual-abi
 chains:
   - id: 1
@@ -198,7 +198,7 @@ chains:
   })
 
   it("allows the same address on different chains", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: multichain-address
 contracts:
   - name: AaveToken
@@ -220,7 +220,7 @@ chains:
   })
 
   it("parses entity and field descriptions from schema text", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
 """A user of the protocol"""
 type User {
@@ -236,7 +236,7 @@ type Token {
   owner: User!
 }
 `,
-      `
+      ~configYaml=`
 name: descriptions
 chains:
   - id: 1
@@ -262,12 +262,12 @@ chains:
   })
 
   it("resolves entity storage directives and config defaults together", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
 type User { id: ID! }
 type Snapshot @storage(clickhouse: true) { id: ID! }
 `,
-      `
+      ~configYaml=`
 name: storage-routing
 storage:
   postgres:
@@ -288,14 +288,14 @@ chains:
   })
 
   it("preserves per-backend column names across the public config boundary", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
 type User {
   id: ID!
   userId: BigInt!
 }
 `,
-      `
+      ~configYaml=`
 name: column-names
 storage:
   postgres:
@@ -479,6 +479,61 @@ chains:
 })
 
 describe("system config validation errors", () => {
+  it("rejects two differently-named events that share a dispatch signature", t => {
+    expectParseError(
+      t,
+      `
+name: duplicate-event
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+        name: Transfer2
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Config parse error: Failed parsing globally defined contract: Contract Token has two events the indexer can't tell apart: "Transfer" and "Transfer2". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
+    )
+  })
+
+  it("rejects a byte-identical duplicate event, pointing at removal", t => {
+    expectParseError(
+      t,
+      `
+name: duplicate-event
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Config parse error: Failed parsing globally defined contract: Contract Token defines the event "Transfer" more than once. Please remove the duplicate.`,
+    )
+  })
+
+  it("rejects two events with the same name but different signatures, suggesting the name alias", t => {
+    expectParseError(
+      t,
+      `
+name: overloaded-event
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address from)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Config parse error: Failed parsing globally defined contract: Contract Token has two events named "Transfer". Give one of them a unique name with the "name" field so the generated code and the indexer's routing can tell them apart.`,
+    )
+  })
+
   it("preserves the root cause from nested Rust error contexts", t => {
     expectParseError(
       t,
@@ -809,8 +864,64 @@ chains:
 })
 
 describe("config YAML success cases", () => {
+  it("allows distinct events on one contract and the same event across contracts", t => {
+    // Distinct signatures on one contract are fine, and the same event on two
+    // different contracts is allowed — routing scopes matches by contract.
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+name: distinct-and-cross-contract-events
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Approval(address indexed owner, address indexed spender, uint256 value)
+  - name: ERC721
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+      - name: ERC721
+        address: "0x2222222222222222222222222222222222222222"
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.contracts->Array.length).toBe(2)
+  })
+
+  it("allows two same-named overloads once a name alias disambiguates them", t => {
+    // Two events resolving to the name "Transfer" would clash, but the alias on
+    // one gives them distinct names (and their signatures differ, so no dispatch
+    // collision either).
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+name: aliased-overload
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address from)
+        name: TransferSimple
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x1111111111111111111111111111111111111111"
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let contract = chain.contracts->Array.getUnsafe(0)
+    t.expect(contract.events->Array.map(e => e.name)).toEqual(["TransferSimple", "Transfer"])
+  })
+
   it("parses a minimal Fuel config through the public boundary", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: fuel-config
 ecosystem: fuel
 chains:
@@ -823,7 +934,7 @@ chains:
   })
 
   it("parses a minimal SVM config through the public boundary", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: svm-config
 ecosystem: svm
 chains:
@@ -836,7 +947,7 @@ chains:
   })
 
   it("validates event field selections against only the chain that uses them", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: mixed-sync-sources
 chains:
   - id: 1
@@ -861,7 +972,7 @@ chains:
   })
 
   it("allows a global contract with HyperSync-only fields when unrelated chains use RPC", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: mixed-global-contract
 contracts:
   - name: HyperOnly
@@ -884,7 +995,7 @@ chains:
   })
 
   it("removes skipped chains from runtime config", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: chain-options
 chains:
   - id: 1
@@ -900,7 +1011,7 @@ chains:
   })
 
   it("normalizes trailing slashes in HyperSync URLs", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: hypersync-url
 chains:
   - id: 1
@@ -923,9 +1034,9 @@ chains:
         `{"contractName":"Token","abi":[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]}`,
       ),
     ])
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      `
+      ~configYaml=`
 name: nested-abi
 chains:
   - id: 1
@@ -944,7 +1055,7 @@ chains:
   })
 
   it("accepts user event signatures with prefixes, tuple spacing, and trailing semicolons", t => {
-    let {config} = MockIndexerConfig.parseYaml(`
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
 name: event-signature-formatting
 contracts:
   - name: Shop
@@ -963,9 +1074,9 @@ chains:
   })
 
   it("uses explicit schema text even when YAML names a nonexistent schema path", t => {
-    let {config} = MockIndexerConfig.parseYaml(
+    let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`type Token { id: ID! }`,
-      `
+      ~configYaml=`
 name: explicit-schema
 schema: ./does-not-exist.graphql
 chains:
@@ -1018,6 +1129,17 @@ chains:
             - {name: Transfer, discriminator: "0x21"}
 `,
       "Config parse error: Program \"Program\" declares the instruction \"Transfer\" more than once",
+    ),
+    (
+      "rejects two instructions whose discriminators differ only in hex casing",
+      prefix ++ `
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: Transfer, discriminator: "0x0f"}
+            - {name: Withdraw, discriminator: "0x0F"}
+`,
+      `Config parse error: Contract Program has two events the indexer can't tell apart: "Transfer" and "Withdraw". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
     ),
     (
       "rejects invalid discriminators",
