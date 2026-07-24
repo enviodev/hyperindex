@@ -133,6 +133,12 @@ type t = {
   // --- Metric counters, rendered by Metrics at scrape time. ---
   mutable preloadSeconds: float,
   mutable processingSeconds: float,
+  mutable processingStalledOnFetchSeconds: float,
+  // Set while the processing loop is idle after starving on an empty buffer;
+  // None while processing or when the loop stopped for a reorg/shutdown. The
+  // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
+  mutable processingStalledOnFetchSince: option<Performance.timeRef>,
+  mutable processingStalledOnStorageWriteSeconds: float,
   handlerStats: dict<handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
@@ -206,6 +212,9 @@ let make = (
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
     preloadSeconds: 0.,
     processingSeconds: 0.,
+    processingStalledOnFetchSeconds: 0.,
+    processingStalledOnFetchSince: None,
+    processingStalledOnStorageWriteSeconds: 0.,
     handlerStats: Dict.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
@@ -391,8 +400,29 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) =>
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
 let isProcessing = (state: t) => state.isProcessing
-let beginProcessing = (state: t) => state.isProcessing = true
+let beginProcessing = (state: t) => {
+  switch state.processingStalledOnFetchSince {
+  | Some(since) =>
+    state.processingStalledOnFetchSeconds =
+      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
+    state.processingStalledOnFetchSince = None
+  | None => ()
+  }
+  state.isProcessing = true
+}
 let endProcessing = (state: t) => state.isProcessing = false
+
+// Start attributing idle time to fetch starvation. Called when the processing
+// loop exits with no work left; skipped when it exits for a reorg or shutdown,
+// so only genuine buffer starvation is counted.
+let markProcessingStalledOnFetch = (state: t) =>
+  if state.processingStalledOnFetchSince->Option.isNone {
+    state.processingStalledOnFetchSince = Some(Performance.now())
+  }
+
+let recordStalledOnStorageWrite = (state: t, ~seconds) =>
+  state.processingStalledOnStorageWriteSeconds =
+    state.processingStalledOnStorageWriteSeconds +. seconds
 
 let recordProcessedBatch = (state: t) =>
   state.processedBatchesCount = state.processedBatchesCount + 1
@@ -475,6 +505,12 @@ let toMetrics = (state: t): Metrics.t => {
     maxBatchSize: state.config.batchSize,
     preloadSeconds: state.preloadSeconds,
     processingSeconds: state.processingSeconds,
+    processingStalledOnFetchSeconds: state.processingStalledOnFetchSeconds +.
+    switch state.processingStalledOnFetchSince {
+    | Some(since) => since->Performance.secondsSince
+    | None => 0.
+    },
+    processingStalledOnStorageWriteSeconds: state.processingStalledOnStorageWriteSeconds,
     rollbackSeconds: state.rollbackSeconds,
     rollbackCount: state.rollbackCount,
     rollbackEventsCount: state.rollbackEventsCount,

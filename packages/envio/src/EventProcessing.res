@@ -352,7 +352,11 @@ let processEventBatch = async (
 
   try {
     // Backpressure: keep processing within keepLatestChangesLimit of the cycle.
+    let writeStallRef = Performance.now()
     await indexerState->Writing.awaitCapacity
+    indexerState->IndexerState.recordStalledOnStorageWrite(
+      ~seconds=writeStallRef->Performance.secondsSince,
+    )
 
     let timeRef = Performance.now()
 

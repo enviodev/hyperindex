@@ -104,6 +104,8 @@ type t = {
   maxBatchSize: int,
   preloadSeconds: float,
   processingSeconds: float,
+  processingStalledOnFetchSeconds: float,
+  processingStalledOnStorageWriteSeconds: float,
   rollbackSeconds: float,
   rollbackCount: int,
   rollbackEventsCount: float,
@@ -252,6 +254,18 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="Cumulative time spent executing event handlers during batch processing.",
     ~kind="counter",
     ~value=metrics.processingSeconds,
+  )
+  b->single(
+    ~name="envio_processing_stalled_on_fetch_seconds",
+    ~help="Cumulative time batch processing was stalled with an empty buffer, waiting for fetched events. A high rate points to fetching as the bottleneck, unless the chain is caught up to the head (compare with envio_indexing_source_waiting_seconds).",
+    ~kind="counter",
+    ~value=metrics.processingStalledOnFetchSeconds,
+  )
+  b->single(
+    ~name="envio_processing_stalled_on_storage_write_seconds",
+    ~help="Cumulative time batch processing was stalled waiting for storage write capacity to free up (backpressure). A high rate points to storage writes as the bottleneck.",
+    ~kind="counter",
+    ~value=metrics.processingStalledOnStorageWriteSeconds,
   )
   b->series(
     ~name="envio_progress_ready",

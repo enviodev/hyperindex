@@ -66,6 +66,7 @@ let applyBatchProgress: (t, ~batch: Batch.t) => unit
 let isProcessing: t => bool
 let beginProcessing: t => unit
 let endProcessing: t => unit
+let markProcessingStalledOnFetch: t => unit
 let recordProcessedBatch: t => unit
 let createBatch: (
   t,
@@ -110,6 +111,7 @@ let toMetrics: t => Metrics.t
 
 // Metric counters.
 let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
+let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
 let recordHandlerDuration: (t, ~contract: string, ~event: string, ~duration: float) => unit
 let startPreloadHandler: (t, ~contract: string, ~event: string) => Performance.timeRef
 let endPreloadHandler: (t, Performance.timeRef, ~contract: string, ~event: string) => unit

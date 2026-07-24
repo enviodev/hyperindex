@@ -45,6 +45,10 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
     // Hand off now that no batch is in flight.
     if state->IndexerState.isResolvingReorg {
       scheduleRollback()
+    } else if !(state->IndexerState.isStopped) {
+      // The loop ran out of work: attribute the idle gap until the next burst
+      // to fetch starvation.
+      state->IndexerState.markProcessingStalledOnFetch
     }
   }
 }
