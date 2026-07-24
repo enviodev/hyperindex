@@ -229,7 +229,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           partitionId: "0",
           registrationIndexes: [3],
           addressesByContractName: addressesByContractName(),
-          clientSideFilteredContracts: None,
+          clientFilteredContracts: None,
         })
         (
           toBlock,
@@ -297,7 +297,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           partitionId: "0",
           registrationIndexes: [3],
           addressesByContractName: addressesByContractName(),
-          clientSideFilteredContracts: None,
+          clientFilteredContracts: None,
         })
         items->Array.length
       },
@@ -343,7 +343,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             partitionId: "0",
             registrationIndexes: [0],
             addressesByContractName: Dict.make(),
-            clientSideFilteredContracts: None,
+            clientFilteredContracts: None,
           })
           None
         } catch {

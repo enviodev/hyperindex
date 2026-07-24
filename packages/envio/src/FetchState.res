@@ -18,7 +18,7 @@ type selection = {
   // their log selections carry no server-side address filter and routing accepts
   // any emitter; the JS `clientAddressFilter` still gates each item by registered
   // address + effectiveStartBlock. Absent for normal partitions.
-  clientSideFilteredContracts?: array<string>,
+  clientFilteredContracts?: array<string>,
 }
 
 type pendingQuery = {
@@ -168,13 +168,12 @@ module OptimizedPartitions = {
     // Tracks all contract names that have been dynamically added.
     // Never reset - used to determine when to split existing partitions.
     dynamicContracts: Utils.Set.t<string>,
-    // Contract names switched to client-side (wildcard) address filtering once
-    // their registered address count crossed the server-side threshold. Sticky
-    // for the run: their addresses live only in the index, their events are
-    // fetched by the single wildcard partition, and new dynamic addresses get a
-    // server-side backfill up to the wildcard frontier instead of a standing
-    // partition.
-    wildcardContracts: Utils.Set.t<string>,
+    // Contract names switched to client-side address filtering once their
+    // registered address count crossed the server-side threshold. Sticky for
+    // the run: their addresses live only in the index, their events are fetched
+    // by the single address-free partition, and new dynamic addresses get a
+    // bounded backfill up to its frontier instead of a standing partition.
+    clientFilteredContracts: Utils.Set.t<string>,
   }
 
   @inline
@@ -299,7 +298,7 @@ module OptimizedPartitions = {
     ~maxAddrInPartition,
     ~nextPartitionIndex: int,
     ~dynamicContracts: Utils.Set.t<string>,
-    ~wildcardContracts: Utils.Set.t<string>,
+    ~clientFilteredContracts: Utils.Set.t<string>,
   ) => {
     let newPartitions = []
     let mergingPartitions = Dict.make()
@@ -433,7 +432,7 @@ module OptimizedPartitions = {
       maxAddrInPartition,
       nextPartitionIndex: nextPartitionIndexRef.contents,
       dynamicContracts,
-      wildcardContracts,
+      clientFilteredContracts,
     }
   }
 
@@ -493,10 +492,10 @@ module OptimizedPartitions = {
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) =>
     switch optimizedPartitions.entities->Utils.Dict.dangerouslyGetNonOption(query.partitionId) {
-    // The partition was absorbed into the wildcard partition while this query was
-    // in flight. Its items are still merged into the buffer by the caller (and
-    // deduped); there's no partition bookkeeping left to do, and its reservation
-    // is released by ChainState regardless.
+    // The partition was absorbed into the address-free client-filtered partition
+    // while this query was in flight. Its items are still merged into the buffer
+    // by the caller (and deduped); there's no partition bookkeeping left to do,
+    // and its reservation is released by ChainState regardless.
     | None => optimizedPartitions
     | Some(p) =>
       optimizedPartitions->handleQueryResponseForPartition(
@@ -590,7 +589,7 @@ module OptimizedPartitions = {
         ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
         ~dynamicContracts=optimizedPartitions.dynamicContracts,
-        ~wildcardContracts=optimizedPartitions.wildcardContracts,
+        ~clientFilteredContracts=optimizedPartitions.clientFilteredContracts,
       )
     } else {
       let updatedMainPartition = {
@@ -640,7 +639,7 @@ module OptimizedPartitions = {
           ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
           ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
           ~dynamicContracts=optimizedPartitions.dynamicContracts,
-          ~wildcardContracts=optimizedPartitions.wildcardContracts,
+          ~clientFilteredContracts=optimizedPartitions.clientFilteredContracts,
         )
       }
     }
@@ -682,10 +681,10 @@ type t = {
   knownHeight: int,
   firstEventBlock: option<int>,
   // Per-contract registered-address count past which a dynamic contract is
-  // switched to client-side (wildcard) filtering. None disables the switch
+  // switched to client-side filtering. None disables the switch
   // (sources that can't filter client-side, e.g. SVM/Fuel), leaving every
   // contract filtered server-side.
-  wildcardAddressThreshold: option<int>,
+  clientFilterAddressThreshold: option<int>,
 }
 
 @inline
@@ -955,7 +954,7 @@ let updateInternal = (
     | blockItems => base->mergeIntoBuffer(blockItems)
     },
     firstEventBlock: fetchState.firstEventBlock,
-    wildcardAddressThreshold: fetchState.wildcardAddressThreshold,
+    clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
   }
 
   updatedFetchState
@@ -995,15 +994,15 @@ let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address
   all
 }
 
-// Move a contract to client-side (wildcard) address filtering, recording why.
-let addWildcardContract = (
-  wildcardContracts: Utils.Set.t<string>,
+// Move a contract to client-side address filtering, recording why.
+let addClientFilteredContract = (
+  clientFilteredContracts: Utils.Set.t<string>,
   ~contractName,
   ~chainId,
   ~addressCount,
   ~threshold,
 ) => {
-  wildcardContracts->Utils.Set.add(contractName)->ignore
+  clientFilteredContracts->Utils.Set.add(contractName)->ignore
   Logging.createChild(
     ~params={
       "chainId": chainId,
@@ -1016,38 +1015,38 @@ let addWildcardContract = (
   )
 }
 
-// Fold every wildcard contract's server-side partitions into client-side
-// (wildcard) fetching without tearing down established state:
-// - The standing wildcard partition (address-free, no mergeBlock) keeps its id,
-//   frontier, in-flight queries and learned density. Only when a newly-switched
-//   contract must be added does its selection change — under a fresh id, so
-//   in-flight responses built from the old selection are orphaned instead of
-//   advancing the frontier past ranges the new contract wasn't fetched for.
+// Fold every client-filtered contract's server-side partitions into client-side
+// fetching without tearing down established state:
+// - The standing address-free partition (no mergeBlock) keeps its id, frontier,
+//   in-flight queries and learned density. Only when a newly-switched contract
+//   must be added does its selection change — under a fresh id, so in-flight
+//   responses built from the old selection are orphaned instead of advancing
+//   the frontier past ranges the new contract wasn't fetched for.
 // - Partitions absorbed below the standing frontier (single-contract dynamic
-//   partitions and config partitions all of whose contracts are wildcard, plus
-//   any prior backfill) become one bounded backfill partition covering
-//   [their min frontier, standing frontier]: getNextQuery caps its queries at
-//   mergeBlock and handleQueryResponse deletes it on arrival. The overlap it
-//   re-delivers is deduped by mergeIntoBuffer, and the re-fetch doubles as
-//   history for freshly registered addresses: events dropped before the
-//   address was registered now pass the clientAddressFilter.
-// - A partition mixing wildcard and non-wildcard contracts stays, stripped of
-//   the wildcard contracts' addresses — the wildcard side covers those logs,
-//   so fetching them server-side too would only produce duplicates. Its
-//   frontier bounds the backfill from below so the stripped contracts lose no
-//   range.
+//   partitions and config partitions all of whose contracts are
+//   client-filtered, plus any prior backfill) become one bounded backfill
+//   partition covering [their min frontier, standing frontier]: getNextQuery
+//   caps its queries at mergeBlock and handleQueryResponse deletes it on
+//   arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and the
+//   re-fetch doubles as history for freshly registered addresses: events
+//   dropped before the address was registered now pass the clientAddressFilter.
+// - A partition mixing client-filtered and server-side contracts stays,
+//   stripped of the client-filtered contracts' addresses — the address-free
+//   partition covers those logs, so fetching them server-side too would only
+//   produce duplicates. Its frontier bounds the backfill from below so the
+//   stripped contracts lose no range.
 //
 // Registrations come from the address-free partitions plus `normalSelection`
-// filtered to wildcard contracts, so coverage never depends on which
+// filtered to client-filtered contracts, so coverage never depends on which
 // partitions happened to be absorbed (a stripped contract may have no
 // absorbable partition at all).
-let collapseWildcardContracts = (
+let collapseClientFilteredContracts = (
   partitions: array<partition>,
-  ~wildcardContracts: Utils.Set.t<string>,
+  ~clientFilteredContracts: Utils.Set.t<string>,
   ~normalSelection: selection,
   ~nextPartitionIndexRef: ref<int>,
 ) => {
-  if wildcardContracts->Utils.Set.size === 0 {
+  if clientFilteredContracts->Utils.Set.size === 0 {
     partitions
   } else {
     let kept = []
@@ -1066,14 +1065,15 @@ let collapseWildcardContracts = (
       | {selection: {dependsOnAddresses: false}} => absorbedPartitions->Array.push(p)->ignore
       | _ =>
         let contractNames = p.addressesByContractName->Dict.keysToArray
-        let wildcardNames = contractNames->Array.filter(c => wildcardContracts->Utils.Set.has(c))
-        if wildcardNames->Utils.Array.isEmpty {
+        let clientFilteredNames =
+          contractNames->Array.filter(c => clientFilteredContracts->Utils.Set.has(c))
+        if clientFilteredNames->Utils.Array.isEmpty {
           kept->Array.push(p)->ignore
-        } else if wildcardNames->Array.length === contractNames->Array.length {
+        } else if clientFilteredNames->Array.length === contractNames->Array.length {
           absorbedPartitions->Array.push(p)->ignore
         } else {
           let stripped = p.addressesByContractName->Utils.Dict.shallowCopy
-          wildcardNames->Array.forEach(c => stripped->Utils.Dict.deleteInPlace(c))
+          clientFilteredNames->Array.forEach(c => stripped->Utils.Dict.deleteInPlace(c))
           strippedFrontiers->Array.push(p.latestFetchedBlock)->ignore
           kept->Array.push({...p, addressesByContractName: stripped})->ignore
         }
@@ -1082,8 +1082,8 @@ let collapseWildcardContracts = (
 
     let selectionChanged = switch standingRef.contents {
     | Some(standing) =>
-      standing.selection.clientSideFilteredContracts->Option.mapOr(0, Array.length) !==
-        wildcardContracts->Utils.Set.size
+      standing.selection.clientFilteredContracts->Option.mapOr(0, Array.length) !==
+        clientFilteredContracts->Utils.Set.size
     | None => true
     }
 
@@ -1120,20 +1120,20 @@ let collapseWildcardContracts = (
       )
       addRegs(
         normalSelection.onEventRegistrations->Array.filter(reg =>
-          wildcardContracts->Utils.Set.has(reg.eventConfig.contractName)
+          clientFilteredContracts->Utils.Set.has(reg.eventConfig.contractName)
         ),
       )
       let newSelection = {
         dependsOnAddresses: false,
         onEventRegistrations: regByIndex->Dict.valuesToArray,
-        clientSideFilteredContracts: wildcardContracts->Utils.Set.toArray,
+        clientFilteredContracts: clientFilteredContracts->Utils.Set.toArray,
       }
 
       switch standingRef.contents {
       | None =>
         // First switch: no standing partition to preserve, so create it at the
         // min frontier directly — the whole range above is unfetched for the
-        // wildcard side anyway.
+        // client-filtered side anyway.
         switch minFrontierRef.contents {
         | None => kept
         | Some(minFrontier) =>
@@ -1207,7 +1207,7 @@ Returns OptimizedPartitions.t directly.
 let createPartitionsFromIndexingAddresses = (
   ~registeringContractsByContract: dict<dict<indexingAddress>>,
   ~dynamicContracts: Utils.Set.t<string>,
-  ~wildcardContracts: Utils.Set.t<string>,
+  ~clientFilteredContracts: Utils.Set.t<string>,
   ~normalSelection: selection,
   ~maxAddrInPartition: int,
   ~nextPartitionIndex: int,
@@ -1380,17 +1380,21 @@ OptimizedPartitions.t => {
   let mergedPartitions = mergedNonDynamic->Array.concat(dynamicPartitions)
 
   // Final step: concat existing partitions with phase 1+2 result, collapse any
-  // wildcard contracts into the single address-free partition, and optimize.
+  // client-filtered contracts into the single address-free partition, and optimize.
   let allPartitions =
     existingPartitions
     ->Array.concat(mergedPartitions)
-    ->collapseWildcardContracts(~wildcardContracts, ~normalSelection, ~nextPartitionIndexRef)
+    ->collapseClientFilteredContracts(
+      ~clientFilteredContracts,
+      ~normalSelection,
+      ~nextPartitionIndexRef,
+    )
   OptimizedPartitions.make(
     ~partitions=allPartitions,
     ~maxAddrInPartition,
     ~nextPartitionIndex=nextPartitionIndexRef.contents,
     ~dynamicContracts,
-    ~wildcardContracts,
+    ~clientFilteredContracts,
   )
 }
 
@@ -1651,18 +1655,18 @@ let registerDynamicContracts = (
       indexingAddresses->IndexingAddresses.register(noEventsAddresses)
 
       // Switch any dynamic contract that has just crossed the server-side
-      // address threshold to wildcard mode. Sticky: the set only grows, and
+      // address threshold to client-side filtering. Sticky: the set only grows, and
       // collapse in createPartitionsFromIndexingAddresses folds the contract's
       // partitions into the single address-free partition.
-      let wildcardContracts = fetchState.optimizedPartitions.wildcardContracts
-      switch fetchState.wildcardAddressThreshold {
+      let clientFilteredContracts = fetchState.optimizedPartitions.clientFilteredContracts
+      switch fetchState.clientFilterAddressThreshold {
       | Some(threshold) =>
         dynamicContractsRef.contents
         ->Utils.Set.toArray
         ->Array.forEach(contractName => {
           let addressCount = indexingAddresses->IndexingAddresses.contractCount(~contractName)
-          if !(wildcardContracts->Utils.Set.has(contractName)) && addressCount > threshold {
-            wildcardContracts->addWildcardContract(
+          if !(clientFilteredContracts->Utils.Set.has(contractName)) && addressCount > threshold {
+            clientFilteredContracts->addClientFilteredContract(
               ~contractName,
               ~chainId=fetchState.chainId,
               ~addressCount,
@@ -1676,7 +1680,7 @@ let registerDynamicContracts = (
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
         ~dynamicContracts=dynamicContractsRef.contents,
-        ~wildcardContracts,
+        ~clientFilteredContracts,
         ~normalSelection=fetchState.normalSelection,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
@@ -2486,7 +2490,7 @@ let make = (
   ~onBlockRegistrations=[],
   ~blockLag=0,
   ~firstEventBlock=None,
-  ~wildcardAddressThreshold=None,
+  ~clientFilterAddressThreshold=None,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -2534,7 +2538,7 @@ let make = (
 
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let dynamicContracts = Utils.Set.make()
-  let wildcardContracts = Utils.Set.make()
+  let clientFilteredContracts = Utils.Set.make()
 
   addresses->Array.forEach(contract => {
     let contractName = contract.contractName
@@ -2557,14 +2561,19 @@ let make = (
   })
 
   // Switch any contract already over the server-side address threshold to
-  // wildcard mode at creation — a config contract with a large static address
-  // list, or a dynamic contract restored from a large persisted set.
-  switch wildcardAddressThreshold {
+  // client-side filtering at creation — a config contract with a large static
+  // address list, or a dynamic contract restored from a large persisted set.
+  switch clientFilterAddressThreshold {
   | Some(threshold) =>
     registeringContractsByContract->Utils.Dict.forEachWithKey((addrs, contractName) => {
       let addressCount = addrs->Utils.Dict.size
       if addressCount > threshold {
-        wildcardContracts->addWildcardContract(~contractName, ~chainId, ~addressCount, ~threshold)
+        clientFilteredContracts->addClientFilteredContract(
+          ~contractName,
+          ~chainId,
+          ~addressCount,
+          ~threshold,
+        )
       }
     })
   | None => ()
@@ -2573,7 +2582,7 @@ let make = (
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
     ~dynamicContracts,
-    ~wildcardContracts,
+    ~clientFilteredContracts,
     ~normalSelection,
     ~maxAddrInPartition,
     ~nextPartitionIndex=partitions->Array.length,
@@ -2631,7 +2640,7 @@ let make = (
     knownHeight,
     buffer,
     firstEventBlock,
-    wildcardAddressThreshold,
+    clientFilterAddressThreshold,
   }
 
   fetchState
@@ -2757,7 +2766,7 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-    ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
+    ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
     ~normalSelection=fetchState.normalSelection,
     ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
     ~nextPartitionIndex=nextKeptIdRef.contents,

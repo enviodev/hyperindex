@@ -79,8 +79,8 @@ type t = {
   enableRawEvents: bool,
   maxAddrInPartition: int,
   // Per-contract registered-address count past which a dynamic contract switches
-  // to client-side (wildcard) filtering. Overridable in tests.
-  maxContractServerSideAddresses: int,
+  // to client-side filtering. Overridable in tests.
+  clientFilterAddressThreshold: int,
   batchSize: int,
   // Slack (in blocks) below the lagged head within which a chain still counts as
   // ready to enter the reorg threshold, absorbing head advances between catch-up
@@ -1032,7 +1032,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
-    maxContractServerSideAddresses: Env.maxContractServerSideAddresses,
+    clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,

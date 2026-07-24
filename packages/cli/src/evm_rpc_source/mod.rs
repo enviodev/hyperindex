@@ -132,9 +132,9 @@ pub struct NextPageParams {
     pub registration_indexes: Vec<i64>,
     pub addresses_by_contract_name: HashMap<String, Vec<String>>,
     /// Contract names to fetch address-free even though their registrations
-    /// depend on addresses (client-side / wildcard filtering). Absent or empty
+    /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
-    pub client_side_filtered_contracts: Option<Vec<String>>,
+    pub client_filtered_contracts: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -258,7 +258,7 @@ impl EvmRpcClient {
             .max(from_block);
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
-            params.client_side_filtered_contracts.unwrap_or_default(),
+            params.client_filtered_contracts.unwrap_or_default(),
         );
         let built = self
             .selection_builder

@@ -1,7 +1,7 @@
 //! Contracts a single query fetches address-free even though their
 //! registrations depend on addresses. When a contract's registered address
 //! count grows past the server-side threshold, the fetch state switches it to
-//! client-side (wildcard) filtering: its log/receipt selections are built
+//! client-side filtering: its log/receipt selections are built
 //! without a server-side address filter and routing accepts any emitter, while
 //! the JS `clientAddressFilter` still drops items whose emitter isn't a
 //! registered address at/before the log's block. Shared by every source's
