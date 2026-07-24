@@ -62,6 +62,8 @@ pub struct ServeState {
     pub model: model::ServerModel,
     pub pool: deadpool_postgres::Pool,
     pub admin_secret: String,
+    pub cors: env_config::CorsConfig,
+    pub use_prepared_statements: bool,
     /// Client-side bound on a whole operation's execution (every root
     /// field's pool wait + prepare + query). The server-side
     /// statement_timeout normally fires first; this is the backstop for a
@@ -126,11 +128,21 @@ pub async fn run(args: &ServeArgs, project_paths: &ParsedProjectPaths) -> anyhow
         model,
         pool,
         admin_secret: env.admin_secret.clone(),
+        cors: env.cors.clone(),
+        use_prepared_statements: env.use_prepared_statements,
         // +5s slack so the server-side statement_timeout (clean SQLSTATE
         // 57014 cancellation) wins whenever Postgres is still responsive.
-        query_timeout: env
-            .query_timeout_ms
-            .map(|ms| std::time::Duration::from_millis(ms + 5_000)),
+        // Without prepared statements there is no server-side timeout to win
+        // (no startup `options`), so the client-side bound is the only one and
+        // must be applied exactly rather than 5s late.
+        query_timeout: env.query_timeout_ms.map(|ms| {
+            let slack = if env.use_prepared_statements {
+                5_000
+            } else {
+                0
+            };
+            std::time::Duration::from_millis(ms + slack)
+        }),
         healthz_timeout: std::time::Duration::from_millis(env.healthz_timeout_ms),
         ws_ping_interval: std::time::Duration::from_millis(env.ws_ping_interval_ms),
         ws_connection_init_timeout: std::time::Duration::from_millis(
