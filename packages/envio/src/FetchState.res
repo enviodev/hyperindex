@@ -1016,101 +1016,183 @@ let addWildcardContract = (
   )
 }
 
-// Collapse every wildcard contract's (single-contract) dynamic partitions and
-// the existing address-free wildcard partition, if any, into one address-free
-// partition at their minimum latestFetchedBlock. Its registrations are the
-// union of the absorbed ones, kept only where they're genuinely wildcard or
-// belong to a wildcard contract; `clientSideFilteredContracts` names the
-// wildcard contracts so the source queries them address-free and the Rust
-// router accepts any emitter (the JS clientAddressFilter re-applies the gate).
+// Fold every wildcard contract's server-side partitions into client-side
+// (wildcard) fetching without tearing down established state:
+// - The standing wildcard partition (address-free, no mergeBlock) keeps its id,
+//   frontier, in-flight queries and learned density. Only when a newly-switched
+//   contract must be added does its selection change — under a fresh id, so
+//   in-flight responses built from the old selection are orphaned instead of
+//   advancing the frontier past ranges the new contract wasn't fetched for.
+// - Partitions absorbed below the standing frontier (single-contract dynamic
+//   partitions and config partitions all of whose contracts are wildcard, plus
+//   any prior backfill) become one bounded backfill partition covering
+//   [their min frontier, standing frontier]: getNextQuery caps its queries at
+//   mergeBlock and handleQueryResponse deletes it on arrival. The overlap it
+//   re-delivers is deduped by mergeIntoBuffer, and the re-fetch doubles as
+//   history for freshly registered addresses: events dropped before the
+//   address was registered now pass the clientAddressFilter.
+// - A partition mixing wildcard and non-wildcard contracts stays, stripped of
+//   the wildcard contracts' addresses — the wildcard side covers those logs,
+//   so fetching them server-side too would only produce duplicates. Its
+//   frontier bounds the backfill from below so the stripped contracts lose no
+//   range.
 //
-// Re-fetching the [min, prev-frontier] overlap is deduped by mergeIntoBuffer.
-// Because new dynamic addresses register near the current frontier, absorbing
-// their fresh partition drags the wildcard frontier back only slightly and the
-// re-fetch doubles as their backfill: events dropped before the address was
-// registered are re-queried and now pass the filter.
+// Registrations come from the address-free partitions plus `normalSelection`
+// filtered to wildcard contracts, so coverage never depends on which
+// partitions happened to be absorbed (a stripped contract may have no
+// absorbable partition at all).
 let collapseWildcardContracts = (
   partitions: array<partition>,
   ~wildcardContracts: Utils.Set.t<string>,
+  ~normalSelection: selection,
   ~nextPartitionIndexRef: ref<int>,
 ) => {
   if wildcardContracts->Utils.Set.size === 0 {
     partitions
   } else {
     let kept = []
+    let standingRef = ref(None)
+    let backfills = []
     let absorbedPartitions = []
-    // Absorb the existing address-free wildcard partition, and any address-bound
-    // partition all of whose contracts are wildcard (a single-contract dynamic
-    // partition, or a config-address partition for a wildcard contract). A
-    // partition mixing a wildcard contract with a non-wildcard one stays
-    // server-side; the wildcard partition still covers the wildcard contract's
-    // logs, so coverage isn't lost, only deduped.
+    let strippedFrontiers = []
+
     partitions->Array.forEach(p =>
       switch p {
+      | {selection: {dependsOnAddresses: false}, mergeBlock: None}
+        if standingRef.contents->Option.isNone =>
+        standingRef := Some(p)
+      | {selection: {dependsOnAddresses: false}, mergeBlock: Some(_)} =>
+        backfills->Array.push(p)->ignore
       | {selection: {dependsOnAddresses: false}} => absorbedPartitions->Array.push(p)->ignore
       | _ =>
         let contractNames = p.addressesByContractName->Dict.keysToArray
-        if (
-          contractNames->Array.length > 0 &&
-            contractNames->Array.every(c => wildcardContracts->Utils.Set.has(c))
-        ) {
+        let wildcardNames = contractNames->Array.filter(c => wildcardContracts->Utils.Set.has(c))
+        if wildcardNames->Utils.Array.isEmpty {
+          kept->Array.push(p)->ignore
+        } else if wildcardNames->Array.length === contractNames->Array.length {
           absorbedPartitions->Array.push(p)->ignore
         } else {
-          kept->Array.push(p)->ignore
+          let stripped = p.addressesByContractName->Utils.Dict.shallowCopy
+          wildcardNames->Array.forEach(c => stripped->Utils.Dict.deleteInPlace(c))
+          strippedFrontiers->Array.push(p.latestFetchedBlock)->ignore
+          kept->Array.push({...p, addressesByContractName: stripped})->ignore
         }
       }
     )
-    switch absorbedPartitions {
-    | [] => partitions
-    // The only absorbed partition is the existing wildcard partition and the
-    // client-filtered set hasn't grown: nothing to fold in. Keep it as-is
-    // instead of tearing it down — a fresh partition would drop its in-flight
-    // queries and learned density and needlessly re-fetch its frontier. Rebuild
-    // only when there's an address-bound partition to absorb (frontier drags
-    // back for backfill) or a newly-switched contract to add.
-    | [p]
-      if !p.selection.dependsOnAddresses &&
-      p.selection.clientSideFilteredContracts->Option.mapOr(0, Array.length) ===
-        wildcardContracts->Utils.Set.size => partitions
-    | _ =>
-      let minFrontier = ref((absorbedPartitions->Array.getUnsafe(0)).latestFetchedBlock)
-      let regByIndex = Dict.make()
-      absorbedPartitions->Array.forEach(p => {
-        if p.latestFetchedBlock.blockNumber < minFrontier.contents.blockNumber {
-          minFrontier := p.latestFetchedBlock
+
+    let selectionChanged = switch standingRef.contents {
+    | Some(standing) =>
+      standing.selection.clientSideFilteredContracts->Option.mapOr(0, Array.length) !==
+        wildcardContracts->Utils.Set.size
+    | None => true
+    }
+
+    if (
+      absorbedPartitions->Utils.Array.isEmpty &&
+      strippedFrontiers->Utils.Array.isEmpty &&
+      !selectionChanged
+    ) {
+      // Nothing to fold in and no newly-switched contract: leave the standing
+      // partition (and any in-progress backfill) untouched.
+      partitions
+    } else {
+      let minFrontierRef: ref<option<blockNumberAndTimestamp>> = ref(None)
+      let considerFrontier = (b: blockNumberAndTimestamp) =>
+        switch minFrontierRef.contents {
+        | Some(m) if m.blockNumber <= b.blockNumber => ()
+        | _ => minFrontierRef := Some(b)
         }
-        p.selection.onEventRegistrations->Array.forEach(reg => {
-          if (
-            !reg.dependsOnAddresses ||
-            wildcardContracts->Utils.Set.has(reg.eventConfig.contractName)
-          ) {
-            regByIndex->Dict.set(reg.index->Int.toString, reg)
-          }
-        })
-      })
-      let minRange = getMinQueryRange(absorbedPartitions)
-      let id = nextPartitionIndexRef.contents->Int.toString
-      nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
-      kept
-      ->Array.push({
-        id,
-        latestFetchedBlock: minFrontier.contents,
-        selection: {
-          dependsOnAddresses: false,
-          onEventRegistrations: regByIndex->Dict.valuesToArray,
-          clientSideFilteredContracts: wildcardContracts->Utils.Set.toArray,
-        },
-        addressesByContractName: Dict.make(),
-        mergeBlock: None,
-        dynamicContract: None,
-        mutPendingQueries: [],
-        sourceRangeCapacity: minRange,
-        prevSourceRangeCapacity: minRange,
-        eventDensity: None,
-        latestSourceRangeCapacityUpdateBlock: 0,
-      })
-      ->ignore
-      kept
+      absorbedPartitions->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
+      backfills->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
+      strippedFrontiers->Array.forEach(considerFrontier)
+
+      let regByIndex = Dict.make()
+      let addRegs = (regs: array<Internal.onEventRegistration>) =>
+        regs->Array.forEach(reg => regByIndex->Dict.set(reg.index->Int.toString, reg))
+      switch standingRef.contents {
+      | Some(standing) => addRegs(standing.selection.onEventRegistrations)
+      | None => ()
+      }
+      absorbedPartitions->Array.forEach(p =>
+        if !p.selection.dependsOnAddresses {
+          addRegs(p.selection.onEventRegistrations)
+        }
+      )
+      addRegs(
+        normalSelection.onEventRegistrations->Array.filter(reg =>
+          wildcardContracts->Utils.Set.has(reg.eventConfig.contractName)
+        ),
+      )
+      let newSelection = {
+        dependsOnAddresses: false,
+        onEventRegistrations: regByIndex->Dict.valuesToArray,
+        clientSideFilteredContracts: wildcardContracts->Utils.Set.toArray,
+      }
+
+      switch standingRef.contents {
+      | None =>
+        // First switch: no standing partition to preserve, so create it at the
+        // min frontier directly — the whole range above is unfetched for the
+        // wildcard side anyway.
+        switch minFrontierRef.contents {
+        | None => kept
+        | Some(minFrontier) =>
+          let minRange = getMinQueryRange(absorbedPartitions)
+          let id = nextPartitionIndexRef.contents->Int.toString
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          kept
+          ->Array.push({
+            id,
+            latestFetchedBlock: minFrontier,
+            selection: newSelection,
+            addressesByContractName: Dict.make(),
+            mergeBlock: None,
+            dynamicContract: None,
+            mutPendingQueries: [],
+            sourceRangeCapacity: minRange,
+            prevSourceRangeCapacity: minRange,
+            eventDensity: None,
+            latestSourceRangeCapacityUpdateBlock: 0,
+          })
+          ->ignore
+          kept
+        }
+      | Some(standing) =>
+        let standingOut = if selectionChanged {
+          let id = nextPartitionIndexRef.contents->Int.toString
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          {...standing, id, selection: newSelection, mutPendingQueries: []}
+        } else {
+          standing
+        }
+        kept->Array.push(standingOut)->ignore
+        switch minFrontierRef.contents {
+        | Some(minFrontier) if minFrontier.blockNumber < standing.latestFetchedBlock.blockNumber =>
+          let id = nextPartitionIndexRef.contents->Int.toString
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          kept
+          ->Array.push({
+            id,
+            latestFetchedBlock: minFrontier,
+            selection: newSelection,
+            addressesByContractName: Dict.make(),
+            mergeBlock: Some(standing.latestFetchedBlock.blockNumber),
+            dynamicContract: None,
+            mutPendingQueries: [],
+            // Same query shape as the standing partition, so inherit its
+            // learned range and density instead of probing from scratch.
+            sourceRangeCapacity: standing.sourceRangeCapacity,
+            prevSourceRangeCapacity: standing.prevSourceRangeCapacity,
+            eventDensity: standing.eventDensity,
+            latestSourceRangeCapacityUpdateBlock: 0,
+          })
+          ->ignore
+        // An absorbed frontier at/above the standing frontier needs no
+        // backfill: the standing partition hasn't fetched past there yet.
+        | _ => ()
+        }
+        kept
+      }
     }
   }
 }
@@ -1302,7 +1384,7 @@ OptimizedPartitions.t => {
   let allPartitions =
     existingPartitions
     ->Array.concat(mergedPartitions)
-    ->collapseWildcardContracts(~wildcardContracts, ~nextPartitionIndexRef)
+    ->collapseWildcardContracts(~wildcardContracts, ~normalSelection, ~nextPartitionIndexRef)
   OptimizedPartitions.make(
     ~partitions=allPartitions,
     ~maxAddrInPartition,

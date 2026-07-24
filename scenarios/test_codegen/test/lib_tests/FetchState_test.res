@@ -5254,4 +5254,141 @@ describe("FetchState wildcard mode (client-side address filtering)", () => {
       ~message="wildcard mode is sticky through rollback; still one client-filtered address-free partition",
     ).toEqual((["Gravatar"], [(false, Some(["Gravatar"]), [])]))
   })
+
+  let standingId = (fetchState: FetchState.t) =>
+    (
+      fetchState.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.find(p => !p.selection.dependsOnAddresses && p.mergeBlock->Option.isNone)
+      ->Option.getOrThrow
+    ).id
+
+  let frontierShape = (fetchState: FetchState.t) =>
+    fetchState.optimizedPartitions.idsInAscOrder->Array.map(id => {
+      let p = fetchState.optimizedPartitions.entities->Dict.getUnsafe(id)
+      (p.latestFetchedBlock.blockNumber, p.mergeBlock, p.selection.clientSideFilteredContracts)
+    })
+
+  // Standing wildcard partition with its frontier advanced to block 50,
+  // ready to take later registrations.
+  let makeCollapsedAt50 = () => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=Some(1))
+    let collapsed =
+      fetchState
+      ->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+      ->FetchState.updateKnownHeight(~knownHeight=100)
+    let query = switch collapsed->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready([query]) => query
+    | _ => JsError.throwWithMessage("Expected a single wildcard query")
+    }
+    collapsed->FetchState.startFetchingQueries(~queries=[query])
+    let advanced =
+      collapsed->FetchState.handleQueryResult(
+        ~query,
+        ~latestFetchedBlock=getBlockData(~blockNumber=50),
+        ~newItems=[],
+      )
+    (advanced, indexingAddresses)
+  }
+
+  it("adds a bounded backfill instead of rebuilding when a wildcard contract registers a new address", t => {
+    let (advanced, indexingAddresses) = makeCollapsedAt50()
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    t.expect(
+      (advanced->standingId === afterReg->standingId, afterReg->frontierShape),
+      ~message="standing partition untouched at 50; backfill covers [19, 50]",
+    ).toEqual((true, [(19, Some(50), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
+  })
+
+  it("folds successive registrations into a single backfill partition", t => {
+    let (advanced, indexingAddresses) = makeCollapsedAt50()
+    let afterSecond =
+      advanced
+      ->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+      ->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=30, ~contractAddress=mockAddress4)->dcToItem,
+      ])
+    t.expect(
+      (advanced->standingId === afterSecond->standingId, afterSecond->frontierShape),
+      ~message="one backfill from the earliest uncovered block; standing partition untouched",
+    ).toEqual((true, [(19, Some(50), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
+  })
+
+  it("removes the backfill partition once it reaches its mergeBlock", t => {
+    let (advanced, indexingAddresses) = makeCollapsedAt50()
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    let queries = switch afterReg->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) => queries
+    | _ => []
+    }
+    afterReg->FetchState.startFetchingQueries(~queries)
+    let backfillQuery =
+      queries->Array.find(q => q.partitionId !== afterReg->standingId)->Option.getOrThrow
+    let caughtUp =
+      afterReg->FetchState.handleQueryResult(
+        ~query=backfillQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=50),
+        ~newItems=[],
+      )
+    t.expect(
+      (caughtUp->standingId === afterReg->standingId, caughtUp->frontierShape),
+      ~message="backfill deleted at its mergeBlock; standing partition untouched",
+    ).toEqual((true, [(50, None, Some(["Gravatar"]))]))
+  })
+
+  it("strips a wildcard contract's addresses from a partition shared with a server-side contract", t => {
+    // 3 Gravatar config addresses (> threshold 2) merge with NftFactory's into
+    // one mixed partition before the collapse runs. The wildcard side covers
+    // Gravatar, so its addresses must leave the mixed partition (no permanent
+    // duplicate fetching), while NftFactory stays server-side.
+    let (fetchState, _indexingAddresses) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[
+        makeConfigContract("Gravatar", mockAddress0),
+        makeConfigContract("Gravatar", mockAddress1),
+        makeConfigContract("Gravatar", mockAddress2),
+        makeConfigContract("NftFactory", mockAddress3),
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~wildcardAddressThreshold=Some(2),
+    )
+    let standingRegContracts =
+      (
+        fetchState.optimizedPartitions.entities
+        ->Dict.valuesToArray
+        ->Array.find(p => !p.selection.dependsOnAddresses)
+        ->Option.getOrThrow
+      ).selection.onEventRegistrations->Array.map(reg => reg.eventConfig.contractName)
+    t.expect(
+      (fetchState->partitionShape, standingRegContracts),
+      ~message="Gravatar stripped from the mixed partition yet covered by the wildcard partition's registrations",
+    ).toEqual(
+      (
+        [(true, None, ["NftFactory"]), (false, Some(["Gravatar"]), [])],
+        ["Gravatar"],
+      ),
+    )
+  })
 })
