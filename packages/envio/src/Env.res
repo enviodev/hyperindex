@@ -11,7 +11,7 @@ let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fall
 
 // Most parallel in-flight queries a single chain may have at once, across all
 // its partitions (consumed as FetchState.maxChainConcurrency).
-let maxChainConcurrency = envSafe->EnvSafe.get("ENVIO_MAX_CHAIN_CONCURRENCY", S.int, ~fallback=100)
+let maxChainConcurrency = 100
 
 // Switch a single contract to client-side address filtering (wildcard mode)
 // once its registered address count crosses this threshold. Keeping addresses
