@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "fragment A1 on User { id ...B1 } fragment B1 on User { address } { User(order_by: {id: asc}, limit: 1) { ...A1 } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "address": "0xaaaa000000000000000000000000000000000005"
+    }
+   ]
+  }
+ }
+}

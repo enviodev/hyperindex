@@ -1,0 +1,13 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($j: jsonb!) { EntityWithAllTypes(where: {json: {_contains: $j}}, order_by: {id: asc}) { id } }",
+  "rawVariables": "{\"j\":{\"nested\":-9e999}}"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": []
+  }
+ }
+}

@@ -1,0 +1,35 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: User(where: {accountType: {_eq: \"ADMIN\"}}, order_by: {id: asc}) { id accountType } neq: User(where: {accountType: {_neq: \"ADMIN\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "user-1",
+     "accountType": "ADMIN"
+    },
+    {
+     "id": "user-4",
+     "accountType": "ADMIN"
+    }
+   ],
+   "neq": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-2"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

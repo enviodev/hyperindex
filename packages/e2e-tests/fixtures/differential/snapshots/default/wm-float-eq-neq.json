@@ -1,0 +1,40 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: EntityWithAllNonArrayTypes(where: {float_: {_eq: \"-3.14159\"}}, order_by: {id: asc}) { id float_ } neq: EntityWithAllNonArrayTypes(where: {float_: {_neq: \"-3.14159\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "scalar-unicode",
+     "float_": "-3.14159"
+    }
+   ],
+   "neq": [
+    {
+     "id": "scalar-1"
+    },
+    {
+     "id": "scalar-empty"
+    },
+    {
+     "id": "scalar-extremes"
+    },
+    {
+     "id": "scalar-neg-inf"
+    },
+    {
+     "id": "scalar-nulls"
+    },
+    {
+     "id": "scalar-quotes"
+    },
+    {
+     "id": "scalar-special-float"
+    }
+   ]
+  }
+ }
+}

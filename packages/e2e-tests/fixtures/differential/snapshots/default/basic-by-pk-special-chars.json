@@ -1,0 +1,15 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user \\\"quoted\\\" 🚀\") { id address } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user \"quoted\" 🚀",
+    "address": "0xaaaa000000000000000000000000000000000005"
+   }
+  }
+ }
+}

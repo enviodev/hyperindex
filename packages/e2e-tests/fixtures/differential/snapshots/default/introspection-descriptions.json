@@ -1,0 +1,44 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"User\") { description fields { name description } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "description": "A user of the protocol, keyed by their wallet address.",
+    "fields": [
+     {
+      "name": "accountType",
+      "description": null
+     },
+     {
+      "name": "address",
+      "description": "The user's wallet address, lowercased."
+     },
+     {
+      "name": "gravatar",
+      "description": "An object relationship"
+     },
+     {
+      "name": "gravatar_id",
+      "description": null
+     },
+     {
+      "name": "id",
+      "description": null
+     },
+     {
+      "name": "tokens",
+      "description": "An array relationship"
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "description": null
+     }
+    ]
+   }
+  }
+ }
+}

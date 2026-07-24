@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithBigDecimal(where: {bigDecimal: {_eq: \"0.000000000000000001\"}}, order_by: {id: asc}) { id bigDecimal } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithBigDecimal": [
+    {
+     "id": "bd-5",
+     "bigDecimal": "0.000000000000000001"
+    }
+   ]
+  }
+ }
+}

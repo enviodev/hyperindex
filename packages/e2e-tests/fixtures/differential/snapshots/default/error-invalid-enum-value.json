@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {accountType: {_eq: \"NOPE\"}}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "invalid input value for enum accounttype: \"NOPE\"",
+    "extensions": {
+     "path": "$",
+     "code": "data-exception"
+    }
+   }
+  ]
+ }
+}

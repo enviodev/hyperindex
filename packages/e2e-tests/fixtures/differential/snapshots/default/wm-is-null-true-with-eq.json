@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {gravatar_id: {_is_null: true, _eq: \"grav-1\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": []
+  }
+ }
+}

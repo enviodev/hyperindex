@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ first: User(order_by: {id: asc}, limit: 1) { id } last: User(order_by: {id: desc}, limit: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "first": [
+    {
+     "id": "user \"quoted\" 🚀"
+    }
+   ],
+   "last": [
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

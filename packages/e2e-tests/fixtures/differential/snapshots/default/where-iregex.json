@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity(where: {value: {_iregex: \"^V[13]$\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-1"
+    },
+    {
+     "id": "simple-3"
+    }
+   ]
+  }
+ }
+}

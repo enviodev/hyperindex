@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(where: {tokenId: {_in: [0, \"8\", 10]}}, order_by: {id: asc}) { id tokenId } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-1",
+     "tokenId": "0"
+    },
+    {
+     "id": "tok-10",
+     "tokenId": "10"
+    },
+    {
+     "id": "tok-8",
+     "tokenId": "8"
+    }
+   ]
+  }
+ }
+}

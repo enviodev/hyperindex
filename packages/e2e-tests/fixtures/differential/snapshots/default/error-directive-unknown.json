@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(limit: 1) { id @bogus } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "directive 'bogus' is not defined in the schema",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

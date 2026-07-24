@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-dangling\") { id gravatar_id gravatar { id displayName } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user-dangling",
+    "gravatar_id": "grav-missing",
+    "gravatar": null
+   }
+  }
+ }
+}

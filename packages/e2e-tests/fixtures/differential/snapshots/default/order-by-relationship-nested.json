@@ -1,0 +1,71 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(order_by: [{collection: {name: asc}}, {id: asc}]) { id collection { name } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-1",
+     "collection": {
+      "name": "Alpha Apes"
+     }
+    },
+    {
+     "id": "tok-10",
+     "collection": {
+      "name": "Alpha Apes"
+     }
+    },
+    {
+     "id": "tok-2",
+     "collection": {
+      "name": "Alpha Apes"
+     }
+    },
+    {
+     "id": "tok-3",
+     "collection": {
+      "name": "Alpha Apes"
+     }
+    },
+    {
+     "id": "tok-4",
+     "collection": {
+      "name": "Béta Bots 🤖"
+     }
+    },
+    {
+     "id": "tok-5",
+     "collection": {
+      "name": "Béta Bots 🤖"
+     }
+    },
+    {
+     "id": "tok-6",
+     "collection": {
+      "name": "Béta Bots 🤖"
+     }
+    },
+    {
+     "id": "tok-8",
+     "collection": {
+      "name": "Béta Bots 🤖"
+     }
+    },
+    {
+     "id": "tok-9",
+     "collection": {
+      "name": "Béta Bots 🤖"
+     }
+    },
+    {
+     "id": "tok-7",
+     "collection": null
+    }
+   ]
+  }
+ }
+}

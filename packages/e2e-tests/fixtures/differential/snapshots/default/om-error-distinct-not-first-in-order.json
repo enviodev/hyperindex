@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(distinct_on: owner_id, order_by: [{tokenId: asc}, {owner_id: asc}]) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "\"distinct_on\" columns must match initial \"order_by\" columns",
+    "extensions": {
+     "path": "$.selectionSet.Token.args",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -19,6 +19,7 @@ mod hbs_templating;
 mod napi;
 mod project_paths;
 pub mod scripts;
+pub mod serve;
 mod service_health;
 mod svm_hypersync_source;
 mod template_dirs;

@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_eq: \"all-1\"}}) { id json(path: \"$.nested.a\") } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1",
+     "json": [
+      1,
+      2
+     ]
+    }
+   ]
+  }
+ }
+}

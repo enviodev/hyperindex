@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NftCollection(where: {tokens: {owner: {accountType: {_eq: \"ADMIN\"}}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-1"
+    },
+    {
+     "id": "coll-2"
+    }
+   ]
+  }
+ }
+}

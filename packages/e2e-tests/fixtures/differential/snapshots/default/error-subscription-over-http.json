@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "subscription { User(limit: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "subscriptions are not supported over HTTP, use websockets instead",
+    "extensions": {
+     "path": "$",
+     "code": "unexpected-payload"
+    }
+   }
+  ]
+ }
+}

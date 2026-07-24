@@ -1,0 +1,44 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ eq: EntityWithAllTypes(where: {arrayOfStrings: {_eq: [\"one\", \"two\", \"three\"]}}, order_by: {id: asc}) { id arrayOfStrings } neq: EntityWithAllTypes(where: {arrayOfStrings: {_neq: [\"one\", \"two\", \"three\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "eq": [
+    {
+     "id": "all-1",
+     "arrayOfStrings": [
+      "one",
+      "two",
+      "three"
+     ]
+    }
+   ],
+   "neq": [
+    {
+     "id": "all-array-edge"
+    },
+    {
+     "id": "all-empty-arrays"
+    },
+    {
+     "id": "all-json-bool"
+    },
+    {
+     "id": "all-json-null"
+    },
+    {
+     "id": "all-json-number"
+    },
+    {
+     "id": "all-json-string"
+    },
+    {
+     "id": "all-json-unicode"
+    }
+   ]
+  }
+ }
+}

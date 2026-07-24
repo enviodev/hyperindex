@@ -1,0 +1,24 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-1\") { id json(path: \"$\") } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-1",
+    "json": {
+     "n": 1,
+     "kind": "object",
+     "nested": {
+      "a": [
+       1,
+       2
+      ]
+     }
+    }
+   }
+  }
+ }
+}

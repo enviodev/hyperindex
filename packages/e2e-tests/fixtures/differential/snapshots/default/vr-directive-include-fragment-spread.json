@@ -1,0 +1,26 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($inc: Boolean!) { User(order_by: {id: asc}, limit: 2) { id ...Extra @include(if: $inc) } } fragment Extra on User { address accountType }",
+  "variables": {
+   "inc": true
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "address": "0xaaaa000000000000000000000000000000000005",
+     "accountType": "USER"
+    },
+    {
+     "id": "user-1",
+     "address": "0xaaaa000000000000000000000000000000000001",
+     "accountType": "ADMIN"
+    }
+   ]
+  }
+ }
+}

@@ -62,6 +62,9 @@ pub enum CommandType {
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
     Metrics(MetricsArgs),
 
+    ///Serve the indexed data over a Hasura-compatible GraphQL API
+    Serve(ServeArgs),
+
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
     #[command(subcommand)]
     Skills(SkillsSubcommand),
@@ -149,6 +152,17 @@ pub struct StartArgs {
 pub struct MetricsArgs {
     #[command(subcommand)]
     pub subcommand: Option<MetricsSubcommand>,
+}
+
+#[derive(Debug, Args)]
+pub struct ServeArgs {
+    ///The port to serve the GraphQL API on. Can also be set via the `ENVIO_SERVE_PORT` environment variable.
+    #[arg(short, long, env = "ENVIO_SERVE_PORT", default_value_t = 8080)]
+    pub port: u16,
+
+    ///The host to bind to
+    #[arg(long, default_value = "0.0.0.0")]
+    pub host: String,
 }
 
 #[derive(Debug, Subcommand)]

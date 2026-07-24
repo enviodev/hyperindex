@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($id: String!) { User_by_pk(id: $id) { id address } }",
+  "variables": {
+   "id": "user-2"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user-2",
+    "address": "0xaaaa000000000000000000000000000000000002"
+   }
+  }
+ }
+}

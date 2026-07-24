@@ -1,0 +1,215 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ d1: EntityWithAllNonArrayTypes(order_by: [{optInt: asc}, {id: asc}]) { id optInt } d2: EntityWithAllNonArrayTypes(order_by: [{optInt: desc}, {id: asc}]) { id optInt } d3: EntityWithAllNonArrayTypes(order_by: [{optInt: asc_nulls_first}, {id: asc}]) { id optInt } d4: EntityWithAllNonArrayTypes(order_by: [{optInt: asc_nulls_last}, {id: asc}]) { id optInt } d5: EntityWithAllNonArrayTypes(order_by: [{optInt: desc_nulls_first}, {id: asc}]) { id optInt } d6: EntityWithAllNonArrayTypes(order_by: [{optInt: desc_nulls_last}, {id: asc}]) { id optInt } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "d1": [
+    {
+     "id": "scalar-extremes",
+     "optInt": -2147483648
+    },
+    {
+     "id": "scalar-empty",
+     "optInt": 0
+    },
+    {
+     "id": "scalar-quotes",
+     "optInt": 3
+    },
+    {
+     "id": "scalar-unicode",
+     "optInt": 7
+    },
+    {
+     "id": "scalar-1",
+     "optInt": 10
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optInt": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optInt": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optInt": null
+    }
+   ],
+   "d2": [
+    {
+     "id": "scalar-neg-inf",
+     "optInt": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optInt": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optInt": null
+    },
+    {
+     "id": "scalar-1",
+     "optInt": 10
+    },
+    {
+     "id": "scalar-unicode",
+     "optInt": 7
+    },
+    {
+     "id": "scalar-quotes",
+     "optInt": 3
+    },
+    {
+     "id": "scalar-empty",
+     "optInt": 0
+    },
+    {
+     "id": "scalar-extremes",
+     "optInt": -2147483648
+    }
+   ],
+   "d3": [
+    {
+     "id": "scalar-neg-inf",
+     "optInt": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optInt": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optInt": null
+    },
+    {
+     "id": "scalar-extremes",
+     "optInt": -2147483648
+    },
+    {
+     "id": "scalar-empty",
+     "optInt": 0
+    },
+    {
+     "id": "scalar-quotes",
+     "optInt": 3
+    },
+    {
+     "id": "scalar-unicode",
+     "optInt": 7
+    },
+    {
+     "id": "scalar-1",
+     "optInt": 10
+    }
+   ],
+   "d4": [
+    {
+     "id": "scalar-extremes",
+     "optInt": -2147483648
+    },
+    {
+     "id": "scalar-empty",
+     "optInt": 0
+    },
+    {
+     "id": "scalar-quotes",
+     "optInt": 3
+    },
+    {
+     "id": "scalar-unicode",
+     "optInt": 7
+    },
+    {
+     "id": "scalar-1",
+     "optInt": 10
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optInt": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optInt": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optInt": null
+    }
+   ],
+   "d5": [
+    {
+     "id": "scalar-neg-inf",
+     "optInt": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optInt": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optInt": null
+    },
+    {
+     "id": "scalar-1",
+     "optInt": 10
+    },
+    {
+     "id": "scalar-unicode",
+     "optInt": 7
+    },
+    {
+     "id": "scalar-quotes",
+     "optInt": 3
+    },
+    {
+     "id": "scalar-empty",
+     "optInt": 0
+    },
+    {
+     "id": "scalar-extremes",
+     "optInt": -2147483648
+    }
+   ],
+   "d6": [
+    {
+     "id": "scalar-1",
+     "optInt": 10
+    },
+    {
+     "id": "scalar-unicode",
+     "optInt": 7
+    },
+    {
+     "id": "scalar-quotes",
+     "optInt": 3
+    },
+    {
+     "id": "scalar-empty",
+     "optInt": 0
+    },
+    {
+     "id": "scalar-extremes",
+     "optInt": -2147483648
+    },
+    {
+     "id": "scalar-neg-inf",
+     "optInt": null
+    },
+    {
+     "id": "scalar-nulls",
+     "optInt": null
+    },
+    {
+     "id": "scalar-special-float",
+     "optInt": null
+    }
+   ]
+  }
+ }
+}

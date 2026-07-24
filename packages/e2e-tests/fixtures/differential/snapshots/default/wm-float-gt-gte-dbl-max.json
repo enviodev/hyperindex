@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: EntityWithAllNonArrayTypes(where: {float_: {_gt: \"1.7976931348623157e308\"}}, order_by: {id: asc}) { id float_ } gte: EntityWithAllNonArrayTypes(where: {float_: {_gte: \"1.7976931348623157e308\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "id": "scalar-special-float",
+     "float_": "Infinity"
+    }
+   ],
+   "gte": [
+    {
+     "id": "scalar-extremes"
+    },
+    {
+     "id": "scalar-special-float"
+    }
+   ]
+  }
+ }
+}

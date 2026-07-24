@@ -30,6 +30,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio start`↴](#envio-start)
 * [`envio metrics`↴](#envio-metrics)
 * [`envio metrics runtime`↴](#envio-metrics-runtime)
+* [`envio serve`↴](#envio-serve)
 * [`envio skills`↴](#envio-skills)
 * [`envio skills update`↴](#envio-skills-update)
 * [`envio tools`↴](#envio-tools)
@@ -51,6 +52,7 @@ This document contains the help content for the `envio` command-line program.
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
+* `serve` — Serve the indexed data over a Hasura-compatible GraphQL API
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
@@ -398,6 +400,23 @@ Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
 
 **Usage:** `envio metrics runtime`
+
+
+
+## `envio serve`
+
+Serve the indexed data over a Hasura-compatible GraphQL API
+
+**Usage:** `envio serve [OPTIONS]`
+
+###### **Options:**
+
+* `-p`, `--port <PORT>` — The port to serve the GraphQL API on. Can also be set via the `ENVIO_SERVE_PORT` environment variable
+
+  Default value: `8080`
+* `--host <HOST>` — The host to bind to
+
+  Default value: `0.0.0.0`
 
 
 

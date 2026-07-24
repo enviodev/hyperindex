@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-unicode\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-unicode",
+    "string": "héllo wörld 中文测试 🚀🎉",
+    "optString": "emoji 🤖",
+    "int_": 7,
+    "optInt": 7,
+    "float_": "-3.14159",
+    "optFloat": "2.718281828459045",
+    "bool": true,
+    "optBool": true,
+    "bigInt": "42",
+    "optBigInt": "-42",
+    "bigDecimal": "3.14000",
+    "optBigDecimal": "0.00000",
+    "bigDecimalWithConfig": "2.50000000",
+    "enumField": "USER",
+    "optEnumField": "USER",
+    "timestamp": "2024-12-25T13:00:00+00:00",
+    "optTimestamp": "2024-12-26T02:30:00+00:00"
+   }
+  }
+ }
+}

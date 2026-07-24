@@ -1,0 +1,44 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ isNull: EntityWithAllNonArrayTypes(where: {optEnumField: {_is_null: true}}, order_by: {id: asc}) { id } notNull: EntityWithAllNonArrayTypes(where: {optEnumField: {_is_null: false}}, order_by: {id: asc}) { id optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "isNull": [
+    {
+     "id": "scalar-neg-inf"
+    },
+    {
+     "id": "scalar-nulls"
+    },
+    {
+     "id": "scalar-special-float"
+    }
+   ],
+   "notNull": [
+    {
+     "id": "scalar-1",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-empty",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-extremes",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "scalar-quotes",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "scalar-unicode",
+     "optEnumField": "USER"
+    }
+   ]
+  }
+ }
+}

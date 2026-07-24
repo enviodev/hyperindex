@@ -1,0 +1,37 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: [{updatesCountOnUserForTesting: desc}, {id: asc}]) { id updatesCountOnUserForTesting } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-3",
+     "updatesCountOnUserForTesting": 2147483647
+    },
+    {
+     "id": "user-2",
+     "updatesCountOnUserForTesting": 42
+    },
+    {
+     "id": "user-dangling",
+     "updatesCountOnUserForTesting": 7
+    },
+    {
+     "id": "user \"quoted\" 🚀",
+     "updatesCountOnUserForTesting": 5
+    },
+    {
+     "id": "user-1",
+     "updatesCountOnUserForTesting": 0
+    },
+    {
+     "id": "user-4",
+     "updatesCountOnUserForTesting": -2147483648
+    }
+   ]
+  }
+ }
+}

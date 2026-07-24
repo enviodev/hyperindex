@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(bogus: 1) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "'User' has no argument named 'bogus'",
+    "extensions": {
+     "path": "$.selectionSet.User",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

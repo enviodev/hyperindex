@@ -1,0 +1,23 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { min { event_id serial } max { event_id serial } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_aggregate": {
+    "aggregate": {
+     "min": {
+      "event_id": "1",
+      "serial": "1"
+     },
+     "max": {
+      "event_id": "4611686018427387906",
+      "serial": "5"
+     }
+    }
+   }
+  }
+ }
+}

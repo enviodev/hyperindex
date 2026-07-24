@@ -1,0 +1,49 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(where: {_or: [{tokenId: {_lt: 0}}, {owner: {accountType: {_eq: \"ADMIN\"}}}, {collection: {name: {_eq: \"\"}}}]}, order_by: {id: asc}) { id tokenId owner_id collection_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-1",
+     "tokenId": "0",
+     "owner_id": "user-1",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-10",
+     "tokenId": "10",
+     "owner_id": "user-4",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-2",
+     "tokenId": "1",
+     "owner_id": "user-1",
+     "collection_id": "coll-1"
+    },
+    {
+     "id": "tok-5",
+     "tokenId": "-5",
+     "owner_id": "user-3",
+     "collection_id": "coll-2"
+    },
+    {
+     "id": "tok-7",
+     "tokenId": "7",
+     "owner_id": "user-1",
+     "collection_id": "coll-missing"
+    },
+    {
+     "id": "tok-9",
+     "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999",
+     "owner_id": "user-4",
+     "collection_id": "coll-2"
+    }
+   ]
+  }
+ }
+}

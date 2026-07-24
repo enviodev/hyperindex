@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfStrings: {_in: [[\"a\"], [\"one\", \"two\", \"three\"]]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "database query error",
+    "extensions": {
+     "path": "$",
+     "code": "unexpected"
+    }
+   }
+  ]
+ }
+}

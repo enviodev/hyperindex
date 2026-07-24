@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __schema { queryType { name } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__schema": {
+    "queryType": {
+     "name": "query_root"
+    }
+   }
+  }
+ }
+}

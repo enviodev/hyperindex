@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(limit: 1) { owner: owner_id owner { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "selection of both 'owner_id' and 'owner' specify the same response name, 'owner'",
+    "extensions": {
+     "path": "$.selectionSet.Token.selectionSet",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

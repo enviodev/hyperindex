@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {bool: {_eq: true}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-1"
+    },
+    {
+     "id": "scalar-empty"
+    },
+    {
+     "id": "scalar-extremes"
+    },
+    {
+     "id": "scalar-neg-inf"
+    },
+    {
+     "id": "scalar-unicode"
+    }
+   ]
+  }
+ }
+}

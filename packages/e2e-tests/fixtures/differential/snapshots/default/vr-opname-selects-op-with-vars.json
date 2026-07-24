@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query WithVar($v: String!) { SimpleEntity(where: {value: {_eq: $v}}, order_by: {id: asc}) { id value } } query NoVar { User(order_by: {id: asc}, limit: 1) { id } }",
+  "variables": {
+   "v": "v2"
+  },
+  "operationName": "WithVar"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-2",
+     "value": "v2"
+    }
+   ]
+  }
+ }
+}

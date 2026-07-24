@@ -1,0 +1,47 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-json-null\") { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-json-null",
+    "string": "jsonb null literal",
+    "optString": null,
+    "arrayOfStrings": [
+     "c"
+    ],
+    "int_": 7,
+    "optInt": null,
+    "arrayOfInts": [
+     7
+    ],
+    "float_": "7.5",
+    "optFloat": null,
+    "arrayOfFloats": [
+     7.5
+    ],
+    "bool": true,
+    "optBool": null,
+    "bigInt": "7",
+    "optBigInt": null,
+    "arrayOfBigInts": [
+     "7"
+    ],
+    "bigDecimal": "7.5",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "7.00000000",
+    "arrayOfBigDecimals": [
+     "7.5"
+    ],
+    "timestamp": "2024-02-04T02:02:02+00:00",
+    "optTimestamp": null,
+    "json": null,
+    "enumField": "ADMIN",
+    "optEnumField": null
+   }
+  }
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate(where: {id: {_eq: \"missing\"}}) { aggregate { count } nodes { id tokenId owner { id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 0
+    },
+    "nodes": []
+   }
+  }
+ }
+}

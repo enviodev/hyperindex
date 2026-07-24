@@ -1,0 +1,50 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ B(order_by: {id: asc}) { id c { id a { id b { id } } } a(order_by: {id: asc}) { id optionalStringToTestLinkedEntities } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "B": [
+    {
+     "id": "b-1",
+     "c": {
+      "id": "c-1",
+      "a": {
+       "id": "a-1",
+       "b": {
+        "id": "b-1"
+       }
+      }
+     },
+     "a": [
+      {
+       "id": "a-1",
+       "optionalStringToTestLinkedEntities": "linked"
+      },
+      {
+       "id": "a-2",
+       "optionalStringToTestLinkedEntities": null
+      }
+     ]
+    },
+    {
+     "id": "b-2",
+     "c": null,
+     "a": [
+      {
+       "id": "a-3",
+       "optionalStringToTestLinkedEntities": ""
+      }
+     ]
+    },
+    {
+     "id": "b-3",
+     "c": null,
+     "a": []
+    }
+   ]
+  }
+ }
+}

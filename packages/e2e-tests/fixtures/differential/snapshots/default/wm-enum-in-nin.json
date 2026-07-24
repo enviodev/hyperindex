@@ -1,0 +1,26 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: Gravatar(where: {size: {_in: [\"SMALL\", \"LARGE\"]}}, order_by: {id: asc}) { id size } nin: Gravatar(where: {size: {_nin: [\"SMALL\", \"LARGE\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "id": "grav-1",
+     "size": "SMALL"
+    },
+    {
+     "id": "grav-3",
+     "size": "LARGE"
+    }
+   ],
+   "nin": [
+    {
+     "id": "grav-2"
+    }
+   ]
+  }
+ }
+}

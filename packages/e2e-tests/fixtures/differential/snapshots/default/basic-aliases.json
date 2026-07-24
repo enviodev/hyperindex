@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ renamed: User(order_by: {id: asc}, limit: 2) { theId: id addr: address t: __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "renamed": [
+    {
+     "theId": "user \"quoted\" 🚀",
+     "addr": "0xaaaa000000000000000000000000000000000005",
+     "t": "User"
+    },
+    {
+     "theId": "user-1",
+     "addr": "0xaaaa000000000000000000000000000000000001",
+     "t": "User"
+    }
+   ]
+  }
+ }
+}

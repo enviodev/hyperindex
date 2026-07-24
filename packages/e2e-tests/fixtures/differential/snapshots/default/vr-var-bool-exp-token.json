@@ -1,0 +1,44 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($w: Token_bool_exp!) { Token(where: $w, order_by: {id: asc}) { id tokenId } }",
+  "variables": {
+   "w": {
+    "tokenId": {
+     "_gte": 7
+    }
+   }
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "id": "tok-10",
+     "tokenId": "10"
+    },
+    {
+     "id": "tok-4",
+     "tokenId": "1000000000000000000000000000000"
+    },
+    {
+     "id": "tok-6",
+     "tokenId": "123456789"
+    },
+    {
+     "id": "tok-7",
+     "tokenId": "7"
+    },
+    {
+     "id": "tok-8",
+     "tokenId": "8"
+    },
+    {
+     "id": "tok-9",
+     "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-json-unicode\") { id json(path: \"$.héllo\") } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-json-unicode",
+    "json": "wörld 🚀"
+   }
+  }
+ }
+}

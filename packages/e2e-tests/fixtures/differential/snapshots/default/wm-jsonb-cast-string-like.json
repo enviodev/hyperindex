@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {json: {_cast: {String: {_like: \"%\\\"kind\\\"%\"}}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1"
+    }
+   ]
+  }
+ }
+}

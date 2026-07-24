@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity(offset: 8) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-9"
+    },
+    {
+     "id": "simple-10"
+    }
+   ]
+  }
+ }
+}

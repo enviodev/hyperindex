@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ gt: raw_events(where: {event_id: {_gt: \"4611686018427387905\"}}, order_by: {serial: asc}) { serial event_id } gte: raw_events(where: {event_id: {_gte: \"4611686018427387905\"}}, order_by: {serial: asc}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "gt": [
+    {
+     "serial": "3",
+     "event_id": "4611686018427387906"
+    }
+   ],
+   "gte": [
+    {
+     "serial": "2"
+    },
+    {
+     "serial": "3"
+    }
+   ]
+  }
+ }
+}

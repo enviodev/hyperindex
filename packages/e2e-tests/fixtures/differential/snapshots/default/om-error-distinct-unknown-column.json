@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(distinct_on: bogus) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected one of the values ['id', 'collection_id', 'owner_id', 'tokenId'] for type 'Token_select_column', but found 'bogus'",
+    "extensions": {
+     "path": "$.selectionSet.Token.args.distinct_on[0]",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

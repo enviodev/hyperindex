@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {id: {_eq: \"user-dangling\"}}) { id tokens(order_by: {id: asc}) { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user-dangling",
+     "tokens": []
+    }
+   ]
+  }
+ }
+}

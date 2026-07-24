@@ -1,0 +1,74 @@
+import { adminSecret } from "./env.js";
+import type { CorpusCase } from "./corpus.js";
+
+export interface GraphQLResponse {
+  status: number;
+  body: unknown;
+}
+
+export async function runCase(
+  endpoint: string,
+  corpusCase: CorpusCase
+): Promise<GraphQLResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const role = corpusCase.role ?? "public";
+  if (role === "admin") {
+    headers["X-Hasura-Admin-Secret"] = adminSecret;
+  } else if (role === "admin-wrong") {
+    headers["X-Hasura-Admin-Secret"] = `${adminSecret}-wrong`;
+  }
+  const payload: Record<string, unknown> = { query: corpusCase.query };
+  if (corpusCase.variables !== undefined)
+    payload.variables = corpusCase.variables;
+  if (corpusCase.operationName !== undefined)
+    payload.operationName = corpusCase.operationName;
+
+  const requestBody =
+    corpusCase.rawVariables === undefined
+      ? JSON.stringify(payload)
+      : `{"query":${JSON.stringify(corpusCase.query)},"variables":${corpusCase.rawVariables}${
+          corpusCase.operationName === undefined
+            ? ""
+            : `,"operationName":${JSON.stringify(corpusCase.operationName)}`
+        }}`;
+
+  const res = await fetch(`${endpoint}/v1/graphql`, {
+    method: "POST",
+    headers,
+    body: requestBody,
+  });
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { nonJsonBody: text };
+  }
+  return { status: res.status, body };
+}
+
+/**
+ * Normalize a response for comparison. For compare mode "rootSet", arrays
+ * directly under data.* are sorted by their JSON representation so queries
+ * without a deterministic order_by can still be diffed.
+ */
+export function normalize(
+  response: GraphQLResponse,
+  compare: CorpusCase["compare"]
+): GraphQLResponse {
+  if (compare !== "rootSet") return response;
+  const body = response.body as { data?: Record<string, unknown> };
+  if (!body || typeof body !== "object" || !body.data) return response;
+  const data: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body.data)) {
+    data[key] = Array.isArray(value)
+      ? [...value]
+          .map((item) => [JSON.stringify(item), item] as const)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([, item]) => item)
+      : value;
+  }
+  return { status: response.status, body: { ...body, data } };
+}

@@ -1,0 +1,45 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(order_by: [{bigInt: asc}, {id: asc}]) { id bigInt } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-neg-inf",
+     "bigInt": "-1"
+    },
+    {
+     "id": "scalar-nulls",
+     "bigInt": "0"
+    },
+    {
+     "id": "scalar-special-float",
+     "bigInt": "1"
+    },
+    {
+     "id": "scalar-quotes",
+     "bigInt": "7"
+    },
+    {
+     "id": "scalar-empty",
+     "bigInt": "10"
+    },
+    {
+     "id": "scalar-unicode",
+     "bigInt": "42"
+    },
+    {
+     "id": "scalar-1",
+     "bigInt": "100"
+    },
+    {
+     "id": "scalar-extremes",
+     "bigInt": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+    }
+   ]
+  }
+ }
+}

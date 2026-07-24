@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ any: C(where: {d: {}}, order_by: {id: asc}) { id } none: C(where: {_not: {d: {}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "any": [
+    {
+     "id": "c-1"
+    },
+    {
+     "id": "c-2"
+    }
+   ],
+   "none": []
+  }
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { hashes: count(columns: block_hash, distinct: true) pairs: count(columns: [chain_id, block_number], distinct: true) } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_aggregate": {
+    "aggregate": {
+     "hashes": 4,
+     "pairs": 4
+    }
+   }
+  }
+ }
+}

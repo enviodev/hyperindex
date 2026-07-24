@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ similar: User(where: {address: {_similar: \"0xaaaa%(1|2)\"}}, order_by: {id: asc}) { id } nsimilar: User(where: {address: {_nsimilar: \"0xaaaa%(1|2)\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "similar": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-2"
+    }
+   ],
+   "nsimilar": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

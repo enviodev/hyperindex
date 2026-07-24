@@ -1,0 +1,111 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"User_bool_exp\") { kind name inputFields { name type { kind name ofType { kind name ofType { kind name } } } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "kind": "INPUT_OBJECT",
+    "name": "User_bool_exp",
+    "inputFields": [
+     {
+      "name": "_and",
+      "type": {
+       "kind": "LIST",
+       "name": null,
+       "ofType": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+         "kind": "INPUT_OBJECT",
+         "name": "User_bool_exp"
+        }
+       }
+      }
+     },
+     {
+      "name": "_not",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "User_bool_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "_or",
+      "type": {
+       "kind": "LIST",
+       "name": null,
+       "ofType": {
+        "kind": "NON_NULL",
+        "name": null,
+        "ofType": {
+         "kind": "INPUT_OBJECT",
+         "name": "User_bool_exp"
+        }
+       }
+      }
+     },
+     {
+      "name": "accountType",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "accounttype_comparison_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "address",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "String_comparison_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "gravatar",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "Gravatar_bool_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "gravatar_id",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "String_comparison_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "id",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "String_comparison_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "tokens",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "Token_bool_exp",
+       "ofType": null
+      }
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "type": {
+       "kind": "INPUT_OBJECT",
+       "name": "Int_comparison_exp",
+       "ofType": null
+      }
+     }
+    ]
+   }
+  }
+ }
+}

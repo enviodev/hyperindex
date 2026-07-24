@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { aggregate { count(columns: [notAColumn]) } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected one of the values ['id', 'accountType', 'address', 'gravatar_id', 'updatesCountOnUserForTesting'] for type 'User_select_column', but found 'notAColumn'",
+    "extensions": {
+     "path": "$.selectionSet.User_aggregate.selectionSet.aggregate.selectionSet.count.args.columns[0]",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

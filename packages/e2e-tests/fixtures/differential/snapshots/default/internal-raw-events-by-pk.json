@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events_by_pk(serial: 1) { serial event_name params } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_by_pk": {
+    "serial": "1",
+    "event_name": "Transfer",
+    "params": {
+     "to": "0x1",
+     "from": "0x0",
+     "value": "100"
+    }
+   }
+  }
+ }
+}

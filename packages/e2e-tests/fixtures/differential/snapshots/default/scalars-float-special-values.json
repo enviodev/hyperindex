@@ -1,0 +1,28 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes(where: {id: {_in: [\"scalar-special-float\", \"scalar-neg-inf\", \"scalar-extremes\"]}}, order_by: {id: asc}) { id float_ optFloat } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes": [
+    {
+     "id": "scalar-extremes",
+     "float_": "1.7976931348623157e+308",
+     "optFloat": "5e-324"
+    },
+    {
+     "id": "scalar-neg-inf",
+     "float_": "-Infinity",
+     "optFloat": "-0"
+    },
+    {
+     "id": "scalar-special-float",
+     "float_": "Infinity",
+     "optFloat": "NaN"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,38 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: [{event_id: asc}, {serial: asc}]) { serial chain_id event_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events": [
+    {
+     "serial": "4",
+     "chain_id": 1337,
+     "event_id": "1"
+    },
+    {
+     "serial": "5",
+     "chain_id": 1337,
+     "event_id": "2"
+    },
+    {
+     "serial": "1",
+     "chain_id": 1,
+     "event_id": "4611686018427387904"
+    },
+    {
+     "serial": "2",
+     "chain_id": 1,
+     "event_id": "4611686018427387905"
+    },
+    {
+     "serial": "3",
+     "chain_id": 1,
+     "event_id": "4611686018427387906"
+    }
+   ]
+  }
+ }
+}

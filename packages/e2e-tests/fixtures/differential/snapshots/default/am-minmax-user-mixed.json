@@ -1,0 +1,25 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate { aggregate { min { accountType address gravatar_id } max { accountType address gravatar_id } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "min": {
+      "accountType": "ADMIN",
+      "address": "0xaaaa000000000000000000000000000000000001",
+      "gravatar_id": "grav-1"
+     },
+     "max": {
+      "accountType": "USER",
+      "address": "0xaaaa000000000000000000000000000000000006",
+      "gravatar_id": "grav-missing"
+     }
+    }
+   }
+  }
+ }
+}

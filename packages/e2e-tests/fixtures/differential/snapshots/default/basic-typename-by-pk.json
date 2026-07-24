@@ -1,0 +1,14 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-1\") { __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "__typename": "User"
+   }
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(limit: 1) { id { nested } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "unexpected subselection set for non-object field",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.id",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

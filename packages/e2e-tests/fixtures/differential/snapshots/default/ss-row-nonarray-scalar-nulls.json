@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-nulls\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-nulls",
+    "string": "has nulls",
+    "optString": null,
+    "int_": 0,
+    "optInt": null,
+    "float_": "0",
+    "optFloat": null,
+    "bool": false,
+    "optBool": null,
+    "bigInt": "0",
+    "optBigInt": null,
+    "bigDecimal": "0",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "0.00000000",
+    "enumField": "USER",
+    "optEnumField": null,
+    "timestamp": "1970-01-01T00:00:00+00:00",
+    "optTimestamp": null
+   }
+  }
+ }
+}

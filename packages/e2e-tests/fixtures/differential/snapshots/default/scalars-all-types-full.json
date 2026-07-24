@@ -1,0 +1,338 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(order_by: {id: asc}) { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1",
+     "string": "first",
+     "optString": "opt",
+     "arrayOfStrings": [
+      "one",
+      "two",
+      "three"
+     ],
+     "int_": 1,
+     "optInt": 2,
+     "arrayOfInts": [
+      1,
+      2,
+      3
+     ],
+     "float_": "1.5",
+     "optFloat": "2.5",
+     "arrayOfFloats": [
+      1.5,
+      2.5,
+      -3.5
+     ],
+     "bool": true,
+     "optBool": false,
+     "bigInt": "1000",
+     "optBigInt": "2000",
+     "arrayOfBigInts": [
+      "1",
+      "2",
+      "3"
+     ],
+     "bigDecimal": "10.5",
+     "optBigDecimal": "20.5",
+     "bigDecimalWithConfig": "1.12345678",
+     "arrayOfBigDecimals": [
+      "1.5",
+      "2.25"
+     ],
+     "timestamp": "2024-01-01T00:00:00+00:00",
+     "optTimestamp": "2024-01-02T00:00:00+00:00",
+     "json": {
+      "n": 1,
+      "kind": "object",
+      "nested": {
+       "a": [
+        1,
+        2
+       ]
+      }
+     },
+     "enumField": "ADMIN",
+     "optEnumField": "USER"
+    },
+    {
+     "id": "all-array-edge",
+     "string": "array edges",
+     "optString": "x",
+     "arrayOfStrings": [
+      "with,comma",
+      "with}brace",
+      "with\"quote",
+      "with'single",
+      "",
+      " leading space",
+      "emoji 🚀",
+      "back\\slash"
+     ],
+     "int_": -1,
+     "optInt": -2,
+     "arrayOfInts": [
+      -2147483648,
+      0,
+      2147483647
+     ],
+     "float_": "-1.5",
+     "optFloat": null,
+     "arrayOfFloats": [
+      0,
+      -0.5
+     ],
+     "bool": true,
+     "optBool": true,
+     "bigInt": "-1",
+     "optBigInt": "1",
+     "arrayOfBigInts": [
+      "-99999999999999999999999999999999999999",
+      "0",
+      "99999999999999999999999999999999999999"
+     ],
+     "bigDecimal": "-0.5",
+     "optBigDecimal": "0.5",
+     "bigDecimalWithConfig": "-1.00000001",
+     "arrayOfBigDecimals": [
+      "-1.5",
+      "0.0",
+      "1.500"
+     ],
+     "timestamp": "2024-05-05T05:05:05.55555+00:00",
+     "optTimestamp": "2024-05-05T05:05:05.555555+00:00",
+     "json": [
+      1,
+      "two",
+      null,
+      true,
+      {
+       "k": "v"
+      },
+      [
+       2.5
+      ]
+     ],
+     "enumField": "ADMIN",
+     "optEnumField": "ADMIN"
+    },
+    {
+     "id": "all-empty-arrays",
+     "string": "empty",
+     "optString": null,
+     "arrayOfStrings": [],
+     "int_": 0,
+     "optInt": null,
+     "arrayOfInts": [],
+     "float_": "0",
+     "optFloat": null,
+     "arrayOfFloats": [],
+     "bool": false,
+     "optBool": null,
+     "bigInt": "0",
+     "optBigInt": null,
+     "arrayOfBigInts": [],
+     "bigDecimal": "0",
+     "optBigDecimal": null,
+     "bigDecimalWithConfig": "0.00000000",
+     "arrayOfBigDecimals": [],
+     "timestamp": "2024-01-01T00:00:00+00:00",
+     "optTimestamp": null,
+     "json": {},
+     "enumField": "USER",
+     "optEnumField": null
+    },
+    {
+     "id": "all-json-bool",
+     "string": "json scalar bool",
+     "optString": null,
+     "arrayOfStrings": [
+      "e"
+     ],
+     "int_": 9,
+     "optInt": null,
+     "arrayOfInts": [
+      9
+     ],
+     "float_": "9.5",
+     "optFloat": null,
+     "arrayOfFloats": [
+      9.5
+     ],
+     "bool": true,
+     "optBool": null,
+     "bigInt": "9",
+     "optBigInt": null,
+     "arrayOfBigInts": [
+      "9"
+     ],
+     "bigDecimal": "9.5",
+     "optBigDecimal": null,
+     "bigDecimalWithConfig": "9.00000000",
+     "arrayOfBigDecimals": [
+      "9.5"
+     ],
+     "timestamp": "2024-02-06T02:02:02+00:00",
+     "optTimestamp": null,
+     "json": false,
+     "enumField": "USER",
+     "optEnumField": null
+    },
+    {
+     "id": "all-json-null",
+     "string": "jsonb null literal",
+     "optString": null,
+     "arrayOfStrings": [
+      "c"
+     ],
+     "int_": 7,
+     "optInt": null,
+     "arrayOfInts": [
+      7
+     ],
+     "float_": "7.5",
+     "optFloat": null,
+     "arrayOfFloats": [
+      7.5
+     ],
+     "bool": true,
+     "optBool": null,
+     "bigInt": "7",
+     "optBigInt": null,
+     "arrayOfBigInts": [
+      "7"
+     ],
+     "bigDecimal": "7.5",
+     "optBigDecimal": null,
+     "bigDecimalWithConfig": "7.00000000",
+     "arrayOfBigDecimals": [
+      "7.5"
+     ],
+     "timestamp": "2024-02-04T02:02:02+00:00",
+     "optTimestamp": null,
+     "json": null,
+     "enumField": "ADMIN",
+     "optEnumField": null
+    },
+    {
+     "id": "all-json-number",
+     "string": "json scalar number",
+     "optString": null,
+     "arrayOfStrings": [
+      "b"
+     ],
+     "int_": 6,
+     "optInt": null,
+     "arrayOfInts": [
+      6
+     ],
+     "float_": "6.5",
+     "optFloat": null,
+     "arrayOfFloats": [
+      6.5
+     ],
+     "bool": false,
+     "optBool": null,
+     "bigInt": "6",
+     "optBigInt": null,
+     "arrayOfBigInts": [
+      "6"
+     ],
+     "bigDecimal": "6.5",
+     "optBigDecimal": null,
+     "bigDecimalWithConfig": "6.00000000",
+     "arrayOfBigDecimals": [
+      "6.5"
+     ],
+     "timestamp": "2024-02-03T02:02:02+00:00",
+     "optTimestamp": null,
+     "json": 1.2345678901234568e+29,
+     "enumField": "USER",
+     "optEnumField": null
+    },
+    {
+     "id": "all-json-string",
+     "string": "json scalar string",
+     "optString": null,
+     "arrayOfStrings": [
+      "a"
+     ],
+     "int_": 5,
+     "optInt": 5,
+     "arrayOfInts": [
+      5
+     ],
+     "float_": "5.5",
+     "optFloat": "5.5",
+     "arrayOfFloats": [
+      5.5
+     ],
+     "bool": true,
+     "optBool": null,
+     "bigInt": "5",
+     "optBigInt": "5",
+     "arrayOfBigInts": [
+      "5"
+     ],
+     "bigDecimal": "5.5",
+     "optBigDecimal": "5.5",
+     "bigDecimalWithConfig": "5.00000000",
+     "arrayOfBigDecimals": [
+      "5.5"
+     ],
+     "timestamp": "2024-02-02T02:02:02+00:00",
+     "optTimestamp": null,
+     "json": "just a string",
+     "enumField": "USER",
+     "optEnumField": null
+    },
+    {
+     "id": "all-json-unicode",
+     "string": "json unicode",
+     "optString": null,
+     "arrayOfStrings": [
+      "d"
+     ],
+     "int_": 8,
+     "optInt": null,
+     "arrayOfInts": [
+      8
+     ],
+     "float_": "8.5",
+     "optFloat": null,
+     "arrayOfFloats": [
+      8.5
+     ],
+     "bool": false,
+     "optBool": null,
+     "bigInt": "8",
+     "optBigInt": null,
+     "arrayOfBigInts": [
+      "8"
+     ],
+     "bigDecimal": "8.5",
+     "optBigDecimal": null,
+     "bigDecimalWithConfig": "8.00000000",
+     "arrayOfBigDecimals": [
+      "8.5"
+     ],
+     "timestamp": "2024-02-05T02:02:02+00:00",
+     "optTimestamp": null,
+     "json": {
+      "esc": "a\"b\\c\nd",
+      "num": 1e+100,
+      "héllo": "wörld 🚀"
+     },
+     "enumField": "USER",
+     "optEnumField": null
+    }
+   ]
+  }
+ }
+}

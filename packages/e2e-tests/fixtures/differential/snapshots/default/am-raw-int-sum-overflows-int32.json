@@ -1,0 +1,21 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { sum { chain_id block_number block_timestamp log_index } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_aggregate": {
+    "aggregate": {
+     "sum": {
+      "chain_id": 2677,
+      "block_number": 32585026,
+      "block_timestamp": 7800000072,
+      "log_index": 4
+     }
+    }
+   }
+  }
+ }
+}

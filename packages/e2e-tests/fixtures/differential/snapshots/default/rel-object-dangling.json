@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(where: {id: {_eq: \"grav-3\"}}) { id owner { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-3",
+     "owner": null
+    }
+   ]
+  }
+ }
+}

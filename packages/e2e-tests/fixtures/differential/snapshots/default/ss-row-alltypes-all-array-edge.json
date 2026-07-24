@@ -1,0 +1,72 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-array-edge\") { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-array-edge",
+    "string": "array edges",
+    "optString": "x",
+    "arrayOfStrings": [
+     "with,comma",
+     "with}brace",
+     "with\"quote",
+     "with'single",
+     "",
+     " leading space",
+     "emoji 🚀",
+     "back\\slash"
+    ],
+    "int_": -1,
+    "optInt": -2,
+    "arrayOfInts": [
+     -2147483648,
+     0,
+     2147483647
+    ],
+    "float_": "-1.5",
+    "optFloat": null,
+    "arrayOfFloats": [
+     0,
+     -0.5
+    ],
+    "bool": true,
+    "optBool": true,
+    "bigInt": "-1",
+    "optBigInt": "1",
+    "arrayOfBigInts": [
+     "-99999999999999999999999999999999999999",
+     "0",
+     "99999999999999999999999999999999999999"
+    ],
+    "bigDecimal": "-0.5",
+    "optBigDecimal": "0.5",
+    "bigDecimalWithConfig": "-1.00000001",
+    "arrayOfBigDecimals": [
+     "-1.5",
+     "0.0",
+     "1.500"
+    ],
+    "timestamp": "2024-05-05T05:05:05.55555+00:00",
+    "optTimestamp": "2024-05-05T05:05:05.555555+00:00",
+    "json": [
+     1,
+     "two",
+     null,
+     true,
+     {
+      "k": "v"
+     },
+     [
+      2.5
+     ]
+    ],
+    "enumField": "ADMIN",
+    "optEnumField": "ADMIN"
+   }
+  }
+ }
+}

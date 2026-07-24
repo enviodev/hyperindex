@@ -1,0 +1,16 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate { aggregate { count(columns: [owner_id, collection_id], distinct: true) } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 9
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,55 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}) { id tokens(where: {tokenId: {_gte: 0}}, distinct_on: collection_id, order_by: [{collection_id: asc}, {tokenId: desc}, {id: asc}], limit: 2, offset: 1) { id collection_id tokenId } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "tokens": []
+    },
+    {
+     "id": "user-1",
+     "tokens": [
+      {
+       "id": "tok-7",
+       "collection_id": "coll-missing",
+       "tokenId": "7"
+      }
+     ]
+    },
+    {
+     "id": "user-2",
+     "tokens": [
+      {
+       "id": "tok-4",
+       "collection_id": "coll-2",
+       "tokenId": "1000000000000000000000000000000"
+      }
+     ]
+    },
+    {
+     "id": "user-3",
+     "tokens": []
+    },
+    {
+     "id": "user-4",
+     "tokens": [
+      {
+       "id": "tok-9",
+       "collection_id": "coll-2",
+       "tokenId": "9999999999999999999999999999999999999999999999999999999999999999999999999999"
+      }
+     ]
+    },
+    {
+     "id": "user-dangling",
+     "tokens": []
+    }
+   ]
+  }
+ }
+}

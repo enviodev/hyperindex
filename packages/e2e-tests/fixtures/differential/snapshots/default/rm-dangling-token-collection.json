@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token_by_pk(id: \"tok-7\") { id collection_id collection { id name } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_by_pk": {
+    "id": "tok-7",
+    "collection_id": "coll-missing",
+    "collection": null
+   }
+  }
+ }
+}

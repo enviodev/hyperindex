@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {id: {_bogus: \"x\"}}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field '_bogus' not found in type: 'String_comparison_exp'",
+    "extensions": {
+     "path": "$.selectionSet.User.args.where.id._bogus",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

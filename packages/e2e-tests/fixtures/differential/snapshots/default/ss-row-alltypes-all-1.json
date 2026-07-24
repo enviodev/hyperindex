@@ -1,0 +1,65 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-1\") { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-1",
+    "string": "first",
+    "optString": "opt",
+    "arrayOfStrings": [
+     "one",
+     "two",
+     "three"
+    ],
+    "int_": 1,
+    "optInt": 2,
+    "arrayOfInts": [
+     1,
+     2,
+     3
+    ],
+    "float_": "1.5",
+    "optFloat": "2.5",
+    "arrayOfFloats": [
+     1.5,
+     2.5,
+     -3.5
+    ],
+    "bool": true,
+    "optBool": false,
+    "bigInt": "1000",
+    "optBigInt": "2000",
+    "arrayOfBigInts": [
+     "1",
+     "2",
+     "3"
+    ],
+    "bigDecimal": "10.5",
+    "optBigDecimal": "20.5",
+    "bigDecimalWithConfig": "1.12345678",
+    "arrayOfBigDecimals": [
+     "1.5",
+     "2.25"
+    ],
+    "timestamp": "2024-01-01T00:00:00+00:00",
+    "optTimestamp": "2024-01-02T00:00:00+00:00",
+    "json": {
+     "n": 1,
+     "kind": "object",
+     "nested": {
+      "a": [
+       1,
+       2
+      ]
+     }
+    },
+    "enumField": "ADMIN",
+    "optEnumField": "USER"
+   }
+  }
+ }
+}

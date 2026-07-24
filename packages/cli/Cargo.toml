@@ -33,6 +33,7 @@ tokio = { version = "1.49", features = [
   "time",
   "fs",
   "io-util",
+  "signal",
 ] }
 anyhow = "1.0.101"
 sha2 = "0.10.8"
@@ -61,6 +62,20 @@ futures-util = "0.3"
 tar = "0.4"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
+axum = { version = "0.8", features = ["ws"] }
+socket2 = "0.5"
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-native-certs = "0.8"
+lru = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+subtle = "2.6"
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = [
+  "native-certs",
+  "ring",
+] }
 
 [features]
 hypersync_health = []
@@ -78,6 +93,8 @@ paste = "1.0.15"
 tracing-subscriber = "0.3.22"
 pretty_assertions = "1.4.1"
 insta = "1.46"
+rustls-pemfile = "1.0"
+tokio-tungstenite = "0.29"
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored

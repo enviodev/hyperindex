@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithTimestamp(where: {timestamp: {_eq: \"2024-06-15T02:30:00+00:00\"}}, order_by: {id: asc}) { id timestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp": [
+    {
+     "id": "ts-zoned",
+     "timestamp": "2024-06-15T02:30:00+00:00"
+    }
+   ]
+  }
+ }
+}

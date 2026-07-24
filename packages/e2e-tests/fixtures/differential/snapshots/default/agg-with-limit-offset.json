@@ -1,0 +1,30 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ SimpleEntity_aggregate(order_by: {id: asc}, limit: 4, offset: 2) { aggregate { count } nodes { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity_aggregate": {
+    "aggregate": {
+     "count": 4
+    },
+    "nodes": [
+     {
+      "id": "simple-2"
+     },
+     {
+      "id": "simple-3"
+     },
+     {
+      "id": "simple-4"
+     },
+     {
+      "id": "simple-5"
+     }
+    ]
+   }
+  }
+ }
+}

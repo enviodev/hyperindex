@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"Token_select_column\") { kind name enumValues { name description } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "kind": "ENUM",
+    "name": "Token_select_column",
+    "enumValues": [
+     {
+      "name": "collection_id",
+      "description": "column name"
+     },
+     {
+      "name": "id",
+      "description": "column name"
+     },
+     {
+      "name": "owner_id",
+      "description": "column name"
+     },
+     {
+      "name": "tokenId",
+      "description": "column name"
+     }
+    ]
+   }
+  }
+ }
+}

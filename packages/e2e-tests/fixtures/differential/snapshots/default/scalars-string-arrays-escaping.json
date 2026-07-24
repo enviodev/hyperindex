@@ -1,0 +1,26 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_eq: \"all-array-edge\"}}) { id arrayOfStrings } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-array-edge",
+     "arrayOfStrings": [
+      "with,comma",
+      "with}brace",
+      "with\"quote",
+      "with'single",
+      "",
+      " leading space",
+      "emoji 🚀",
+      "back\\slash"
+     ]
+    }
+   ]
+  }
+ }
+}

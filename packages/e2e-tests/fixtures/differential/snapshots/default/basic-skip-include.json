@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($withAddr: Boolean!, $skipType: Boolean!) { User(order_by: {id: asc}, limit: 2) { id address @include(if: $withAddr) accountType @skip(if: $skipType) } }",
+  "variables": {
+   "withAddr": true,
+   "skipType": true
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "address": "0xaaaa000000000000000000000000000000000005"
+    },
+    {
+     "id": "user-1",
+     "address": "0xaaaa000000000000000000000000000000000001"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,22 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ NftCollection(order_by: [{tokens_aggregate: {max: {tokenId: desc_nulls_last}}}, {id: asc}]) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-2"
+    },
+    {
+     "id": "coll-1"
+    },
+    {
+     "id": "coll-3"
+    }
+   ]
+  }
+ }
+}

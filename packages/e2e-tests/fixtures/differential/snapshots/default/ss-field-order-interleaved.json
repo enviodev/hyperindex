@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-1\") { json bool __typename bigDecimal id enumField arrayOfInts } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "json": {
+     "n": 1,
+     "kind": "object",
+     "nested": {
+      "a": [
+       1,
+       2
+      ]
+     }
+    },
+    "bool": true,
+    "__typename": "EntityWithAllTypes",
+    "bigDecimal": "10.5",
+    "id": "all-1",
+    "enumField": "ADMIN",
+    "arrayOfInts": [
+     1,
+     2,
+     3
+    ]
+   }
+  }
+ }
+}

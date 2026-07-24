@@ -1,0 +1,37 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ _meta { chainId startBlock endBlock progressBlock bufferBlock firstEventBlock eventsProcessed sourceBlock readyAt isReady } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "_meta": [
+    {
+     "chainId": 1,
+     "startBlock": 0,
+     "endBlock": null,
+     "progressBlock": 10861774,
+     "bufferBlock": 10861774,
+     "firstEventBlock": 10861674,
+     "eventsProcessed": 2147487700,
+     "sourceBlock": 10861800,
+     "readyAt": "2024-11-01T10:20:30.456+00:00",
+     "isReady": true
+    },
+    {
+     "chainId": 1337,
+     "startBlock": 1,
+     "endBlock": 5000,
+     "progressBlock": 3999,
+     "bufferBlock": 4000,
+     "firstEventBlock": null,
+     "eventsProcessed": 0,
+     "sourceBlock": 4500,
+     "readyAt": null,
+     "isReady": false
+    }
+   ]
+  }
+ }
+}

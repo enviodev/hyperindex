@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"\ud800\") { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "Cannot decode input: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream",
+    "extensions": {
+     "path": "$",
+     "code": "invalid-json"
+    }
+   }
+  ]
+ }
+}

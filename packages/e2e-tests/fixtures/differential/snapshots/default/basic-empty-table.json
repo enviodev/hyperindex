@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ CustomSelectionTestPass(where: {id: {_eq: \"missing\"}}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "CustomSelectionTestPass": []
+  }
+ }
+}

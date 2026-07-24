@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($t: accounttype!) { User(where: {accountType: {_eq: $t}}, order_by: {id: asc}) { id } }",
+  "variables": {
+   "t": "SUPERADMIN"
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "invalid input value for enum accounttype: \"SUPERADMIN\"",
+    "extensions": {
+     "path": "$",
+     "code": "data-exception"
+    }
+   }
+  ]
+ }
+}

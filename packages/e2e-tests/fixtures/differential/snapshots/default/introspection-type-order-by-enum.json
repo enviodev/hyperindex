@@ -1,0 +1,41 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __type(name: \"order_by\") { kind name enumValues { name description } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "__type": {
+    "kind": "ENUM",
+    "name": "order_by",
+    "enumValues": [
+     {
+      "name": "asc",
+      "description": "in ascending order, nulls last"
+     },
+     {
+      "name": "asc_nulls_first",
+      "description": "in ascending order, nulls first"
+     },
+     {
+      "name": "asc_nulls_last",
+      "description": "in ascending order, nulls last"
+     },
+     {
+      "name": "desc",
+      "description": "in descending order, nulls first"
+     },
+     {
+      "name": "desc_nulls_first",
+      "description": "in descending order, nulls first"
+     },
+     {
+      "name": "desc_nulls_last",
+      "description": "in descending order, nulls last"
+     }
+    ]
+   }
+  }
+ }
+}

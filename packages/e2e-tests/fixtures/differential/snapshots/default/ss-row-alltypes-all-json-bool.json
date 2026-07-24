@@ -1,0 +1,47 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes_by_pk(id: \"all-json-bool\") { id string optString arrayOfStrings int_ optInt arrayOfInts float_ optFloat arrayOfFloats bool optBool bigInt optBigInt arrayOfBigInts bigDecimal optBigDecimal bigDecimalWithConfig arrayOfBigDecimals timestamp optTimestamp json enumField optEnumField } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes_by_pk": {
+    "id": "all-json-bool",
+    "string": "json scalar bool",
+    "optString": null,
+    "arrayOfStrings": [
+     "e"
+    ],
+    "int_": 9,
+    "optInt": null,
+    "arrayOfInts": [
+     9
+    ],
+    "float_": "9.5",
+    "optFloat": null,
+    "arrayOfFloats": [
+     9.5
+    ],
+    "bool": true,
+    "optBool": null,
+    "bigInt": "9",
+    "optBigInt": null,
+    "arrayOfBigInts": [
+     "9"
+    ],
+    "bigDecimal": "9.5",
+    "optBigDecimal": null,
+    "bigDecimalWithConfig": "9.00000000",
+    "arrayOfBigDecimals": [
+     "9.5"
+    ],
+    "timestamp": "2024-02-06T02:02:02+00:00",
+    "optTimestamp": null,
+    "json": false,
+    "enumField": "USER",
+    "optEnumField": null
+   }
+  }
+ }
+}

@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithBigDecimal(order_by: [{bigDecimal: desc}, {id: asc}]) { id bigDecimal } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithBigDecimal": [
+    {
+     "id": "bd-4",
+     "bigDecimal": "123456789.123456789"
+    },
+    {
+     "id": "bd-2",
+     "bigDecimal": "1.10"
+    },
+    {
+     "id": "bd-5",
+     "bigDecimal": "0.000000000000000001"
+    },
+    {
+     "id": "bd-1",
+     "bigDecimal": "0"
+    },
+    {
+     "id": "bd-3",
+     "bigDecimal": "-1.10"
+    }
+   ]
+  }
+ }
+}

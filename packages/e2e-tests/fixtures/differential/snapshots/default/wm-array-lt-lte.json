@@ -1,0 +1,34 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ lt: EntityWithAllTypes(where: {arrayOfStrings: {_lt: [\"b\"]}}, order_by: {id: asc}) { id arrayOfStrings } lte: EntityWithAllTypes(where: {arrayOfStrings: {_lte: [\"b\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "lt": [
+    {
+     "id": "all-empty-arrays",
+     "arrayOfStrings": []
+    },
+    {
+     "id": "all-json-string",
+     "arrayOfStrings": [
+      "a"
+     ]
+    }
+   ],
+   "lte": [
+    {
+     "id": "all-empty-arrays"
+    },
+    {
+     "id": "all-json-number"
+    },
+    {
+     "id": "all-json-string"
+    }
+   ]
+  }
+ }
+}

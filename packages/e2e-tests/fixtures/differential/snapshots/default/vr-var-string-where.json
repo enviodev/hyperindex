@@ -1,0 +1,20 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($v: String!) { SimpleEntity(where: {value: {_eq: $v}}, order_by: {id: asc}) { id value } }",
+  "variables": {
+   "v": "v3"
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity": [
+    {
+     "id": "simple-3",
+     "value": "v3"
+    }
+   ]
+  }
+ }
+}

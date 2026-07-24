@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Token(distinct_on: owner_id) { owner_id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token": [
+    {
+     "owner_id": "user \"quoted\" 🚀"
+    },
+    {
+     "owner_id": "user-1"
+    },
+    {
+     "owner_id": "user-2"
+    },
+    {
+     "owner_id": "user-3"
+    },
+    {
+     "owner_id": "user-4"
+    },
+    {
+     "owner_id": "user-missing"
+    }
+   ]
+  }
+ }
+}

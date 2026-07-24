@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar(order_by: {id: asc}) { id owner { id address accountType } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar": [
+    {
+     "id": "grav-1",
+     "owner": {
+      "id": "user-1",
+      "address": "0xaaaa000000000000000000000000000000000001",
+      "accountType": "ADMIN"
+     }
+    },
+    {
+     "id": "grav-2",
+     "owner": {
+      "id": "user-2",
+      "address": "0xaaaa000000000000000000000000000000000002",
+      "accountType": "USER"
+     }
+    },
+    {
+     "id": "grav-3",
+     "owner": null
+    }
+   ]
+  }
+ }
+}

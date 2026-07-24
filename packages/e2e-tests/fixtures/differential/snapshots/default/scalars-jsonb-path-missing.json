@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {id: {_eq: \"all-1\"}}) { id json(path: \"$.does.not.exist\") } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-1",
+     "json": null
+    }
+   ]
+  }
+ }
+}

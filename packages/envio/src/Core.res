@@ -27,6 +27,7 @@ type addon = {
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  requestShutdown: unit => unit,
   @as("EvmHyperSyncClient")
   evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
@@ -228,7 +229,40 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) =
   )
 }
 
+let runWithShutdownSignals = %raw(`function(run, requestShutdown) {
+  var onShutdown = function() { requestShutdown(); };
+  process.once("SIGINT", onShutdown);
+  process.once("SIGTERM", onShutdown);
+  return run().finally(function() {
+    process.off("SIGINT", onShutdown);
+    process.off("SIGTERM", onShutdown);
+  });
+}`)
+
+// True only when the parsed subcommand is `serve`. The subcommand is the
+// first positional arg; global value-taking flags (`-d`/`--directory`/
+// `--config`) consume the token after them, and other leading flags are
+// skipped — so an unrelated arg value that happens to equal "serve" (e.g.
+// `envio init --name serve`) does not trigger the serve-only shutdown wiring.
+let isServeCommand: array<string> => bool = %raw(`function(args) {
+  var valueFlags = { "-d": true, "--directory": true, "--config": true };
+  for (var i = 0; i < args.length; i++) {
+    var a = args[i];
+    if (a[0] === "-") {
+      if (a.indexOf("=") === -1 && valueFlags[a]) { i++; }
+      continue;
+    }
+    return a === "serve";
+  }
+  return false;
+}`)
+
 let runCli = args => {
   let addon = getAddon()
-  addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
+  let invoke = () => addon.runCli(~args, ~envioPackageDir=Null.make(envioPackageDir))
+  if isServeCommand(args) {
+    runWithShutdownSignals(invoke, () => addon.requestShutdown())
+  } else {
+    invoke()
+  }
 }

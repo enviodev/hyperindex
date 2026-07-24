@@ -1,0 +1,39 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ chain_metadata(order_by: {chain_id: asc}) { block_height chain_id end_block first_event_block_number is_hyper_sync latest_fetched_block_number latest_processed_block num_batches_fetched num_events_processed start_block timestamp_caught_up_to_head_or_endblock } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "chain_metadata": [
+    {
+     "block_height": 10861800,
+     "chain_id": 1,
+     "end_block": null,
+     "first_event_block_number": 10861674,
+     "is_hyper_sync": true,
+     "latest_fetched_block_number": 10861774,
+     "latest_processed_block": 10861774,
+     "num_batches_fetched": 0,
+     "num_events_processed": 2147487700,
+     "start_block": 0,
+     "timestamp_caught_up_to_head_or_endblock": "2024-11-01T10:20:30.456+00:00"
+    },
+    {
+     "block_height": 4500,
+     "chain_id": 1337,
+     "end_block": 5000,
+     "first_event_block_number": null,
+     "is_hyper_sync": false,
+     "latest_fetched_block_number": 4000,
+     "latest_processed_block": 3999,
+     "num_batches_fetched": 0,
+     "num_events_processed": 0,
+     "start_block": 1,
+     "timestamp_caught_up_to_head_or_endblock": null
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-empty\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-empty",
+    "string": "",
+    "optString": "",
+    "int_": 4,
+    "optInt": 0,
+    "float_": "-0.5",
+    "optFloat": "0",
+    "bool": true,
+    "optBool": false,
+    "bigInt": "10",
+    "optBigInt": "0",
+    "bigDecimal": "100",
+    "optBigDecimal": "0",
+    "bigDecimalWithConfig": "0.00000001",
+    "enumField": "USER",
+    "optEnumField": "ADMIN",
+    "timestamp": "2024-07-04T00:00:00.1+00:00",
+    "optTimestamp": "2024-07-04T00:00:00.12+00:00"
+   }
+  }
+ }
+}

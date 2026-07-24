@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: \"asc\"}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected an enum value for type 'order_by', but found a string",
+    "extensions": {
+     "path": "$.selectionSet.User.args.order_by[0].id",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

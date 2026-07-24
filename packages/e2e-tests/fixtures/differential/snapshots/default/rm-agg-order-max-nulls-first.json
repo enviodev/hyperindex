@@ -1,0 +1,22 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NftCollection(order_by: [{tokens_aggregate: {max: {tokenId: asc_nulls_first}}}, {id: asc}]) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-3"
+    },
+    {
+     "id": "coll-1"
+    },
+    {
+     "id": "coll-2"
+    }
+   ]
+  }
+ }
+}

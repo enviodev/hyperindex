@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 1) { id id address address } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "address": "0xaaaa000000000000000000000000000000000005"
+    }
+   ]
+  }
+ }
+}

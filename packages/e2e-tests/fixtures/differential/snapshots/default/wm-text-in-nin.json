@@ -1,0 +1,33 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: User(where: {address: {_in: [\"0xaaaa000000000000000000000000000000000002\", \"0xaaaa000000000000000000000000000000000005\", \"0xmissing\"]}}, order_by: {id: asc}) { id } nin: User(where: {address: {_nin: [\"0xaaaa000000000000000000000000000000000002\", \"0xaaaa000000000000000000000000000000000005\", \"0xmissing\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-2"
+    }
+   ],
+   "nin": [
+    {
+     "id": "user-1"
+    },
+    {
+     "id": "user-3"
+    },
+    {
+     "id": "user-4"
+    },
+    {
+     "id": "user-dangling"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithTimestamp_by_pk(id: \"ts-milli\") { id timestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp_by_pk": {
+    "id": "ts-milli",
+    "timestamp": "2024-01-15T12:34:56.123+00:00"
+   }
+  }
+ }
+}

@@ -1,0 +1,34 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate(where: {id: {_eq: \"tok-1\"}}) { aggregate { count stddev { tokenId } stddev_pop { tokenId } stddev_samp { tokenId } var_pop { tokenId } var_samp { tokenId } variance { tokenId } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 1,
+     "stddev": {
+      "tokenId": null
+     },
+     "stddev_pop": {
+      "tokenId": "0"
+     },
+     "stddev_samp": {
+      "tokenId": null
+     },
+     "var_pop": {
+      "tokenId": "0"
+     },
+     "var_samp": {
+      "tokenId": null
+     },
+     "variance": {
+      "tokenId": null
+     }
+    }
+   }
+  }
+ }
+}

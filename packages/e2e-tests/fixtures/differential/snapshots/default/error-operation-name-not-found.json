@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query A { User(limit: 1) { id } }",
+  "operationName": "B"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "no such operation found in the document: \"B\"",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

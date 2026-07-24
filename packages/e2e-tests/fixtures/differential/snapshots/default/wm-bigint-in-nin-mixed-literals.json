@@ -1,0 +1,32 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ in: raw_events(where: {event_id: {_in: [1, \"4611686018427387906\"]}}, order_by: {serial: asc}) { serial event_id } nin: raw_events(where: {event_id: {_nin: [1, \"4611686018427387906\"]}}, order_by: {serial: asc}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "in": [
+    {
+     "serial": "3",
+     "event_id": "4611686018427387906"
+    },
+    {
+     "serial": "4",
+     "event_id": "1"
+    }
+   ],
+   "nin": [
+    {
+     "serial": "1"
+    },
+    {
+     "serial": "2"
+    },
+    {
+     "serial": "5"
+    }
+   ]
+  }
+ }
+}

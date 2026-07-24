@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(where: {_or: [{_and: [{accountType: {_eq: \"ADMIN\"}}, {_not: {updatesCountOnUserForTesting: {_lt: 0}}}]}, {id: {_like: \"%quoted%\"}}]}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀"
+    },
+    {
+     "id": "user-1"
+    }
+   ]
+  }
+ }
+}

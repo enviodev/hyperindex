@@ -1,0 +1,24 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ bare: NftCollection(where: {tokens: {}}, order_by: {id: asc}) { id } withPred: NftCollection(where: {tokens: {tokenId: {_gt: 1000}}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "bare": [
+    {
+     "id": "coll-1"
+    },
+    {
+     "id": "coll-2"
+    }
+   ],
+   "withPred": [
+    {
+     "id": "coll-2"
+    }
+   ]
+  }
+ }
+}

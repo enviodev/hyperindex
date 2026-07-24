@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ Gravatar_by_pk(id: \"grav-3\") { id owner_id owner { id address } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Gravatar_by_pk": {
+    "id": "grav-3",
+    "owner_id": "user-missing",
+    "owner": null
+   }
+  }
+ }
+}

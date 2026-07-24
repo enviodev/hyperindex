@@ -1,0 +1,85 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ cursor: __type(name: \"User_stream_cursor_input\") { inputFields { name type { kind name ofType { kind name } } } } value: __type(name: \"User_stream_cursor_value_input\") { inputFields { name type { kind name } } } ordering: __type(name: \"cursor_ordering\") { enumValues { name description } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "cursor": {
+    "inputFields": [
+     {
+      "name": "initial_value",
+      "type": {
+       "kind": "NON_NULL",
+       "name": null,
+       "ofType": {
+        "kind": "INPUT_OBJECT",
+        "name": "User_stream_cursor_value_input"
+       }
+      }
+     },
+     {
+      "name": "ordering",
+      "type": {
+       "kind": "ENUM",
+       "name": "cursor_ordering",
+       "ofType": null
+      }
+     }
+    ]
+   },
+   "value": {
+    "inputFields": [
+     {
+      "name": "accountType",
+      "type": {
+       "kind": "SCALAR",
+       "name": "accounttype"
+      }
+     },
+     {
+      "name": "address",
+      "type": {
+       "kind": "SCALAR",
+       "name": "String"
+      }
+     },
+     {
+      "name": "gravatar_id",
+      "type": {
+       "kind": "SCALAR",
+       "name": "String"
+      }
+     },
+     {
+      "name": "id",
+      "type": {
+       "kind": "SCALAR",
+       "name": "String"
+      }
+     },
+     {
+      "name": "updatesCountOnUserForTesting",
+      "type": {
+       "kind": "SCALAR",
+       "name": "Int"
+      }
+     }
+    ]
+   },
+   "ordering": {
+    "enumValues": [
+     {
+      "name": "ASC",
+      "description": "ascending ordering of the cursor"
+     },
+     {
+      "name": "DESC",
+      "description": "descending ordering of the cursor"
+     }
+    ]
+   }
+  }
+ }
+}

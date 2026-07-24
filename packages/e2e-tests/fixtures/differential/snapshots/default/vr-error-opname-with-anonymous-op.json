@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query A { SimpleEntity(order_by: {id: asc}, limit: 1) { id } } { User(order_by: {id: asc}, limit: 1) { id } }",
+  "operationName": "A"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "operationName cannot be used when an anonymous operation exists in the document",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithTimestamp_by_pk(id: \"ts-zoned\") { id timestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithTimestamp_by_pk": {
+    "id": "ts-zoned",
+    "timestamp": "2024-06-15T02:30:00+00:00"
+   }
+  }
+ }
+}

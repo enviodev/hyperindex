@@ -1,0 +1,19 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ raw_events_aggregate { aggregate { sum { event_id serial } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "raw_events_aggregate": {
+    "aggregate": {
+     "sum": {
+      "event_id": "13835058055282163718",
+      "serial": "15"
+     }
+    }
+   }
+  }
+ }
+}

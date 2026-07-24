@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "mutation { insert_User(objects: [{id: \"x\", address: \"0x\", updatesCountOnUserForTesting: 0, accountType: \"USER\"}]) { affected_rows } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "no mutations exist",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

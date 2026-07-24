@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ A_by_pk(id: \"a-4\") { id b_id b { id c_id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "A_by_pk": {
+    "id": "a-4",
+    "b_id": "b-missing",
+    "b": null
+   }
+  }
+ }
+}

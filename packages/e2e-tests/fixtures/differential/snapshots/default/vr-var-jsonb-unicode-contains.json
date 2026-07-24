@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($j: jsonb!) { EntityWithAllTypes(where: {json: {_contains: $j}}, order_by: {id: asc}) { id } }",
+  "variables": {
+   "j": {
+    "héllo": "wörld 🚀"
+   }
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": [
+    {
+     "id": "all-json-unicode"
+    }
+   ]
+  }
+ }
+}

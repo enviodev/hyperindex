@@ -1,0 +1,42 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ Token_aggregate(distinct_on: owner_id, order_by: [{owner_id: asc}, {tokenId: desc}]) { aggregate { count } nodes { id owner_id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "Token_aggregate": {
+    "aggregate": {
+     "count": 6
+    },
+    "nodes": [
+     {
+      "id": "tok-8",
+      "owner_id": "user \"quoted\" 🚀"
+     },
+     {
+      "id": "tok-7",
+      "owner_id": "user-1"
+     },
+     {
+      "id": "tok-4",
+      "owner_id": "user-2"
+     },
+     {
+      "id": "tok-5",
+      "owner_id": "user-3"
+     },
+     {
+      "id": "tok-9",
+      "owner_id": "user-4"
+     },
+     {
+      "id": "tok-6",
+      "owner_id": "user-missing"
+     }
+    ]
+   }
+  }
+ }
+}

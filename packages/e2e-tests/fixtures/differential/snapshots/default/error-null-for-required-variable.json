@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($id: String!) { User_by_pk(id: $id) { id } }",
+  "variables": {
+   "id": null
+  }
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "null value found for non-nullable type: \"String!\"",
+    "extensions": {
+     "path": "$",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

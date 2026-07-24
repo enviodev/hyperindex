@@ -1,0 +1,31 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllNonArrayTypes_by_pk(id: \"scalar-extremes\") { id string optString int_ optInt float_ optFloat bool optBool bigInt optBigInt bigDecimal optBigDecimal bigDecimalWithConfig enumField optEnumField timestamp optTimestamp } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllNonArrayTypes_by_pk": {
+    "id": "scalar-extremes",
+    "string": "extremes",
+    "optString": "x",
+    "int_": 2147483647,
+    "optInt": -2147483648,
+    "float_": "1.7976931348623157e+308",
+    "optFloat": "5e-324",
+    "bool": true,
+    "optBool": false,
+    "bigInt": "9999999999999999999999999999999999999999999999999999999999999999999999999999",
+    "optBigInt": "-9999999999999999999999999999999999999999999999999999999999999999999999999999",
+    "bigDecimal": "12345678901234567890.123456789",
+    "optBigDecimal": "-0.000000001",
+    "bigDecimalWithConfig": "99.99999999",
+    "enumField": "ADMIN",
+    "optEnumField": "ADMIN",
+    "timestamp": "9999-12-31T23:59:59.999999+00:00",
+    "optTimestamp": "1969-12-31T23:59:59.999999+00:00"
+   }
+  }
+ }
+}
