@@ -740,6 +740,8 @@ module Indexer = {
           ~saveFullHistory,
           ~reset=false,
           ~batchSize?,
+          ~maxAddrInPartition?,
+          ~clientFilterAddressThreshold?,
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
           ~targetBufferSize?,

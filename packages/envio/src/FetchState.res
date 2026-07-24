@@ -1658,9 +1658,14 @@ let registerDynamicContracts = (
       // address threshold to client-side filtering. Sticky: the set only grows, and
       // collapse in createPartitionsFromIndexingAddresses folds the contract's
       // partitions into the single address-free partition.
-      let clientFilteredContracts = fetchState.optimizedPartitions.clientFilteredContracts
-      switch fetchState.clientFilterAddressThreshold {
+      // Clone the sticky set before mutating so this update owns its copy and
+      // older fetchState snapshots keep theirs (Utils.Set.add mutates in place).
+      let clientFilteredContracts = switch fetchState.clientFilterAddressThreshold {
       | Some(threshold) =>
+        let clientFilteredContracts =
+          fetchState.optimizedPartitions.clientFilteredContracts
+          ->Utils.Set.toArray
+          ->Utils.Set.fromArray
         dynamicContractsRef.contents
         ->Utils.Set.toArray
         ->Array.forEach(contractName => {
@@ -1674,7 +1679,8 @@ let registerDynamicContracts = (
             )
           }
         })
-      | None => ()
+        clientFilteredContracts
+      | None => fetchState.optimizedPartitions.clientFilteredContracts
       }
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(

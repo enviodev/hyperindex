@@ -28,6 +28,11 @@ describe("Client-side address filtering item dedup", () => {
     await Utils.delay(0)
     await Utils.delay(0)
 
+    // Snapshot the pre-switch queries so we can require a *newly appended*
+    // post-switch re-fetch below — the initial fetch also starts at/below block
+    // 10, so it must not satisfy the overlap assertion on its own.
+    let preSwitchCalls = sourceMock.getItemsOrThrowCalls->Utils.Array.copy
+
     // Fetch a Gravatar event at block 10 that registers 3 dynamic Gravatar
     // addresses. That pushes Gravatar past the threshold and collapses its
     // partitions into a single address-free partition mid-response.
@@ -57,11 +62,13 @@ describe("Client-side address filtering item dedup", () => {
     await Utils.delay(0)
 
     // The switch dragged the collapsed partition's frontier back below block 10,
-    // so the next fetch re-queries a range covering block 10 — the overlap the
-    // dedup must absorb.
+    // so a *newly issued* query (not one of the pre-switch calls) re-queries a
+    // range covering block 10 — the overlap the dedup must absorb.
     t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.some(c => c.payload["fromBlock"] <= 10),
-      ~message="a query re-fetches over block 10 after the switch",
+      sourceMock.getItemsOrThrowCalls->Array.some(c =>
+        !(preSwitchCalls->Array.includes(c)) && c.payload["fromBlock"] <= 10
+      ),
+      ~message="a new query re-fetches over block 10 after the switch",
     ).toBe(true)
 
     // The address-free partition re-fetches from its (min) frontier and re-delivers
