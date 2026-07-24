@@ -21,12 +21,16 @@ let get: (t, string) => option<indexingAddress>
 
 let size: t => int
 
+// Number of registered addresses for a single contract (O(1)).
+let contractCount: (t, ~contractName: string) => int
+
 let getContractAddresses: (t, ~contractName: string) => array<Address.t>
 
-// Underlying dict for the precompiled `clientAddressFilter` only, which does raw
-// `indexingAddresses[srcAddress]` access in generated JS. Don't use elsewhere —
-// prefer the domain accessors so the opaque type stays enforced.
-let rawForFilter: t => dict<indexingAddress>
+// The address→entry dict for a single contract, passed to that contract's
+// precompiled `clientAddressFilter` (raw `byAddr[srcAddress]` access in
+// generated JS). Don't use elsewhere — prefer the domain accessors so the
+// opaque type stays enforced.
+let forContract: (t, ~contractName: string) => dict<indexingAddress>
 
 let register: (t, dict<indexingAddress>) => unit
 

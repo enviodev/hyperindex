@@ -9,7 +9,16 @@ type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
+  // Whether the partition's queries are built from its own address list
+  // (server-side address filtering). This is the *partition* property; not to
+  // be confused with the per-registration `Internal.onEventRegistration.dependsOnAddresses`.
   dependsOnAddresses: bool,
+  // Contract names this query fetches address-free even though their
+  // registrations depend on addresses. The source passes these to the client so
+  // their log selections carry no server-side address filter and routing accepts
+  // any emitter; the JS `clientAddressFilter` still gates each item by registered
+  // address + effectiveStartBlock. Absent for normal partitions.
+  clientSideFilteredContracts?: array<string>,
 }
 
 type pendingQuery = {
@@ -1419,9 +1428,16 @@ let filterByClientAddress = (
   items->Array.filter(item =>
     switch item {
     | Internal.Event({payload, blockNumber}) as item =>
-      switch (item->Internal.castUnsafeEventItem).onEventRegistration.clientAddressFilter {
+      let reg = (item->Internal.castUnsafeEventItem).onEventRegistration
+      switch reg.clientAddressFilter {
       | Some(filter) =>
-        filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
+        filter(
+          payload,
+          blockNumber,
+          indexingAddresses->IndexingAddresses.forContract(
+            ~contractName=reg.eventConfig.contractName,
+          ),
+        )
       | None => true
       }
     | _ => true
