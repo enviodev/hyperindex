@@ -78,7 +78,7 @@ let rawBodyRoute = Rest.route(() => {
   responses,
 })
 
-let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
+let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t, ~logger) => {
   let maxRetries = 3
   let rec retry = async (~attempt) => {
     try {
@@ -96,7 +96,7 @@ let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
-        Logging.warn({
+        logger->Logging.childWarn({
           "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
           "err": exn->Utils.prettifyExn,
         })
@@ -106,24 +106,24 @@ let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
   await retry(~attempt=0)
 }
 
-let clearHasuraMetadata = async (~endpoint, ~auth) => {
+let clearHasuraMetadata = async (~endpoint, ~auth, ~logger) => {
   try {
     let result = await clearMetadataRoute->Rest.fetch(auth, ~client=Rest.client(endpoint))
     let msg = switch result {
     | QuerySucceeded => "Hasura metadata cleared"
     | AlreadyDone => "Hasura metadata already cleared"
     }
-    Logging.trace(msg)
+    logger->Logging.childTrace(msg)
   } catch {
   | exn =>
-    Logging.error({
+    logger->Logging.childError({
       "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "err": exn->Utils.prettifyExn,
     })
   }
 }
 
-let reloadHasuraMetadata = async (~endpoint, ~auth) => {
+let reloadHasuraMetadata = async (~endpoint, ~auth, ~logger) => {
   try {
     let result = await reloadMetadataRoute->Rest.fetch(
       {
@@ -138,10 +138,10 @@ let reloadHasuraMetadata = async (~endpoint, ~auth) => {
     | QuerySucceeded => "Hasura metadata reloaded"
     | AlreadyDone => "Hasura metadata reload acknowledged"
     }
-    Logging.trace(msg)
+    logger->Logging.childTrace(msg)
   } catch {
   | exn =>
-    Logging.error({
+    logger->Logging.childError({
       "msg": `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
       "err": exn->Utils.prettifyExn,
     })
@@ -182,7 +182,13 @@ let makeColumnConfigs = (table: Table.table): dict<columnConfig> => {
   columnConfigs
 }
 
-let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<trackTableConfig>) => {
+let trackTables = async (
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~tableConfigs: array<trackTableConfig>,
+  ~logger,
+) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -236,13 +242,13 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
     | QuerySucceeded => "Hasura finished tracking tables"
     | AlreadyDone => "Hasura tables already tracked"
     }
-    Logging.trace({
+    logger->Logging.childTrace({
       "msg": msg,
       "tableNames": tableConfigs->Array.map(c => c.tableName),
     })
   } catch {
   | exn =>
-    Logging.error({
+    logger->Logging.childError({
       "msg": `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableNames": tableConfigs->Array.map(c => c.tableName),
       "err": exn->Utils.prettifyExn,
@@ -257,10 +263,12 @@ let createSelectPermission = async (
   ~pgSchema,
   ~responseLimit,
   ~aggregateEntities,
+  ~logger,
 ) => {
   await sendOperation(
     ~endpoint,
     ~auth,
+    ~logger,
     ~operation={
       "type": "pg_create_select_permission",
       "args": {
@@ -291,6 +299,7 @@ let createEntityRelationship = async (
   ~objectName: string,
   ~mappedEntity: string,
   ~isDerivedFrom: bool,
+  ~logger,
   ~comment: option<string>=?,
 ) => {
   // The column_mapping references columns by their db names
@@ -324,6 +333,7 @@ let createEntityRelationship = async (
   await sendOperation(
     ~endpoint,
     ~auth,
+    ~logger,
     ~operation={
       "type": `pg_create_${relationshipType}_relationship`,
       "args": args,
@@ -339,6 +349,7 @@ let trackDatabase = async (
   ~aggregateEntities,
   ~responseLimit,
   ~schema,
+  ~logger,
 ) => {
   let exposedInternalTableConfigs = [
     {
@@ -365,16 +376,16 @@ let trackDatabase = async (
   let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
-  Logging.info("Tracking tables in Hasura")
+  logger->Logging.childInfo("Tracking tables in Hasura")
 
-  let _ = await clearHasuraMetadata(~endpoint, ~auth)
+  let _ = await clearHasuraMetadata(~endpoint, ~auth, ~logger)
 
   // Force Hasura to re-introspect the source schema before tracking, otherwise
   // freshly-created user tables may be invisible to pg_track_tables and the call
   // returns `metadata-warnings` (HTTP 400), leaving tracking permanently broken.
-  await reloadHasuraMetadata(~endpoint, ~auth)
+  await reloadHasuraMetadata(~endpoint, ~auth, ~logger)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableConfigs)
+  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableConfigs, ~logger)
 
   for i in 0 to tableNames->Array.length - 1 {
     let tableName = tableNames->Array.getUnsafe(i)
@@ -385,6 +396,7 @@ let trackDatabase = async (
       ~pgSchema,
       ~responseLimit,
       ~aggregateEntities,
+      ~logger,
     )
   }
 
@@ -410,6 +422,7 @@ let trackDatabase = async (
         ~objectName=derivedFromField.fieldName,
         ~relationalKey=relationalFieldName,
         ~mappedEntity=derivedFromField.derivedFromEntity,
+        ~logger,
         ~comment=?derivedFromField.description,
       )
     }
@@ -428,10 +441,11 @@ let trackDatabase = async (
         ~objectName=field.fieldName,
         ~relationalKey=field->Table.getPgDbFieldName,
         ~mappedEntity=linkedEntityName,
+        ~logger,
         ~comment=?field.description,
       )
     }
   }
 
-  Logging.info("Hasura configuration completed")
+  logger->Logging.childInfo("Hasura configuration completed")
 }

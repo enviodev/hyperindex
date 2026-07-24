@@ -4,6 +4,7 @@
 // through the transitions below; the type is opaque in the interface.
 
 type t = {
+  logger: Pino.t,
   chainStates: dict<ChainState.t>,
   // Chain ids in a stable order, so the cross-chain loops iterate the chains
   // without allocating a values array on every tick.
@@ -27,8 +28,10 @@ let make = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~targetBufferSize=calculateTargetBufferSize(),
+  ~logger=Env.logger,
 ): t => {
   {
+    logger,
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
@@ -118,7 +121,7 @@ let createBatch = (
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.
 let enterReorgThreshold = (crossChainState: t) => {
-  Logging.info("Reorg threshold reached")
+  crossChainState.logger->Logging.childInfo("Reorg threshold reached")
 
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -337,9 +340,10 @@ let checkAndFetch = async (
               },
             )
           )
-          Logging.trace({
+          cs
+          ->ChainState.logger
+          ->Logging.childTrace({
             "msg": "Started querying",
-            "chainId": chainId,
             "partitions": partitions,
           })
 

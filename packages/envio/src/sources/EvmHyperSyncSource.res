@@ -1,6 +1,5 @@
 open Source
 
-
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
 // check so it can't silently drift away from what getHeightOrThrow guards on.
@@ -46,9 +45,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -180,8 +177,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
 
     pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration =
-        onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
       ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
       ->ignore
@@ -275,7 +271,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       | JsExn(e) =>
         switch e->JsExn.message {
         | Some(message) if message->isUnauthorizedError =>
-          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          Env.logger->Logging.childError(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
           // Retrying an unauthorized request can never succeed, so block forever
           let _ = await Promise.make((_, _) => ())
           0

@@ -53,7 +53,7 @@ describe("blockRangeSchema (shared inner range validation)", () => {
 })
 
 describe("Evm ecosystem onBlockFilterSchema", () => {
-  let schema = Evm.make(~logger=Logging.getLogger()).onBlockFilterSchema
+  let schema = Evm.make(~logger=Env.logger).onBlockFilterSchema
 
   it("surfaces the inner range chunk as Some(unknown) when block.number is present", t => {
     let parsed =
@@ -89,7 +89,7 @@ describe("Evm ecosystem onBlockFilterSchema", () => {
 })
 
 describe("Fuel ecosystem onBlockFilterSchema", () => {
-  let schema = Fuel.make(~logger=Logging.getLogger()).onBlockFilterSchema
+  let schema = Fuel.make(~logger=Env.logger).onBlockFilterSchema
 
   it("surfaces the inner range chunk from block.height", t => {
     let parsed =
@@ -105,7 +105,7 @@ describe("Fuel ecosystem onBlockFilterSchema", () => {
 })
 
 describe("Svm ecosystem onBlockFilterSchema", () => {
-  let schema = Svm.make(~logger=Logging.getLogger()).onBlockFilterSchema
+  let schema = Svm.make(~logger=Env.logger).onBlockFilterSchema
 
   it("surfaces the inner range chunk from the flat `slot` key", t => {
     let parsed = %raw(`{slot: {_gte: 42, _every: 3}}`)->S.parseOrThrow(schema)
@@ -126,12 +126,12 @@ describe("Svm ecosystem onBlockFilterSchema", () => {
 
 describe("Ecosystem.t wires the correct onBlockMethodName", () => {
   it("EVM exposes onBlock", t => {
-    t.expect(Evm.make(~logger=Logging.getLogger()).onBlockMethodName).toBe("onBlock")
+    t.expect(Evm.make(~logger=Env.logger).onBlockMethodName).toBe("onBlock")
   })
   it("Fuel exposes onBlock", t => {
-    t.expect(Fuel.make(~logger=Logging.getLogger()).onBlockMethodName).toBe("onBlock")
+    t.expect(Fuel.make(~logger=Env.logger).onBlockMethodName).toBe("onBlock")
   })
   it("SVM exposes onSlot", t => {
-    t.expect(Svm.make(~logger=Logging.getLogger()).onBlockMethodName).toBe("onSlot")
+    t.expect(Svm.make(~logger=Env.logger).onBlockMethodName).toBe("onSlot")
   })
 })

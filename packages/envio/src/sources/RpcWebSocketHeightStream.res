@@ -121,20 +121,20 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
           }
         } catch {
         | S.Raised(_) =>
-          Logging.warn({
+          Env.logger->Logging.childWarn({
             "msg": "WebSocket height stream received unrecognized message",
             "chainId": chainId,
             "data": event.data,
           })
         | JsExn(_) as e =>
-          Logging.warn({
+          Env.logger->Logging.childWarn({
             "msg": "WebSocket height stream failed to parse message",
             "chainId": chainId,
             "err": e->Utils.prettifyExn,
             "data": event.data,
           })
         | e =>
-          Logging.error({
+          Env.logger->Logging.childError({
             "msg": "Unexpected error in WebSocket height stream message handler",
             "chainId": chainId,
             "err": e->Utils.prettifyExn,

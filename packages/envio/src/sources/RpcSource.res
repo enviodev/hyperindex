@@ -56,7 +56,7 @@ let getKnownRawBlockWithBackoff = async (
     switch await getKnownRawBlock(~client, ~blockNumber) {
     | exception err =>
       recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
-      Logging.warn({
+      Env.logger->Logging.childWarn({
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
@@ -96,7 +96,6 @@ let getErrorMessage = (exn: exn): option<string> =>
     }
   | _ => None
   }
-
 
 // `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
 // payload describing the retry decision:
@@ -647,9 +646,7 @@ let make = (
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -688,7 +685,7 @@ let make = (
         })
       },
       ~onError=(am, ~exn) => {
-        Logging.error({
+        Env.logger->Logging.childError({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
@@ -717,7 +714,7 @@ let make = (
         )
       },
       ~onError=(am, ~exn) => {
-        Logging.error({
+        Env.logger->Logging.childError({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
@@ -748,7 +745,7 @@ let make = (
         })
       },
       ~onError=(am, ~exn) => {
-        Logging.error({
+        Env.logger->Logging.childError({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
@@ -879,63 +876,64 @@ let make = (
         onEventRegistration.eventConfig->(
           Utils.magic: Internal.eventConfig => Internal.evmEventConfig
         )
+
       (
         async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
-                  log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
-                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
-                    ),
-                  ),
-                )) catch {
-                | TransactionDataNotFound({message}) =>
-                  let backoffMillis = switch retry {
-                  | 0 => 100
-                  | _ => 500 * retry
-                  }
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn: %raw(`null`),
-                        attemptedToBlock: toBlock,
-                        retry: WithBackoff({
-                          message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                          backoffMillis,
-                        }),
-                      }),
-                    ),
-                  )
-                | exn =>
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber: log.blockNumber,
-                        logIndex: log.logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                Internal.Event({
-                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-                  blockNumber: block->getBlockNumber,
-                  chain,
+          let (block, transaction) = try await Promise.all2((
+            log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
+            log->getEventTransactionOrThrow(
+              ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+              ),
+            ),
+          )) catch {
+          | TransactionDataNotFound({message}) =>
+            let backoffMillis = switch retry {
+            | 0 => 100
+            | _ => 500 * retry
+            }
+            throw(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: toBlock,
+                  retry: WithBackoff({
+                    message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                    backoffMillis,
+                  }),
+                }),
+              ),
+            )
+          | exn =>
+            throw(
+              Source.GetItemsError(
+                FailedGettingFieldSelection({
+                  message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                  exn,
+                  blockNumber: log.blockNumber,
                   logIndex: log.logIndex,
-                  transactionIndex: log.transactionIndex,
-                  payload: {
-                    contractName: eventConfig.contractName,
-                    eventName: eventConfig.name,
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded,
-                    block,
-                    transaction,
-                    srcAddress: log.address,
-                    logIndex: log.logIndex,
-                  }->Evm.fromPayload,
-                })
+                }),
+              ),
+            )
+          }
+
+          Internal.Event({
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+            blockNumber: block->getBlockNumber,
+            chain,
+            logIndex: log.logIndex,
+            transactionIndex: log.transactionIndex,
+            payload: {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              chainId: chain->ChainMap.Chain.toChainId,
+              params: decoded,
+              block,
+              transaction,
+              srcAddress: log.address,
+              logIndex: log.logIndex,
+            }->Evm.fromPayload,
+          })
         }
       )()
     })

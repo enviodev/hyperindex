@@ -750,7 +750,7 @@ describe("RpcSource - empty selection", () => {
         ~selection={dependsOnAddresses: true, onEventRegistrations: []},
         ~itemsTarget=5000,
         ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "RpcSource empty selection"}),
+        ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource empty selection"}),
       )
       None
     } catch {
@@ -840,7 +840,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=5000,
             ~retry=0,
-            ~logger=Logging.createChild(~params={"test": "RpcSource response too large"}),
+            ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource response too large"}),
           )
           None
         } catch {
@@ -969,7 +969,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=5000,
             ~retry=0,
-            ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
+            ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource re-grow"}),
           )
           ()
         } catch {
@@ -1118,7 +1118,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
             },
             ~itemsTarget=5000,
             ~retry=0,
-            ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
+            ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource classify " ++ name}),
           )
           None
         } catch {
@@ -1213,7 +1213,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
               },
               ~itemsTarget=5000,
               ~retry,
-              ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
+              ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource missing transaction data"}),
             )
             None
           } catch {
@@ -1363,7 +1363,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource fan-out"}),
+          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource fan-out"}),
         )
         mock.close()
         page
@@ -1491,7 +1491,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource selection e2e"}),
+          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource selection e2e"}),
         )
         let filters =
           mock.requests
@@ -1579,7 +1579,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource skip-all"}),
+          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource skip-all"}),
         )
         mock.close()
         page
@@ -1740,7 +1740,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource pooled leak"}),
+          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource pooled leak"}),
         )
         mock.close()
         page

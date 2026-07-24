@@ -97,7 +97,7 @@ let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, 
     },
     ~itemsTarget=5_000,
     ~retry,
-    ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+    ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RPC source contract pin"}),
   )
 }
 
@@ -446,7 +446,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                 },
                 ~itemsTarget=5_000,
                 ~retry=0,
-                ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
+                ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RPC interval pin"}),
               )
             )
           (await call(), await call())
@@ -587,7 +587,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               },
               ~itemsTarget=5_000,
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
+              ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RPC skip-all pin"}),
             )
           ) {
           | Ok(page) => page
@@ -709,7 +709,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               },
               ~itemsTarget=5_000,
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
+              ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RPC contract scoping pin"}),
             )
           ) {
           | Ok(page) => page

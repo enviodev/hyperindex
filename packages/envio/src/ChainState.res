@@ -269,7 +269,7 @@ let makeInternal = (
     ~fetchState,
     ~onEventRegistrations,
     ~indexingAddresses=indexingAddressIndex,
-    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
+    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?, ~logger),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
       ~maxReorgDepth,
@@ -299,11 +299,11 @@ let makeInternal = (
 
 let makeFromConfig = (
   chainConfig: Config.chain,
-  ~config,
+  ~config: Config.t,
   ~registrationsByChainId,
   ~knownHeight,
 ) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
+  let logger = Logging.createChildFrom(~logger=config.logger, ~params={"chainId": chainConfig.id})
 
   makeInternal(
     ~chainConfig,
@@ -333,12 +333,12 @@ let makeFromDbState = (
   ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~isRealtime,
-  ~config,
+  ~config: Config.t,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
-  let logger = Logging.createChild(~params={"chainId": chainId})
+  let logger = Logging.createChildFrom(~logger=config.logger, ~params={"chainId": chainId})
 
   let progressBlockNumber =
     // Can be -1 when not set

@@ -4,7 +4,7 @@ let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; 
 // Crash on unhandled promise rejections with a readable error.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
 NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
-  Logging.errorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
+  Env.logger->Logging.childErrorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
   NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
@@ -82,7 +82,7 @@ let run = async args => {
     | JsExn(e) => e->JsExn.message->Option.getOr("Failed at initialization")
     | _ => "Failed at initialization"
     }
-    Logging.error(message)
+    Env.logger->Logging.childError(message)
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

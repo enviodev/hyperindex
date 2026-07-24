@@ -1,6 +1,6 @@
 open Vitest
 
-// For Logging.setLogger call
+// Force Env to load so its base logger is initialized
 let _ = Env.logStrategy
 
 type server

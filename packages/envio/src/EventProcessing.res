@@ -340,7 +340,7 @@ let processEventBatch = async (
   // Compute chains state for this batch
   let chains: Internal.chains = chainStates->computeChainsState
 
-  let logger = Logging.getLogger()
+  let logger = config.logger
 
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
     logger->Logging.childTrace({

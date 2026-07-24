@@ -468,7 +468,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
           )
           ->Array.joinUnsafe(", ")
-        Logging.getLogger()->Logging.childInfo(
+        config.logger->Logging.childInfo(
           `Events without a handler, skipped for indexing: ${groups}`,
         )
       }
@@ -569,7 +569,7 @@ let registerOnBlock = (
     let config = registration.config
     let ecosystem = config.ecosystem
     let chainsDict = getChainsObject(config)
-    let logger = Logging.createChild(~params={"onBlock": name})
+    let logger = Logging.createChildFrom(~logger=config.logger, ~params={"onBlock": name})
 
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain

@@ -160,7 +160,8 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      ~logger=Logging.createChild(
+      ~logger=Logging.createChildFrom(
+        ~logger=config.logger,
         ~params={
           "context": "Throttler for chain metadata writes",
           "intervalMillis": intervalMillis,
@@ -192,6 +193,7 @@ let make = (
       ~isInReorgThreshold,
       ~isRealtime,
       ~targetBufferSize,
+      ~logger=config.logger,
     ),
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -403,6 +405,7 @@ let recordProcessedBatch = (state: t) =>
 // the container in place (eg insert an entity table). ---
 
 let config = (state: t) => state.config
+let logger = (state: t) => state.config.logger
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities

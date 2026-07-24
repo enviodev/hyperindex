@@ -24,8 +24,6 @@ let logLevels = [
   ("fatal", 60),
 ]->Dict.fromArray
 
-%%private(let logger = ref(None))
-
 let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
   // Currently unused - useful if using multiple transports.
   // let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
@@ -83,46 +81,8 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
   }
 }
 
-let setLogger = l => {
-  logger := Some(l)
-}
-
-let getLogger = () => {
-  switch logger.contents {
-  | Some(logger) => logger
-  | None => JsError.throwWithMessage("Unreachable code. Logger not initialized")
-  }
-}
-
-let setLogLevel = (level: Pino.logLevel) => {
-  getLogger()->setLevel(level)
-}
-
-let trace = message => {
-  getLogger().trace(message->createPinoMessage)
-}
-
-let debug = message => {
-  getLogger().debug(message->createPinoMessage)
-}
-
-let info = message => {
-  getLogger().info(message->createPinoMessage)
-}
-
-let warn = message => {
-  getLogger().warn(message->createPinoMessage)
-}
-
-let error = message => {
-  getLogger().error(message->createPinoMessage)
-}
-let errorWithExn = (error, message) => {
-  getLogger()->Pino.errorExn(message->createPinoMessageWithError(error))
-}
-
-let fatal = message => {
-  getLogger().fatal(message->createPinoMessage)
+let setLogLevel = (logger: t, level: Pino.logLevel) => {
+  logger->setLevel(level)
 }
 
 let childTrace = (logger, params: 'a) => {
@@ -148,9 +108,6 @@ let childFatal = (logger, params: 'a) => {
   logger.fatal(params->createPinoMessage)
 }
 
-let createChild = (~params: 'a) => {
-  getLogger()->child(params->createChildParams)
-}
 let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }

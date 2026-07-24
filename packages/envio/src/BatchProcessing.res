@@ -90,7 +90,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
 
     // When resuming from persisted state, all events may already be processed.
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
-      Logging.info("All chains are caught up to end blocks.")
+      state->IndexerState.logger->Logging.childInfo("All chains are caught up to end blocks.")
       if !(state->IndexerState.keepProcessAlive) {
         await ExitOnCaughtUp.run(state)
       }
@@ -156,7 +156,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
           state->IndexerState.chainStates,
         )
         if allCaughtUp {
-          Logging.info("All chains are caught up to end blocks.")
+          state->IndexerState.logger->Logging.childInfo("All chains are caught up to end blocks.")
         }
 
         if allCaughtUp && !(state->IndexerState.keepProcessAlive) {

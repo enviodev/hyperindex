@@ -124,7 +124,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~selection=makeSelection(),
     ~itemsTarget=5000,
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
+    ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "SourceBlockHashes"}),
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {

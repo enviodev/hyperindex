@@ -112,7 +112,8 @@ let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpointId) 
       )
     | exception exn =>
       // Pruning is cleanup; a failure must not fail the write loop.
-      Logging.createChild(
+      Logging.createChildFrom(
+        ~logger=state->IndexerState.logger,
         ~params={
           "entityName": entityConfig.name,
           "safeCheckpointId": safeCheckpointId,
@@ -126,10 +127,10 @@ let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpointId) => {
   switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpointId) {
   | () => ()
   | exception exn =>
-    Logging.createChild(~params={"safeCheckpointId": safeCheckpointId})->Logging.childErrorWithExn(
-      exn->Utils.prettifyExn,
-      `Failed to prune stale checkpoints`,
-    )
+    Logging.createChildFrom(
+      ~logger=state->IndexerState.logger,
+      ~params={"safeCheckpointId": safeCheckpointId},
+    )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale checkpoints`)
   }
 }
 

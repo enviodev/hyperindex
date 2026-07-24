@@ -606,11 +606,12 @@ let createTestIndexer = (): t<'processConfig> => {
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
     ~storage,
+    ~logger=config.logger,
   )
 
   // Silence logs by default in test mode unless LOG_LEVEL is explicitly set.
   switch Env.userLogLevel {
-  | None => Logging.setLogLevel(#silent)
+  | None => config.logger->Logging.setLogLevel(#silent)
   | Some(_) => ()
   }
 
