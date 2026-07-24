@@ -386,32 +386,48 @@ let getGlobalIndexer = (): 'indexer => {
   // array is memoized lazily: an early `createEffect` / `S` import that
   // never touches the indexer must not trigger a config parse. The memo is
   // safe because `Config.load` is itself pure.
+  // A scoped handler import (internal test indexer) has no generated config on
+  // disk, so `Config.load()` would throw. Prefer the active registration's
+  // config when a scope is set; production has no scope and keeps loading the
+  // generated config.
+  let resolveConfig = () =>
+    switch HandlerRegister.getActiveConfig() {
+    | Some(config) => config
+    | None => Config.load()
+    }
+
   let keysMemo: ref<option<array<string>>> = ref(None)
+  let computeKeys = (config: Config.t) =>
+    switch config.ecosystem.name {
+    | Evm | Fuel => [
+        "name",
+        "description",
+        "chainIds",
+        "chains",
+        "onEvent",
+        "contractRegister",
+        "onBlock",
+        "~internalAndWillBeRemovedSoon_onRollbackCommit",
+      ]
+    | Svm => [
+        "name",
+        "description",
+        "chainIds",
+        "chains",
+        "onInstruction",
+        "onSlot",
+        "~internalAndWillBeRemovedSoon_onRollbackCommit",
+      ]
+    }
   let getKeys = () =>
-    switch keysMemo.contents {
-    | Some(k) => k
-    | None => {
-        let keys = switch Config.load().ecosystem.name {
-        | Evm | Fuel => [
-            "name",
-            "description",
-            "chainIds",
-            "chains",
-            "onEvent",
-            "contractRegister",
-            "onBlock",
-            "~internalAndWillBeRemovedSoon_onRollbackCommit",
-          ]
-        | Svm => [
-            "name",
-            "description",
-            "chainIds",
-            "chains",
-            "onInstruction",
-            "onSlot",
-            "~internalAndWillBeRemovedSoon_onRollbackCommit",
-          ]
-        }
+    switch HandlerRegister.getActiveConfig() {
+    // Scoped: compute fresh so the memo never caches a per-test config.
+    | Some(config) => computeKeys(config)
+    | None =>
+      switch keysMemo.contents {
+      | Some(k) => k
+      | None =>
+        let keys = computeKeys(Config.load())
         keysMemo := Some(keys)
         keys
       }
@@ -419,14 +435,14 @@ let getGlobalIndexer = (): 'indexer => {
 
   let get = (~prop: string) =>
     switch prop {
-    | "name" => Config.load().name->(Utils.magic: string => unknown)
-    | "description" => Config.load().description->(Utils.magic: option<string> => unknown)
+    | "name" => resolveConfig().name->(Utils.magic: string => unknown)
+    | "description" => resolveConfig().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
-        let (_, chainIds) = buildChainsObject(~config=Config.load())
+        let (_, chainIds) = buildChainsObject(~config=resolveConfig())
         chainIds->(Utils.magic: array<int> => unknown)
       }
     | "chains" => {
-        let (chains, _) = buildChainsObject(~config=Config.load())
+        let (chains, _) = buildChainsObject(~config=resolveConfig())
         chains->(Utils.magic: {..} => unknown)
       }
     | "onEvent" => onEventFn->Utils.magic

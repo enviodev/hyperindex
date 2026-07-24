@@ -219,6 +219,7 @@ let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: dict<chainConfig>,
   ~indexingAddressesByChain: dict<array<Internal.indexingAddress>>,
+  ~envioInfo: option<JSON.t>,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -251,7 +252,7 @@ let makeInitialState = (
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     reorgCheckpoints: [],
-    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
+    envioInfo,
   }
 }
 
@@ -550,7 +551,7 @@ let cloneRegistrations = (
 // module-cached anyway) and reuse them across every createTestIndexer run, so
 // the global registration cycle runs a single time and never races.
 let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
-let getRegistrations = (~config) =>
+let getGlobalRegistrations = (~config) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
@@ -559,8 +560,18 @@ let getRegistrations = (~config) =>
     promise
   }
 
-let createTestIndexer = (): t<'processConfig> => {
-  let config = Config.load()
+// The core in-memory test indexer over a resolved config + registration set.
+// `getRegistrations` yields the finished per-chain registrations (memoized by
+// the caller) and `getActiveRegistration` the raw registration record simulate
+// reads. Split out from `createTestIndexer` so the internal test indexer can
+// supply an isolated per-instance registration instead of the process-global
+// one.
+let make = (
+  ~config: Config.t,
+  ~getRegistrations: unit => promise<HandlerRegister.registrationsByChainId>,
+  ~getActiveRegistration: unit => HandlerRegister.activeRegistration,
+  ~envioInfo: option<JSON.t>,
+): t<'processConfig> => {
   let allEntities = config.allEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
@@ -776,6 +787,7 @@ let createTestIndexer = (): t<'processConfig> => {
             ~config,
             ~processConfigChains=chains,
             ~indexingAddressesByChain,
+            ~envioInfo,
           )
 
           // No endBlock means auto-exit mode: process one block checkpoint at a
@@ -808,11 +820,12 @@ let createTestIndexer = (): t<'processConfig> => {
 
           // Each run gets its own copy of the shared base registration so the
           // simulate-source registration it appends stays isolated.
-          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config))
+          let registrationsByChainId = cloneRegistrations(await getRegistrations())
           let patchedConfig: Config.t = SimulateItems.patchConfig(
             ~config,
             ~processConfig=processConfigJson,
             ~registrationsByChainId,
+            ~activeRegistration=getActiveRegistration(),
           )
           let runConfig = {...patchedConfig, shouldRollbackOnReorg: false}
           let runConfig = exitAfterFirstEventBlock ? {...runConfig, batchSize: 1} : runConfig
@@ -893,4 +906,19 @@ let createTestIndexer = (): t<'processConfig> => {
   )
 
   result->(Utils.magic: dict<unknown> => t<'processConfig>)
+}
+
+let createTestIndexer = (): t<'processConfig> => {
+  let config = Config.load()
+  make(
+    ~config,
+    ~getRegistrations=() => getGlobalRegistrations(~config),
+    // The global registration cycle runs inside `getGlobalRegistrations`, so the
+    // active record is only resolvable once `process()` has awaited it.
+    ~getActiveRegistration=() =>
+      HandlerRegister.getActiveRegistration()->Option.getOrThrow(
+        ~message="TestIndexer: handler registration has not run yet",
+      ),
+    ~envioInfo=Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
+  )
 }

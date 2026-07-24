@@ -4,6 +4,20 @@ type chainRegistrations = {
 }
 type registrationsByChainId = dict<chainRegistrations>
 
+// A registration record. Opaque: consumers build one with `make`, run handler
+// registration into it (via `withScope`), then read it back with `finish`.
+type activeRegistration
+
+let make: (~config: Config.t) => activeRegistration
+let finish: (activeRegistration, ~config: Config.t) => registrationsByChainId
+let withScope: (activeRegistration, unit => promise<unit>) => promise<unit>
+let getActiveRegistration: unit => option<activeRegistration>
+let getActiveConfig: unit => option<Config.t>
+// True when a handler registered while no registration scope was active (queued
+// for the next global `startRegistration`). The internal test indexer treats
+// this as an error — a handler registered outside its scope.
+let hasPreRegistered: unit => bool
+
 let startRegistration: (~config: Config.t) => unit
 let resetOnEventRegistrations: unit => unit
 let isPendingRegistration: unit => bool
@@ -22,9 +36,14 @@ let setContractRegister: (
   Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, 'context>>,
   ~eventOptions: option<Internal.eventOptions<'where>>,
 ) => unit
-let isWildcard: (~contractName: string, ~eventName: string) => bool
+let isWildcard: (
+  ~registration: activeRegistration,
+  ~contractName: string,
+  ~eventName: string,
+) => bool
 let isDroppedByWhere: (~config: Config.t, Internal.onEventRegistration) => bool
 let getSimulateOnEventRegistrations: (
+  ~registration: activeRegistration,
   ~config: Config.t,
   ~chainId: int,
   ~eventConfig: Internal.eventConfig,

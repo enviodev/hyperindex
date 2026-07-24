@@ -30,8 +30,59 @@ let resetOnEventRegistrations = () => {
   EnvioGlobal.value.activeRegistration = None
 }
 
+// A registration record detached from the global registry. The internal test
+// indexer builds one per instance so handler sets stay isolated across configs.
+let make = (~config: Config.t): activeRegistration => {
+  config,
+  registrationsByChainId: Dict.make(),
+  finished: false,
+}
+
+// A scope override, when set, wins over the global `activeRegistration` so
+// `indexer.onEvent`/`.onBlock` (and the `indexer` getters) resolve against the
+// instance registration during a scoped handler import.
 let getActiveRegistration = () =>
-  EnvioGlobal.value.activeRegistration->(Utils.magic: option<unknown> => option<activeRegistration>)
+  switch EnvioGlobal.value.registrationScopeOverride->(
+    Utils.magic: option<unknown> => option<activeRegistration>
+  ) {
+  | Some(_) as override => override
+  | None =>
+    EnvioGlobal.value.activeRegistration->(
+      Utils.magic: option<unknown> => option<activeRegistration>
+    )
+  }
+
+let getActiveConfig = (): option<Config.t> => getActiveRegistration()->Option.map(r => r.config)
+
+// Serializes overlapping `withScope` calls: the override is a single global
+// slot, so a second import must wait for the first to restore it, else its
+// registrations would land under the wrong (or no) scope.
+let scopeLock = ref(Promise.resolve())
+
+// Run `fn` (typically a dynamic handler-module import) with `r` installed as
+// the active registration scope, restoring the previous state afterwards even
+// on failure. Serialized against other `withScope` calls.
+let withScope = (r: activeRegistration, fn: unit => promise<unit>): promise<unit> => {
+  let run = async () => {
+    let prev = EnvioGlobal.value.registrationScopeOverride
+    EnvioGlobal.value.registrationScopeOverride = Some(
+      r->(Utils.magic: activeRegistration => unknown),
+    )
+    let result = try Ok(await fn()) catch {
+    | exn => Error(exn)
+    }
+    EnvioGlobal.value.registrationScopeOverride = prev
+    switch result {
+    | Ok() => ()
+    | Error(exn) => throw(exn)
+    }
+  }
+  let next = scopeLock.contents->Promise.then(run)
+  // Keep the lock chain alive even if this run rejects, so a later scoped
+  // import isn't blocked forever behind a failed one.
+  scopeLock := next->Promise.catch(_ => Promise.resolve())
+  next
+}
 
 // Might happen for tests when the handler file
 // is imported by a non-envio process (eg mocha)
@@ -44,6 +95,8 @@ let preRegistered =
   EnvioGlobal.value.preRegistered->(
     Utils.magic: array<unknown> => array<activeRegistration => unit>
   )
+
+let hasPreRegistered = () => preRegistered->Array.length > 0
 
 let withRegistration = (fn: activeRegistration => unit) => {
   switch getActiveRegistration() {
@@ -230,6 +283,7 @@ let addOnEventRegistration = (
 ) => {
   let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
+  let matched = ref(false)
   registration.config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig =>
@@ -239,6 +293,7 @@ let addOnEventRegistration = (
       switch contract.events->Array.find(e => e.name === eventName) {
       | None => ()
       | Some(eventConfig) =>
+        matched := true
         let reg = buildOnEventRegistrationWith(
           ~config=registration.config,
           ~chainId=chainConfig.id,
@@ -255,6 +310,16 @@ let addOnEventRegistration = (
       }
     }
   )
+
+  // A scoped registration (internal test indexer) that matches no configured
+  // contract/event is almost always a typo — the handler would silently never
+  // run. The global path stays lenient (a shared contract may legitimately be
+  // absent from a narrowed config).
+  if !matched.contents && EnvioGlobal.value.registrationScopeOverride->Option.isSome {
+    JsError.throwWithMessage(
+      `No event "${eventName}" is configured on contract "${contractName}", so the handler would never run. Check the contract and event names against your config.`,
+    )
+  }
 }
 
 let setHandler = (~contractName, ~eventName, handler, ~eventOptions) => {
@@ -307,34 +372,28 @@ let storedOnEventRegistrations = (r: activeRegistration, ~chainId: int): array<
 
 // True when any registration for the event is a wildcard. Used by simulate to
 // decide whether a src address needs deriving.
-let isWildcard = (~contractName, ~eventName) =>
-  switch getActiveRegistration() {
-  | Some(r) =>
-    r.registrationsByChainId
-    ->Dict.valuesToArray
-    ->Array.some(chainRegs =>
-      chainRegs.onEventRegistrations->Array.some(reg =>
-        reg.eventConfig.contractName === contractName &&
-        reg.eventConfig.name === eventName &&
-        reg.isWildcard
-      )
+let isWildcard = (~registration: activeRegistration, ~contractName, ~eventName) =>
+  registration.registrationsByChainId
+  ->Dict.valuesToArray
+  ->Array.some(chainRegs =>
+    chainRegs.onEventRegistrations->Array.some(reg =>
+      reg.eventConfig.contractName === contractName &&
+      reg.eventConfig.name === eventName &&
+      reg.isWildcard
     )
-  | None => false
-  }
+  )
 
 // Every registration for one event on a chain, so simulate fans a simulated
 // event out to each the way real routing does. Falls back to a bare
 // registration when the event has no handler/contractRegister, so a simulated
 // item still produces an item to run.
 let getSimulateOnEventRegistrations = (
+  ~registration: activeRegistration,
   ~config: Config.t,
   ~chainId: int,
   ~eventConfig: Internal.eventConfig,
 ): array<Internal.onEventRegistration> => {
-  let stored = switch getActiveRegistration() {
-  | Some(r) => r->storedOnEventRegistrations(~chainId)
-  | None => []
-  }
+  let stored = registration->storedOnEventRegistrations(~chainId)
   let matching =
     mergeRegistrations(stored, ~config)->Array.filter(reg =>
       reg.eventConfig.contractName === eventConfig.contractName &&
@@ -357,124 +416,126 @@ let getSimulateOnEventRegistrations = (
   }
 }
 
-let finishRegistration = (~config: Config.t): registrationsByChainId => {
-  switch getActiveRegistration() {
-  | Some(r) => {
-      r.finished = true
-      let notRegisteredEventsByContract: dict<Utils.Set.t<string>> = Dict.make()
-      let registrationsByChainId: registrationsByChainId = Dict.make()
-      config.chainMap
-      ->ChainMap.values
-      ->Array.forEach(chainConfig => {
-        let chainId = chainConfig.id
-        let key = chainId->Int.toString
+let finish = (r: activeRegistration, ~config: Config.t): registrationsByChainId => {
+  r.finished = true
+  let notRegisteredEventsByContract: dict<Utils.Set.t<string>> = Dict.make()
+  let registrationsByChainId: registrationsByChainId = Dict.make()
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig => {
+    let chainId = chainConfig.id
+    let key = chainId->Int.toString
 
-        let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
-        let registeredKeys = Utils.Set.make()
-        builtRegs->Array.forEach(reg =>
-          registeredKeys
-          ->Utils.Set.add(
-            getKey(~contractName=reg.eventConfig.contractName, ~eventName=reg.eventConfig.name),
-          )
-          ->ignore
-        )
+    let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
+    let registeredKeys = Utils.Set.make()
+    builtRegs->Array.forEach(reg =>
+      registeredKeys
+      ->Utils.Set.add(
+        getKey(~contractName=reg.eventConfig.contractName, ~eventName=reg.eventConfig.name),
+      )
+      ->ignore
+    )
 
-        // Events with no handler/contractRegister aren't fetched or dispatched
-        // unless raw events are enabled, in which case a bare registration is
-        // added to fetch them. Otherwise they're reported once below. Keyed on
-        // the resolved registrations (before the where-empty drop) so a
-        // `where: false` event still counts as registered — its handler opted
-        // out of this chain, so it gets no raw-event registration either.
-        let rawEventRegs = []
-        chainConfig.contracts->Array.forEach(contract => {
-          contract.events->Array.forEach(
-            eventConfig => {
-              if (
-                !(
-                  registeredKeys->Utils.Set.has(
-                    getKey(~contractName=contract.name, ~eventName=eventConfig.name),
-                  )
-                )
+    // Events with no handler/contractRegister aren't fetched or dispatched
+    // unless raw events are enabled, in which case a bare registration is
+    // added to fetch them. Otherwise they're reported once below. Keyed on
+    // the resolved registrations (before the where-empty drop) so a
+    // `where: false` event still counts as registered — its handler opted
+    // out of this chain, so it gets no raw-event registration either.
+    let rawEventRegs = []
+    chainConfig.contracts->Array.forEach(contract => {
+      contract.events->Array.forEach(
+        eventConfig => {
+          if (
+            !(
+              registeredKeys->Utils.Set.has(
+                getKey(~contractName=contract.name, ~eventName=eventConfig.name),
+              )
+            )
+          ) {
+            if config.enableRawEvents {
+              rawEventRegs
+              ->Array.push(
+                buildOnEventRegistrationWith(
+                  ~config,
+                  ~chainId,
+                  ~eventConfig,
+                  ~isWildcard=false,
+                  ~handler=None,
+                  ~contractRegister=None,
+                  ~where=None,
+                  ~startBlock=?contract.startBlock,
+                ),
+              )
+              ->ignore
+            } else {
+              let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
+                contract.name,
               ) {
-                if config.enableRawEvents {
-                  rawEventRegs
-                  ->Array.push(
-                    buildOnEventRegistrationWith(
-                      ~config,
-                      ~chainId,
-                      ~eventConfig,
-                      ~isWildcard=false,
-                      ~handler=None,
-                      ~contractRegister=None,
-                      ~where=None,
-                      ~startBlock=?contract.startBlock,
-                    ),
-                  )
-                  ->ignore
-                } else {
-                  let eventNames = switch notRegisteredEventsByContract->Utils.Dict.dangerouslyGetNonOption(
-                    contract.name,
-                  ) {
-                  | Some(set) => set
-                  | None => {
-                      let set = Utils.Set.make()
-                      notRegisteredEventsByContract->Dict.set(contract.name, set)
-                      set
-                    }
-                  }
-                  eventNames->Utils.Set.add(eventConfig.name)->ignore
+              | Some(set) => set
+              | None => {
+                  let set = Utils.Set.make()
+                  notRegisteredEventsByContract->Dict.set(contract.name, set)
+                  set
                 }
               }
-            },
-          )
-        })
-
-        // Drop registrations whose `where` opts out of this chain, then assign
-        // each survivor its chain-scoped index by position.
-        let onEventRegistrations: array<Internal.onEventRegistration> = []
-        builtRegs
-        ->Array.concat(rawEventRegs)
-        ->Array.forEach(reg => {
-          if !isDroppedByWhere(~config, reg) {
-            onEventRegistrations
-            ->Array.push({...reg, index: onEventRegistrations->Array.length})
-            ->ignore
+              eventNames->Utils.Set.add(eventConfig.name)->ignore
+            }
           }
-        })
+        },
+      )
+    })
 
-        registrationsByChainId->Dict.set(
-          key,
-          {
-            onEventRegistrations,
-            // Copy so a consumer appending to the output (e.g. simulate source
-            // registration) never mutates the persistent store.
-            onBlockRegistrations: switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
-              key,
-            ) {
-            | Some(chainRegs) => chainRegs.onBlockRegistrations->Array.copy
-            | None => []
-            },
-          },
-        )
-      })
-
-      // Reported once for the whole indexer (a shared contract on multiple
-      // chains would otherwise repeat the same message per chain).
-      let notRegisteredEntries = notRegisteredEventsByContract->Dict.toArray
-      if notRegisteredEntries->Utils.Array.notEmpty {
-        let groups =
-          notRegisteredEntries
-          ->Array.map(((contractName, eventNames)) =>
-            `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
-          )
-          ->Array.joinUnsafe(", ")
-        Logging.getLogger()->Logging.childInfo(
-          `Events without a handler, skipped for indexing: ${groups}`,
-        )
+    // Drop registrations whose `where` opts out of this chain, then assign
+    // each survivor its chain-scoped index by position.
+    let onEventRegistrations: array<Internal.onEventRegistration> = []
+    builtRegs
+    ->Array.concat(rawEventRegs)
+    ->Array.forEach(reg => {
+      if !isDroppedByWhere(~config, reg) {
+        onEventRegistrations
+        ->Array.push({...reg, index: onEventRegistrations->Array.length})
+        ->ignore
       }
+    })
 
-      registrationsByChainId
-    }
+    registrationsByChainId->Dict.set(
+      key,
+      {
+        onEventRegistrations,
+        // Copy so a consumer appending to the output (e.g. simulate source
+        // registration) never mutates the persistent store.
+        onBlockRegistrations: switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(
+          key,
+        ) {
+        | Some(chainRegs) => chainRegs.onBlockRegistrations->Array.copy
+        | None => []
+        },
+      },
+    )
+  })
+
+  // Reported once for the whole indexer (a shared contract on multiple
+  // chains would otherwise repeat the same message per chain).
+  let notRegisteredEntries = notRegisteredEventsByContract->Dict.toArray
+  if notRegisteredEntries->Utils.Array.notEmpty {
+    let groups =
+      notRegisteredEntries
+      ->Array.map(((contractName, eventNames)) =>
+        `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
+      )
+      ->Array.joinUnsafe(", ")
+    Logging.getLogger()->Logging.childInfo(
+      `Events without a handler, skipped for indexing: ${groups}`,
+    )
+  }
+
+  registrationsByChainId
+}
+
+let finishRegistration = (~config: Config.t): registrationsByChainId => {
+  switch getActiveRegistration() {
+  | Some(r) => r->finish(~config)
   | None =>
     JsError.throwWithMessage(
       "The indexer has not started registering handlers, so can't finish it.",
