@@ -188,7 +188,8 @@ module EventItems = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
-    maxNumInstructions: int,
+    // Absent means no server-side cap on the number of instructions returned.
+    maxNumInstructions?: int,
     registrationIndexes: array<int>,
     addressesByContractName: dict<array<Address.t>>,
   }

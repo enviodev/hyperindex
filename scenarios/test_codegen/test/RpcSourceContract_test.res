@@ -95,7 +95,7 @@ let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, 
       dependsOnAddresses: true,
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
-    ~itemsTarget=5_000,
+    ~itemsTarget=Some(5_000),
     ~retry,
     ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
   )
@@ -444,7 +444,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                   dependsOnAddresses: true,
                   onEventRegistrations: [(registration :> Internal.onEventRegistration)],
                 },
-                ~itemsTarget=5_000,
+                ~itemsTarget=Some(5_000),
                 ~retry=0,
                 ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
               )
@@ -585,7 +585,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                 dependsOnAddresses: false,
                 onEventRegistrations: [(registration :> Internal.onEventRegistration)],
               },
-              ~itemsTarget=5_000,
+              ~itemsTarget=Some(5_000),
               ~retry=0,
               ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
             )
@@ -707,7 +707,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                   (eventB :> Internal.onEventRegistration),
                 ],
               },
-              ~itemsTarget=5_000,
+              ~itemsTarget=Some(5_000),
               ~retry=0,
               ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
             )

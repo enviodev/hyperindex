@@ -25,11 +25,11 @@ type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Items this in-flight query is targeting (server maxNumLogs-style cap).
-  itemsTarget: int,
-  // Estimated items this in-flight query will actually return (no headroom),
-  // carried from the query so the shared buffer budget can account for what's
-  // already being fetched without the cap's safety margin inflating it.
+  // Server maxNumLogs-style cap for this in-flight query. None for bounded
+  // chunk/gap-fill queries, which send no cap (their toBlock is the bound).
+  itemsTarget: option<int>,
+  // Estimated items this in-flight query will return, carried from the query so
+  // the shared buffer budget can account for what's already being fetched.
   itemsEst: int,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
@@ -81,14 +81,15 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Items this query targets: the server-side maxNumLogs-style cap, sized
-  // with headroom (chunkItemsMultiplier) so a denser-than-expected range
-  // doesn't truncate the response.
-  itemsTarget: int,
-  // Expected items without headroom: density × the query's block range for a
-  // known-density partition, the query's budget share otherwise. This is the
-  // unit the chain's per-tick budget is reserved/consumed in — reserving the
-  // headroomed cap instead would throttle the pipeline by the safety margin.
+  // Server-side maxNumLogs-style cap. Some only for open-ended probes, whose
+  // range isn't otherwise bounded; None for bounded chunk/gap-fill queries,
+  // whose toBlock already bounds the response so a cap would only self-truncate
+  // (worse under client-side address filtering, which counts filtered-out items
+  // toward the cap).
+  itemsTarget: option<int>,
+  // Density × the query's block range for a known-density partition, the
+  // query's budget share otherwise. This is the unit the chain's per-tick
+  // budget is reserved/consumed in and that sizes every query.
   itemsEst: int,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
@@ -112,13 +113,13 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   result
 })
 
-// itemsTarget for a query over [fromBlock, toBlock] at the given event density
+// itemsEst for a query over [fromBlock, toBlock] at the given event density
 // (items/block). toBlock None is the open-ended tail, capped at
 // chainTargetBlock — the soft per-tick horizon the owning chain wants to reach
 // (see getNextQuery).
 let densityItemsTarget = (~density, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
-  // Floor at 1: the reservation must equal the server-side cap SourceManager
-  // sends, and a 0 cap would ask the backend for nothing.
+  // Floor at 1: this is the budget reservation, and for a probe also its server
+  // cap — a 0 cap would ask the backend for nothing.
   Pervasives.max(
     1,
     ((toBlock->Option.getOr(chainTargetBlock) - fromBlock + 1)->Int.toFloat *. density)
@@ -548,8 +549,12 @@ module OptimizedPartitions = {
           if latestFetchedBlock.blockNumber < queryToBlock {
             // Partial response is direct capacity evidence — unless it was
             // truncated by our own itemsTarget cap: that reflects the
-            // reservation we asked for, not what the server could return.
-            itemsCount < query.itemsTarget
+            // reservation we asked for, not what the server could return. A
+            // capless bounded query can only have been truncated by the source.
+            switch query.itemsTarget {
+            | None => true
+            | Some(itemsTarget) => itemsCount < itemsTarget
+            }
           } else {
             // A full response updates only when the query's intended range
             // covers at least the partition's current chunk range — meaning it
@@ -1811,19 +1816,12 @@ let maxChainConcurrency = Env.maxChainConcurrency
 // the first measurement.
 let chunkRangeGrowthFactor = 1.8
 
-// Push one density-priced query and return its itemsEst. itemsEst is the honest
-// density estimate the chain's budget is reserved in; itemsTarget is the
-// server-side cap with chunkItemsMultiplier headroom so a denser-than-expected
-// range doesn't truncate the response.
-//
-// A bounded query (toBlock set) additionally floors its cap at
-// itemsTargetFloor: its range is already the hard bound on the response, so a
-// low density estimate shrinking the cap only buys self-truncated responses —
-// each one a wasted roundtrip that opens a gap and pollutes nothing but our
-// own pipeline. The floor is the indexer target split across the chain's
-// concurrency slots, so even every in-flight bounded query hitting its floored
-// cap at once overshoots the pool by at most ~one buffer target. Open-ended
-// queries keep the pure density cap — there it's the only bound at all.
+// Push one density-priced query and return its itemsEst, the density estimate
+// that sizes the query and the chain's budget reservation. These queries are
+// chunks and gap-fills: their toBlock is a tight bound sized to the source's
+// range capacity, so they send no server cap (itemsTarget None) — a cap would
+// only self-truncate the bounded range, worse under client-side address
+// filtering. A rare unbounded call caps at the estimate as its only bound.
 let pushDensityPricedQuery = (
   queries: array<query>,
   ~partitionId,
@@ -1831,19 +1829,11 @@ let pushDensityPricedQuery = (
   ~toBlock,
   ~isChunk,
   ~density,
-  ~chunkItemsMultiplier,
   ~chainTargetBlock,
-  ~itemsTargetFloor,
   ~selection,
   ~addressesByContractName,
 ) => {
   let itemsEst = densityItemsTarget(~density, ~fromBlock, ~toBlock, ~chainTargetBlock)
-  let itemsTarget = densityItemsTarget(
-    ~density=density *. chunkItemsMultiplier,
-    ~fromBlock,
-    ~toBlock,
-    ~chainTargetBlock,
-  )
   queries
   ->Array.push({
     partitionId,
@@ -1852,8 +1842,8 @@ let pushDensityPricedQuery = (
     selection,
     isChunk,
     itemsTarget: switch toBlock {
-    | Some(_) => Pervasives.max(itemsTarget, itemsTargetFloor)
-    | None => itemsTarget
+    | Some(_) => None
+    | None => Some(itemsEst)
     },
     itemsEst,
     addressesByContractName,
@@ -1884,8 +1874,6 @@ let pushGapFillQueries = (
   ~maxChunks: int,
   ~partition: partition,
   ~partitionBudget: float,
-  ~chunkItemsMultiplier: float,
-  ~itemsTargetFloor: int,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1909,9 +1897,7 @@ let pushGapFillQueries = (
           ~toBlock=rangeEndBlock,
           ~isChunk,
           ~density,
-          ~chunkItemsMultiplier,
           ~chainTargetBlock,
-          ~itemsTargetFloor,
           ~selection,
           ~addressesByContractName,
         )
@@ -1933,9 +1919,7 @@ let pushGapFillQueries = (
               ~toBlock=Some(chunkToBlock),
               ~isChunk=true,
               ~density,
-              ~chunkItemsMultiplier,
               ~chainTargetBlock,
-              ~itemsTargetFloor,
               ~selection,
               ~addressesByContractName,
             )
@@ -1983,8 +1967,6 @@ let walkPartitionPending = (
   ~candidates: array<query>,
   ~headBlockNumber: int,
   ~chainTargetBlock: int,
-  ~chunkItemsMultiplier: float,
-  ~itemsTargetFloor: int,
   ~partitionBudget: float,
   ~queryEndBlock: option<int>,
 ): option<partitionFillState> => {
@@ -2011,8 +1993,6 @@ let walkPartitionPending = (
         ~maxChunks=maxInFlightChunksPerPartition - inFlightCount - chunksUsedThisCall.contents,
         ~partition=p,
         ~partitionBudget,
-        ~chunkItemsMultiplier,
-        ~itemsTargetFloor,
         ~selection=p.selection,
         ~addressesByContractName=p.addressesByContractName,
       )
@@ -2056,14 +2036,12 @@ let pushForwardCandidates = (
   // bound, see getNextQuery.
   ~inRangeStates: array<partitionFillState>,
   // The full in-range partition count, pre-truncation. Probe sizing divides by
-  // this so each probe's itemsEst/itemsTarget stays the honest per-partition
-  // share for budget control — sizing by the (fewer) admittable queries would
-  // let every accepted probe over-fetch its share.
+  // this so each probe's itemsEst stays the honest per-partition share for
+  // budget control — sizing by the (fewer) admittable queries would let every
+  // accepted probe over-fetch its share.
   ~inRangeCount: int,
   ~chainTargetBlock: int,
   ~freshBudget: float,
-  ~chunkItemsMultiplier: float,
-  ~itemsTargetFloor: int,
 ) => {
   // Even share of the fresh budget across the partitions actually fetching
   // this tick (not every partition — so budget isn't stranded on ones below
@@ -2117,9 +2095,7 @@ let pushForwardCandidates = (
             ~toBlock=Some(chunkToBlock),
             ~isChunk=true,
             ~density,
-            ~chunkItemsMultiplier,
             ~chainTargetBlock,
-            ~itemsTargetFloor,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
@@ -2133,7 +2109,7 @@ let pushForwardCandidates = (
       // across the partitions fetching this tick. With no range to the target
       // fall back to an even share of the fresh budget, so cold chains and
       // caught-up partitions still probe.
-      let itemsTarget = if rangeToTarget > 0 {
+      let itemsEst = if rangeToTarget > 0 {
         Pervasives.max(
           1,
           Math.round(
@@ -2152,8 +2128,10 @@ let pushForwardCandidates = (
         toBlock: fs.queryEndBlock,
         isChunk: false,
         selection: p.selection,
-        itemsTarget,
-        itemsEst: itemsTarget,
+        // An open-ended probe's range isn't bounded to source capacity, so it
+        // keeps a server cap at its estimate to protect the shared buffer.
+        itemsTarget: Some(itemsEst),
+        itemsEst,
         addressesByContractName: p.addressesByContractName,
       })
       ->ignore
@@ -2257,10 +2235,6 @@ let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
-  ~chunkItemsMultiplier: float=1.,
-  // Floor for bounded queries' server cap (see pushDensityPricedQuery) —
-  // targetBufferSize / maxChainConcurrency from the cross-chain scheduler.
-  ~itemsTargetFloor: int=0,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -2378,8 +2352,6 @@ let getNextQuery = (
         ~candidates,
         ~headBlockNumber,
         ~chainTargetBlock,
-        ~chunkItemsMultiplier,
-        ~itemsTargetFloor,
         ~partitionBudget,
         ~queryEndBlock=computeQueryEndBlock(p),
       ) {
@@ -2423,8 +2395,6 @@ let getNextQuery = (
       ~inRangeCount,
       ~chainTargetBlock,
       ~freshBudget,
-      ~chunkItemsMultiplier,
-      ~itemsTargetFloor,
     )
 
     acceptCandidates(

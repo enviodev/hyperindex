@@ -7,7 +7,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  itemsTarget: 0,
+  itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
@@ -180,7 +180,7 @@ describe("SourceManager source priority with Live sources", () => {
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
-    itemsTarget: 5000,
+    itemsTarget: Some(5000),
     itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
@@ -489,7 +489,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      itemsTarget: 5000,
+      itemsTarget: None,
       itemsEst: 5000,
       fetchedBlock: None,
     }
@@ -550,7 +550,7 @@ describe("SourceManager fetchNext", () => {
       ).toEqual([
         {
           partitionId: "2",
-          itemsTarget: 16_667,
+          itemsTarget: Some(16_667),
           itemsEst: 16_667,
           fromBlock: 2,
           toBlock: None,
@@ -562,7 +562,7 @@ describe("SourceManager fetchNext", () => {
           partitionId: "0",
           // Starts at block 5 vs partition "2"'s block 2, so it covers less of
           // the range to the target and gets a smaller probe.
-          itemsTarget: 11_111,
+          itemsTarget: Some(11_111),
           itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
@@ -573,7 +573,7 @@ describe("SourceManager fetchNext", () => {
         {
           partitionId: "1",
           // Starts furthest ahead (block 6), so it gets the smallest probe.
-          itemsTarget: 9_259,
+          itemsTarget: Some(9_259),
           itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
@@ -1440,7 +1440,7 @@ describe("SourceManager.executeQuery", () => {
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
-    itemsTarget: 5000,
+    itemsTarget: Some(5000),
     itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,

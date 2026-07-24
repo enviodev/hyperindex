@@ -98,7 +98,7 @@ module GetLogs = {
     let query: HyperSyncClient.EventItems.query = {
       fromBlock,
       toBlock,
-      maxNumLogs,
+      ?maxNumLogs,
       registrationIndexes,
       addressesByContractName,
       clientFilteredContracts,

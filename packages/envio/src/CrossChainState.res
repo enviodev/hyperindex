@@ -249,19 +249,6 @@ let checkAndFetch = async (
   // while it takes its first measurements. Its probe is one admission unit.
   let coldChainBudget = minimumAdmissionBudget
 
-  // Chunk reservations get headroom over the density estimate so a
-  // denser-than-expected range doesn't truncate at the server cap; realtime
-  // gets more since a forced catch-up query there costs a head-poll roundtrip.
-  let chunkItemsMultiplier = crossChainState.isRealtime ? 3. : 1.5
-
-  // Server-cap floor for bounded queries: their block range is already the
-  // hard bound on the response, so a low density estimate shrinking the cap
-  // below this only buys self-truncated responses. Splitting the target pool
-  // across a chain's concurrency slots keeps the worst case — every in-flight
-  // bounded query returning a full floored response at once — at ~one buffer
-  // target.
-  let itemsTargetFloor = crossChainState.targetBufferSize / FetchState.maxChainConcurrency
-
   let prioritizedChainStates = crossChainState->priorityOrder
 
   // Alignment anchor: the first known-height chain in priority order — which,
@@ -308,12 +295,7 @@ let checkAndFetch = async (
         Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.1))
       | _ => None
       }
-      switch cs->ChainState.getNextQuery(
-        ~chainTargetItems,
-        ~chunkItemsMultiplier,
-        ~itemsTargetFloor,
-        ~maxTargetBlock?,
-      ) {
+      switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
       | WaitingForNewBlock as action => actionByChain->Utils.Dict.setByInt(chainId, action)
       | NothingToQuery =>
         // A chain below its head can emit no query when its budget went to
@@ -333,7 +315,7 @@ let checkAndFetch = async (
               {
                 "fromBlock": query.fromBlock,
                 "targetBlock": query.toBlock,
-                "targetEvents": query.itemsTarget,
+                "targetEvents": query.itemsEst,
               },
             )
           )

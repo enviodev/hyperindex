@@ -422,11 +422,10 @@ describe("CrossChainState fetch control", () => {
 
   // Chain 1 (furthest behind, so priorityOrder visits it first): a single
   // known-density partition with a short remaining range (endBlock=20 at
-  // density 10 items/block -> 200 items across 2 chunks, reserved at the
-  // chunk headroom multiplier: 1.5x backfill, 3x realtime). Its real
+  // density 10 items/block -> 200 items across 2 chunks). Its real
   // consumption is capped by that range, far below whatever share of the
   // 3000-item pool the waterfall would otherwise hand it. Returns each
-  // chain's dispatched itemsTarget total and pendingBudget.
+  // chain's dispatched itemsEst total and pendingBudget.
   let runShortRangeWaterfall = async (~isRealtime) => {
       let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
       let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
@@ -510,7 +509,7 @@ describe("CrossChainState fetch control", () => {
           chain->ChainMap.Chain.toChainId,
           switch action {
           | Ready(queries) =>
-            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
+            queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
           | _ => 0.
           },
         )
@@ -530,16 +529,16 @@ describe("CrossChainState fetch control", () => {
     async t => {
       t.expect(
         await runShortRangeWaterfall(~isRealtime=false),
-        ~message="Chain 1's real range caps it at 200 items (itemsTarget carries the 1.5x headroom = 300, only the 200 estimate is reserved); chain 2's frontier is already past the alignment line anchored at chain 1's frontier, so it waits instead of draining the pool",
-      ).toEqual((Some(300.), Some(0.), 200., 0.))
+        ~message="Chain 1's real range caps it at its honest 200-item estimate, which is also what pendingBudget reserves; chain 2's frontier is already past the alignment line anchored at chain 1's frontier, so it waits instead of draining the pool",
+      ).toEqual((Some(200.), Some(0.), 200., 0.))
     },
   )
 
-  Async.it("checkAndFetch drops the alignment clamp in realtime and sizes chunk caps with 3x headroom", async t => {
+  Async.it("checkAndFetch drops the alignment clamp in realtime", async t => {
     t.expect(
       await runShortRangeWaterfall(~isRealtime=true),
-      ~message="Chain 1's itemsTarget carries the 3x realtime headroom = 600, but pendingBudget still reserves the honest 200-item estimate; chain 2 is unclamped at realtime and gets the rest",
-    ).toEqual((Some(600.), Some(2800.), 200., 2800.))
+      ~message="Chain 1 is sized to its honest 200-item range estimate, which pendingBudget also reserves; chain 2 is unclamped at realtime and gets the rest",
+    ).toEqual((Some(200.), Some(2800.), 200., 2800.))
   })
 
   Async.it(
@@ -563,7 +562,7 @@ describe("CrossChainState fetch control", () => {
           | Ready(queries) =>
             "ready:" ++
             queries
-            ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
+            ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
             ->Float.toString
           },
         )
@@ -634,13 +633,11 @@ describe("CrossChainState fetch control", () => {
       )
     let itemsTarget = cs =>
       switch cs->ChainState.getNextQuery(~chainTargetItems=3000.) {
-      | Ready([q]) => q.itemsTarget
+      | Ready([q]) => q.itemsEst
       | _ => JsError.throwWithMessage("expected a single ready query")
       }
 
     // Range cost to the 20-block endBlock ceiling at density 10 = 200 items.
-    // No extra headroom on the budget cap: truncation safety lives in the
-    // itemsTarget server cap via chunkItemsMultiplier, not in the reservation.
     t.expect(
       (makeChain(~caughtUpOnce=false)->itemsTarget, makeChain(~caughtUpOnce=true)->itemsTarget),
       ~message="Both are capped at the plain range cost",
@@ -739,7 +736,7 @@ describe("ChainState cold start", () => {
         chain->ChainMap.Chain.toChainId,
         switch action {
         | Ready(queries) =>
-          queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
+          queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
         | _ => 0.
         },
       )
@@ -782,7 +779,7 @@ describe("ChainState cold start", () => {
         | Ready(queries) =>
           "ready:" ++
           queries
-          ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsTarget->Int.toFloat)
+          ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
           ->Float.toString
         },
       )
@@ -846,7 +843,7 @@ describe("ChainState cold start", () => {
         | Ready(queries) =>
           dispatched :=
             queries->Array.reduce(0., (acc, q: FetchState.query) =>
-              acc +. q.itemsTarget->Int.toFloat
+              acc +. q.itemsEst->Int.toFloat
             )
         | _ => ()
         }
