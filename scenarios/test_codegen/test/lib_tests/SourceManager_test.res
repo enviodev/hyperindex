@@ -452,6 +452,7 @@ describe("SourceManager fetchNext", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=partitions->Array.length,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     )
 
     {

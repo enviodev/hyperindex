@@ -244,6 +244,7 @@ describe("FetchState.make", () => {
         ~nextPartitionIndex=1,
         ~maxAddrInPartition=3,
         ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
       ),
       startBlock: 0,
       endBlock: None,
@@ -359,6 +360,7 @@ describe("FetchState.make", () => {
         ~nextPartitionIndex=1,
         ~maxAddrInPartition=2,
         ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+        ~wildcardContracts=Utils.Set.make(),
       ),
       maxOnBlockBufferSize: targetBufferSize,
       latestOnBlockBlockNumber: -1,
@@ -432,6 +434,7 @@ describe("FetchState.make", () => {
           ~nextPartitionIndex=2,
           ~maxAddrInPartition=1,
           ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+          ~wildcardContracts=Utils.Set.make(),
         ),
         maxOnBlockBufferSize: targetBufferSize,
         latestOnBlockBlockNumber: -1,
@@ -550,6 +553,7 @@ describe("FetchState.make", () => {
           ~nextPartitionIndex=4,
           ~maxAddrInPartition=1,
           ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+          ~wildcardContracts=Utils.Set.make(),
         ),
         maxOnBlockBufferSize: targetBufferSize,
         latestOnBlockBlockNumber: -1,
@@ -1705,6 +1709,7 @@ describe("FetchState.registerDynamicContracts", () => {
           ~nextPartitionIndex=2,
           ~maxAddrInPartition=1000,
           ~dynamicContracts=Utils.Set.fromArray(["NftFactory"]),
+          ~wildcardContracts=Utils.Set.make(),
         ),
         startBlock: 0,
         endBlock: None,
@@ -1766,6 +1771,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=1,
         ~maxAddrInPartition=3,
         ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
       ),
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
@@ -1826,6 +1832,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=3,
         ~maxAddrInPartition,
         ~dynamicContracts=Utils.Set.fromArray(["Gravatar"]),
+        ~wildcardContracts=Utils.Set.make(),
       ),
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
@@ -2389,6 +2396,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=fetchStateWithResponse1.optimizedPartitions.nextPartitionIndex,
         ~maxAddrInPartition=fetchStateWithResponse1.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=fetchStateWithResponse1.optimizedPartitions.wildcardContracts,
       ),
     })
   })
@@ -2525,6 +2533,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=2,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
       ),
     })
 
@@ -2560,6 +2569,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=1,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
       ),
       // Removed an item here
 
@@ -2595,6 +2605,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=1,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
       ),
       buffer: [],
     })
@@ -2686,6 +2697,7 @@ describe("FetchState.getNextQuery & integration", () => {
         ~nextPartitionIndex=1,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
       ),
       buffer: [],
     })
@@ -2735,6 +2747,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~nextPartitionIndex=2,
         ~maxAddrInPartition=base.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=base.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=base.optimizedPartitions.wildcardContracts,
       ),
       ~mutItems=[
         mockEvent(~blockNumber=4, ~logIndex=2),
@@ -3054,6 +3067,7 @@ describe("FetchState unit tests for specific cases", () => {
         ~nextPartitionIndex=2,
         ~maxAddrInPartition=base.optimizedPartitions.maxAddrInPartition,
         ~dynamicContracts=base.optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=base.optimizedPartitions.wildcardContracts,
       ),
       ~mutItems=[
         mockEvent(~blockNumber=6, ~logIndex=1),
@@ -4123,6 +4137,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
         ~maxAddrInPartition=2,
         ~nextPartitionIndex=2,
         ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
       ),
       startBlock: 0,
       endBlock: None,
@@ -4199,6 +4214,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=2,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     ),
     startBlock: 0,
     endBlock: None,
@@ -4284,6 +4300,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=2,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     ),
     startBlock: 0,
     endBlock: None,
@@ -4489,6 +4506,7 @@ describe("FetchState.getNextQuery target containment", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=1,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     ),
     startBlock: 0,
     endBlock: None,
@@ -4612,6 +4630,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=1,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     ),
     startBlock: 0,
     endBlock: None,
@@ -4719,6 +4738,7 @@ describe("Response density and source range capacity update independently", () =
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=1,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     ),
     startBlock: 0,
     endBlock: None,
@@ -4867,6 +4887,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
       ~maxAddrInPartition=1,
       ~nextPartitionIndex=partitionsCount,
       ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
     ),
     startBlock: 0,
     endBlock: None,
@@ -4944,6 +4965,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
         ~maxAddrInPartition=1,
         ~nextPartitionIndex=1,
         ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
       ),
     }
     t.expect(
@@ -4981,6 +5003,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
         ~maxAddrInPartition=1,
         ~nextPartitionIndex=2,
         ~dynamicContracts=Utils.Set.make(),
+      ~wildcardContracts=Utils.Set.make(),
       ),
     }
     let query: FetchState.query = {

@@ -168,6 +168,13 @@ module OptimizedPartitions = {
     // Tracks all contract names that have been dynamically added.
     // Never reset - used to determine when to split existing partitions.
     dynamicContracts: Utils.Set.t<string>,
+    // Contract names switched to client-side (wildcard) address filtering once
+    // their registered address count crossed the server-side threshold. Sticky
+    // for the run: their addresses live only in the index, their events are
+    // fetched by the single wildcard partition, and new dynamic addresses get a
+    // server-side backfill up to the wildcard frontier instead of a standing
+    // partition.
+    wildcardContracts: Utils.Set.t<string>,
   }
 
   @inline
@@ -292,6 +299,7 @@ module OptimizedPartitions = {
     ~maxAddrInPartition,
     ~nextPartitionIndex: int,
     ~dynamicContracts: Utils.Set.t<string>,
+    ~wildcardContracts: Utils.Set.t<string>,
   ) => {
     let newPartitions = []
     let mergingPartitions = Dict.make()
@@ -425,6 +433,7 @@ module OptimizedPartitions = {
       maxAddrInPartition,
       nextPartitionIndex: nextPartitionIndexRef.contents,
       dynamicContracts,
+      wildcardContracts,
     }
   }
 
@@ -558,6 +567,7 @@ module OptimizedPartitions = {
         ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
         ~dynamicContracts=optimizedPartitions.dynamicContracts,
+        ~wildcardContracts=optimizedPartitions.wildcardContracts,
       )
     } else {
       let updatedMainPartition = {
@@ -607,6 +617,7 @@ module OptimizedPartitions = {
           ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
           ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
           ~dynamicContracts=optimizedPartitions.dynamicContracts,
+          ~wildcardContracts=optimizedPartitions.wildcardContracts,
         )
       }
     }
@@ -965,6 +976,7 @@ Returns OptimizedPartitions.t directly.
 let createPartitionsFromIndexingAddresses = (
   ~registeringContractsByContract: dict<dict<indexingAddress>>,
   ~dynamicContracts: Utils.Set.t<string>,
+  ~wildcardContracts: Utils.Set.t<string>,
   ~normalSelection: selection,
   ~maxAddrInPartition: int,
   ~nextPartitionIndex: int,
@@ -1142,6 +1154,7 @@ OptimizedPartitions.t => {
     ~maxAddrInPartition,
     ~nextPartitionIndex=nextPartitionIndexRef.contents,
     ~dynamicContracts,
+    ~wildcardContracts,
   )
 }
 
@@ -1404,6 +1417,7 @@ let registerDynamicContracts = (
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
         ~dynamicContracts=dynamicContractsRef.contents,
+        ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
         ~normalSelection=fetchState.normalSelection,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
@@ -2260,6 +2274,7 @@ let make = (
 
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let dynamicContracts = Utils.Set.make()
+  let wildcardContracts = Utils.Set.make()
 
   addresses->Array.forEach(contract => {
     let contractName = contract.contractName
@@ -2284,6 +2299,7 @@ let make = (
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
     ~dynamicContracts,
+    ~wildcardContracts,
     ~normalSelection,
     ~maxAddrInPartition,
     ~nextPartitionIndex=partitions->Array.length,
@@ -2466,6 +2482,7 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+    ~wildcardContracts=fetchState.optimizedPartitions.wildcardContracts,
     ~normalSelection=fetchState.normalSelection,
     ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
     ~nextPartitionIndex=nextKeptIdRef.contents,
