@@ -77,6 +77,7 @@ impl TopicFilters {
         &self,
         topics: &[Option<LogArgument>],
         contract_address_topics: &[[u8; 32]],
+        force_wildcard: bool,
     ) -> bool {
         // No explicit empty-DNF guard: `any` over zero alternatives is already
         // `false`. (An empty DNF is `where: false`, which is dropped at
@@ -89,6 +90,10 @@ impl TopicFilters {
                     let allowed: &[[u8; 32]] = match constraint {
                         TopicConstraint::Any => return true,
                         TopicConstraint::Values(values) => values,
+                        // Client-filtered: addresses aren't in this query, so the
+                        // marker can't be resolved server-side — accept any value
+                        // and let the JS clientAddressFilter gate the param.
+                        TopicConstraint::ContractAddresses if force_wildcard => return true,
                         TopicConstraint::ContractAddresses => contract_address_topics,
                     };
                     topics
@@ -150,11 +155,16 @@ impl OnEventRegistration {
         contract_name: Option<&str>,
         topics: &[Option<LogArgument>],
         contract_address_topics: &[[u8; 32]],
+        force_wildcard: bool,
     ) -> bool {
         self.sighash == *topic0
             && self.topic_count == topic_count
-            && (self.is_wildcard || contract_name == Some(self.contract_name.as_str()))
-            && self.topic_filters.matches(topics, contract_address_topics)
+            && (self.is_wildcard
+                || force_wildcard
+                || contract_name == Some(self.contract_name.as_str()))
+            && self
+                .topic_filters
+                .matches(topics, contract_address_topics, force_wildcard)
     }
 }
 
@@ -198,6 +208,7 @@ impl Decoder {
         &self,
         registration_indexes: &[i64],
         addresses_by_contract_name: &HashMap<String, Vec<String>>,
+        client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     ) -> Result<SelectionDecoder> {
         let mut registrations = registration_indexes
             .iter()
@@ -215,9 +226,14 @@ impl Decoder {
                     })
                     .transpose()?
                     .unwrap_or_default();
+                // A client-filtered contract is queried address-free and its
+                // addresses aren't in this query, so route it as a wildcard and
+                // let the JS clientAddressFilter re-apply the address gate.
+                let force_wildcard = client_filtered.applies(&registration.contract_name);
                 Ok(SelectedRegistration {
                     registration,
                     contract_address_topics,
+                    force_wildcard,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -236,6 +252,9 @@ impl Decoder {
 struct SelectedRegistration {
     registration: Arc<OnEventRegistration>,
     contract_address_topics: Vec<[u8; 32]>,
+    /// The contract is client-side filtered: route it as a wildcard (accept any
+    /// emitter, treat ContractAddresses topic markers as match-any).
+    force_wildcard: bool,
 }
 
 /// One query selection's registrations, in registration order. Routing is a
@@ -321,6 +340,7 @@ impl SelectionDecoder {
                 contract_name,
                 topics,
                 &sel.contract_address_topics,
+                sel.force_wildcard,
             ) {
                 continue;
             }
@@ -505,7 +525,10 @@ mod tests {
     #[test]
     fn unknown_registration_index_errors() {
         let core = Decoder::from_registrations(&[], false).unwrap();
-        let err = core.selection(&[7], &HashMap::new()).err().unwrap();
+        let err = core
+            .selection(&[7], &HashMap::new(), &Default::default())
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
 
@@ -552,7 +575,7 @@ mod tests {
         };
 
         let mut routed = core
-            .selection(&[7], &HashMap::new())
+            .selection(&[7], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&log, Some("TestContract"))
             .unwrap();
@@ -587,7 +610,9 @@ mod tests {
             false,
         )
         .unwrap();
-        let decoder = core.selection(&[0, 1, 2, 3], &HashMap::new()).unwrap();
+        let decoder = core
+            .selection(&[0, 1, 2, 3], &HashMap::new(), &Default::default())
+            .unwrap();
         let log = value_log(VALID_SIGHASH);
 
         // Owned address: the contract's registration plus every wildcard.
@@ -598,6 +623,32 @@ mod tests {
         // registrations.
         let unowned = decoder.route_and_decode_napi(&log, None).unwrap();
         assert_eq!(routed_indexes(&unowned), vec![1, 2]);
+    }
+
+    #[test]
+    fn client_filtered_contract_routes_like_wildcard() {
+        // "Owned" is a non-wildcard registration, but client-filtered: a log
+        // from an emitter that doesn't resolve to any contract (None) still
+        // routes to it, exactly as a wildcard would. The JS clientAddressFilter
+        // re-applies the address gate afterwards.
+        let core = Decoder::from_registrations(
+            &[
+                value_reg(0, "Owned", false, VALID_SIGHASH),
+                value_reg(1, "W1", true, VALID_SIGHASH),
+            ],
+            false,
+        )
+        .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "Owned".to_string()
+            ]);
+        let routed = core
+            .selection(&[0, 1], &HashMap::new(), &client_filtered)
+            .unwrap()
+            .route_and_decode_napi(&value_log(VALID_SIGHASH), None)
+            .unwrap();
+        assert_eq!(routed_indexes(&routed), vec![0, 1]);
     }
 
     #[test]
@@ -612,7 +663,7 @@ mod tests {
         .unwrap();
         let log = value_log(VALID_SIGHASH);
         let routed = core
-            .selection(&[0], &HashMap::new())
+            .selection(&[0], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&log, Some("Owned"))
             .unwrap();
@@ -631,7 +682,7 @@ mod tests {
 
         let core = Decoder::from_registrations(&[disabled, sibling], false).unwrap();
         let routed = core
-            .selection(&[0, 1], &HashMap::new())
+            .selection(&[0, 1], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&value_log(VALID_SIGHASH), None)
             .unwrap();
@@ -676,7 +727,7 @@ mod tests {
             ..Default::default()
         };
         let routed = core
-            .selection(&[0, 1], &HashMap::new())
+            .selection(&[0, 1], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();
@@ -713,7 +764,9 @@ mod tests {
             "C".to_string(),
             vec!["0x00000000000000000000000000000000000000aa".to_string()],
         )]);
-        let decoder = core.selection(&[0], &addresses).unwrap();
+        let decoder = core
+            .selection(&[0], &addresses, &Default::default())
+            .unwrap();
 
         // topic1 is C's registered address → the marker matches.
         let owned = decoder
@@ -746,7 +799,7 @@ mod tests {
         )]);
         // Foreign address (0x..bb) in topic1: only the broad sibling matches.
         let routed = core
-            .selection(&[0, 1], &addresses)
+            .selection(&[0, 1], &addresses, &Default::default())
             .unwrap()
             .route_and_decode_napi(&address_param_log(&addr_topic("bb")), None)
             .unwrap();
@@ -793,7 +846,7 @@ mod tests {
             ..Default::default()
         };
         let routed = core
-            .selection(&[0, 1], &HashMap::new())
+            .selection(&[0, 1], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();
@@ -864,7 +917,7 @@ mod tests {
             ..Default::default()
         };
         let routed = core
-            .selection(&[0, 1], &HashMap::new())
+            .selection(&[0, 1], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();
@@ -875,7 +928,7 @@ mod tests {
         // not malformed data (a wildcard registration routinely fetches foreign
         // same-signature logs it can't read under its own indexed split).
         let routed = core
-            .selection(&[1], &HashMap::new())
+            .selection(&[1], &HashMap::new(), &Default::default())
             .unwrap()
             .route_and_decode_napi(&log, None)
             .unwrap();

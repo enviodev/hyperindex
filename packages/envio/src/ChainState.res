@@ -187,6 +187,12 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
+    // Only EVM sources (HyperSync + RPC) honor client-side address filtering so
+    // far, so switching contracts to it is gated to EVM chains.
+    ~clientFilterAddressThreshold=switch config.ecosystem.name {
+    | Evm => Some(config.clientFilterAddressThreshold)
+    | Fuel | Svm => None
+    },
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {

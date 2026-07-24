@@ -452,6 +452,7 @@ describe("SourceManager fetchNext", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=partitions->Array.length,
       ~dynamicContracts=Utils.Set.make(),
+      ~clientFilteredContracts=Utils.Set.make(),
     )
 
     {
@@ -468,6 +469,7 @@ describe("SourceManager fetchNext", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
+      clientFilterAddressThreshold: None,
     }
   }
 

@@ -27,6 +27,10 @@ type nextPageParams = {
   // registrations passed at construction.
   registrationIndexes: array<int>,
   addressesByContractName: dict<array<Address.t>>,
+  // Contract names to fetch address-free even though their registrations
+  // depend on addresses (client-side filtering). None/empty means
+  // every address-dependent contract is filtered server-side.
+  clientFilteredContracts: option<array<string>>,
 }
 
 type nextPageResponse = {
