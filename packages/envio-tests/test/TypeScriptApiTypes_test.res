@@ -72,6 +72,54 @@ chains:
 // thrown as the test failure, so each `it` only needs to hand over a snippet.
 let check = handlers => InternalTestIndexer.fromUserApi(~schema, ~handlers, ~configYaml)->ignore
 
+// Fuel needs a real Sway ABI (parsed by the `fuels` crate), so a known-good
+// greeter ABI is supplied as a virtual file.
+let fuelFiles = Dict.fromArray([("abis/greeter-abi.json", FuelAbiFixtures.greeter)])
+let fuelConfig = `
+name: fuel-api-types
+ecosystem: fuel
+chains:
+  - id: 0
+    start_block: 0
+    contracts:
+      - name: Greeter
+        address: 0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b
+        abi_file_path: abis/greeter-abi.json
+        events:
+          - name: NewGreeting
+          - name: ClearGreeting
+`
+
+let svmConfig = `
+name: svm-api-types
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Swapper
+          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+          instructions:
+            - name: swap
+              discriminator: "0x09"
+              args:
+                - { name: amountIn, type: u64 }
+                - { name: minAmountOut, type: u64 }
+              accounts:
+                - source
+                - destination
+              field_selection:
+                transaction_fields: [signatures]
+`
+
+let checkFuel = handlers =>
+  InternalTestIndexer.fromUserApi(~schema, ~files=fuelFiles, ~handlers, ~configYaml=fuelConfig)->ignore
+
+let checkSvm = handlers =>
+  InternalTestIndexer.fromUserApi(~schema, ~handlers, ~configYaml=svmConfig)->ignore
+
 describe("TypeScript API types", () => {
   it("resolves config-bound chain/contract name and id unions", _ =>
     check(`
@@ -111,12 +159,26 @@ expectType<
 
   it("looks up EvmEvent by contract and event name", _ =>
     check(`
-import type { Address, EvmChainId, EvmEvent } from "envio";
+import type {
+  Address,
+  EvmChainId,
+  EvmEvent,
+  EvmOnEvent,
+  EvmOnEventWhereChain,
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 // Without generics, the discriminant spans every configured event.
 type AllEvents = EvmEvent;
 expectType<TypeEqual<AllEvents["contractName"], "Token" | "Factory">>(true);
+
+// EvmOnEvent is the config-generic form behind the EvmEvent alias.
+expectType<TypeEqual<EvmOnEvent["contractName"], "Token" | "Factory">>(true);
+
+// The where-callback chain object exposes the event's own contract addresses.
+expectType<
+  TypeEqual<EvmOnEventWhereChain<"Token">["Token"]["addresses"], readonly Address[]>
+>(true);
 
 type TokenEvent = EvmEvent<"Token">;
 expectType<TypeEqual<TokenEvent["contractName"], "Token">>(true);
@@ -319,6 +381,7 @@ import type {
   EvmOnBlockFilter,
   EvmOnBlockHandler,
   EvmOnBlockHandlerArgs,
+  EvmOnBlockOptions,
   EvmOnBlockWhereArgs,
   EvmOnBlockWhereResult,
   EvmOnEventContext,
@@ -326,6 +389,11 @@ import type {
 import { expectType, type TypeEqual } from "ts-expect";
 
 expectType<TypeEqual<EvmOnBlockContext, EvmOnEventContext>>(true);
+const _blockOpts: EvmOnBlockOptions = {
+  name: "b",
+  where: ({ chain }) => (chain.id === 1 ? true : false),
+};
+expectType<EvmOnBlockOptions>(_blockOpts);
 expectType<
   TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
 >(true);
@@ -450,6 +518,567 @@ if (0) {
     async () => {},
   );
 }
+`)
+  )
+
+  it("narrows onEvent where.params by indexed event params", _ =>
+    check(`
+import { indexer } from "envio";
+import type { Address, EvmOnEventWhere, SingleOrMultiple } from "envio";
+import { expectType } from "ts-expect";
+
+const ZERO: Address = "0x0000000000000000000000000000000000000000";
+
+// Transfer's indexed params (from/to) resolve the where.params filter, each
+// accepting a single value or an array (OR semantics).
+type TransferWhere = EvmOnEventWhere<
+  {
+    readonly from?: SingleOrMultiple<Address>;
+    readonly to?: SingleOrMultiple<Address>;
+  },
+  "Token"
+>;
+const _single: TransferWhere = { params: { from: ZERO } };
+const _multi: TransferWhere = { params: { from: [ZERO], to: [ZERO] } };
+expectType<TransferWhere>(_single);
+expectType<TransferWhere>(_multi);
+
+if (0) {
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", wildcard: true, where: { params: { from: ZERO } } },
+    async () => {},
+  );
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", wildcard: true, where: { params: { to: [ZERO] } } },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      wildcard: true,
+      // @ts-expect-error - value is not an indexed param, so it isn't filterable
+      where: { params: { value: 1n } },
+    },
+    async () => {},
+  );
+}
+`)
+  )
+
+  it("binds the Indexer / TestIndexer instances and TestHelpers", _ =>
+    check(`
+import { createTestIndexer, indexer, TestHelpers } from "envio";
+import type {
+  Account,
+  Indexer,
+  TestIndexer,
+  TestIndexerProcessConfig,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<typeof indexer, Indexer>>(true);
+expectType<TypeEqual<typeof createTestIndexer, () => TestIndexer>>(true);
+expectType<TypeEqual<Indexer["name"], string>>(true);
+expectType<TypeEqual<Indexer["chainIds"], readonly (1 | 137)[]>>(true);
+
+// The test indexer exposes entity operations bound to the schema.
+expectType<
+  TypeEqual<TestIndexer["Account"]["set"], (entity: Account) => void>
+>(true);
+
+// process() config is keyed by chain id.
+const _proc: TestIndexerProcessConfig = { chains: { 1: { startBlock: 0 } } };
+expectType<TestIndexerProcessConfig>(_proc);
+
+expectType<
+  TypeEqual<typeof TestHelpers.Addresses.defaultAddress, \`0x\${string}\`>
+>(true);
+`)
+  )
+})
+
+describe("Fuel API types", () => {
+  it("resolves config-bound Fuel chain/contract name and id unions", _ =>
+    checkFuel(`
+import type { FuelChainId, FuelChainName, FuelContractName } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<FuelChainId, 0>>(true);
+expectType<TypeEqual<FuelChainName, "0">>(true);
+expectType<TypeEqual<FuelContractName, "Greeter">>(true);
+
+// @ts-expect-error - "NotAContract" is not configured
+const _bad: FuelContractName = "NotAContract";
+`)
+  )
+
+  it("looks up FuelEvent and its Fuel-specific block/transaction", _ =>
+    checkFuel(`
+import type { FuelChainId, FuelEvent } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type AllEvents = FuelEvent;
+expectType<TypeEqual<AllEvents["contractName"], "Greeter">>(true);
+
+type NewGreeting = FuelEvent<"Greeter", "NewGreeting">;
+expectType<TypeEqual<NewGreeting["contractName"], "Greeter">>(true);
+expectType<TypeEqual<NewGreeting["eventName"], "NewGreeting">>(true);
+expectType<TypeEqual<NewGreeting["chainId"], FuelChainId>>(true);
+expectType<TypeEqual<NewGreeting["logIndex"], number>>(true);
+expectType<TypeEqual<NewGreeting["srcAddress"], \`0x\${string}\`>>(true);
+
+// Fuel blocks are keyed by height (not number) and carry an id + time.
+expectType<TypeEqual<NewGreeting["block"]["height"], number>>(true);
+expectType<TypeEqual<NewGreeting["block"]["id"], string>>(true);
+expectType<TypeEqual<NewGreeting["block"]["time"], number>>(true);
+expectType<TypeEqual<NewGreeting["transaction"]["id"], string>>(true);
+`)
+  )
+
+  it("shapes Fuel onEvent / contractRegister options, handlers and contexts", _ =>
+    checkFuel(`
+import type {
+  Account,
+  Address,
+  FuelContractRegisterContext,
+  FuelContractRegisterHandler,
+  FuelContractRegisterOptions,
+  FuelEvent,
+  FuelOnEventContext,
+  FuelOnEventHandler,
+  FuelOnEventOptions,
+  FuelOnEventWhere,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type NewGreeting = FuelEvent<"Greeter", "NewGreeting">;
+
+// Fuel has no indexed params, so the eventFilters lookup resolves to {}.
+expectType<
+  TypeEqual<
+    FuelOnEventOptions<NewGreeting>,
+    {
+      readonly contract: "Greeter";
+      readonly event: "NewGreeting";
+      readonly wildcard?: boolean;
+      readonly where?: FuelOnEventWhere<{}, "Greeter">;
+    }
+  >
+>(true);
+
+expectType<
+  TypeEqual<
+    FuelContractRegisterOptions<NewGreeting>,
+    FuelOnEventOptions<NewGreeting>
+  >
+>(true);
+
+expectType<
+  TypeEqual<
+    FuelOnEventHandler<NewGreeting>,
+    (args: { event: NewGreeting; context: FuelOnEventContext }) => Promise<void>
+  >
+>(true);
+expectType<
+  TypeEqual<
+    FuelContractRegisterHandler<NewGreeting>,
+    (args: {
+      event: NewGreeting;
+      context: FuelContractRegisterContext;
+    }) => Promise<void>
+  >
+>(true);
+
+expectType<TypeEqual<FuelOnEventContext["chain"]["id"], 0>>(true);
+expectType<TypeEqual<FuelOnEventContext["chain"]["isRealtime"], boolean>>(true);
+expectType<
+  TypeEqual<FuelOnEventContext["Account"]["set"], (entity: Account) => void>
+>(true);
+
+expectType<TypeEqual<FuelContractRegisterContext["chain"]["id"], 0>>(true);
+expectType<
+  TypeEqual<
+    FuelContractRegisterContext["chain"]["Greeter"]["add"],
+    (address: Address) => void
+  >
+>(true);
+`)
+  )
+
+  it("keys the Fuel onBlock / where surface on block.height", _ =>
+    checkFuel(`
+import type {
+  Address,
+  FuelChainId,
+  FuelOnBlockContext,
+  FuelOnBlockFilter,
+  FuelOnBlockHandler,
+  FuelOnBlockHandlerArgs,
+  FuelOnBlockOptions,
+  FuelOnBlockWhereArgs,
+  FuelOnBlockWhereResult,
+  FuelOnEvent,
+  FuelOnEventContext,
+  FuelOnEventWhere,
+  FuelOnEventWhereArgs,
+  FuelOnEventWhereChain,
+  FuelOnEventWhereFilter,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<FuelOnBlockContext, FuelOnEventContext>>(true);
+
+// FuelOnEvent is the config-generic form behind the FuelEvent alias.
+expectType<TypeEqual<FuelOnEvent["contractName"], "Greeter">>(true);
+
+const _fBlockOpts: FuelOnBlockOptions = {
+  name: "b",
+  where: ({ chain }) => (chain.id === 0 ? true : false),
+};
+expectType<FuelOnBlockOptions>(_fBlockOpts);
+
+// The Fuel where-callback surface mirrors EVM but filters on block.height.
+expectType<TypeEqual<FuelOnEventWhereChain<"Greeter">["id"], number>>(true);
+expectType<
+  TypeEqual<
+    FuelOnEventWhereArgs<"Greeter">["chain"]["Greeter"]["addresses"],
+    readonly Address[]
+  >
+>(true);
+const _fFilter: FuelOnEventWhereFilter<{}> = { block: { height: { _gte: 1 } } };
+expectType<FuelOnEventWhereFilter<{}>>(_fFilter);
+expectType<
+  TypeEqual<FuelOnBlockHandlerArgs["block"], { readonly height: number }>
+>(true);
+expectType<TypeEqual<FuelOnBlockHandlerArgs["context"], FuelOnBlockContext>>(true);
+expectType<
+  TypeEqual<FuelOnBlockHandler, (args: FuelOnBlockHandlerArgs) => Promise<void>>
+>(true);
+expectType<TypeEqual<FuelOnBlockWhereArgs["chain"]["id"], FuelChainId>>(true);
+expectType<TypeEqual<FuelOnBlockWhereResult, boolean | FuelOnBlockFilter>>(true);
+
+const _ok: FuelOnBlockFilter = {
+  block: { height: { _gte: 1, _lte: 10, _every: 2 } },
+};
+expectType<FuelOnBlockFilter>(_ok);
+
+// Fuel event filters narrow block.height with _gte only.
+const _where: FuelOnEventWhere<{}, "Greeter"> = {
+  block: { height: { _gte: 1 } },
+};
+expectType<FuelOnEventWhere<{}, "Greeter">>(_where);
+`)
+  )
+
+  it("guards the Fuel indexer registration surface", _ =>
+    checkFuel(`
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+if (0) {
+  indexer.onEvent(
+    // @ts-expect-error - "BadContract" is not a configured contract
+    { contract: "BadContract", event: "X" },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - "BadEvent" is not an event of Greeter
+    { contract: "Greeter", event: "BadEvent" },
+    async () => {},
+  );
+  indexer.onEvent(
+    { contract: "Greeter", event: "NewGreeting" },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.contractName, "Greeter">>(true);
+    },
+  );
+  indexer.contractRegister(
+    { contract: "Greeter", event: "ClearGreeting" },
+    async ({ context }) => {
+      context.chain.Greeter.add("0x0");
+    },
+  );
+  indexer.onBlock(
+    { name: "fuelBlock", where: ({ chain }) => (chain.id === 0 ? true : false) },
+    async ({ block }) => {
+      expectType<TypeEqual<typeof block.height, number>>(true);
+    },
+  );
+  indexer.onEvent(
+    {
+      contract: "Greeter",
+      event: "NewGreeting",
+      wildcard: true,
+      // @ts-expect-error - Fuel keys block by \`height\`, not \`number\`.
+      where: { block: { number: { _gte: 1 } } },
+    },
+    async () => {},
+  );
+}
+`)
+  )
+})
+
+describe("SVM API types", () => {
+  it("resolves config-bound SVM chain name and id unions", _ =>
+    checkSvm(`
+import type { SvmChainId, SvmChainName } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<SvmChainId, 0>>(true);
+expectType<TypeEqual<SvmChainName, "0">>(true);
+`)
+  )
+
+  it("shapes the onSlot surface", _ =>
+    checkSvm(`
+import type {
+  Account,
+  SvmChainId,
+  SvmOnSlotContext,
+  SvmOnSlotFilter,
+  SvmOnSlotHandler,
+  SvmOnSlotHandlerArgs,
+  SvmOnSlotOptions,
+  SvmOnSlotWhereArgs,
+  SvmOnSlotWhereResult,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<SvmOnSlotContext["chain"]["id"], SvmChainId>>(true);
+
+const _slotOpts: SvmOnSlotOptions = {
+  name: "s",
+  where: ({ chain }) => (chain.id === 0 ? true : false),
+};
+expectType<SvmOnSlotOptions>(_slotOpts);
+expectType<TypeEqual<SvmOnSlotContext["isPreload"], boolean>>(true);
+expectType<
+  TypeEqual<SvmOnSlotContext["Account"]["set"], (entity: Account) => void>
+>(true);
+
+expectType<TypeEqual<SvmOnSlotHandlerArgs["slot"], number>>(true);
+expectType<TypeEqual<SvmOnSlotHandlerArgs["context"], SvmOnSlotContext>>(true);
+expectType<
+  TypeEqual<SvmOnSlotHandler, (args: SvmOnSlotHandlerArgs) => Promise<void>>
+>(true);
+
+expectType<TypeEqual<SvmOnSlotWhereArgs["chain"]["id"], SvmChainId>>(true);
+expectType<TypeEqual<SvmOnSlotWhereResult, boolean | SvmOnSlotFilter>>(true);
+
+const _ok: SvmOnSlotFilter = { slot: { _gte: 1, _lte: 10, _every: 2 } };
+const _empty: SvmOnSlotFilter = {};
+expectType<SvmOnSlotFilter>(_ok);
+expectType<SvmOnSlotFilter>(_empty);
+`)
+  )
+
+  it("shapes the config-independent instruction named types", _ =>
+    checkSvm(`
+import type {
+  SvmInstruction,
+  SvmInstructionBlock,
+  SvmInstructionParams,
+  SvmLog,
+  SvmTokenBalance,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<SvmInstruction["programName"], string>>(true);
+expectType<TypeEqual<SvmInstruction["instructionName"], string>>(true);
+expectType<TypeEqual<SvmInstruction["programId"], string>>(true);
+expectType<TypeEqual<SvmInstruction["data"], string>>(true);
+expectType<TypeEqual<SvmInstruction["accounts"], readonly string[]>>(true);
+expectType<TypeEqual<SvmInstruction["isInner"], boolean>>(true);
+expectType<TypeEqual<SvmInstruction["params"], SvmInstructionParams | undefined>>(true);
+
+expectType<TypeEqual<SvmInstructionParams["name"], string>>(true);
+expectType<TypeEqual<SvmInstructionParams["args"], unknown>>(true);
+expectType<
+  TypeEqual<SvmInstructionParams["accounts"], Readonly<Record<string, string>>>
+>(true);
+expectType<
+  TypeEqual<SvmInstructionParams["extraAccounts"], readonly string[]>
+>(true);
+
+expectType<TypeEqual<SvmInstructionBlock["slot"], number>>(true);
+expectType<TypeEqual<SvmInstructionBlock["hash"], string>>(true);
+expectType<TypeEqual<SvmInstructionBlock["time"], number | undefined>>(true);
+
+expectType<TypeEqual<SvmLog, { readonly kind: string; readonly message: string }>>(true);
+expectType<TypeEqual<SvmTokenBalance["mint"], string | undefined>>(true);
+`)
+  )
+
+  it("shapes onInstruction options / handler and narrows params from config", _ =>
+    checkSvm(`
+import type {
+  SvmOnInstructionHandler,
+  SvmOnInstructionHandlerArgs,
+  SvmOnInstructionOptions,
+  SvmOnSlotContext,
+  SvmTransaction,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<
+  TypeEqual<
+    SvmOnInstructionOptions<"Swapper", "swap">,
+    { readonly program: "Swapper"; readonly instruction: "swap" }
+  >
+>(true);
+expectType<
+  TypeEqual<SvmOnInstructionHandlerArgs["context"], SvmOnSlotContext>
+>(true);
+expectType<
+  TypeEqual<
+    SvmOnInstructionHandler,
+    (args: SvmOnInstructionHandlerArgs) => Promise<void>
+  >
+>(true);
+
+// The configured instruction selects the signatures transaction field.
+expectType<TypeEqual<SvmTransaction["signatures"], readonly string[]>>(true);
+`)
+  )
+
+  it("guards the SVM indexer registration surface", _ =>
+    checkSvm(`
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+if (0) {
+  indexer.onSlot(
+    { name: "everySlot", where: ({ chain }) => (chain.id === 0 ? true : false) },
+    async ({ slot }) => {
+      expectType<TypeEqual<typeof slot, number>>(true);
+    },
+  );
+  indexer.onInstruction(
+    // @ts-expect-error - "BadProgram" is not a configured program
+    { program: "BadProgram", instruction: "swap" },
+    async () => {},
+  );
+  indexer.onInstruction(
+    { program: "Swapper", instruction: "swap" },
+    async ({ instruction }) => {
+      expectType<TypeEqual<typeof instruction.programName, string>>(true);
+      if (instruction.params) {
+        expectType<TypeEqual<typeof instruction.params.args.amountIn, string>>(true);
+        expectType<TypeEqual<typeof instruction.params.accounts.source, string>>(true);
+      }
+    },
+  );
+}
+`)
+  )
+})
+
+describe("Effect and utility types", () => {
+  it("infers createEffect input/output and Effect handles", _ =>
+    check(`
+import { createEffect, S } from "envio";
+import type {
+  Effect,
+  EffectArgs,
+  EffectCaller,
+  EffectChain,
+  EffectContext,
+  EffectOptions,
+  Logger,
+  RateLimit,
+  RateLimitDuration,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+const getBalance = createEffect(
+  {
+    name: "getBalance",
+    input: { address: S.address, blockNumber: S.optional(S.bigint) },
+    output: S.bigint,
+    rateLimit: false,
+  },
+  async ({ input, context }) => {
+    expectType<
+      TypeEqual<
+        typeof input,
+        { address: \`0x\${string}\`; blockNumber?: bigint | undefined }
+      >
+    >(true);
+    expectType<TypeEqual<typeof context.log, Logger>>(true);
+    expectType<TypeEqual<typeof context.effect, EffectCaller>>(true);
+    expectType<TypeEqual<typeof context.chain, EffectChain>>(true);
+    // @ts-expect-error - input is required for a non-undefined schema
+    await context.effect(getBalance, undefined);
+    return input.blockNumber ?? 0n;
+  },
+);
+
+expectType<
+  TypeEqual<
+    typeof getBalance,
+    Effect<{ address: \`0x\${string}\`; blockNumber?: bigint | undefined }, bigint>
+  >
+>(true);
+
+// Ecosystem-agnostic surface aliases.
+expectType<TypeEqual<EffectContext["cache"], boolean>>(true);
+expectType<TypeEqual<EffectArgs<number>["input"], number>>(true);
+expectType<TypeEqual<EffectChain["id"], number>>(true);
+const _rlOff: RateLimit = false;
+const _rl: RateLimit = { calls: 1, per: "second" };
+const _dur: RateLimitDuration = "minute";
+expectType<RateLimit>(_rlOff);
+expectType<RateLimit>(_rl);
+expectType<RateLimitDuration>(_dur);
+expectType<TypeEqual<EffectOptions<number, string>["name"], string>>(true);
+expectType<TypeEqual<EffectOptions<number, string>["rateLimit"], RateLimit>>(true);
+`)
+  )
+
+  it("shapes getWhere filters, the dynamic where callback, and misc aliases", _ =>
+    check(`
+import type {
+  Account,
+  Address,
+  EvmOnEventWhere,
+  EvmOnEventWhereArgs,
+  EvmOnEventWhereFilter,
+  GetWhereFilter,
+  GetWhereOperator,
+  Logger,
+  SingleOrMultiple,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+// getWhere operators/filters over an entity type.
+const _op: GetWhereOperator<bigint> = { _gte: 1n, _in: [1n, 2n] };
+expectType<GetWhereOperator<bigint>>(_op);
+const _filter: GetWhereFilter<Account> = { balance: { _gt: 0n }, id: { _eq: "x" } };
+expectType<GetWhereFilter<Account>>(_filter);
+
+// The dynamic where callback form exposes the event's own contract addresses.
+type Args = EvmOnEventWhereArgs<"Token">;
+expectType<TypeEqual<Args["chain"]["id"], number>>(true);
+expectType<
+  TypeEqual<Args["chain"]["Token"]["addresses"], readonly Address[]>
+>(true);
+const _cb: EvmOnEventWhere<{}, "Token"> = ({ chain }) =>
+  chain.id === 1 ? true : { block: { number: { _gte: 1 } } };
+expectType<EvmOnEventWhere<{}, "Token">>(_cb);
+const _staticFilter: EvmOnEventWhereFilter<{}> = { block: { number: { _gte: 1 } } };
+expectType<EvmOnEventWhereFilter<{}>>(_staticFilter);
+
+// SingleOrMultiple accepts a value or a readonly array of it.
+const _single: SingleOrMultiple<Address> = "0x0";
+const _multi: SingleOrMultiple<Address> = ["0x0", "0x1"];
+expectType<SingleOrMultiple<Address>>(_single);
+expectType<SingleOrMultiple<Address>>(_multi);
+
+expectType<
+  TypeEqual<Logger["info"], (message: string, params?: Record<string, unknown> | Error) => void>
+>(true);
 `)
   )
 })
