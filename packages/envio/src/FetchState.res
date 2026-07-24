@@ -681,10 +681,11 @@ type t = {
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
-  // Whether this chain's sources can filter addresses client-side (see
-  // clientSideFilteredContracts). Gates the switch of a high-address contract
-  // to wildcard mode; false leaves every contract filtered server-side.
-  clientSideFilteringSupported: bool,
+  // Per-contract registered-address count past which a dynamic contract is
+  // switched to client-side (wildcard) filtering. None disables the switch
+  // (sources that can't filter client-side, e.g. SVM/Fuel), leaving every
+  // contract filtered server-side.
+  wildcardAddressThreshold: option<int>,
 }
 
 @inline
@@ -954,7 +955,7 @@ let updateInternal = (
     | blockItems => base->mergeIntoBuffer(blockItems)
     },
     firstEventBlock: fetchState.firstEventBlock,
-    clientSideFilteringSupported: fetchState.clientSideFilteringSupported,
+    wildcardAddressThreshold: fetchState.wildcardAddressThreshold,
   }
 
   updatedFetchState
@@ -1017,12 +1018,25 @@ let collapseWildcardContracts = (
   } else {
     let kept = []
     let absorbedPartitions = []
+    // Absorb the existing address-free wildcard partition, and any address-bound
+    // partition all of whose contracts are wildcard (a single-contract dynamic
+    // partition, or a config-address partition for a wildcard contract). A
+    // partition mixing a wildcard contract with a non-wildcard one stays
+    // server-side; the wildcard partition still covers the wildcard contract's
+    // logs, so coverage isn't lost, only deduped.
     partitions->Array.forEach(p =>
       switch p {
-      | {dynamicContract: Some(contractName)} if wildcardContracts->Utils.Set.has(contractName) =>
-        absorbedPartitions->Array.push(p)->ignore
       | {selection: {dependsOnAddresses: false}} => absorbedPartitions->Array.push(p)->ignore
-      | _ => kept->Array.push(p)->ignore
+      | _ =>
+        let contractNames = p.addressesByContractName->Dict.keysToArray
+        if (
+          contractNames->Array.length > 0 &&
+            contractNames->Array.every(c => wildcardContracts->Utils.Set.has(c))
+        ) {
+          absorbedPartitions->Array.push(p)->ignore
+        } else {
+          kept->Array.push(p)->ignore
+        }
       }
     )
     switch absorbedPartitions {
@@ -1528,18 +1542,19 @@ let registerDynamicContracts = (
       // collapse in createPartitionsFromIndexingAddresses folds the contract's
       // partitions into the single address-free partition.
       let wildcardContracts = fetchState.optimizedPartitions.wildcardContracts
-      if fetchState.clientSideFilteringSupported {
+      switch fetchState.wildcardAddressThreshold {
+      | Some(threshold) =>
         dynamicContractsRef.contents
         ->Utils.Set.toArray
         ->Array.forEach(contractName =>
           if (
             !(wildcardContracts->Utils.Set.has(contractName)) &&
-            indexingAddresses->IndexingAddresses.contractCount(~contractName) >
-              Env.maxContractServerSideAddresses
+            indexingAddresses->IndexingAddresses.contractCount(~contractName) > threshold
           ) {
             wildcardContracts->Utils.Set.add(contractName)->ignore
           }
         )
+      | None => ()
       }
 
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
@@ -2355,7 +2370,7 @@ let make = (
   ~onBlockRegistrations=[],
   ~blockLag=0,
   ~firstEventBlock=None,
-  ~clientSideFilteringSupported=false,
+  ~wildcardAddressThreshold=None,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -2427,16 +2442,18 @@ let make = (
 
   // Switch dynamic contracts already over the server-side address threshold to
   // wildcard mode (e.g. on restart with a large persisted address set).
-  if clientSideFilteringSupported {
+  switch wildcardAddressThreshold {
+  | Some(threshold) =>
     dynamicContracts
     ->Utils.Set.toArray
     ->Array.forEach(contractName =>
       switch registeringContractsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | Some(addrs) if addrs->Utils.Dict.size > Env.maxContractServerSideAddresses =>
+      | Some(addrs) if addrs->Utils.Dict.size > threshold =>
         wildcardContracts->Utils.Set.add(contractName)->ignore
       | _ => ()
       }
     )
+  | None => ()
   }
 
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
@@ -2500,7 +2517,7 @@ let make = (
     knownHeight,
     buffer,
     firstEventBlock,
-    clientSideFilteringSupported,
+    wildcardAddressThreshold,
   }
 
   fetchState

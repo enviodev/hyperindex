@@ -160,6 +160,7 @@ let makeFs = (
   ~onBlockRegistrations=?,
   ~blockLag=?,
   ~firstEventBlock=?,
+  ~wildcardAddressThreshold=?,
 ) => {
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
@@ -177,6 +178,7 @@ let makeFs = (
     ~onBlockRegistrations=?onBlockRegistrations,
     ~blockLag=?blockLag,
     ~firstEventBlock=?firstEventBlock,
+    ~wildcardAddressThreshold=?wildcardAddressThreshold,
   )
   (fetchState, indexingAddresses)
 }
@@ -258,7 +260,7 @@ describe("FetchState.make", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
-      clientSideFilteringSupported: false,
+      wildcardAddressThreshold: None,
     })
   })
 
@@ -375,7 +377,7 @@ describe("FetchState.make", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
-      clientSideFilteringSupported: false,
+      wildcardAddressThreshold: None,
     })
   })
 
@@ -450,7 +452,7 @@ describe("FetchState.make", () => {
         onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
-        clientSideFilteringSupported: false,
+        wildcardAddressThreshold: None,
       })
 
       t.expect(
@@ -570,7 +572,7 @@ describe("FetchState.make", () => {
         onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
-        clientSideFilteringSupported: false,
+        wildcardAddressThreshold: None,
       })
     },
   )
@@ -1727,7 +1729,7 @@ describe("FetchState.registerDynamicContracts", () => {
         onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
-        clientSideFilteringSupported: false,
+        wildcardAddressThreshold: None,
       })
     },
   )
@@ -1790,7 +1792,7 @@ describe("FetchState.getNextQuery & integration", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
-      clientSideFilteringSupported: false,
+      wildcardAddressThreshold: None,
     }
   }
 
@@ -1852,7 +1854,7 @@ describe("FetchState.getNextQuery & integration", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
-      clientSideFilteringSupported: false,
+      wildcardAddressThreshold: None,
     }
   }
 
@@ -4158,7 +4160,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       onBlockRegistrations: [],
       knownHeight: 10000,
       firstEventBlock: Some(0),
-      clientSideFilteringSupported: false,
+      wildcardAddressThreshold: None,
     }
   }
 
@@ -4236,7 +4238,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientSideFilteringSupported: false,
+    wildcardAddressThreshold: None,
   }
 
   it("fills each partition toward the shared target, then stops at its range end", t => {
@@ -4323,7 +4325,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     onBlockRegistrations: [],
     knownHeight: 10000,
     firstEventBlock: Some(0),
-    clientSideFilteringSupported: false,
+    wildcardAddressThreshold: None,
   }
 
   it("hands a known-density partition only the fresh budget, not the mean footprint", t => {
@@ -4530,7 +4532,7 @@ describe("FetchState.getNextQuery target containment", () => {
     onBlockRegistrations: [],
     knownHeight: 10000,
     firstEventBlock: Some(0),
-    clientSideFilteringSupported: false,
+    wildcardAddressThreshold: None,
   }
 
   it("gates chunk starts at the target block even when a far mergeBlock allows more", t => {
@@ -4655,7 +4657,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientSideFilteringSupported: false,
+    wildcardAddressThreshold: None,
   }
 
   let getChunks = (fetchState: FetchState.t, ~chainTargetItems, ~chunkItemsMultiplier=?) =>
@@ -4764,7 +4766,7 @@ describe("Response density and source range capacity update independently", () =
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientSideFilteringSupported: false,
+    wildcardAddressThreshold: None,
   }
 
   let chunkQuery: FetchState.query = {
@@ -4914,7 +4916,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientSideFilteringSupported: false,
+    wildcardAddressThreshold: None,
   }
 
   let countQueries = (fetchState: FetchState.t) =>
@@ -5041,5 +5043,120 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
       updated.optimizedPartitions.idsInAscOrder,
       ~message="partition 1 (still at block 50) must sort before partition 0 (now at 100)",
     ).toEqual(["1", "0"])
+  })
+})
+
+describe("FetchState wildcard mode (client-side address filtering)", () => {
+  let makeGravatarFs = (~wildcardAddressThreshold) =>
+    makeFs(
+      ~onEventRegistrations=[baseEventConfig],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~wildcardAddressThreshold,
+    )
+
+  let partitionShape = (fetchState: FetchState.t) =>
+    fetchState.optimizedPartitions.entities
+    ->Dict.valuesToArray
+    ->Array.map(p => (
+      p.selection.dependsOnAddresses,
+      p.selection.clientSideFilteredContracts,
+      p.addressesByContractName->Dict.keysToArray,
+    ))
+
+  it("collapses a dynamic contract into one address-free partition once it crosses the threshold", t => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=Some(1))
+    // Config Gravatar (mockAddress0) + two dynamic Gravatar addresses => count 3 > 1.
+    let updated =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    t.expect(
+      (updated->partitionShape, updated.optimizedPartitions.wildcardContracts->Utils.Set.toArray),
+      ~message="single address-free partition marking Gravatar client-filtered, no server-side addresses",
+    ).toEqual(([(false, Some(["Gravatar"]), [])], ["Gravatar"]))
+  })
+
+  it("stays server-side while under the threshold", t => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=Some(10))
+    let updated =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+      ])
+    t.expect(
+      updated.optimizedPartitions.wildcardContracts->Utils.Set.toArray,
+      ~message="no contract switched below the threshold",
+    ).toEqual([])
+  })
+
+  it("never switches when the threshold is None (unsupported source)", t => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=None)
+    let updated =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+        makeDynContractRegistration(~blockNumber=5, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    t.expect(
+      updated.optimizedPartitions.wildcardContracts->Utils.Set.toArray,
+      ~message="disabled: never switches regardless of address count",
+    ).toEqual([])
+  })
+
+  it("emits queries carrying clientSideFilteredContracts", t => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=Some(1))
+    let updated =
+      fetchState
+      ->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+      ->FetchState.updateKnownHeight(~knownHeight=100)
+
+    let clientFiltered = switch updated->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) =>
+      queries->Array.map(q => (q.selection.dependsOnAddresses, q.selection.clientSideFilteredContracts))
+    | _ => []
+    }
+    t.expect(
+      clientFiltered,
+      ~message="the wildcard partition's query is address-free and names the client-filtered contract",
+    ).toEqual([(false, Some(["Gravatar"]))])
+  })
+
+  it("tolerates a response for a partition absorbed while its query was in flight", t => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=Some(1))
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    // A response tagged with a partition id that no longer exists (absorbed).
+    let orphanQuery: FetchState.query = {
+      ...defaultQuery,
+      partitionId: "999",
+      fromBlock: 0,
+    }
+    let afterOrphan =
+      collapsed->FetchState.handleQueryResult(
+        ~query=orphanQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=5),
+        ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+      )
+    t.expect(
+      (afterOrphan->FetchState.bufferSize, afterOrphan->partitionShape),
+      ~message="orphan response merges its items and leaves partitions untouched",
+    ).toEqual((2, [(false, Some(["Gravatar"]), [])]))
   })
 })
