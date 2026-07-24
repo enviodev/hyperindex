@@ -1,5 +1,6 @@
 mod block_store;
 mod cli_args;
+mod client_filtered_contracts;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
 mod commands;

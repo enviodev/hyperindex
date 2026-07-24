@@ -208,6 +208,7 @@ impl SelectionBuilder {
         &self,
         registration_indexes: &[i64],
         addresses_by_contract_name: &HashMap<String, Vec<String>>,
+        client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
         // group per contract so one contract's query can't fetch a sibling's
@@ -240,7 +241,7 @@ impl SelectionBuilder {
                     transaction_fields.push(field);
                 }
             }
-            if reg.depends_on_addresses {
+            if reg.depends_on_addresses && !client_filtered.applies(&reg.contract_name) {
                 if !ordered_contracts.contains(&reg.contract_name.as_str()) {
                     ordered_contracts.push(reg.contract_name.as_str());
                 }
@@ -254,6 +255,10 @@ impl SelectionBuilder {
                     .or_default()
                     .extend(reg.topic_selections.iter());
             } else {
+                // Address-free: genuine wildcards, plus client-filtered contracts
+                // whose ContractAddresses markers materialize to match-any (empty
+                // address topics). The JS clientAddressFilter re-applies the
+                // address gate on the returned items.
                 no_address.extend(reg.topic_selections.iter().map(|ts| ts.materialize(&[])));
             }
         }
@@ -377,7 +382,7 @@ mod tests {
         ])
         .unwrap();
         let built = builder
-            .build(&[0, 1], &addresses(&[("C", &[ADDR])]))
+            .build(&[0, 1], &addresses(&[("C", &[ADDR])]), &Default::default())
             .unwrap();
         assert_eq!(
             built.log_selections,
@@ -408,7 +413,9 @@ mod tests {
             Some(vec![]),
         )])
         .unwrap();
-        let built = builder.build(&[0], &HashMap::new()).unwrap();
+        let built = builder
+            .build(&[0], &HashMap::new(), &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -426,7 +433,9 @@ mod tests {
         let builder =
             SelectionBuilder::from_registrations(&[reg(0, SIGHASH_A, "C", true, true, None)])
                 .unwrap();
-        let built = builder.build(&[0], &addresses(&[("C", &[ADDR])])).unwrap();
+        let built = builder
+            .build(&[0], &addresses(&[("C", &[ADDR])]), &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -466,7 +475,9 @@ mod tests {
             ),
         ])
         .unwrap();
-        let built = builder.build(&[0, 1, 2, 3], &HashMap::new()).unwrap();
+        let built = builder
+            .build(&[0, 1, 2, 3], &HashMap::new(), &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![
@@ -498,8 +509,64 @@ mod tests {
             Some(vec![]),
         )])
         .unwrap();
-        let built = builder.build(&[0], &addresses(&[("C", &[])])).unwrap();
+        let built = builder
+            .build(&[0], &addresses(&[("C", &[])]), &Default::default())
+            .unwrap();
         assert_eq!(built.log_selections, vec![]);
+    }
+
+    #[test]
+    fn client_filtered_contract_builds_address_free_selection() {
+        // A non-wildcard, address-dependent registration whose contract is
+        // client-filtered is queried address-free (topic0 only), even though
+        // the query carries no addresses for it.
+        let builder = SelectionBuilder::from_registrations(&[reg(
+            0,
+            SIGHASH_A,
+            "C",
+            false,
+            true,
+            Some(vec![]),
+        )])
+        .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C".to_string()
+            ]);
+        let built = builder
+            .build(&[0], &HashMap::new(), &client_filtered)
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![BuiltLogSelection {
+                addresses: vec![],
+                topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+            }]
+        );
+    }
+
+    #[test]
+    fn client_filtered_contract_addresses_marker_becomes_match_any() {
+        // A wildcard event filtering an indexed param by the contract's own
+        // addresses: when the contract is client-filtered the marker resolves to
+        // match-any (empty topic position) instead of the address topics.
+        let builder =
+            SelectionBuilder::from_registrations(&[reg(0, SIGHASH_A, "C", true, true, None)])
+                .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C".to_string()
+            ]);
+        let built = builder
+            .build(&[0], &addresses(&[("C", &[ADDR])]), &client_filtered)
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![BuiltLogSelection {
+                addresses: vec![],
+                topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+            }]
+        );
     }
 
     #[test]
@@ -511,7 +578,9 @@ mod tests {
             reg(1, SIGHASH_B, "C", false, true, Some(vec![])),
         ])
         .unwrap();
-        let built = builder.build(&[1], &addresses(&[("C", &[ADDR])])).unwrap();
+        let built = builder
+            .build(&[1], &addresses(&[("C", &[ADDR])]), &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -530,7 +599,9 @@ mod tests {
         b.block_fields = vec![BlockField::Number, BlockField::Nonce];
         b.transaction_fields = vec![TransactionField::GasPrice];
         let builder = SelectionBuilder::from_registrations(&[a, b]).unwrap();
-        let built = builder.build(&[0, 1], &HashMap::new()).unwrap();
+        let built = builder
+            .build(&[0, 1], &HashMap::new(), &Default::default())
+            .unwrap();
         assert_eq!(
             built.block_fields,
             vec![BlockField::Hash, BlockField::Number, BlockField::Nonce]
@@ -546,7 +617,10 @@ mod tests {
     #[test]
     fn unknown_registration_id_errors() {
         let builder = SelectionBuilder::from_registrations(&[]).unwrap();
-        let err = builder.build(&[7], &HashMap::new()).err().unwrap();
+        let err = builder
+            .build(&[7], &HashMap::new(), &Default::default())
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
 }
