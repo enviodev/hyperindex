@@ -1534,6 +1534,16 @@ type Token @storage {
 `,
       "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
     ),
+    (
+      // Entities are exposed on the handler context under their capitalized
+      // name, so two entities differing only in first-letter case collide.
+      "rejects entity names that collide when capitalized",
+      `
+type user { id: ID! }
+type User { id: ID! }
+`,
+      "Config parse error: Failed converting schema doc to schema struct: Schema contains entities whose names collide when capitalized. Each entity is exposed on the handler context under its capitalized name, so these must be unique: User (from User, user)",
+    ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))
   })
