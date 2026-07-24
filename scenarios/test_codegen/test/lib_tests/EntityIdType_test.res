@@ -250,31 +250,42 @@ chains:
 
   let bothBackends = "  postgres:\n    default: true\n  clickhouse: true"
 
+  // The full error a rejected parse throws, so each negative case asserts the
+  // exact message (not a substring). The entity is named "Thing" in every case.
+  let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal."
+
+  // Returns the thrown message, so the assertion pins the whole error rather
+  // than a substring (vitest's `toThrowError(string)` only checks containment).
+  let parseError = (~schema, ~storage) =>
+    try {
+      parseWithStorage(~schema, ~storage)->ignore
+      "Expected config parsing to throw, but it succeeded."
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("Thrown value had no message.")
+    }
+
   it("rejects an unbounded BigInt id on a clickhouse entity", t => {
-    t.expect(() =>
-      parseWithStorage(
-        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! }`,
-        ~storage=bothBackends,
-      )->ignore
-    ).toThrowError("ClickHouse stores as a String")
+    t.expect(
+      parseError(~schema=`type Thing @storage(clickhouse: true) { id: BigInt! }`, ~storage=bothBackends),
+    ).toBe(expectedError)
   })
 
   it("rejects a BigInt id whose precision exceeds the ClickHouse Decimal ceiling", t => {
-    t.expect(() =>
-      parseWithStorage(
+    t.expect(
+      parseError(
         ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 100) }`,
         ~storage=bothBackends,
-      )->ignore
-    ).toThrowError("ClickHouse stores as a String")
+      ),
+    ).toBe(expectedError)
   })
 
   it("rejects an unbounded BigInt id when clickhouse is the default backend", t => {
-    t.expect(() =>
-      parseWithStorage(
+    t.expect(
+      parseError(
         ~schema=`type Thing { id: BigInt! }`,
         ~storage="  postgres:\n    default: true\n  clickhouse:\n    default: true",
-      )->ignore
-    ).toThrowError("ClickHouse stores as a String")
+      ),
+    ).toBe(expectedError)
   })
 
   it("accepts a BigInt id with a numeric precision on a clickhouse entity", t => {
