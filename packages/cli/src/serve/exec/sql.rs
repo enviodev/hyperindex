@@ -47,8 +47,22 @@ fn sql_hash(sql: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
+fn decode_error(e: tokio_postgres::Error) -> GraphQLError {
+    tracing::warn!(error = %e, "envio serve: root value decode failed");
+    internal_db_error()
+}
+
 /// Runs `sql`/`params` (as compiled by `compile_root`) and returns the
 /// single output row every root-field query produces.
+///
+/// With prepared statements (the default) the plan is cached per pooled
+/// connection. Without them, the statement runs through the extended
+/// protocol's unnamed statement (`query_typed_raw`): one Parse/Bind/Execute
+/// with no server-side *named* statement to strand, so it stays correct
+/// through a transaction-mode connection pooler (which may route each
+/// statement to a different backend), at the cost of re-parsing and
+/// re-planning every query. Parameters travel out-of-band in both paths —
+/// never inlined into SQL text.
 async fn run_root_query(
     state: &Arc<ServeState>,
     sql: &str,
@@ -68,27 +82,48 @@ async fn run_root_query(
             status: 200,
         }
     })?;
-    if client.statement_cache.size() >= STATEMENT_CACHE_CAP {
-        client.statement_cache.clear();
-    }
-    // All parameters are bound as text and cast in the SQL itself
-    // (`($1)::numeric`), which keeps runtime coercion errors identical to
-    // Hasura's inlined-literal form.
-    let types = vec![Type::TEXT; params.len()];
-    let stmt = client
-        .prepare_typed_cached(sql, &types)
-        .await
-        .map_err(|e| pg_error(e, sql))?;
-    let row_stream = client
-        .query_raw(&stmt, params.iter().map(|p| p as &(dyn ToSql + Sync)))
-        .await
-        .map_err(|e| pg_error(e, sql))?;
-    // Every compiled statement is expected to produce exactly one row, but
-    // read only the first one off the wire instead of buffering a Vec: a
-    // statement that unexpectedly degenerates to per-row output must not
-    // buffer the whole table in memory.
-    futures_util::pin_mut!(row_stream);
-    let row = row_stream.try_next().await.map_err(|e| pg_error(e, sql))?;
+
+    // Every compiled statement is expected to produce exactly one row.
+    let row = if state.use_prepared_statements {
+        if client.statement_cache.size() >= STATEMENT_CACHE_CAP {
+            client.statement_cache.clear();
+        }
+        // Parameters are bound as text and cast in the SQL itself
+        // (`($1)::numeric`), which keeps runtime coercion errors identical to
+        // the inlined-literal form below (and to Hasura).
+        let types = vec![Type::TEXT; params.len()];
+        let stmt = client
+            .prepare_typed_cached(sql, &types)
+            .await
+            .map_err(|e| pg_error(e, sql))?;
+        let row_stream = client
+            .query_raw(&stmt, params.iter().map(|p| p as &(dyn ToSql + Sync)))
+            .await
+            .map_err(|e| pg_error(e, sql))?;
+        // Read only the first row off the wire instead of buffering a Vec: a
+        // statement that unexpectedly degenerates to per-row output must not
+        // buffer the whole table in memory.
+        futures_util::pin_mut!(row_stream);
+        row_stream.try_next().await.map_err(|e| pg_error(e, sql))?
+    } else {
+        // Unnamed extended-protocol statement: no named prepared statement to
+        // strand on a backend the execute never reaches, so a transaction-mode
+        // pooler can't split Parse/Bind from Execute. Parameters are bound as
+        // text and cast in the SQL itself, exactly as the prepared path above.
+        let row_stream = client
+            .query_typed_raw(
+                sql,
+                params
+                    .iter()
+                    .map(|p| (p as &(dyn ToSql + Sync), Type::TEXT)),
+            )
+            .await
+            .map_err(|e| pg_error(e, sql))?;
+        // Same first-row-only read as the prepared path: never buffer a table.
+        futures_util::pin_mut!(row_stream);
+        row_stream.try_next().await.map_err(|e| pg_error(e, sql))?
+    };
+
     let elapsed = started.elapsed();
     if elapsed >= slow_query_threshold() {
         tracing::warn!(
@@ -127,11 +162,7 @@ pub async fn execute_root(
 ) -> GResult<()> {
     let compiled = compile_root_full(&state.model.pg_schema, root);
     let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
-    let text: &str = row.try_get(0).map_err(|e| {
-        tracing::warn!(error = %e, "envio serve: root value decode failed");
-        internal_db_error()
-    })?;
-    out.push_str(text);
+    out.push_str(row.try_get::<_, &str>(0).map_err(decode_error)?);
     Ok(())
 }
 
@@ -143,11 +174,7 @@ pub async fn execute_root_compiled(
     compiled: &CompiledRoot,
 ) -> GResult<String> {
     let row = run_root_query(state, &compiled.sql, &compiled.params).await?;
-    let text: &str = row.try_get(0).map_err(|e| {
-        tracing::warn!(error = %e, "envio serve: live-query root value decode failed");
-        internal_db_error()
-    })?;
-    Ok(text.to_string())
+    Ok(row.try_get::<_, &str>(0).map_err(decode_error)?.to_string())
 }
 
 /// Like `execute_root`, but for an already-compiled `_stream` root: also
@@ -169,10 +196,7 @@ pub async fn execute_stream_compiled(
     out: &mut String,
 ) -> GResult<Option<Vec<Option<String>>>> {
     let row = run_root_query(state, sql, params).await?;
-    let root_text: &str = row.try_get(0).map_err(|e| {
-        tracing::warn!(error = %e, "envio serve: stream root value decode failed");
-        internal_db_error()
-    })?;
+    let root_text: &str = row.try_get(0).map_err(decode_error)?;
     out.push_str(root_text);
     if root_text == "[]" {
         return Ok(None);
@@ -180,11 +204,11 @@ pub async fn execute_stream_compiled(
 
     let mut cursor_values = Vec::with_capacity(row.len().saturating_sub(1));
     for i in 1..row.len() {
-        let v = row.try_get::<_, Option<&str>>(i).map_err(|e| {
-            tracing::warn!(error = %e, "envio serve: stream cursor value decode failed");
-            internal_db_error()
-        })?;
-        cursor_values.push(v.map(str::to_string));
+        cursor_values.push(
+            row.try_get::<_, Option<&str>>(i)
+                .map_err(decode_error)?
+                .map(str::to_string),
+        );
     }
     Ok(Some(cursor_values))
 }

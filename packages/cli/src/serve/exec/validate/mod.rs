@@ -11,7 +11,7 @@ use crate::serve::gql::types::{FieldDef, FieldKind, Registry, TypeDef, TypeRef};
 use crate::serve::model::{Column, Scalar, ServerModel, Table};
 use graphql_parser::query as q;
 use serde_json::Value as Json;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 mod args;
@@ -182,6 +182,7 @@ pub fn plan_request(
         fragments,
         vars: build_variables(op.var_defs, variables_json)?,
         used_vars: RefCell::new(HashSet::new()),
+        selection_budget: Cell::new(selection::MAX_SELECTIONS),
         int_originals: scan.int_originals,
         float_originals: scan.float_originals,
         inf_float_originals: scan.inf_float_originals,
@@ -381,6 +382,11 @@ struct Ctx<'a> {
     fragments: HashMap<&'a str, &'a AFragment>,
     vars: HashMap<&'a str, VarInfo<'a>>,
     used_vars: RefCell<HashSet<&'a str>>,
+    /// Nodes still allowed across the whole operation's fragment expansion.
+    /// Shared by every `collect_fields` call so fanning a fragment chain out
+    /// across nested relationship levels can't escape the cap by resetting a
+    /// per-level budget (each level stays small, the product explodes).
+    selection_budget: Cell<usize>,
     /// i64-overflowing int literals were rewritten to magic sentinel values
     /// before parsing; this maps each sentinel back to the original digits.
     int_originals: HashMap<i64, String>,
@@ -1359,6 +1365,39 @@ mod tests {
         );
     }
 
+    /// Each fragment spreads the next through two *nested* object-relationship
+    /// fields, so expansion fans out (2^depth) across relationship levels
+    /// rather than within a single one — the vector a per-`collect_fields`
+    /// budget would miss.
+    fn field_nested_fragment_chain(count: usize) -> String {
+        let mut q = String::from("query { User { ...f0 } } ");
+        for i in 0..count {
+            q.push_str(&format!("fragment f{i} on User {{ "));
+            if i + 1 < count {
+                q.push_str(&format!(
+                    "a: self_rel {{ ...f{next} }} b: self_rel {{ ...f{next} }} ",
+                    next = i + 1
+                ));
+            } else {
+                q.push_str("id ");
+            }
+            q.push_str("} ");
+        }
+        q
+    }
+
+    #[test]
+    fn field_nested_fragment_chain_hits_shared_selection_budget() {
+        // Stays under the depth limit but expands to ~2^40 nodes across
+        // relationship levels; the shared budget must stop it fast instead
+        // of hanging.
+        let err = plan(&field_nested_fragment_chain(40), None).unwrap_err();
+        assert_eq!(
+            err.message,
+            "the selection set exceeds the maximum of 50000 selections after fragment expansion"
+        );
+    }
+
     #[test]
     fn long_single_spread_fragment_chain_hits_depth_limit() {
         // 100k chained fragments would recurse 100k frames in the prepass
@@ -1519,6 +1558,23 @@ mod tests {
                 "The value 1.0e400 lies outside the bounds. Is it overflowing the float bounds?",
                 CODE_PARSE_FAILED,
             )
+        );
+    }
+
+    #[test]
+    fn offset_at_i64_max_plus_one_reports_bounds_error() {
+        // i64::MAX+1 (2^63) is exactly representable as f64 and slips past a
+        // naive `f <= i64::MAX as f64` (which rounds up), then a saturating
+        // cast would silently accept it as i64::MAX. It must report the
+        // bounds error instead, matching Hasura's out-of-range rejection.
+        let err = plan(
+            "query($o: Int) { User(offset: $o, order_by: {id: asc}) { id } }",
+            Some(r#"{"o": 9223372036854775808.0}"#),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.message,
+            "The value 9.223372036854775808e18 lies outside the bounds or is not an integer. Maybe it is a float, or is there integer overflow?"
         );
     }
 

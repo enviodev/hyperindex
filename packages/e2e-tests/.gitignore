@@ -1,0 +1,5 @@
+# Generated benchmark/soak reports and the locally-recorded Hasura baseline.
+# CI records these fresh each run; committing them just churns the tree.
+bench-report.md
+soak-report.md
+fixtures/differential/hasura-baseline.json

@@ -3,6 +3,7 @@
 
 use anyhow::Context;
 use std::collections::HashMap;
+use tokio_postgres::types::{ToSql, Type};
 
 pub struct Catalog {
     /// Tables and views in the target schema, keyed by relation name.
@@ -37,14 +38,31 @@ pub struct Column {
     pub is_enum: bool,
 }
 
+fn column_from_row(row: &tokio_postgres::Row) -> Result<Column, tokio_postgres::Error> {
+    Ok(Column {
+        name: row.try_get("column_name")?,
+        pg_type: row.try_get("pg_type")?,
+        pg_type_schema: row.try_get("pg_type_schema")?,
+        is_array: row.try_get("is_array")?,
+        nullable: row.try_get("nullable")?,
+        is_enum: row.try_get("is_enum")?,
+    })
+}
+
 pub async fn introspect(
     pool: &deadpool_postgres::Pool,
     pg_schema: &str,
 ) -> anyhow::Result<Catalog> {
     let client = pool.get().await.context("Failed acquiring PG connection")?;
 
+    // Unnamed extended-protocol statements (`query_typed`), never named
+    // prepared ones: startup introspection must survive a transaction-mode
+    // pooler too, not just the root-query path. `$1` is bound as NAME to match
+    // the `nspname` column type exactly, as server type inference would.
+    let schema_param: &[(&(dyn ToSql + Sync), Type)] = &[(&pg_schema, Type::NAME)];
+
     let column_rows = client
-        .query(
+        .query_typed(
             r#"
             SELECT
               c.relname::text AS table_name,
@@ -75,13 +93,13 @@ pub async fn introspect(
             WHERE n.nspname = $1 AND c.relkind IN ('r', 'v', 'm')
             ORDER BY c.relname, a.attnum
             "#,
-            &[&pg_schema],
+            schema_param,
         )
         .await
         .context("Failed querying pg_catalog for columns")?;
 
     let pk_rows = client
-        .query(
+        .query_typed(
             r#"
             SELECT c.relname::text AS table_name, a.attname::text AS column_name, k.ordinality
             FROM pg_index i
@@ -92,7 +110,7 @@ pub async fn introspect(
             WHERE n.nspname = $1 AND i.indisprimary
             ORDER BY c.relname, k.ordinality
             "#,
-            &[&pg_schema],
+            schema_param,
         )
         .await
         .context("Failed querying pg_catalog for primary keys")?;
@@ -113,14 +131,19 @@ pub async fn introspect(
                 columns: Vec::new(),
                 primary_key: Vec::new(),
             });
-        relation.columns.push(Column {
-            name: row.get("column_name"),
-            pg_type: row.get("pg_type"),
-            pg_type_schema: row.get("pg_type_schema"),
-            is_array: row.get("is_array"),
-            nullable: row.get("nullable"),
-            is_enum: row.get("is_enum"),
-        });
+        // pg_type/pg_type_schema/is_enum come from LEFT JOINs on the type
+        // catalog and are NULL only for a type that can't be resolved
+        // (e.g. a domain or array whose base/element type row is missing).
+        // Hasura refuses such a column as a source inconsistency; fail
+        // startup with a clear error rather than panicking in `Row::get`.
+        let column = column_from_row(&row).with_context(|| {
+            format!(
+                "Column \"{}\" of \"{pg_schema}\".\"{}\" has an unresolvable or unsupported type",
+                row.get::<_, String>("column_name"),
+                relation.name,
+            )
+        })?;
+        relation.columns.push(column);
     }
 
     for row in pk_rows {

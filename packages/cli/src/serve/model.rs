@@ -3,7 +3,7 @@
 //! metadata (as applied by the indexer) and Postgres introspection produce.
 
 use super::env_config::ServeEnv;
-use super::pg_catalog::{Catalog, RelationKind};
+use super::pg_catalog::{Catalog, Column as CatalogColumn, RelationKind};
 use super::project_schema::ProjectSchema;
 use crate::config_parsing::field_types::to_snake_case;
 use anyhow::anyhow;
@@ -174,6 +174,22 @@ pub struct ServerModel {
     pub response_limit: Option<u32>,
 }
 
+/// Builds a model `Column` from a catalog column. Only the GraphQL api name
+/// and description vary by table kind (internal/effect tables use the raw db
+/// name and no description; user entities remap both from schema.graphql).
+fn model_column(c: &CatalogColumn, api_name: String, description: Option<String>) -> Column {
+    Column {
+        api_name,
+        db_name: c.name.clone(),
+        pg_type: c.pg_type.clone(),
+        pg_type_schema: c.pg_type_schema.clone(),
+        scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
+        is_array: c.is_array,
+        nullable: c.nullable,
+        description,
+    }
+}
+
 impl ServerModel {
     pub fn table(&self, name: &str) -> Option<&Table> {
         self.tables
@@ -199,16 +215,7 @@ impl ServerModel {
                     columns: rel
                         .columns
                         .iter()
-                        .map(|c| Column {
-                            api_name: c.name.clone(),
-                            db_name: c.name.clone(),
-                            pg_type: c.pg_type.clone(),
-                            pg_type_schema: c.pg_type_schema.clone(),
-                            scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
-                            is_array: c.is_array,
-                            nullable: c.nullable,
-                            description: None,
-                        })
+                        .map(|c| model_column(c, c.name.clone(), None))
                         .collect(),
                     primary_key: rel.primary_key.clone(),
                     object_relationships: vec![],
@@ -266,16 +273,7 @@ impl ServerModel {
                         .get(&c.name)
                         .cloned()
                         .unwrap_or((c.name.clone(), None));
-                    Column {
-                        api_name,
-                        db_name: c.name.clone(),
-                        pg_type: c.pg_type.clone(),
-                        pg_type_schema: c.pg_type_schema.clone(),
-                        scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
-                        is_array: c.is_array,
-                        nullable: c.nullable,
-                        description,
-                    }
+                    model_column(c, api_name, description)
                 })
                 .collect::<Vec<_>>();
 
@@ -350,16 +348,7 @@ impl ServerModel {
                     columns: rel
                         .columns
                         .iter()
-                        .map(|c| Column {
-                            api_name: c.name.clone(),
-                            db_name: c.name.clone(),
-                            pg_type: c.pg_type.clone(),
-                            pg_type_schema: c.pg_type_schema.clone(),
-                            scalar: Scalar::from_pg_type(&c.pg_type, c.is_enum),
-                            is_array: c.is_array,
-                            nullable: c.nullable,
-                            description: None,
-                        })
+                        .map(|c| model_column(c, c.name.clone(), None))
                         .collect(),
                     primary_key: rel.primary_key.clone(),
                     object_relationships: vec![],
@@ -428,6 +417,8 @@ mod tests {
             pg_schema: "public".to_string(),
             pg_ssl: PgSslMode::Disable,
             admin_secret: "testing".to_string(),
+            cors: crate::serve::env_config::CorsConfig::AllowAll,
+            use_prepared_statements: true,
             response_limit: None,
             aggregate_entities: vec![],
             query_timeout_ms: None,

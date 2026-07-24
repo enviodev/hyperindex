@@ -82,8 +82,11 @@ export function waitForServeExit(
   });
 }
 
-export async function startServe(options: TrackOptions): Promise<ServeProcess> {
-  const serve = spawnServe(options);
+export async function startServe(
+  options: TrackOptions,
+  envOverrides: NodeJS.ProcessEnv = {}
+): Promise<ServeProcess> {
+  const serve = spawnServe(options, servePort, envOverrides);
   const { child, logs } = serve;
 
   const deadline = Date.now() + 60_000;

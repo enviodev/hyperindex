@@ -190,7 +190,16 @@ impl Num {
             }
             Num::Big(_) => Err(self.display(ctx)),
             Num::Float(f) => {
-                if f.is_finite() && f.fract() == 0.0 && *f >= min as f64 && *f <= max as f64 {
+                // `max as f64` rounds *up* for i64::MAX (2^63-1 → 2^63), so a
+                // naive `*f <= max as f64` admits max+1, which the saturating
+                // `*f as i64` cast then silently turns into i64::MAX instead
+                // of erroring. Compare against the exact upper bound
+                // (`max as i128 + 1`, exactly representable for our
+                // power-of-two-minus-one bounds) with a strict `<`, matching
+                // Hasura's out-of-range rejection.
+                let above_min = *f >= min as f64;
+                let below_max = *f < (max as i128 + 1) as f64;
+                if f.is_finite() && f.fract() == 0.0 && above_min && below_max {
                     Ok(*f as i64)
                 } else {
                     Err(self.display(ctx))
