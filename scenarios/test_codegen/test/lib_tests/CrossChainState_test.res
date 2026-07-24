@@ -190,7 +190,7 @@ describe("ChainState event registration ownership", () => {
         ~firstEventBlock=0,
         ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
       )->ignore
-    ).toThrowError(
+    ).toThrowErrorEqual(
       "Invalid onEvent registration index for chain 1: ContractA.EventWithoutFields has index 4, but its ChainState position is 0.",
     )
   })

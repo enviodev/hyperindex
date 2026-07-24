@@ -271,7 +271,7 @@ describe("EventConfigBuilder", () => {
   })
 
   it("abiTypeToSchema throws on unsupported types", t => {
-    t.expect(() => EventConfigBuilder.abiTypeToSchema("function")).toThrowError(
+    t.expect(() => EventConfigBuilder.abiTypeToSchema("function")).toThrowErrorEqual(
       "Unsupported ABI type: function",
     )
   })

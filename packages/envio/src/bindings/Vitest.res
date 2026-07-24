@@ -34,10 +34,8 @@ type rec expectation<'a> = {
   toHavePropertyValue: 'b. (string, 'b) => unit,
   // Exception matchers
   toThrow: unit => unit,
-  toThrowError: string => unit,
-  // Strict variant of `toThrowError`: the thrown message must equal the
-  // argument exactly, not merely contain it. Registered in each package's
-  // vitest setup via `expect.extend`.
+  // The thrown message must equal the argument exactly. Registered in each
+  // package's vitest setup via `expect.extend`.
   toThrowErrorEqual: string => unit,
   // Snapshot matchers
   toMatchSnapshot: unit => unit,
