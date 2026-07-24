@@ -45,6 +45,20 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
     // Hand off now that no batch is in flight.
     if state->IndexerState.isResolvingReorg {
       scheduleRollback()
+    } else if (
+      !(state->IndexerState.isStopped) &&
+      // Only a genuine fetch stall when some chain still has blocks to bring in.
+      // If every chain has buffered up to its known head, the loop is idling at
+      // the tip waiting for new blocks, not bottlenecked on fetch.
+      !(
+        state
+        ->IndexerState.chainStates
+        ->Dict.valuesToArray
+        ->Array.every(ChainState.isFetchingAtHead)
+      )
+    ) {
+      // Attribute the idle gap until the next burst to fetch starvation.
+      state->IndexerState.markProcessingStalledOnFetch
     }
   }
 }

@@ -69,12 +69,15 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(0.),
+      scrapeTime: Date.fromTime(0.),
       targetBufferSize: 0,
       isInReorgThreshold: false,
       rollbackEnabled: false,
       maxBatchSize: 0,
       preloadSeconds: 0.,
       processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
       rollbackSeconds: 0.,
       rollbackCount: 0,
       rollbackEventsCount: 0.,
@@ -111,12 +114,15 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
+      scrapeTime: Date.fromTime(1700000123456.),
       targetBufferSize: 5000,
       isInReorgThreshold: true,
       rollbackEnabled: true,
       maxBatchSize: 5000,
       preloadSeconds: 12.3456,
       processingSeconds: 7.891,
+      processingStalledOnFetchSeconds: 6.02,
+      processingStalledOnStorageWriteSeconds: 1.33,
       rollbackSeconds: 0.25,
       rollbackCount: 2,
       rollbackEventsCount: 42.,
@@ -227,6 +233,18 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
+# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE envio_process_start_time_seconds gauge
+envio_process_start_time_seconds 1700000000
+
+# HELP envio_process_metric_time_seconds Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.
+# TYPE envio_process_metric_time_seconds gauge
+envio_process_metric_time_seconds 1700000123.456
+
+# HELP envio_process_elapsed_seconds Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.
+# TYPE envio_process_elapsed_seconds gauge
+envio_process_elapsed_seconds 123.456
+
 # HELP envio_preload_seconds Cumulative time spent on preloading entities during batch processing.
 # TYPE envio_preload_seconds counter
 envio_preload_seconds 12.346
@@ -234,6 +252,14 @@ envio_preload_seconds 12.346
 # HELP envio_processing_seconds Cumulative time spent executing event handlers during batch processing.
 # TYPE envio_processing_seconds counter
 envio_processing_seconds 7.891
+
+# HELP envio_processing_stalled_on_fetch_seconds Cumulative time batch processing was stalled with an empty buffer, waiting for fetched events. A high rate points to fetching as the bottleneck, unless the chain is caught up to the head (compare with envio_indexing_source_waiting_seconds).
+# TYPE envio_processing_stalled_on_fetch_seconds counter
+envio_processing_stalled_on_fetch_seconds 6.02
+
+# HELP envio_processing_stalled_on_storage_write_seconds Cumulative time batch processing was stalled waiting for storage write capacity to free up (backpressure). A high rate points to storage writes as the bottleneck.
+# TYPE envio_processing_stalled_on_storage_write_seconds counter
+envio_processing_stalled_on_storage_write_seconds 1.33
 
 # HELP envio_progress_ready Whether the chain is fully synced to the head.
 # TYPE envio_progress_ready gauge
@@ -286,10 +312,6 @@ envio_fetching_block_range_size{chainId="1"} 250
 # HELP envio_indexing_known_height The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.
 # TYPE envio_indexing_known_height gauge
 envio_indexing_known_height{chainId="1"} 305
-
-# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
-# TYPE envio_process_start_time_seconds gauge
-envio_process_start_time_seconds 1700000000
 
 # HELP envio_indexing_concurrency The number of executing concurrent queries to the chain data-source.
 # TYPE envio_indexing_concurrency gauge
