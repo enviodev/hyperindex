@@ -227,3 +227,77 @@ chains:
     ))
   })
 })
+
+// A ClickHouse entity keyed by a BigInt id must set a numeric precision:
+// ClickHouse stores an unbounded (or over-precision) BigInt as a String, and an
+// id is the mandatory sort key, so it would order lexicographically.
+describe("ClickHouse BigInt id precision validation", () => {
+  let parseWithStorage = (~schema, ~storage) =>
+    InternalTestIndexer.fromUserApi(
+      ~schema,
+      ~configYaml=`
+name: ch-bigint-id
+storage:
+${storage}
+chains:
+  - id: 1
+    rpc:
+      url: https://eth.com
+      for: sync
+    start_block: 0
+`,
+    )
+
+  let bothBackends = "  postgres:\n    default: true\n  clickhouse: true"
+
+  it("rejects an unbounded BigInt id on a clickhouse entity", t => {
+    t.expect(() =>
+      parseWithStorage(
+        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! }`,
+        ~storage=bothBackends,
+      )->ignore
+    ).toThrowError("ClickHouse stores as a String")
+  })
+
+  it("rejects a BigInt id whose precision exceeds the ClickHouse Decimal ceiling", t => {
+    t.expect(() =>
+      parseWithStorage(
+        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 100) }`,
+        ~storage=bothBackends,
+      )->ignore
+    ).toThrowError("ClickHouse stores as a String")
+  })
+
+  it("rejects an unbounded BigInt id when clickhouse is the default backend", t => {
+    t.expect(() =>
+      parseWithStorage(
+        ~schema=`type Thing { id: BigInt! }`,
+        ~storage="  postgres:\n    default: true\n  clickhouse:\n    default: true",
+      )->ignore
+    ).toThrowError("ClickHouse stores as a String")
+  })
+
+  it("accepts a BigInt id with a numeric precision on a clickhouse entity", t => {
+    let {config} = parseWithStorage(
+      ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 20) }`,
+      ~storage=bothBackends,
+    )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+
+  it("accepts an Int id on a clickhouse entity", t => {
+    let {config} = parseWithStorage(
+      ~schema=`type Thing @storage(clickhouse: true) { id: Int! }`,
+      ~storage=bothBackends,
+    )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+
+  it("accepts an unbounded BigInt id on a postgres-only entity", t => {
+    let {config} = parseWithStorage(
+      ~schema=`type Thing { id: BigInt! }`,
+      ~storage="  postgres:\n    default: true",
+    )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+})
