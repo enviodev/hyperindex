@@ -316,6 +316,43 @@ chains:
     }
     t.expect(columnNames).toEqual((Some("user_id"), None))
   })
+
+  it("resolves per-entity ClickHouse table options from the storage directive", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~schema=`
+type Transfer @storage(clickhouse: {
+  partitionBy: "toYYYYMM(timestamp)",
+  orderBy: ["timestamp"],
+  ttl: "timestamp + INTERVAL 2 YEAR"
+}) {
+  id: ID!
+  timestamp: Timestamp!
+  amount: BigInt!
+}
+`,
+      ~configYaml=`
+name: clickhouse-table-options
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    default: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+    )
+    let transfer = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+    t.expect(transfer.storage).toEqual({
+      Internal.postgres: false,
+      clickhouse: true,
+      clickhouseOptions: {
+        partitionBy: "toYYYYMM(timestamp)",
+        orderBy: ["timestamp"],
+        ttl: "timestamp + INTERVAL 2 YEAR",
+      },
+    })
+  })
 })
 
 describe("config YAML interpolation errors", () => {
@@ -1085,6 +1122,67 @@ chains:
 `,
     )
     t.expect(config.userEntitiesByName->Dict.has("Token")).toBe(true)
+  })
+
+  it("resolves per-contract start blocks and leaves unset ones to the chain default", t => {
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+name: per-contract-start-block
+contracts:
+  - name: Early
+    events:
+      - event: Transfer()
+  - name: Late
+    events:
+      - event: Transfer()
+  - name: Default
+    events:
+      - event: Transfer()
+chains:
+  - id: 1
+    start_block: 1000
+    contracts:
+      - name: Early
+        address: "0x1111111111111111111111111111111111111111"
+        start_block: 500
+      - name: Late
+        address: "0x2222222222222222222222222222222222222222"
+        start_block: 1500
+      - name: Default
+        address: "0x3333333333333333333333333333333333333333"
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let byName = chain.contracts->Array.toSorted((a, b) => String.compare(a.name, b.name))
+    t.expect(byName->Array.map(c => (c.name, c.startBlock))).toEqual([
+      ("Default", None),
+      ("Early", Some(500)),
+      ("Late", Some(1500)),
+    ])
+  })
+
+  it("keeps a contract with no address for dynamic registration", t => {
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+name: factory-and-dynamic
+contracts:
+  - name: Factory
+    events:
+      - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+  - name: Pool
+    events:
+      - event: Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Factory
+        address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+      - name: Pool
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let byName = chain.contracts->Array.toSorted((a, b) => String.compare(a.name, b.name))
+    t.expect(byName->Array.map(c => (c.name, c.addresses->Array.length))).toEqual([
+      ("Factory", 1),
+      ("Pool", 0),
+    ])
   })
 })
 
