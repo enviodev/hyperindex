@@ -316,6 +316,43 @@ chains:
     }
     t.expect(columnNames).toEqual((Some("user_id"), None))
   })
+
+  it("resolves per-entity ClickHouse table options from the storage directive", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~schema=`
+type Transfer @storage(clickhouse: {
+  partitionBy: "toYYYYMM(timestamp)",
+  orderBy: ["timestamp"],
+  ttl: "timestamp + INTERVAL 2 YEAR"
+}) {
+  id: ID!
+  timestamp: Timestamp!
+  amount: BigInt!
+}
+`,
+      ~configYaml=`
+name: clickhouse-table-options
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    default: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+    )
+    let transfer = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+    t.expect(transfer.storage).toEqual({
+      Internal.postgres: false,
+      clickhouse: true,
+      clickhouseOptions: {
+        partitionBy: "toYYYYMM(timestamp)",
+        orderBy: ["timestamp"],
+        ttl: "timestamp + INTERVAL 2 YEAR",
+      },
+    })
+  })
 })
 
 describe("config YAML interpolation errors", () => {
