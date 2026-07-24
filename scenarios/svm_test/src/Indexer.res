@@ -75,8 +75,8 @@ module Entities = {
   type id = string
 
   module SlotPing = {
-    type t = {id: id, slot: int}
     type id = string
+    type t = {id: id, slot: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("slot") slot?: Envio.whereOperator<int>}
   }
@@ -85,13 +85,13 @@ module Entities = {
     | @as("SlotPing") SlotPing: name<SlotPing.t>
 }
 
-type handlerEntityOperations<'entity, 'id, 'getWhereFilter> = {
-  get: 'id => promise<option<'entity>>,
-  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+type handlerEntityOperations<'entity, 'getWhereFilter> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
-  deleteUnsafe: 'id => unit,
+  deleteUnsafe: string => unit,
 }
 
 type handlerContext = {
@@ -99,7 +99,7 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  \"SlotPing": handlerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.id, Entities.SlotPing.getWhereFilter>,
+  \"SlotPing": handlerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.getWhereFilter>,
 }
 
 type chainId = [#0]
@@ -187,13 +187,13 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity, 'id> = {
+type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
-  get: 'id => promise<option<'entity>>,
+  get: string => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
-  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }
@@ -206,10 +206,10 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.id>,
+  \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.t>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity, 'id> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

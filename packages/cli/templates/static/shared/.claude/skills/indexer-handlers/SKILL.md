@@ -108,11 +108,10 @@ indexer.chains[1].MyContract.abi;    // [...]
 
 ## Common Pitfalls
 
-**Entity IDs** — default to a string `${chainId}_${blockNumber}_${logIndex}`, globally unique across chains and blocks, unless the entity is a singleton keyed by address:
+**Entity IDs** — for a string id, `${chainId}_${blockNumber}_${logIndex}` is globally unique across chains and blocks; use it unless the entity is a singleton keyed by address:
 ```ts
 const id = `${event.chainId}_${event.block.number}_${event.logIndex}`;
 ```
-Ids may also be `Int!`/`BigInt!` (see `indexer-schema`); `get`/`getOrThrow`/`deleteUnsafe` then take that type (`number`/`bigint`) instead of `string`.
 
 **Entity relationships** — schema uses the entity reference (`token0: Token!`); handlers use the `_id` suffix codegen adds (`token0_id: token0.id`), typed as the referenced entity's id. Never write the bare name (`token0`) in the handler, and never put `_id` in the schema.
 

@@ -13,16 +13,16 @@ metadata:
 ## Entity Rules
 
 - Every type is an entity — **no `@entity` decorator** (unlike TheGraph)
-- Must have an `id` field first — `ID!` (default), or `String!`, `Int!`, `BigInt!`
+- Must have an `id` field first — `ID!` (recommended), or `String!`, `Int!`, `BigInt!`
 - Names: 1-63 chars, alphanumeric + underscore, no reserved words
 - Relationship fields use the **entity type directly**: `collection: NftCollection!` — **never** add `_id` in the schema field name
-- The `_id` suffix only appears in TypeScript handlers (added by codegen): schema field `collection` → handler field `collection_id`, typed as the referenced entity's id (`string` for `ID!`/`String!`, `number` for `Int!`, `bigint` for `BigInt!`)
+- The `_id` suffix only appears in TypeScript handlers (added by codegen): schema field `collection` → handler field `collection_id`, typed as the referenced entity's id
 
 ## Scalar Types
 
 | Schema Type | TypeScript Type | Notes |
 |-------------|----------------|-------|
-| `ID!` | `string` | Default entity id; `String!`/`Int!`/`BigInt!` also allowed as id |
+| `ID!` | `string` | Recommended entity id; `String!`/`Int!`/`BigInt!` also allowed as id |
 | `String!` | `string` | |
 | `Int!` | `number` | |
 | `Float!` | `number` | |
@@ -161,6 +161,6 @@ type Swap {
 | `token0` | `Token!` | `token0_id: string` |
 | `collection` | `NftCollection!` | `collection_id: string` |
 
-Codegen appends `_id` to entity reference fields (never add it in the schema) and types the column as the referenced entity's id — `string` here, but `number`/`bigint` when the target has an `Int!`/`BigInt!` id.
+Codegen appends `_id` to entity reference fields (never add it in the schema), typed as the referenced entity's id.
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

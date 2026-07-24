@@ -200,148 +200,148 @@ module Entities = {
   type id = string
 
   module A = {
-    type t = {id: id, b_id: id, optionalStringToTestLinkedEntities: option<string>}
     type id = string
+    type t = {id: id, b_id: id, optionalStringToTestLinkedEntities: option<string>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("b_id") b?: Envio.whereOperator<id>, @as("optionalStringToTestLinkedEntities") optionalStringToTestLinkedEntities?: Envio.whereOperator<option<string>>}
   }
 
   module B = {
-    type t = {id: id, c_id: option<id>}
     type id = string
+    type t = {id: id, c_id: option<id>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c_id") c?: Envio.whereOperator<option<id>>}
   }
 
   module BigIntIdEntity = {
-    type t = {id: bigint, numericRef_id: int}
     type id = bigint
+    type t = {id: bigint, numericRef_id: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<bigint>, @as("numericRef_id") numericRef?: Envio.whereOperator<int>}
   }
 
   module C = {
-    type t = {id: id, a_id: id, stringThatIsMirroredToA: string}
     type id = string
+    type t = {id: id, a_id: id, stringThatIsMirroredToA: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("a_id") a?: Envio.whereOperator<id>, @as("stringThatIsMirroredToA") stringThatIsMirroredToA?: Envio.whereOperator<string>}
   }
 
   module CustomSelectionTestPass = {
-    type t = {id: id}
     type id = string
+    type t = {id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>}
   }
 
   module D = {
-    type t = {id: id, c: id}
     type id = string
+    type t = {id: id, c: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c") c?: Envio.whereOperator<id>}
   }
 
   module EntityWith63LenghtName______________________________________one = {
-    type t = {id: id}
     type id = string
+    type t = {id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>}
   }
 
   module EntityWith63LenghtName______________________________________two = {
-    type t = {id: id}
     type id = string
+    type t = {id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>}
   }
 
   module EntityWithAllNonArrayTypes = {
-    type t = {id: id, string: string, optString: option<string>, int_: int, optInt: option<int>, float_: float, optFloat: option<float>, bool: bool, optBool: option<bool>, bigInt: bigint, optBigInt: option<bigint>, bigDecimal: BigDecimal.t, optBigDecimal: option<BigDecimal.t>, bigDecimalWithConfig: BigDecimal.t, enumField: Enums.AccountType.t, optEnumField: option<Enums.AccountType.t>, timestamp: Date.t, optTimestamp: option<Date.t>}
     type id = string
+    type t = {id: id, string: string, optString: option<string>, int_: int, optInt: option<int>, float_: float, optFloat: option<float>, bool: bool, optBool: option<bool>, bigInt: bigint, optBigInt: option<bigint>, bigDecimal: BigDecimal.t, optBigDecimal: option<BigDecimal.t>, bigDecimalWithConfig: BigDecimal.t, enumField: Enums.AccountType.t, optEnumField: option<Enums.AccountType.t>, timestamp: Date.t, optTimestamp: option<Date.t>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("string") string?: Envio.whereOperator<string>, @as("optString") optString?: Envio.whereOperator<option<string>>, @as("int_") int_?: Envio.whereOperator<int>, @as("optInt") optInt?: Envio.whereOperator<option<int>>, @as("float_") float_?: Envio.whereOperator<float>, @as("optFloat") optFloat?: Envio.whereOperator<option<float>>, @as("bool") bool?: Envio.whereOperator<bool>, @as("optBool") optBool?: Envio.whereOperator<option<bool>>, @as("bigInt") bigInt?: Envio.whereOperator<bigint>, @as("optBigInt") optBigInt?: Envio.whereOperator<option<bigint>>, @as("bigDecimal") bigDecimal?: Envio.whereOperator<BigDecimal.t>, @as("optBigDecimal") optBigDecimal?: Envio.whereOperator<option<BigDecimal.t>>, @as("bigDecimalWithConfig") bigDecimalWithConfig?: Envio.whereOperator<BigDecimal.t>, @as("enumField") enumField?: Envio.whereOperator<Enums.AccountType.t>, @as("optEnumField") optEnumField?: Envio.whereOperator<option<Enums.AccountType.t>>, @as("timestamp") timestamp?: Envio.whereOperator<Date.t>, @as("optTimestamp") optTimestamp?: Envio.whereOperator<option<Date.t>>}
   }
 
   module EntityWithAllTypes = {
-    type t = {id: id, string: string, optString: option<string>, arrayOfStrings: array<string>, int_: int, optInt: option<int>, arrayOfInts: array<int>, float_: float, optFloat: option<float>, arrayOfFloats: array<float>, bool: bool, optBool: option<bool>, bigInt: bigint, optBigInt: option<bigint>, arrayOfBigInts: array<bigint>, bigDecimal: BigDecimal.t, optBigDecimal: option<BigDecimal.t>, bigDecimalWithConfig: BigDecimal.t, arrayOfBigDecimals: array<BigDecimal.t>, timestamp: Date.t, optTimestamp: option<Date.t>, json: JSON.t, enumField: Enums.AccountType.t, optEnumField: option<Enums.AccountType.t>}
     type id = string
+    type t = {id: id, string: string, optString: option<string>, arrayOfStrings: array<string>, int_: int, optInt: option<int>, arrayOfInts: array<int>, float_: float, optFloat: option<float>, arrayOfFloats: array<float>, bool: bool, optBool: option<bool>, bigInt: bigint, optBigInt: option<bigint>, arrayOfBigInts: array<bigint>, bigDecimal: BigDecimal.t, optBigDecimal: option<BigDecimal.t>, bigDecimalWithConfig: BigDecimal.t, arrayOfBigDecimals: array<BigDecimal.t>, timestamp: Date.t, optTimestamp: option<Date.t>, json: JSON.t, enumField: Enums.AccountType.t, optEnumField: option<Enums.AccountType.t>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("string") string?: Envio.whereOperator<string>, @as("optString") optString?: Envio.whereOperator<option<string>>, @as("arrayOfStrings") arrayOfStrings?: Envio.whereOperator<array<string>>, @as("int_") int_?: Envio.whereOperator<int>, @as("optInt") optInt?: Envio.whereOperator<option<int>>, @as("arrayOfInts") arrayOfInts?: Envio.whereOperator<array<int>>, @as("float_") float_?: Envio.whereOperator<float>, @as("optFloat") optFloat?: Envio.whereOperator<option<float>>, @as("arrayOfFloats") arrayOfFloats?: Envio.whereOperator<array<float>>, @as("bool") bool?: Envio.whereOperator<bool>, @as("optBool") optBool?: Envio.whereOperator<option<bool>>, @as("bigInt") bigInt?: Envio.whereOperator<bigint>, @as("optBigInt") optBigInt?: Envio.whereOperator<option<bigint>>, @as("arrayOfBigInts") arrayOfBigInts?: Envio.whereOperator<array<bigint>>, @as("bigDecimal") bigDecimal?: Envio.whereOperator<BigDecimal.t>, @as("optBigDecimal") optBigDecimal?: Envio.whereOperator<option<BigDecimal.t>>, @as("bigDecimalWithConfig") bigDecimalWithConfig?: Envio.whereOperator<BigDecimal.t>, @as("arrayOfBigDecimals") arrayOfBigDecimals?: Envio.whereOperator<array<BigDecimal.t>>, @as("timestamp") timestamp?: Envio.whereOperator<Date.t>, @as("optTimestamp") optTimestamp?: Envio.whereOperator<option<Date.t>>, @as("json") json?: Envio.whereOperator<JSON.t>, @as("enumField") enumField?: Envio.whereOperator<Enums.AccountType.t>, @as("optEnumField") optEnumField?: Envio.whereOperator<option<Enums.AccountType.t>>}
   }
 
   module EntityWithBigDecimal = {
-    type t = {id: id, bigDecimal: BigDecimal.t}
     type id = string
+    type t = {id: id, bigDecimal: BigDecimal.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("bigDecimal") bigDecimal?: Envio.whereOperator<BigDecimal.t>}
   }
 
   module EntityWithRestrictedReScriptField = {
-    type t = {id: id, @as("type") type_: string}
     type id = string
+    type t = {id: id, @as("type") type_: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("type") type_?: Envio.whereOperator<string>}
   }
 
   module EntityWithTimestamp = {
-    type t = {id: id, timestamp: Date.t}
     type id = string
+    type t = {id: id, timestamp: Date.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("timestamp") timestamp?: Envio.whereOperator<Date.t>}
   }
 
   module Gravatar = {
-    type t = {id: id, owner_id: id, displayName: string, imageUrl: string, updatesCount: bigint, size: Enums.GravatarSize.t}
     type id = string
+    type t = {id: id, owner_id: id, displayName: string, imageUrl: string, updatesCount: bigint, size: Enums.GravatarSize.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<id>, @as("displayName") displayName?: Envio.whereOperator<string>, @as("imageUrl") imageUrl?: Envio.whereOperator<string>, @as("updatesCount") updatesCount?: Envio.whereOperator<bigint>, @as("size") size?: Envio.whereOperator<Enums.GravatarSize.t>}
   }
 
   module IntIdEntity = {
-    type t = {id: int, value: string}
     type id = int
+    type t = {id: int, value: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<int>, @as("value") value?: Envio.whereOperator<string>}
   }
 
   module NftCollection = {
-    type t = {id: id, contractAddress: string, name: string, symbol: string, maxSupply: bigint, currentSupply: int}
     type id = string
+    type t = {id: id, contractAddress: string, name: string, symbol: string, maxSupply: bigint, currentSupply: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("contractAddress") contractAddress?: Envio.whereOperator<string>, @as("name") name?: Envio.whereOperator<string>, @as("symbol") symbol?: Envio.whereOperator<string>, @as("maxSupply") maxSupply?: Envio.whereOperator<bigint>, @as("currentSupply") currentSupply?: Envio.whereOperator<int>}
   }
 
   module PostgresNumericPrecisionEntityTester = {
-    type t = {id: id, exampleBigInt: option<bigint>, exampleBigIntRequired: bigint, exampleBigIntArray: option<array<bigint>>, exampleBigIntArrayRequired: array<bigint>, exampleBigDecimal: option<BigDecimal.t>, exampleBigDecimalRequired: BigDecimal.t, exampleBigDecimalArray: option<array<BigDecimal.t>>, exampleBigDecimalArrayRequired: array<BigDecimal.t>, exampleBigDecimalOtherOrder: BigDecimal.t}
     type id = string
+    type t = {id: id, exampleBigInt: option<bigint>, exampleBigIntRequired: bigint, exampleBigIntArray: option<array<bigint>>, exampleBigIntArrayRequired: array<bigint>, exampleBigDecimal: option<BigDecimal.t>, exampleBigDecimalRequired: BigDecimal.t, exampleBigDecimalArray: option<array<BigDecimal.t>>, exampleBigDecimalArrayRequired: array<BigDecimal.t>, exampleBigDecimalOtherOrder: BigDecimal.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("exampleBigInt") exampleBigInt?: Envio.whereOperator<option<bigint>>, @as("exampleBigIntRequired") exampleBigIntRequired?: Envio.whereOperator<bigint>, @as("exampleBigIntArray") exampleBigIntArray?: Envio.whereOperator<option<array<bigint>>>, @as("exampleBigIntArrayRequired") exampleBigIntArrayRequired?: Envio.whereOperator<array<bigint>>, @as("exampleBigDecimal") exampleBigDecimal?: Envio.whereOperator<option<BigDecimal.t>>, @as("exampleBigDecimalRequired") exampleBigDecimalRequired?: Envio.whereOperator<BigDecimal.t>, @as("exampleBigDecimalArray") exampleBigDecimalArray?: Envio.whereOperator<option<array<BigDecimal.t>>>, @as("exampleBigDecimalArrayRequired") exampleBigDecimalArrayRequired?: Envio.whereOperator<array<BigDecimal.t>>, @as("exampleBigDecimalOtherOrder") exampleBigDecimalOtherOrder?: Envio.whereOperator<BigDecimal.t>}
   }
 
   module SimpleEntity = {
-    type t = {id: id, value: string}
     type id = string
+    type t = {id: id, value: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("value") value?: Envio.whereOperator<string>}
   }
 
   module SimulateTestEvent = {
-    type t = {id: id, blockNumber: int, logIndex: int, timestamp: int}
     type id = string
+    type t = {id: id, blockNumber: int, logIndex: int, timestamp: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("blockNumber") blockNumber?: Envio.whereOperator<int>, @as("logIndex") logIndex?: Envio.whereOperator<int>, @as("timestamp") timestamp?: Envio.whereOperator<int>}
   }
 
   module Token = {
-    type t = {id: id, tokenId: bigint, collection_id: id, owner_id: id}
     type id = string
+    type t = {id: id, tokenId: bigint, collection_id: id, owner_id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("tokenId") tokenId?: Envio.whereOperator<bigint>, @as("collection_id") collection?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<id>}
   }
 
   module User = {
-    type t = {id: id, address: string, gravatar_id: option<id>, updatesCountOnUserForTesting: int, accountType: Enums.AccountType.t}
     type id = string
+    type t = {id: id, address: string, gravatar_id: option<id>, updatesCountOnUserForTesting: int, accountType: Enums.AccountType.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("address") address?: Envio.whereOperator<string>, @as("gravatar_id") gravatar?: Envio.whereOperator<option<id>>, @as("updatesCountOnUserForTesting") updatesCountOnUserForTesting?: Envio.whereOperator<int>, @as("accountType") accountType?: Envio.whereOperator<Enums.AccountType.t>}
   }
@@ -370,7 +370,16 @@ module Entities = {
     | @as("User") User: name<User.t>
 }
 
-type handlerEntityOperations<'entity, 'id, 'getWhereFilter> = {
+type handlerEntityOperations<'entity, 'getWhereFilter> = {
+  get: string => promise<option<'entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: string => unit,
+}
+
+type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   get: 'id => promise<option<'entity>>,
   getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
@@ -384,27 +393,27 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  \"A": handlerEntityOperations<Entities.A.t, Entities.A.id, Entities.A.getWhereFilter>,
-  \"B": handlerEntityOperations<Entities.B.t, Entities.B.id, Entities.B.getWhereFilter>,
-  \"BigIntIdEntity": handlerEntityOperations<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id, Entities.BigIntIdEntity.getWhereFilter>,
-  \"C": handlerEntityOperations<Entities.C.t, Entities.C.id, Entities.C.getWhereFilter>,
-  \"CustomSelectionTestPass": handlerEntityOperations<Entities.CustomSelectionTestPass.t, Entities.CustomSelectionTestPass.id, Entities.CustomSelectionTestPass.getWhereFilter>,
-  \"D": handlerEntityOperations<Entities.D.t, Entities.D.id, Entities.D.getWhereFilter>,
-  \"EntityWith63LenghtName______________________________________one": handlerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t, Entities.EntityWith63LenghtName______________________________________one.id, Entities.EntityWith63LenghtName______________________________________one.getWhereFilter>,
-  \"EntityWith63LenghtName______________________________________two": handlerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t, Entities.EntityWith63LenghtName______________________________________two.id, Entities.EntityWith63LenghtName______________________________________two.getWhereFilter>,
-  \"EntityWithAllNonArrayTypes": handlerEntityOperations<Entities.EntityWithAllNonArrayTypes.t, Entities.EntityWithAllNonArrayTypes.id, Entities.EntityWithAllNonArrayTypes.getWhereFilter>,
-  \"EntityWithAllTypes": handlerEntityOperations<Entities.EntityWithAllTypes.t, Entities.EntityWithAllTypes.id, Entities.EntityWithAllTypes.getWhereFilter>,
-  \"EntityWithBigDecimal": handlerEntityOperations<Entities.EntityWithBigDecimal.t, Entities.EntityWithBigDecimal.id, Entities.EntityWithBigDecimal.getWhereFilter>,
-  \"EntityWithRestrictedReScriptField": handlerEntityOperations<Entities.EntityWithRestrictedReScriptField.t, Entities.EntityWithRestrictedReScriptField.id, Entities.EntityWithRestrictedReScriptField.getWhereFilter>,
-  \"EntityWithTimestamp": handlerEntityOperations<Entities.EntityWithTimestamp.t, Entities.EntityWithTimestamp.id, Entities.EntityWithTimestamp.getWhereFilter>,
-  \"Gravatar": handlerEntityOperations<Entities.Gravatar.t, Entities.Gravatar.id, Entities.Gravatar.getWhereFilter>,
-  \"IntIdEntity": handlerEntityOperations<Entities.IntIdEntity.t, Entities.IntIdEntity.id, Entities.IntIdEntity.getWhereFilter>,
-  \"NftCollection": handlerEntityOperations<Entities.NftCollection.t, Entities.NftCollection.id, Entities.NftCollection.getWhereFilter>,
-  \"PostgresNumericPrecisionEntityTester": handlerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t, Entities.PostgresNumericPrecisionEntityTester.id, Entities.PostgresNumericPrecisionEntityTester.getWhereFilter>,
-  \"SimpleEntity": handlerEntityOperations<Entities.SimpleEntity.t, Entities.SimpleEntity.id, Entities.SimpleEntity.getWhereFilter>,
-  \"SimulateTestEvent": handlerEntityOperations<Entities.SimulateTestEvent.t, Entities.SimulateTestEvent.id, Entities.SimulateTestEvent.getWhereFilter>,
-  \"Token": handlerEntityOperations<Entities.Token.t, Entities.Token.id, Entities.Token.getWhereFilter>,
-  \"User": handlerEntityOperations<Entities.User.t, Entities.User.id, Entities.User.getWhereFilter>,
+  \"A": handlerEntityOperations<Entities.A.t, Entities.A.getWhereFilter>,
+  \"B": handlerEntityOperations<Entities.B.t, Entities.B.getWhereFilter>,
+  \"BigIntIdEntity": handlerEntityOperationsWithCustomId<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id, Entities.BigIntIdEntity.getWhereFilter>,
+  \"C": handlerEntityOperations<Entities.C.t, Entities.C.getWhereFilter>,
+  \"CustomSelectionTestPass": handlerEntityOperations<Entities.CustomSelectionTestPass.t, Entities.CustomSelectionTestPass.getWhereFilter>,
+  \"D": handlerEntityOperations<Entities.D.t, Entities.D.getWhereFilter>,
+  \"EntityWith63LenghtName______________________________________one": handlerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t, Entities.EntityWith63LenghtName______________________________________one.getWhereFilter>,
+  \"EntityWith63LenghtName______________________________________two": handlerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t, Entities.EntityWith63LenghtName______________________________________two.getWhereFilter>,
+  \"EntityWithAllNonArrayTypes": handlerEntityOperations<Entities.EntityWithAllNonArrayTypes.t, Entities.EntityWithAllNonArrayTypes.getWhereFilter>,
+  \"EntityWithAllTypes": handlerEntityOperations<Entities.EntityWithAllTypes.t, Entities.EntityWithAllTypes.getWhereFilter>,
+  \"EntityWithBigDecimal": handlerEntityOperations<Entities.EntityWithBigDecimal.t, Entities.EntityWithBigDecimal.getWhereFilter>,
+  \"EntityWithRestrictedReScriptField": handlerEntityOperations<Entities.EntityWithRestrictedReScriptField.t, Entities.EntityWithRestrictedReScriptField.getWhereFilter>,
+  \"EntityWithTimestamp": handlerEntityOperations<Entities.EntityWithTimestamp.t, Entities.EntityWithTimestamp.getWhereFilter>,
+  \"Gravatar": handlerEntityOperations<Entities.Gravatar.t, Entities.Gravatar.getWhereFilter>,
+  \"IntIdEntity": handlerEntityOperationsWithCustomId<Entities.IntIdEntity.t, Entities.IntIdEntity.id, Entities.IntIdEntity.getWhereFilter>,
+  \"NftCollection": handlerEntityOperations<Entities.NftCollection.t, Entities.NftCollection.getWhereFilter>,
+  \"PostgresNumericPrecisionEntityTester": handlerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t, Entities.PostgresNumericPrecisionEntityTester.getWhereFilter>,
+  \"SimpleEntity": handlerEntityOperations<Entities.SimpleEntity.t, Entities.SimpleEntity.getWhereFilter>,
+  \"SimulateTestEvent": handlerEntityOperations<Entities.SimulateTestEvent.t, Entities.SimulateTestEvent.getWhereFilter>,
+  \"Token": handlerEntityOperations<Entities.Token.t, Entities.Token.getWhereFilter>,
+  \"User": handlerEntityOperations<Entities.User.t, Entities.User.getWhereFilter>,
 }
 
 type chainId = [#1337 | #1 | #100 | #137]
@@ -2002,7 +2011,18 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity, 'id> = {
+type testIndexerEntityOperations<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
+type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
   /** Get an entity by ID. */
   get: 'id => promise<option<'entity>>,
   /** Get all entities. */
@@ -2021,30 +2041,30 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"A": testIndexerEntityOperations<Entities.A.t, Entities.A.id>,
-  \"B": testIndexerEntityOperations<Entities.B.t, Entities.B.id>,
-  \"BigIntIdEntity": testIndexerEntityOperations<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id>,
-  \"C": testIndexerEntityOperations<Entities.C.t, Entities.C.id>,
-  \"CustomSelectionTestPass": testIndexerEntityOperations<Entities.CustomSelectionTestPass.t, Entities.CustomSelectionTestPass.id>,
-  \"D": testIndexerEntityOperations<Entities.D.t, Entities.D.id>,
-  \"EntityWith63LenghtName______________________________________one": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t, Entities.EntityWith63LenghtName______________________________________one.id>,
-  \"EntityWith63LenghtName______________________________________two": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t, Entities.EntityWith63LenghtName______________________________________two.id>,
-  \"EntityWithAllNonArrayTypes": testIndexerEntityOperations<Entities.EntityWithAllNonArrayTypes.t, Entities.EntityWithAllNonArrayTypes.id>,
-  \"EntityWithAllTypes": testIndexerEntityOperations<Entities.EntityWithAllTypes.t, Entities.EntityWithAllTypes.id>,
-  \"EntityWithBigDecimal": testIndexerEntityOperations<Entities.EntityWithBigDecimal.t, Entities.EntityWithBigDecimal.id>,
-  \"EntityWithRestrictedReScriptField": testIndexerEntityOperations<Entities.EntityWithRestrictedReScriptField.t, Entities.EntityWithRestrictedReScriptField.id>,
-  \"EntityWithTimestamp": testIndexerEntityOperations<Entities.EntityWithTimestamp.t, Entities.EntityWithTimestamp.id>,
-  \"Gravatar": testIndexerEntityOperations<Entities.Gravatar.t, Entities.Gravatar.id>,
-  \"IntIdEntity": testIndexerEntityOperations<Entities.IntIdEntity.t, Entities.IntIdEntity.id>,
-  \"NftCollection": testIndexerEntityOperations<Entities.NftCollection.t, Entities.NftCollection.id>,
-  \"PostgresNumericPrecisionEntityTester": testIndexerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t, Entities.PostgresNumericPrecisionEntityTester.id>,
-  \"SimpleEntity": testIndexerEntityOperations<Entities.SimpleEntity.t, Entities.SimpleEntity.id>,
-  \"SimulateTestEvent": testIndexerEntityOperations<Entities.SimulateTestEvent.t, Entities.SimulateTestEvent.id>,
-  \"Token": testIndexerEntityOperations<Entities.Token.t, Entities.Token.id>,
-  \"User": testIndexerEntityOperations<Entities.User.t, Entities.User.id>,
+  \"A": testIndexerEntityOperations<Entities.A.t>,
+  \"B": testIndexerEntityOperations<Entities.B.t>,
+  \"BigIntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id>,
+  \"C": testIndexerEntityOperations<Entities.C.t>,
+  \"CustomSelectionTestPass": testIndexerEntityOperations<Entities.CustomSelectionTestPass.t>,
+  \"D": testIndexerEntityOperations<Entities.D.t>,
+  \"EntityWith63LenghtName______________________________________one": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t>,
+  \"EntityWith63LenghtName______________________________________two": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t>,
+  \"EntityWithAllNonArrayTypes": testIndexerEntityOperations<Entities.EntityWithAllNonArrayTypes.t>,
+  \"EntityWithAllTypes": testIndexerEntityOperations<Entities.EntityWithAllTypes.t>,
+  \"EntityWithBigDecimal": testIndexerEntityOperations<Entities.EntityWithBigDecimal.t>,
+  \"EntityWithRestrictedReScriptField": testIndexerEntityOperations<Entities.EntityWithRestrictedReScriptField.t>,
+  \"EntityWithTimestamp": testIndexerEntityOperations<Entities.EntityWithTimestamp.t>,
+  \"Gravatar": testIndexerEntityOperations<Entities.Gravatar.t>,
+  \"IntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.IntIdEntity.t, Entities.IntIdEntity.id>,
+  \"NftCollection": testIndexerEntityOperations<Entities.NftCollection.t>,
+  \"PostgresNumericPrecisionEntityTester": testIndexerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t>,
+  \"SimpleEntity": testIndexerEntityOperations<Entities.SimpleEntity.t>,
+  \"SimulateTestEvent": testIndexerEntityOperations<Entities.SimulateTestEvent.t>,
+  \"Token": testIndexerEntityOperations<Entities.Token.t>,
+  \"User": testIndexerEntityOperations<Entities.User.t>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity, 'id> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 
