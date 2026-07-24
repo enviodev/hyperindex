@@ -20,7 +20,7 @@ let maxChainConcurrency = 100
 // the chain's concurrency budget stops one busy contract from monopolising them.
 let clientFilterAddressThreshold =
   envSafe->EnvSafe.get(
-    "ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD",
+    "ENVIO_EXPERIMENTAL_CLIENT_FILTER_ADDRESS_THRESHOLD",
     S.int,
     ~fallback=maxAddrInPartition * maxChainConcurrency / 2,
   )
