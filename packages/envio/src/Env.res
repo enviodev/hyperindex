@@ -9,17 +9,20 @@ let updateSyncTimeOnRestart =
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 
+// Most parallel in-flight queries a single chain may have at once, across all
+// its partitions (consumed as FetchState.maxChainConcurrency).
+let maxChainConcurrency = 100
+
 // Switch a single contract to client-side address filtering (wildcard mode)
 // once its registered address count crosses this threshold. Keeping addresses
 // server-side spreads the contract across ceil(count / maxAddrInPartition)
-// partitions; a single HTTP/2 connection (one per chain) tops out around 100
-// concurrent requests, so we switch a bit before that ceiling — default 80
-// partitions' worth — to keep one busy contract from saturating the connection.
+// partitions, each holding an in-flight query slot; capping a contract at half
+// the chain's concurrency budget stops one busy contract from monopolising them.
 let maxContractServerSideAddresses =
   envSafe->EnvSafe.get(
     "ENVIO_MAX_CONTRACT_SERVER_SIDE_ADDRESSES",
     S.int,
-    ~fallback=maxAddrInPartition * 80,
+    ~fallback=maxAddrInPartition * maxChainConcurrency / 2,
   )
 
 // Target number of in-memory objects (uncommitted entity/effect changes plus

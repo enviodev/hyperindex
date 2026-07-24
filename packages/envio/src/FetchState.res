@@ -995,6 +995,27 @@ let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address
   all
 }
 
+// Move a contract to client-side (wildcard) address filtering, recording why.
+let addWildcardContract = (
+  wildcardContracts: Utils.Set.t<string>,
+  ~contractName,
+  ~chainId,
+  ~addressCount,
+  ~threshold,
+) => {
+  wildcardContracts->Utils.Set.add(contractName)->ignore
+  Logging.createChild(
+    ~params={
+      "chainId": chainId,
+      "contractName": contractName,
+      "addressCount": addressCount,
+      "threshold": threshold,
+    },
+  )->Logging.childTrace(
+    "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+  )
+}
+
 // Collapse every wildcard contract's (single-contract) dynamic partitions and
 // the existing address-free wildcard partition, if any, into one address-free
 // partition at their minimum latestFetchedBlock. Its registrations are the
@@ -1041,6 +1062,16 @@ let collapseWildcardContracts = (
     )
     switch absorbedPartitions {
     | [] => partitions
+    // The only absorbed partition is the existing wildcard partition and the
+    // client-filtered set hasn't grown: nothing to fold in. Keep it as-is
+    // instead of tearing it down — a fresh partition would drop its in-flight
+    // queries and learned density and needlessly re-fetch its frontier. Rebuild
+    // only when there's an address-bound partition to absorb (frontier drags
+    // back for backfill) or a newly-switched contract to add.
+    | [p]
+      if !p.selection.dependsOnAddresses &&
+      p.selection.clientSideFilteredContracts->Option.mapOr(0, Array.length) ===
+        wildcardContracts->Utils.Set.size => partitions
     | _ =>
       let minFrontier = ref((absorbedPartitions->Array.getUnsafe(0)).latestFetchedBlock)
       let regByIndex = Dict.make()
@@ -1546,14 +1577,17 @@ let registerDynamicContracts = (
       | Some(threshold) =>
         dynamicContractsRef.contents
         ->Utils.Set.toArray
-        ->Array.forEach(contractName =>
-          if (
-            !(wildcardContracts->Utils.Set.has(contractName)) &&
-            indexingAddresses->IndexingAddresses.contractCount(~contractName) > threshold
-          ) {
-            wildcardContracts->Utils.Set.add(contractName)->ignore
+        ->Array.forEach(contractName => {
+          let addressCount = indexingAddresses->IndexingAddresses.contractCount(~contractName)
+          if !(wildcardContracts->Utils.Set.has(contractName)) && addressCount > threshold {
+            wildcardContracts->addWildcardContract(
+              ~contractName,
+              ~chainId=fetchState.chainId,
+              ~addressCount,
+              ~threshold,
+            )
           }
-        )
+        })
       | None => ()
       }
 
@@ -1678,7 +1712,7 @@ let maxInFlightChunksPerPartition = 12
 // Most parallel in-flight queries a single chain may have at once, across all
 // its partitions. Bounds source load on chains with many partitions, where the
 // per-partition cap alone would admit thousands of concurrent queries.
-let maxChainConcurrency = 100
+let maxChainConcurrency = Env.maxChainConcurrency
 
 // Chunk spans grow by this factor over the smallest recently observed source
 // range, so the pipeline keeps probing for more capacity instead of locking in
@@ -2440,19 +2474,17 @@ let make = (
     }
   })
 
-  // Switch dynamic contracts already over the server-side address threshold to
-  // wildcard mode (e.g. on restart with a large persisted address set).
+  // Switch any contract already over the server-side address threshold to
+  // wildcard mode at creation — a config contract with a large static address
+  // list, or a dynamic contract restored from a large persisted set.
   switch wildcardAddressThreshold {
   | Some(threshold) =>
-    dynamicContracts
-    ->Utils.Set.toArray
-    ->Array.forEach(contractName =>
-      switch registeringContractsByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-      | Some(addrs) if addrs->Utils.Dict.size > threshold =>
-        wildcardContracts->Utils.Set.add(contractName)->ignore
-      | _ => ()
+    registeringContractsByContract->Utils.Dict.forEachWithKey((addrs, contractName) => {
+      let addressCount = addrs->Utils.Dict.size
+      if addressCount > threshold {
+        wildcardContracts->addWildcardContract(~contractName, ~chainId, ~addressCount, ~threshold)
       }
-    )
+    })
   | None => ()
   }
 
