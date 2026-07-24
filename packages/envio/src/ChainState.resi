@@ -80,13 +80,7 @@ let hasReadyItem: t => bool
 let targetBlock: (t, ~chainTargetItems: float) => int
 let blockAtProgress: (t, ~progress: float) => int
 let frontierProgress: t => float
-let getNextQuery: (
-  t,
-  ~chainTargetItems: float,
-  ~chunkItemsMultiplier: float=?,
-  ~itemsTargetFloor: int=?,
-  ~maxTargetBlock: int=?,
-) => FetchState.nextQuery
+let getNextQuery: (t, ~chainTargetItems: float, ~maxTargetBlock: int=?) => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,

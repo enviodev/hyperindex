@@ -9,7 +9,7 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  itemsTarget: 0,
+  itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
   addressesByContractName: Dict.make(),
@@ -93,7 +93,7 @@ describe("FetchState onBlock functionality", () => {
     // This should trigger the onBlock logic and add block items to the queue
     let query: FetchState.query = {
       partitionId: "0",
-      itemsTarget: 0,
+      itemsTarget: Some(0),
       itemsEst: 0,
       toBlock: None,
       isChunk: false,
@@ -141,7 +141,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
       partitionId: "0",
-      itemsTarget: 0,
+      itemsTarget: Some(0),
       itemsEst: 0,
       toBlock: None,
       isChunk: false,
@@ -190,7 +190,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch that goes from block 0 to 10
     let query: FetchState.query = {
       partitionId: "0",
-      itemsTarget: 0,
+      itemsTarget: Some(0),
       itemsEst: 0,
       toBlock: None,
       isChunk: false,
@@ -243,7 +243,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch
     let query: FetchState.query = {
       partitionId: "0",
-      itemsTarget: 0,
+      itemsTarget: Some(0),
       itemsEst: 0,
       toBlock: None,
       isChunk: false,
@@ -299,7 +299,7 @@ describe("FetchState onBlock functionality", () => {
     // Process a batch
     let query: FetchState.query = {
       partitionId: "0",
-      itemsTarget: 0,
+      itemsTarget: Some(0),
       itemsEst: 0,
       toBlock: None,
       isChunk: false,

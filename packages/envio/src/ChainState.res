@@ -547,13 +547,7 @@ let frontierProgress = (cs: t) =>
 // maxTargetBlock set to the most-behind chain's progress mapped onto this
 // chain, so a chain with budget can't run further ahead than the chain the
 // whole pool is prioritizing.
-let getNextQuery = (
-  cs: t,
-  ~chainTargetItems: float,
-  ~chunkItemsMultiplier=1.,
-  ~itemsTargetFloor=0,
-  ~maxTargetBlock=?,
-) => {
+let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
   let chainTargetBlock = switch maxTargetBlock {
   | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
@@ -567,10 +561,6 @@ let getNextQuery = (
   // of being held by an oversized probe.
   let chainTargetItems = switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
-    // No extra headroom here: the budget is reserved in honest itemsEst units,
-    // and truncation safety lives in the itemsTarget server cap (sized with
-    // chunkItemsMultiplier at query creation) — multiplying the budget cap too
-    // would compound the two and hold budget away from other chains.
     let rangeCost =
       density *. (chainTargetBlock - cs.fetchState->FetchState.bufferBlockNumber)->Int.toFloat
     Pervasives.min(chainTargetItems, Math.ceil(rangeCost) +. cs.pendingBudget)
@@ -578,12 +568,7 @@ let getNextQuery = (
   // budget to the cold-chain cap, so it's used as-is.
   | _ => chainTargetItems
   }
-  cs.fetchState->FetchState.getNextQuery(
-    ~chainTargetBlock,
-    ~chainTargetItems,
-    ~chunkItemsMultiplier,
-    ~itemsTargetFloor,
-  )
+  cs.fetchState->FetchState.getNextQuery(~chainTargetBlock, ~chainTargetItems)
 }
 
 // Run a fetch tick for this chain against its sources, feeding the owned fetch
