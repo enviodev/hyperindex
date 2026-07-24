@@ -217,6 +217,7 @@ let deriveSrcAddress = (
   ~eventConfig: Internal.eventConfig,
   ~chainConfig: Config.chain,
   ~config: Config.t,
+  ~activeRegistration: HandlerRegister.activeRegistration,
 ): Address.t => {
   switch providedSrcAddress {
   // Canonicalize to the configured casing; the fallback addresses below already
@@ -226,6 +227,7 @@ let deriveSrcAddress = (
   | None =>
     if (
       HandlerRegister.isWildcard(
+        ~registration=activeRegistration,
         ~contractName=eventConfig.contractName,
         ~eventName=eventConfig.name,
       )
@@ -245,6 +247,7 @@ let parse = (
   ~config: Config.t,
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~activeRegistration: HandlerRegister.activeRegistration,
 ): array<Internal.item> => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
@@ -300,6 +303,7 @@ let parse = (
         ~eventConfig,
         ~chainConfig,
         ~config,
+        ~activeRegistration,
       )
 
       let rawItem = rawJson->(Utils.magic: JSON.t => {..})
@@ -350,6 +354,7 @@ let parse = (
       // instead of silently running nothing.
       let liveRegistrations =
         HandlerRegister.getSimulateOnEventRegistrations(
+          ~registration=activeRegistration,
           ~config,
           ~chainId,
           ~eventConfig,
@@ -415,6 +420,7 @@ let patchConfig = (
   ~config: Config.t,
   ~processConfig: JSON.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+  ~activeRegistration: HandlerRegister.activeRegistration,
 ): Config.t => {
   let processChains: option<dict<JSON.t>> =
     (processConfig->(Utils.magic: JSON.t => {..}))["chains"]->Nullable.toOption
@@ -450,6 +456,7 @@ let patchConfig = (
             ~config,
             ~chainConfig,
             ~onEventRegistrations=chainRegistrations.onEventRegistrations,
+            ~activeRegistration,
           )
           let source = SimulateSource.make(~items, ~endBlock, ~chain)
           {...chainConfig, sourceConfig: Config.CustomSources([source])}

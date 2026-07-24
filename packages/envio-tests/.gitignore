@@ -4,3 +4,6 @@ node_modules/
 lib
 *.res.js
 *.res.mjs
+
+# Internal test indexer temp handler files
+test/.tmp/

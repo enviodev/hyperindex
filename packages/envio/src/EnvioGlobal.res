@@ -16,6 +16,10 @@
 type t = {
   version: string,
   mutable activeRegistration: option<unknown>,
+  // When set, registration and `indexer` getters resolve against this scope
+  // instead of `activeRegistration`. Used by the internal test indexer to run
+  // an isolated handler set per instance without touching the global registry.
+  mutable registrationScopeOverride: option<unknown>,
   preRegistered: array<unknown>,
   rollbackCommitCallbacks: array<unknown>,
   mutable indexerState: option<unknown>,
@@ -40,6 +44,7 @@ let value: t = {
     let fresh = {
       version,
       activeRegistration: None,
+      registrationScopeOverride: None,
       preRegistered: [],
       rollbackCommitCallbacks: [],
       indexerState: None,
