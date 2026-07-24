@@ -33,7 +33,7 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
       Table.mkField("score", Int32, ~isIndex=true, ~fieldSchema=S.int),
       Table.mkField("name", String, ~fieldSchema=S.string),
-      Table.mkField("owner", Entity({name: "Owner"}), ~linkedEntity="Owner", ~fieldSchema=S.string),
+      Table.mkField("owner", String, ~linkedEntity="Owner", ~fieldSchema=S.string),
       Table.mkDerivedFromField("tokens", ~derivedFromEntity="Token", ~derivedFromField="owner"),
     ],
   )
@@ -237,7 +237,7 @@ describe("EntityFilter.merge", () => {
         EntityFilter.Eq({fieldName: "a", fieldValue: v(1)}),
         EntityFilter.And({filters: [EntityFilter.Eq({fieldName: "a", fieldValue: v(2)})]}),
       ]->EntityFilter.merge
-    ).toThrowError(
+    ).toThrowErrorEqual(
       "Unexpected filter And(a:Eq:2) in a merged batch. Filters batched into a single query must use the same operator and field.",
     )
   })

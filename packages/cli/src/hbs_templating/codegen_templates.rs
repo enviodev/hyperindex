@@ -85,14 +85,34 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
     code
 }
 
+/// An entity's `id` rescript type and whether it is the default `string`.
+/// Foreign keys and id-keyed operations adopt this type; `ID!`/`String!` keep
+/// `string`, `Int!` is `int`, `BigInt!` is `bigint`.
+fn entity_id_type(entity: &EntityRecordTypeTemplate) -> (bool, String) {
+    entity
+        .params
+        .iter()
+        .find(|param| param.field_name.uncapitalized == "id")
+        .map(|param| match &param.field_type {
+            TypeIdent::ID | TypeIdent::String => (true, "string".to_string()),
+            other => (false, other.to_string()),
+        })
+        .unwrap_or((true, "string".to_string()))
+}
+
 fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     let mut code = String::new();
 
+    // The default id type. `ID!`/`String!` ids and the foreign keys that
+    // reference them render as this alias; numeric ids render as int/bigint.
     writeln!(code, "type id = string").unwrap();
 
     for entity in entities {
+        let (_, id_type) = entity_id_type(entity);
+
         writeln!(code).unwrap();
         writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
+        writeln!(code, "  type id = {}", id_type).unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
         writeln!(code).unwrap();
         writeln!(
@@ -1478,19 +1498,40 @@ switch chainId {{
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
 
-        // Generate handlerContext types
+        // Generate handlerContext types. String ids use the plain
+        // `handlerEntityOperations`; numeric ids use the custom-id variant.
+        let has_custom_id_entity = entities.iter().any(|entity| !entity_id_type(entity).0);
         let handler_context_entity_fields = entities
             .iter()
             .map(|entity| {
-                format!(
-                    "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
-                    entity.name.capitalized,
-                    entity.name.capitalized,
-                    entity.name.capitalized,
-                )
+                let name = &entity.name.capitalized;
+                if entity_id_type(entity).0 {
+                    format!(
+                        "  \\\"{name}\": handlerEntityOperations<Entities.{name}.t, Entities.{name}.getWhereFilter>,",
+                    )
+                } else {
+                    format!(
+                        "  \\\"{name}\": handlerEntityOperationsWithCustomId<Entities.{name}.t, Entities.{name}.id, Entities.{name}.getWhereFilter>,",
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
+
+        let custom_id_handler_ops_code = if has_custom_id_entity {
+            r#"
+
+type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
+  get: 'id => promise<option<'entity>>,
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: 'id => unit,
+}"#
+        } else {
+            ""
+        };
 
         let handler_context_code = format!(
             r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
@@ -1500,16 +1541,15 @@ switch chainId {{
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
   deleteUnsafe: string => unit,
-}}
+}}{custom_id_handler_ops_code}
 
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-{}
+{handler_context_entity_fields}
 }}"#,
-            handler_context_entity_fields
         );
 
         // Generate contract modules with event sub-modules
@@ -1800,8 +1840,10 @@ type contractRegisterContext = {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Generate entity ops fields for the testIndexer type
-        let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
+        // Generate entity ops fields for the testIndexer type. String ids use
+        // the plain type; numeric ids use the custom-id variant.
+        let test_indexer_entity_ops_type = if has_custom_id_entity {
+            r#"/** Entity operations for direct access outside handlers. */
 type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
@@ -1811,15 +1853,43 @@ type testIndexerEntityOperations<'entity> = {
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
-}"#;
+}
+
+type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+  /** Get an entity by ID. */
+  get: 'id => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}"#
+        } else {
+            r#"/** Entity operations for direct access outside handlers. */
+type testIndexerEntityOperations<'entity> = {
+  /** Get an entity by ID. */
+  get: string => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}"#
+        };
 
         let test_indexer_entity_fields = entities
             .iter()
             .map(|entity| {
-                format!(
-                    "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
-                    entity.name.capitalized, entity.name.capitalized,
-                )
+                let name = &entity.name.capitalized;
+                if entity_id_type(entity).0 {
+                    format!("  \\\"{name}\": testIndexerEntityOperations<Entities.{name}.t>,")
+                } else {
+                    format!(
+                        "  \\\"{name}\": testIndexerEntityOperationsWithCustomId<Entities.{name}.t, Entities.{name}.id>,",
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -2307,18 +2377,16 @@ type testIndexer = {{
                         .iter()
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
+                            // Foreign keys take the referenced entity's id type
+                            // (already resolved into field_type), exposed under
+                            // the `_id` column name.
                             let ts_type = param.field_type.to_ts_type_string();
-                            let (field_name, field_type) = if param.is_entity_field {
-                                let base_type = if param.field_type.is_option() {
-                                    "string | undefined".to_string()
-                                } else {
-                                    "string".to_string()
-                                };
-                                (format!("{}_id", param.field_name.original), base_type)
+                            let field_name = if param.is_entity_field {
+                                format!("{}_id", param.field_name.original)
                             } else {
-                                (param.field_name.original.clone(), ts_type)
+                                param.field_name.original.clone()
                             };
-                            format!("    readonly \"{}\": {};", field_name, field_type)
+                            format!("    readonly \"{}\": {};", field_name, ts_type)
                         })
                         .collect();
                     format!(
@@ -2825,6 +2893,7 @@ mod test {
         utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use std::vec;
     use system_config::FieldSelection;
 
@@ -3362,6 +3431,66 @@ mod test {
         // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
         let project_template = get_project_template_helper("config2.yaml");
         insta::assert_snapshot!(project_template.indexer_code);
+    }
+
+    #[test]
+    fn indexer_code_exposes_numeric_entity_id_types() {
+        // Each entity module exposes its id scalar so handler/test-indexer
+        // operations are keyed by the real type: `ID!` reuses `string`, while
+        // `Int!`/`BigInt!` render as `int`/`bigint`.
+        let yaml = r#"
+name: numeric-ids
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer()
+"#;
+        let schema = r#"
+type Chain {
+  id: Int!
+}
+type BigThing {
+  id: BigInt!
+}
+type Vault {
+  id: ID!
+  chain: Chain!
+  big: BigThing!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("numeric-id config should parse");
+        let indexer_code = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code;
+
+        let expectations = [
+            // `type id` is emitted before `type t`.
+            "module Chain = {\n    type id = int\n    type t = {id: int}",
+            "module BigThing = {\n    type id = bigint\n    type t = {id: bigint}",
+            // The FK columns adopt the referenced entity's id type.
+            "module Vault = {\n    type id = string\n    type t = {id: id, chain_id: int, big_id: bigint}",
+            // Numeric ids use the custom-id operation variants...
+            "handlerEntityOperationsWithCustomId<Entities.Chain.t, Entities.Chain.id, Entities.Chain.getWhereFilter>",
+            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.t, Entities.BigThing.id>",
+            // ...while string ids stay on the plain, id-argument-free variants.
+            "handlerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
+            "testIndexerEntityOperations<Entities.Vault.t>",
+        ];
+        for expected in expectations {
+            assert!(
+                indexer_code.contains(expected),
+                "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
+            );
+        }
     }
 
     #[test]

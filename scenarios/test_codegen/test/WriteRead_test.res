@@ -100,7 +100,7 @@ describe("Write/read tests", () => {
     t.expect(await indexerMock.queryHistory(EntityWithAllTypes)).toEqual([
       Set({
         checkpointId: 1n,
-        entityId: "1",
+        entityId: "1"->EntityId.unsafeOfString,
         entity: entityWithAllTypes,
       }),
     ])
@@ -110,7 +110,7 @@ describe("Write/read tests", () => {
     t.expect(await indexerMock.queryHistory(EntityWithAllNonArrayTypes)).toEqual([
       Set({
         checkpointId: 1n,
-        entityId: "1",
+        entityId: "1"->EntityId.unsafeOfString,
         entity: entityWithAllNonArrayTypes,
       }),
     ])
@@ -129,7 +129,7 @@ describe("Write/read tests", () => {
     ).toEqual([
       Set({
         checkpointId: 1n,
-        entityId: "1",
+        entityId: "1"->EntityId.unsafeOfString,
         entity: {
           id: "1",
         },
@@ -149,7 +149,7 @@ describe("Write/read tests", () => {
     ).toEqual([
       Set({
         checkpointId: 1n,
-        entityId: "2",
+        entityId: "2"->EntityId.unsafeOfString,
         entity: {
           id: "2",
         },
@@ -220,9 +220,9 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
       await indexerMock.getBatchWritePromise()
 
       t.expect(await indexerMock.queryHistory(SimpleEntity)).toEqual([
-        Set({checkpointId: 1n, entityId: "untouched", entity: {id: "untouched", value: "batch1"}}),
-        Set({checkpointId: 1n, entityId: "updated", entity: {id: "updated", value: "batch1"}}),
-        Set({checkpointId: 3n, entityId: "updated", entity: {id: "updated", value: "batch2"}}),
+        Set({checkpointId: 1n, entityId: "untouched"->EntityId.unsafeOfString, entity: {id: "untouched", value: "batch1"}}),
+        Set({checkpointId: 1n, entityId: "updated"->EntityId.unsafeOfString, entity: {id: "updated", value: "batch1"}}),
+        Set({checkpointId: 3n, entityId: "updated"->EntityId.unsafeOfString, entity: {id: "updated", value: "batch2"}}),
       ])
     },
   )
@@ -235,7 +235,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
         ~committedCheckpointId=Internal.initialCheckpointId,
-        Set({entityId: id, entity: makeEntity(id), checkpointId}),
+        Set({entityId: id->EntityId.unsafeOfString, entity: makeEntity(id), checkpointId}),
       )
     add("loaded", Internal.loadedFromDbCheckpointId)
     add("committed", 5n)
@@ -257,7 +257,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
     let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
         ~committedCheckpointId=Internal.initialCheckpointId,
-        Set({entityId: id, entity: makeEntity(id), checkpointId}),
+        Set({entityId: id->EntityId.unsafeOfString, entity: makeEntity(id), checkpointId}),
       )
     add("loaded", Internal.loadedFromDbCheckpointId)
     add("committed", 5n)

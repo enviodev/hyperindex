@@ -17,11 +17,13 @@ module Entity = {
     mutable filterIndices: filterIndices,
   }
 
-  // Helper to extract entity ID from any entity
+  // Helper to extract an entity's id as a dict key. The raw id may be a
+  // string/int/bigint, so it's stringified to a stable key for in-memory
+  // indexing.
   exception UnexpectedIdNotDefinedOnEntity
   let getEntityIdUnsafe = (entity: Internal.entity): string =>
-    switch (entity->(Utils.magic: Internal.entity => {"id": option<string>}))["id"] {
-    | Some(id) => id
+    switch (entity->(Utils.magic: Internal.entity => {"id": option<EntityId.t>}))["id"] {
+    | Some(id) => id->EntityId.toKey
     | None =>
       UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
         ~msg="Property 'id' does not exist on expected entity object",
@@ -142,8 +144,8 @@ module Entity = {
     }
 
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
-    let entityId = change->Change.getEntityId
-    switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+    let entityKey = change->Change.getEntityId->EntityId.toKey
+    switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
       if (
@@ -158,9 +160,9 @@ module Entity = {
 
     switch change {
     | Set({entity}) => inMemTable->updateIndices(~entity)
-    | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId)
+    | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId=entityId->EntityId.toKey)
     }
-    inMemTable.latestEntityChangeById->Dict.set(entityId, change)
+    inMemTable.latestEntityChangeById->Dict.set(entityKey, change)
   }
 
   // Only writes when the id isn't already present, so set always takes its
@@ -172,10 +174,10 @@ module Entity = {
     ~entity: option<Internal.entity>,
   ) =>
     if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
+      let entityId = key->EntityId.unsafeOfString
       let change: Change.t<Internal.entity> = switch entity {
-      | Some(entity) =>
-        Set({entityId: key, entity, checkpointId: Internal.loadedFromDbCheckpointId})
-      | None => Delete({entityId: key, checkpointId: Internal.loadedFromDbCheckpointId})
+      | Some(entity) => Set({entityId, entity, checkpointId: Internal.loadedFromDbCheckpointId})
+      | None => Delete({entityId, checkpointId: Internal.loadedFromDbCheckpointId})
       }
       inMemTable->set(~committedCheckpointId, change)
     }

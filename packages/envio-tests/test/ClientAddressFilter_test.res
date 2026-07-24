@@ -53,7 +53,9 @@ describe("parseWhereOrThrow — address-param detection", () => {
       parseEvm(
         ~eventFilters=Some(%raw(`({chain}) => ({params: {to: [...chain.ERC20.addresses]}})`)),
       )->ignore
-    ).toThrowError("must be passed directly as an indexed-param filter value")
+    ).toThrowErrorEqual(
+      "Invalid where configuration for \"ERC20\": chain.ERC20.addresses must be passed directly as an indexed-param filter value (e.g. { params: { to: chain.ERC20.addresses } }). It cannot be spread, mapped, indexed, or otherwise transformed.",
+    )
   })
 
   it("throws when addresses are read but not used as a param filter", t => {
@@ -61,7 +63,9 @@ describe("parseWhereOrThrow — address-param detection", () => {
       parseEvm(
         ~eventFilters=Some(%raw(`({chain}) => { const _a = chain.ERC20.addresses; return true }`)),
       )->ignore
-    ).toThrowError("doesn't use it as an indexed-param filter value")
+    ).toThrowErrorEqual(
+      "Invalid where configuration for ERC20. The callback reads `chain.ERC20.addresses` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.ERC20.addresses } }.",
+    )
   })
 })
 
