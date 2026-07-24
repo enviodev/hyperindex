@@ -416,6 +416,8 @@ module Indexer = {
     ~enableRawEvents=false,
     ~reset=true,
     ~batchSize=?,
+    ~maxAddrInPartition=?,
+    ~maxContractServerSideAddresses=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
@@ -472,6 +474,10 @@ module Indexer = {
         enableRawEvents,
         chainMap,
         batchSize: batchSize->Option.getOr(baseConfig.batchSize),
+        maxAddrInPartition: maxAddrInPartition->Option.getOr(baseConfig.maxAddrInPartition),
+        maxContractServerSideAddresses: maxContractServerSideAddresses->Option.getOr(
+          baseConfig.maxContractServerSideAddresses,
+        ),
         reorgThresholdReadyTolerance,
       }
     }
