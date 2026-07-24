@@ -82,6 +82,7 @@ module Entities = {
 
   module User = {
     type t = {id: id, greetings: array<string>, latestGreeting: string, numberOfGreetings: int}
+    type id = string
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("greetings") greetings?: Envio.whereOperator<array<string>>, @as("latestGreeting") latestGreeting?: Envio.whereOperator<string>, @as("numberOfGreetings") numberOfGreetings?: Envio.whereOperator<int>}
   }
@@ -90,13 +91,13 @@ module Entities = {
     | @as("User") User: name<User.t>
 }
 
-type handlerEntityOperations<'entity, 'getWhereFilter> = {
-  get: string => promise<option<'entity>>,
-  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+type handlerEntityOperations<'entity, 'id, 'getWhereFilter> = {
+  get: 'id => promise<option<'entity>>,
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   getWhere: 'getWhereFilter => promise<array<'entity>>,
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
-  deleteUnsafe: string => unit,
+  deleteUnsafe: 'id => unit,
 }
 
 type handlerContext = {
@@ -104,7 +105,7 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  \"User": handlerEntityOperations<Entities.User.t, Entities.User.getWhereFilter>,
+  \"User": handlerEntityOperations<Entities.User.t, Entities.User.id, Entities.User.getWhereFilter>,
 }
 
 type chainId = [#0]
@@ -1186,13 +1187,13 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
+type testIndexerEntityOperations<'entity, 'id> = {
   /** Get an entity by ID. */
-  get: string => promise<option<'entity>>,
+  get: 'id => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
-  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }
@@ -1205,10 +1206,10 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"User": testIndexerEntityOperations<Entities.User.t>,
+  \"User": testIndexerEntityOperations<Entities.User.t, Entities.User.id>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity, 'id> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

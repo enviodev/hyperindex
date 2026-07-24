@@ -71,6 +71,15 @@ describe("Non-string entity id support", () => {
     )).toEqual(("Int32", "Decimal(20,0)"))
   })
 
+  it("degrades an unbounded BigInt id to a ClickHouse String column", t => {
+    // A BigInt without precision has no Decimal width, so ClickHouse falls back
+    // to String. This is expected (lexicographic ORDER BY) — pin it so the
+    // fallback isn't silently changed.
+    t.expect(
+      ClickHouse.getClickHouseFieldType(~fieldType=BigInt({}), ~isNullable=false, ~isArray=false),
+    ).toBe("String")
+  })
+
   it("serializes a history set update keeping the numeric id value", t => {
     let entitySchema =
       S.object(s =>
@@ -99,6 +108,29 @@ describe("Non-string entity id support", () => {
     )
   })
 })
+
+// Compile-time proof that the generated user-facing API keys each entity's
+// operations by its real id scalar. These functions are type-checked, never
+// run: `IntIdEntity` id is `int`, `BigIntIdEntity` id is `bigint`, and its
+// foreign key `numericRef_id` adopts the referenced `Int` id. Passing a string
+// where a numeric id is expected would fail to compile.
+let _handlerContextKeysOpsByIdScalar = async (context: Indexer.handlerContext) => {
+  context.\"IntIdEntity".set({id: 1, value: "x"})
+  let _: option<Indexer.Entities.IntIdEntity.t> = await context.\"IntIdEntity".get(1)
+  let _ = await context.\"IntIdEntity".getOrThrow(1)
+  context.\"IntIdEntity".deleteUnsafe(1)
+
+  context.\"BigIntIdEntity".set({id: 1n, numericRef_id: 2})
+  let _ = await context.\"BigIntIdEntity".get(1n)
+  context.\"BigIntIdEntity".deleteUnsafe(1n)
+}
+
+let _testIndexerKeysOpsByIdScalar = async (indexer: Indexer.testIndexer) => {
+  let _: option<Indexer.Entities.IntIdEntity.t> = await indexer.\"IntIdEntity".get(1)
+  let _ = await indexer.\"IntIdEntity".getOrThrow(1)
+  indexer.\"IntIdEntity".set({id: 1, value: "x"})
+  let _ = await indexer.\"BigIntIdEntity".get(1n)
+}
 
 // End-to-end coverage through the in-process test indexer + Postgres: a schema
 // with Int!/BigInt! ids and foreign keys referencing them, driven by a real
