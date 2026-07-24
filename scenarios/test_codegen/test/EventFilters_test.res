@@ -300,7 +300,7 @@ describe("Test eventFilters", () => {
         partitionId: "topic-filter-e2e",
         registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
         addressesByContractName,
-        clientSideFilteredContracts: None,
+        clientFilteredContracts: None,
       }) catch {
       | exn =>
         mock.close()

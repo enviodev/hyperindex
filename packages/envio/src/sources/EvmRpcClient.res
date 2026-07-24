@@ -28,9 +28,9 @@ type nextPageParams = {
   registrationIndexes: array<int>,
   addressesByContractName: dict<array<Address.t>>,
   // Contract names to fetch address-free even though their registrations
-  // depend on addresses (client-side / wildcard filtering). None/empty means
+  // depend on addresses (client-side filtering). None/empty means
   // every address-dependent contract is filtered server-side.
-  clientSideFilteredContracts: option<array<string>>,
+  clientFilteredContracts: option<array<string>>,
 }
 
 type nextPageResponse = {

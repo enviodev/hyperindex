@@ -1,13 +1,13 @@
 open Vitest
 
-// End-to-end guard that switching a contract to wildcard (client-side address)
-// mode never double-processes an event. When the switch collapses a contract's
+// End-to-end guard that switching a contract to client-side address filtering
+// never double-processes an event. When the switch collapses a contract's
 // partitions into one address-free partition at their minimum frontier, the
-// wildcard partition re-fetches the overlap; those re-delivered events must be
+// address-free partition re-fetches the overlap; those re-delivered events must be
 // deduped against the ones still in the buffer (nothing above the min frontier
 // has been processed yet).
-describe("Wildcard mode item dedup", () => {
-  Async.it("does not process an event twice across the switch to wildcard mode", async t => {
+describe("Client-side address filtering item dedup", () => {
+  Async.it("does not process an event twice across the switch to client-side filtering", async t => {
     let processed = []
     let record = (~blockNumber, ~logIndex) =>
       (async _ => processed->Array.push((blockNumber, logIndex))->ignore)->Obj.magic
@@ -18,8 +18,8 @@ describe("Wildcard mode item dedup", () => {
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
-      // Switch Gravatar to wildcard as soon as it has >2 registered addresses.
-      ~maxContractServerSideAddresses=2,
+      // Switch Gravatar to client-side filtering as soon as it has >2 registered addresses.
+      ~clientFilterAddressThreshold=2,
       ~maxAddrInPartition=1,
     )
     await Utils.delay(0)
@@ -30,7 +30,7 @@ describe("Wildcard mode item dedup", () => {
 
     // Fetch a Gravatar event at block 10 that registers 3 dynamic Gravatar
     // addresses. That pushes Gravatar past the threshold and collapses its
-    // partitions into a single wildcard partition mid-response.
+    // partitions into a single address-free partition mid-response.
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -64,7 +64,7 @@ describe("Wildcard mode item dedup", () => {
       ~message="a query re-fetches over block 10 after the switch",
     ).toBe(true)
 
-    // The wildcard partition re-fetches from its (min) frontier and re-delivers
+    // The address-free partition re-fetches from its (min) frontier and re-delivers
     // the block-10 event; advance it to the head so the buffered block-10 event
     // becomes processable. The re-delivered copy must be deduped.
     sourceMock.resolveGetItemsOrThrow(
@@ -76,7 +76,7 @@ describe("Wildcard mode item dedup", () => {
 
     t.expect(
       processed,
-      ~message="the block-10 event is processed exactly once despite the wildcard re-fetch",
+      ~message="the block-10 event is processed exactly once despite the backfill re-fetch",
     ).toEqual([(10, 0)])
   })
 })

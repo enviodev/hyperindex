@@ -63,7 +63,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
           [usdcAddress->Address.toString->String.toLowerCase->Address.unsafeFromString],
         ),
       ]),
-      clientSideFilteredContracts: None,
+      clientFilteredContracts: None,
     },
   )
   res

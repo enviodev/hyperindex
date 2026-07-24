@@ -417,7 +417,7 @@ module Indexer = {
     ~reset=true,
     ~batchSize=?,
     ~maxAddrInPartition=?,
-    ~maxContractServerSideAddresses=?,
+    ~clientFilterAddressThreshold=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
@@ -475,8 +475,8 @@ module Indexer = {
         chainMap,
         batchSize: batchSize->Option.getOr(baseConfig.batchSize),
         maxAddrInPartition: maxAddrInPartition->Option.getOr(baseConfig.maxAddrInPartition),
-        maxContractServerSideAddresses: maxContractServerSideAddresses->Option.getOr(
-          baseConfig.maxContractServerSideAddresses,
+        clientFilterAddressThreshold: clientFilterAddressThreshold->Option.getOr(
+          baseConfig.clientFilterAddressThreshold,
         ),
         reorgThresholdReadyTolerance,
       }
