@@ -127,6 +127,7 @@ impl Schema {
         self.check_enum_type_defs()?
             .check_schema_for_reserved_words()?
             .check_duplicate_naming_between_enums_and_entities()?
+            .check_capitalized_entity_name_collisions()?
             .check_related_type_defs_exist()?
             .validate_entity_field_types()
     }
@@ -184,6 +185,41 @@ impl Schema {
             ))
         } else {
             Ok(self)
+        }
+    }
+
+    // The handler context and generated types expose each entity under its
+    // capitalized name, so entities whose names differ only by the first
+    // letter's case (e.g. `user` and `User`) would map to the same accessor
+    // and silently shadow each other at runtime.
+    fn check_capitalized_entity_name_collisions(self) -> anyhow::Result<Self> {
+        let mut by_capitalized: HashMap<String, Vec<String>> = HashMap::new();
+        for name in self.entities.keys() {
+            by_capitalized
+                .entry(name.capitalize())
+                .or_default()
+                .push(name.clone());
+        }
+
+        let mut collisions = by_capitalized
+            .into_iter()
+            .filter(|(_, names)| names.len() > 1)
+            .map(|(capitalized, mut names)| {
+                names.sort();
+                format!("{} (from {})", capitalized, names.join(", "))
+            })
+            .collect::<Vec<_>>();
+
+        if collisions.is_empty() {
+            Ok(self)
+        } else {
+            collisions.sort();
+            Err(anyhow!(
+                "Schema contains entities whose names collide when capitalized. Each entity is \
+                 exposed on the handler context under its capitalized name, so these must be \
+                 unique: {}",
+                collisions.join("; ")
+            ))
         }
     }
 
@@ -2238,6 +2274,32 @@ type TestEntity {
         assert!(!pg_field.is_array);
         assert!(!pg_field.is_nullable);
         assert_eq!(pg_field.linked_entity, None);
+    }
+
+    #[test]
+    fn rejects_entities_that_collide_when_capitalized() {
+        let schema_str = r#"
+type user { id: ID! }
+type User { id: ID! }
+        "#;
+        let err = Schema::from_string(schema_str)
+            .expect_err("expected a capitalized entity-name collision error");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("collide when capitalized")
+                && message.contains("User (from User, user)"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn allows_entities_that_are_unique_when_capitalized() {
+        let schema_str = r#"
+type user { id: ID! }
+type post { id: ID! }
+        "#;
+        let schema = Schema::from_string(schema_str).unwrap();
+        assert_eq!(schema.entities.len(), 2);
     }
 
     #[test]

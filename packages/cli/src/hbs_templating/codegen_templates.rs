@@ -1484,7 +1484,7 @@ switch chainId {{
             .map(|entity| {
                 format!(
                     "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
-                    entity.name.original,
+                    entity.name.capitalized,
                     entity.name.capitalized,
                     entity.name.capitalized,
                 )
@@ -1818,7 +1818,7 @@ type testIndexerEntityOperations<'entity> = {
             .map(|entity| {
                 format!(
                     "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
-                    entity.name.original, entity.name.capitalized,
+                    entity.name.capitalized, entity.name.capitalized,
                 )
             })
             .collect::<Vec<_>>()

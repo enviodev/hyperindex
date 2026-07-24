@@ -199,7 +199,11 @@ let handleWriteBatch = (
           if deleted->Array.length > 0 {
             entityObj->Dict.set("deleted", deleted->(Utils.magic: array<string> => unknown))
           }
-          change->Dict.set(entityName, entityObj->(Utils.magic: dict<unknown> => unknown))
+          // Match the capitalized entity accessor the generated change types expose.
+          change->Dict.set(
+            entityName->Utils.String.capitalize,
+            entityObj->(Utils.magic: dict<unknown> => unknown),
+          )
         }
       })
     | None => ()
@@ -699,7 +703,9 @@ let createTestIndexer = (): t<'processConfig> => {
   entityOpsDict
   ->Dict.toArray
   ->Array.forEach(((name, ops)) => {
-    result->Dict.set(name, ops->(Utils.magic: entityOperations => unknown))
+    // Expose the capitalized accessor (indexer.Pool_snapshots) the generated
+    // types declare, matching the handler-context keys.
+    result->Dict.set(name->Utils.String.capitalize, ops->(Utils.magic: entityOperations => unknown))
   })
 
   result->Dict.set(
