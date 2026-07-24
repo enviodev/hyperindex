@@ -81,17 +81,18 @@ let make = (
   indexingAddresses
 }
 
-let get = (indexingAddresses: t, address) => {
-  let contractDicts = indexingAddresses->Dict.valuesToArray
-  let idx = ref(0)
-  let result = ref(None)
-  while result.contents === None && idx.contents < contractDicts->Array.length {
-    result :=
-      contractDicts->Array.getUnsafe(idx.contents)->Utils.Dict.dangerouslyGetNonOption(address)
-    idx := idx.contents + 1
+// Address strings are globally unique, so the first inner dict holding the
+// address owns it. for..in returns on the first hit without allocating a values
+// array per lookup (get runs once per registration).
+let get: (t, string) => option<indexingAddress> = %raw(`(index, address) => {
+  for (var contractName in index) {
+    var entry = index[contractName][address];
+    if (entry !== undefined) {
+      return entry;
+    }
   }
-  result.contents
-}
+  return undefined;
+}`)
 
 let size = (indexingAddresses: t) => {
   let total = ref(0)
@@ -101,8 +102,9 @@ let size = (indexingAddresses: t) => {
   total.contents
 }
 
-// Number of registered addresses for a single contract. O(1) — the trigger
-// deciding when to switch a contract to client-side filtering reads this.
+// Number of registered addresses for a single contract — a for..in over that
+// one contract's addresses. The trigger deciding when to switch a contract to
+// client-side filtering reads this.
 let contractCount = (indexingAddresses: t, ~contractName) =>
   switch indexingAddresses->Utils.Dict.dangerouslyGetNonOption(contractName) {
   | Some(inner) => inner->Utils.Dict.size

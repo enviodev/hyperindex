@@ -22,6 +22,6 @@ impl ClientFilteredContracts {
     /// wildcard. Only address-dependent registrations are affected; a genuinely
     /// wildcard registration is already address-free.
     pub fn applies(&self, contract_name: &str) -> bool {
-        !self.0.is_empty() && self.0.contains(contract_name)
+        self.0.contains(contract_name)
     }
 }

@@ -5159,4 +5159,99 @@ describe("FetchState wildcard mode (client-side address filtering)", () => {
       ~message="orphan response merges its items and leaves partitions untouched",
     ).toEqual((2, [(false, Some(["Gravatar"]), [])]))
   })
+
+  let wildcardId = (fetchState: FetchState.t) =>
+    (
+      fetchState.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.find(p => !p.selection.dependsOnAddresses)
+      ->Option.getOrThrow
+    ).id
+
+  it("keeps the collapsed wildcard partition across an unrelated registration batch", t => {
+    let (fetchState, indexingAddresses) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~wildcardAddressThreshold=Some(1),
+    )
+    // Gravatar crosses the threshold → collapses to one address-free partition.
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    // Registering an unrelated NftFactory address must not tear the Gravatar
+    // wildcard partition down: its id (and in-flight queries + learned density)
+    // must survive, with NftFactory added as its own server-side partition.
+    let afterUnrelated =
+      collapsed->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(
+          ~blockNumber=5,
+          ~contractAddress=mockAddress3,
+          ~contractName="NftFactory",
+        )->dcToItem,
+      ])
+
+    let shape = afterUnrelated->partitionShape
+    t.expect(
+      (
+        collapsed->wildcardId === afterUnrelated->wildcardId,
+        shape->Array.filter(((dependsOnAddresses, _, _)) => !dependsOnAddresses),
+        shape->Array.filter(((dependsOnAddresses, _, _)) => dependsOnAddresses),
+      ),
+      ~message="wildcard partition id preserved; NftFactory kept server-side",
+    ).toEqual((
+      true,
+      [(false, Some(["Gravatar"]), [])],
+      [(true, None, ["NftFactory"])],
+    ))
+  })
+
+  it("switches a config contract to wildcard mode at creation when it exceeds the threshold", t => {
+    // Config addresses (registrationBlock -1) are not dynamic, yet a static list
+    // over the threshold still switches to client-side filtering at creation.
+    let (fetchState, _indexingAddresses) = makeFs(
+      ~onEventRegistrations=[baseEventConfig],
+      ~addresses=[
+        makeConfigContract("Gravatar", mockAddress0),
+        makeConfigContract("Gravatar", mockAddress1),
+        makeConfigContract("Gravatar", mockAddress2),
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~wildcardAddressThreshold=Some(2),
+    )
+    t.expect(
+      (fetchState->partitionShape, fetchState.optimizedPartitions.wildcardContracts->Utils.Set.toArray),
+      ~message="3 config addresses > threshold 2 → one address-free client-filtered partition",
+    ).toEqual(([(false, Some(["Gravatar"]), [])], ["Gravatar"]))
+  })
+
+  it("keeps a contract in wildcard mode across rollback", t => {
+    let (fetchState, indexingAddresses) = makeGravatarFs(~wildcardAddressThreshold=Some(1))
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+    let rolledBack = collapsed->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=3)
+    t.expect(
+      (
+        rolledBack.optimizedPartitions.wildcardContracts->Utils.Set.toArray,
+        rolledBack->partitionShape,
+      ),
+      ~message="wildcard mode is sticky through rollback; still one client-filtered address-free partition",
+    ).toEqual((["Gravatar"], [(false, Some(["Gravatar"]), [])]))
+  })
 })

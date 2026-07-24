@@ -21,7 +21,8 @@ let get: (t, string) => option<indexingAddress>
 
 let size: t => int
 
-// Number of registered addresses for a single contract (O(1)).
+// Number of registered addresses for a single contract (scans just that
+// contract's addresses).
 let contractCount: (t, ~contractName: string) => int
 
 let getContractAddresses: (t, ~contractName: string) => array<Address.t>
