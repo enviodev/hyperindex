@@ -233,6 +233,18 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
+# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE envio_process_start_time_seconds gauge
+envio_process_start_time_seconds 1700000000
+
+# HELP envio_process_metric_time_seconds Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.
+# TYPE envio_process_metric_time_seconds gauge
+envio_process_metric_time_seconds 1700000123.456
+
+# HELP envio_process_elapsed_seconds Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.
+# TYPE envio_process_elapsed_seconds gauge
+envio_process_elapsed_seconds 123.456
+
 # HELP envio_preload_seconds Cumulative time spent on preloading entities during batch processing.
 # TYPE envio_preload_seconds counter
 envio_preload_seconds 12.346
@@ -300,18 +312,6 @@ envio_fetching_block_range_size{chainId="1"} 250
 # HELP envio_indexing_known_height The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.
 # TYPE envio_indexing_known_height gauge
 envio_indexing_known_height{chainId="1"} 305
-
-# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
-# TYPE envio_process_start_time_seconds gauge
-envio_process_start_time_seconds 1700000000
-
-# HELP envio_process_elapsed_seconds Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.
-# TYPE envio_process_elapsed_seconds gauge
-envio_process_elapsed_seconds 123.456
-
-# HELP envio_scrape_time_seconds Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.
-# TYPE envio_scrape_time_seconds gauge
-envio_scrape_time_seconds 1700000123.456
 
 # HELP envio_indexing_concurrency The number of executing concurrent queries to the chain data-source.
 # TYPE envio_indexing_concurrency gauge
