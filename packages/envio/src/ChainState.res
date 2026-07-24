@@ -187,6 +187,12 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
+    // Only EVM sources (HyperSync + RPC) honor client-side address filtering so
+    // far, so wildcard-mode switching is gated to EVM chains.
+    ~clientSideFilteringSupported=switch config.ecosystem.name {
+    | Evm => true
+    | Fuel | Svm => false
+    },
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {

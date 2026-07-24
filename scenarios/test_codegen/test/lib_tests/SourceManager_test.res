@@ -469,6 +469,7 @@ describe("SourceManager fetchNext", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
+      clientSideFilteringSupported: false,
     }
   }
 
