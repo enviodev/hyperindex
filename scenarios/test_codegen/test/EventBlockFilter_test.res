@@ -30,14 +30,14 @@ let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
   parse(
     ~eventFilters,
     ~probeChainId,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
   )
 
 let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
   parse(
     ~eventFilters,
     ~probeChainId,
-    ~onEventBlockFilterSchema=Fuel.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Fuel.make().onEventBlockFilterSchema,
   )
 
 describe("eventBlockRangeSchema (strict, _gte-only)", () => {
@@ -254,7 +254,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~contractRegister=None,
       ~where=eventFilters,
       ~chainId=1,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
       ~startBlock?,
     )
 
@@ -304,7 +304,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~contractRegister=None,
       ~where=Some(whereFn),
       ~chainId=137,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
       ~startBlock=1,
     )
     let chain1 = EventConfigBuilder.buildEvmOnEventRegistration(
@@ -319,7 +319,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~contractRegister=None,
       ~where=Some(whereFn),
       ~chainId=1,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
       ~startBlock=1,
     )
     t.expect((chain137.startBlock, chain1.startBlock)).toEqual((Some(5000), Some(250)))
@@ -353,7 +353,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~contractRegister=None,
       ~where=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
       ~chainId=1,
-      ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+      ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
       ~startBlock?,
     )
 
@@ -369,7 +369,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       },
     ]
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-    FetchState.make(
+    FetchState.make(~logger=Env.logger, 
       ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,

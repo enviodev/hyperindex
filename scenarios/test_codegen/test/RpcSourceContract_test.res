@@ -70,6 +70,7 @@ let syncConfig = EvmChain.getSyncConfig({
 
 let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
   let options: RpcSource.options = {
+    logger: Env.logger,
     url,
     chain,
     onEventRegistrations: [registration],
@@ -97,7 +98,7 @@ let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, 
     },
     ~itemsTarget=Some(5_000),
     ~retry,
-    ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+    ~logger=Env.logger,
   )
 }
 
@@ -418,6 +419,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         async mock => {
           let registration = makeRegistration()
           let options: RpcSource.options = {
+            logger: Env.logger,
             url: mock.url,
             chain,
             onEventRegistrations: [registration],
@@ -446,7 +448,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                 },
                 ~itemsTarget=Some(5_000),
                 ~retry=0,
-                ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
+                ~logger=Env.logger,
               )
             )
           (await call(), await call())
@@ -587,7 +589,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
+              ~logger=Env.logger,
             )
           ) {
           | Ok(page) => page
@@ -678,6 +680,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         ],
         async mock => {
           let options: RpcSource.options = {
+            logger: Env.logger,
             url: mock.url,
             chain,
             onEventRegistrations: [eventA, eventB],
@@ -709,7 +712,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
+              ~logger=Env.logger,
             )
           ) {
           | Ok(page) => page

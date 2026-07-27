@@ -24,8 +24,6 @@ let logLevels = [
   ("fatal", 60),
 ]->Dict.fromArray
 
-%%private(let logger = ref(None))
-
 let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel) => {
   // Currently unused - useful if using multiple transports.
   // let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
@@ -83,76 +81,36 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
   }
 }
 
-let setLogger = l => {
-  logger := Some(l)
+// Release the logger's stream. Each indexer instance owns its logger, so an
+// instance that shuts down must not leave a file handle or transport worker
+// behind.
+let close = Pino.close
+
+let setLogLevel = (logger: t, level: Pino.logLevel) => {
+  logger->setLevel(level)
 }
 
-let getLogger = () => {
-  switch logger.contents {
-  | Some(logger) => logger
-  | None => JsError.throwWithMessage("Unreachable code. Logger not initialized")
-  }
-}
-
-let setLogLevel = (level: Pino.logLevel) => {
-  getLogger()->setLevel(level)
-}
-
-let trace = message => {
-  getLogger().trace(message->createPinoMessage)
-}
-
-let debug = message => {
-  getLogger().debug(message->createPinoMessage)
-}
-
-let info = message => {
-  getLogger().info(message->createPinoMessage)
-}
-
-let warn = message => {
-  getLogger().warn(message->createPinoMessage)
-}
-
-let error = message => {
-  getLogger().error(message->createPinoMessage)
-}
-let errorWithExn = (error, message) => {
-  getLogger()->Pino.errorExn(message->createPinoMessageWithError(error))
-}
-
-let fatal = message => {
-  getLogger().fatal(message->createPinoMessage)
-}
-
-let childTrace = (logger, params: 'a) => {
+let trace = (logger, params: 'a) => {
   logger.trace(params->createPinoMessage)
 }
-let childDebug = (logger, params: 'a) => {
+let debug = (logger, params: 'a) => {
   logger.debug(params->createPinoMessage)
 }
-let childInfo = (logger, params: 'a) => {
+let info = (logger, params: 'a) => {
   logger.info(params->createPinoMessage)
 }
-let childWarn = (logger, params: 'a) => {
+let warn = (logger, params: 'a) => {
   logger.warn(params->createPinoMessage)
 }
-let childError = (logger, params: 'a) => {
+let error = (logger, params: 'a) => {
   logger.error(params->createPinoMessage)
 }
-let childErrorWithExn = (logger, error, params: 'a) => {
-  logger->Pino.errorExn(params->createPinoMessageWithError(error))
+let errorWithExn = (logger, err, params: 'a) => {
+  logger->Pino.errorExn(params->createPinoMessageWithError(err))
 }
 
-let childFatal = (logger, params: 'a) => {
+let fatal = (logger, params: 'a) => {
   logger.fatal(params->createPinoMessage)
-}
-
-let createChild = (~params: 'a) => {
-  getLogger()->child(params->createChildParams)
-}
-let createChildFrom = (~logger: t, ~params: 'a) => {
-  logger->child(params->createChildParams)
 }
 
 @inline
@@ -172,13 +130,36 @@ let noopLogger: Envio.logger = {
   errorWithExn: (_message: string, _exn) => (),
 }
 
-// Wrap a (child) logger as the user-facing `context.log`, routing through the
-// custom `u*` levels. The caller builds the per-item logger via the ecosystem.
-let userLogger = (logger: t): Envio.logger => {
-  info: (message: string, ~params=?) => logger->logAtLevel(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => logger->logAtLevel(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => logger->logAtLevel(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => logger->logAtLevel(#uerror, message, ~params?),
+let mergeParams: (Internal.logParams, option<'a>) => 'a = %raw(`(base, params) =>
+  params === undefined ? base : {...base, ...params}`)
+
+// Spread a shared context object into a log message. Used where a block of
+// code emits several lines about the same subject; the fields are still
+// written on every line instead of being bound to a child logger.
+let withParams: (Internal.logParams, 'a) => 'a = %raw(`(base, message) => ({...base, ...message})`)
+
+// Binds params for code we hand the logger to rather than call — a `Source.t`
+// implementation logs from inside its own module, where the caller's query
+// context isn't in scope and can't be spread per line. Everywhere the params
+// are in scope, write them on the line instead.
+let createChild = (~logger: t, ~params: 'a) => logger->child(params->createChildParams)
+
+// Wrap a logger as the user-facing `context.log`, routing through the custom
+// `u*` levels. `params` is the item context (built by the ecosystem) and is
+// merged into every line, with the user's own params taking precedence.
+let userLogger = (logger: t, ~params as itemParams: Internal.logParams): Envio.logger => {
+  info: (message: string, ~params=?) =>
+    logger->logAtLevel(#uinfo, message, ~params=itemParams->mergeParams(params)),
+  debug: (message: string, ~params=?) =>
+    logger->logAtLevel(#udebug, message, ~params=itemParams->mergeParams(params)),
+  warn: (message: string, ~params=?) =>
+    logger->logAtLevel(#uwarn, message, ~params=itemParams->mergeParams(params)),
+  error: (message: string, ~params=?) =>
+    logger->logAtLevel(#uerror, message, ~params=itemParams->mergeParams(params)),
   errorWithExn: (message: string, exn) =>
-    logger->logAtLevel(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+    logger->logAtLevel(
+      #uerror,
+      message,
+      ~params=itemParams->mergeParams(Some({"err": exn->Utils.prettifyExn})),
+    ),
 }

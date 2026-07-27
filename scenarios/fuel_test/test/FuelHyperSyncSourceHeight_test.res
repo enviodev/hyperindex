@@ -1,6 +1,6 @@
 open Vitest
 
-// For Logging.setLogger call
+// Force Env to load so its base logger is initialized
 let _ = Env.logStrategy
 
 type server
@@ -51,6 +51,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
       res->endWith(`{"height": 123}`)
     }, async endpointUrl => {
       let source = FuelHyperSyncSource.make({
+    logger: Env.logger,
         chain,
         endpointUrl,
         apiToken: Some(apiToken),
@@ -77,6 +78,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
       res->endWith("Unauthorized")
     }, async endpointUrl => {
       let source = FuelHyperSyncSource.make({
+    logger: Env.logger,
         chain,
         endpointUrl,
         apiToken: Some(apiToken),

@@ -53,7 +53,7 @@ let wsMessageSchema = S.union([
   }),
 ])
 
-let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
+let subscribe = (~logger, ~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
   let wsRef: ref<option<WebSocket.t>> = ref(None)
   let isUnsubscribed = ref(false)
   let errorCount = ref(0)
@@ -121,20 +121,20 @@ let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
           }
         } catch {
         | S.Raised(_) =>
-          Logging.warn({
+          logger->Logging.warn({
             "msg": "WebSocket height stream received unrecognized message",
             "chainId": chainId,
             "data": event.data,
           })
         | JsExn(_) as e =>
-          Logging.warn({
+          logger->Logging.warn({
             "msg": "WebSocket height stream failed to parse message",
             "chainId": chainId,
             "err": e->Utils.prettifyExn,
             "data": event.data,
           })
         | e =>
-          Logging.error({
+          logger->Logging.error({
             "msg": "Unexpected error in WebSocket height stream message handler",
             "chainId": chainId,
             "err": e->Utils.prettifyExn,

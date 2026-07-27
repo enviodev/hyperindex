@@ -95,14 +95,14 @@ let logStrategy =
     ~fallback=ConsolePretty,
   )
 
-Logging.setLogger(
-  Logging.makeLogger(
-    ~logStrategy,
-    ~logFilePath,
-    ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Option.getOr(#info),
-  ),
-)
+// Builds a logger from the process env. Each indexer instance gets its own,
+// so a level change on one can't affect another.
+let makeLogger = (~userLogLevel=userLogLevel->Option.getOr(#info)) =>
+  Logging.makeLogger(~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel)
+
+// Sink for process-level logging that happens outside any indexer instance:
+// bootstrap and pre-config errors, and `ErrorHandling`'s fallback logger.
+let logger = makeLogger()
 
 module Db = {
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")

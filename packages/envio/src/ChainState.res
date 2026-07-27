@@ -187,6 +187,7 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
+    ~logger,
     // Only EVM sources (HyperSync + RPC) honor client-side address filtering so
     // far, so switching contracts to it is gated to EVM chains.
     ~clientFilterAddressThreshold=switch config.ecosystem.name {
@@ -221,6 +222,7 @@ let makeInternal = (
       }
     })
     EvmChain.makeSources(
+      ~logger,
       ~chain,
       ~onEventRegistrations=onEventRegistrations->(
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
@@ -231,6 +233,7 @@ let makeInternal = (
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
+        logger,
         chain,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
@@ -275,7 +278,7 @@ let makeInternal = (
     ~fetchState,
     ~onEventRegistrations,
     ~indexingAddresses=indexingAddressIndex,
-    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
+    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?, ~logger),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
       ~maxReorgDepth,
@@ -305,12 +308,11 @@ let makeInternal = (
 
 let makeFromConfig = (
   chainConfig: Config.chain,
-  ~config,
+  ~config: Config.t,
+  ~logger: Pino.t,
   ~registrationsByChainId,
   ~knownHeight,
 ) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
-
   makeInternal(
     ~chainConfig,
     ~config,
@@ -339,13 +341,11 @@ let makeFromDbState = (
   ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~isRealtime,
-  ~config,
+  ~config: Config.t,
+  ~logger: Pino.t,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
-  let chainId = chainConfig.id
-  let logger = Logging.createChild(~params={"chainId": chainId})
-
   let progressBlockNumber =
     // Can be -1 when not set
     resumedChainState.progressBlockNumber >= 0
@@ -831,6 +831,7 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~indexingAddresses=cs.indexingAddresses,
+      ~logger=cs.logger,
       newItemsWithDcs,
     )
   }

@@ -946,7 +946,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         storage: ({postgres: true, clickhouse: true}: Config.storage),
       }
       let message = switch try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
+        let _ = PgStorage.makeStorageFromEnv(~logger=Env.logger, ~config)
         None
       } catch {
       | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
@@ -972,7 +972,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         storage: ({postgres: true, clickhouse: false}: Config.storage),
       }
       // Just ensure construction succeeds without touching ClickHouse env vars.
-      let _ = PgStorage.makeStorageFromEnv(~config)
+      let _ = PgStorage.makeStorageFromEnv(~logger=Env.logger, ~config)
       t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
     },
   )
@@ -996,7 +996,7 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
         storage: ({postgres: true, clickhouse: true}: Config.storage),
       }
       let result = try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
+        let _ = PgStorage.makeStorageFromEnv(~logger=Env.logger, ~config)
         Ok()
       } catch {
       | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))

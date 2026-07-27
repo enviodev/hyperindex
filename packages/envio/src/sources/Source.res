@@ -68,6 +68,8 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
+  // The logger is a child bound with the caller's query context (chain,
+  // source, partition, retry), so lines a source logs itself carry it.
   getBlockHashes: (~blockNumbers: array<int>, ~logger: Pino.t) => promise<getBlockHashesResponse>,
   getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (

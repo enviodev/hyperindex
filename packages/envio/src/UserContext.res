@@ -23,7 +23,11 @@ Utils.Object.defineProperty(
     // Wrap with toMethod so `this` binds to the EffectContext instance.
     get: Utils.toMethod(() => {
       let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
-      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
+      Ecosystem.getItemUserLogger(
+        params.item,
+        ~ecosystem=params.config.ecosystem,
+        ~logger=params.indexerState->IndexerState.logger,
+      )
     }),
   },
 )
@@ -296,7 +300,8 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       Utils.Error.make(
         `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
       )->ErrorHandling.mkLogAndRaise(
-        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
+        ~logger=params.indexerState->IndexerState.logger,
+        ~params=Ecosystem.getItemLogParams(params.item, ~ecosystem=params.config.ecosystem),
       )
     }
     switch prop {
@@ -304,7 +309,11 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       (
         params.isPreload
           ? Logging.noopLogger
-          : Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
+          : Ecosystem.getItemUserLogger(
+              params.item,
+              ~ecosystem=params.config.ecosystem,
+              ~logger=params.indexerState->IndexerState.logger,
+            )
       )->(Utils.magic: Envio.logger => unknown)
 
     | "effect" =>

@@ -92,6 +92,7 @@ let makeSelection = (): FetchState.selection => {
 
 let makeHyperSyncSource = () =>
   EvmHyperSyncSource.make({
+    logger: Env.logger,
     chain,
     endpointUrl: "https://eth.hypersync.xyz",
     onEventRegistrations: [pairCreatedRegistration],
@@ -105,6 +106,7 @@ let makeHyperSyncSource = () =>
 
 let makeRpcSource = () =>
   RpcSource.make({
+    logger: Env.logger,
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
     chain,
     onEventRegistrations: [pairCreatedRegistration],
@@ -124,7 +126,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~selection=makeSelection(),
     ~itemsTarget=Some(5000),
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
+    ~logger=Env.logger,
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {

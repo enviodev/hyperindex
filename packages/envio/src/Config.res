@@ -584,11 +584,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     )
   }
 
-  let logger = Logging.getLogger()
   let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.make(~logger)
-  | Ecosystem.Fuel => Fuel.make(~logger)
-  | Ecosystem.Svm => Svm.make(~logger)
+  | Ecosystem.Evm => Evm.make()
+  | Ecosystem.Fuel => Fuel.make()
+  | Ecosystem.Svm => Svm.make()
   }
 
   // SVM has no raw-events representation (`Svm.toRawEvent` throws), so reject

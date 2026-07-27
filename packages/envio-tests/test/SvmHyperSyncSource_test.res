@@ -173,7 +173,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           dependsOnAddresses: true,
         },
         ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+        ~logger=Env.logger,
       )
 
       let item = switch response.parsedQueueItems {

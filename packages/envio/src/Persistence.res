@@ -149,6 +149,7 @@ type storageStatus =
   | Ready(initialState)
 
 type t = {
+  logger: Pino.t,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
@@ -163,17 +164,26 @@ let make = (
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
   ~storage,
+  ~logger: Pino.t,
 ) => {
   let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
   let allEnums =
     allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
+    logger,
     userEntities,
     allEntities,
     allEnums,
     storageStatus: Unknown,
     storage,
   }
+}
+
+// Shut the indexer's resources down: the storage, then the logger that was
+// reporting on it.
+let close = async (persistence: t) => {
+  await persistence.storage.close()
+  await persistence.logger->Logging.close
 }
 
 let init = {
@@ -194,14 +204,14 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
-          Logging.info(`Initializing the indexer storage...`)
+          persistence.logger->Logging.info(`Initializing the indexer storage...`)
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
             ~envioInfo,
           )
-          Logging.info(`The indexer storage is ready. Starting indexing!`)
+          persistence.logger->Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -211,7 +221,7 @@ let init = {
           | _ => false
           }
         ) {
-          Logging.info(`Found existing indexer storage. Resuming indexing state...`)
+          persistence.logger->Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
           // Compat-check the running config against what was stored on the
           // last successful initialize. None means the schema pre-dates
@@ -242,7 +252,7 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
-          Logging.info({
+          persistence.logger->Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
             "progress": progress,
           })
@@ -250,7 +260,11 @@ let init = {
         resolveRef.contents()
       }
     } catch {
-    | exn => exn->ErrorHandling.mkLogAndRaise(~msg=`Failed to initialize the indexer storage.`)
+    | exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~logger=persistence.logger,
+        ~msg=`Failed to initialize the indexer storage.`,
+      )
     }
   }
 }

@@ -40,6 +40,7 @@ let getSyncConfig = (
 }
 
 let makeSources = (
+  ~logger,
   ~chain,
   ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
   ~hyperSync,
@@ -49,6 +50,7 @@ let makeSources = (
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
       EvmHyperSyncSource.make({
+        logger,
         chain,
         endpointUrl,
         onEventRegistrations,
@@ -64,6 +66,7 @@ let makeSources = (
   }
   rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
+      logger,
       chain,
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),

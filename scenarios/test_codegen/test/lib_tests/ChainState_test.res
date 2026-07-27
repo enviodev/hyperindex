@@ -45,7 +45,7 @@ let makeResumedChainState = (
 }
 
 let makeChainState = resumedChainState =>
-  ChainState.makeFromDbState(
+  ChainState.makeFromDbState(~logger=Env.logger, 
     baseChainConfig,
     ~resumedChainState,
     ~reorgCheckpoints=[],
@@ -92,7 +92,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   // value works here — a fresh, minimal one, independent of the chain state
   // under test.
   let dummyFetchState = () =>
-    FetchState.make(
+    FetchState.make(~logger=Env.logger, 
       ~onEventRegistrations=[],
       ~contractConfigs=Dict.make(),
       ~addresses=[],

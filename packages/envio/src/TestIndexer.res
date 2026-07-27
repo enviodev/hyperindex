@@ -546,16 +546,30 @@ let cloneRegistrations = (
   clone
 }
 
+// Shared by every test indexer in the process: nothing disposes a test
+// indexer, so a logger per instance would leak a handle per instance. Silent
+// unless LOG_LEVEL is set, in which case the process logger already has the
+// requested level.
+let logger = switch Env.userLogLevel {
+| Some(_) => Env.logger
+| None =>
+  let logger = Env.makeLogger(~userLogLevel=#silent)
+  // The file-backed strategies build the logger at their own file level and
+  // ignore `userLogLevel`, so silence has to be set on the instance.
+  logger->Logging.setLogLevel(#silent)
+  logger
+}
+
 // User handlers register into the process-global HandlerRegister as an import
 // side effect. Capture the resolved registrations once per process (imports are
 // module-cached anyway) and reuse them across every createTestIndexer run, so
 // the global registration cycle runs a single time and never races.
 let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
-let getRegistrations = (~config) =>
+let getRegistrations = (~config, ~logger) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
-    let promise = HandlerLoader.registerAllHandlers(~config)
+    let promise = HandlerLoader.registerAllHandlers(~config, ~logger)
     registrationsRef := Some(promise)
     promise
   }
@@ -607,13 +621,8 @@ let createTestIndexer = (): t<'processConfig> => {
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
     ~storage,
+    ~logger,
   )
-
-  // Silence logs by default in test mode unless LOG_LEVEL is explicitly set.
-  switch Env.userLogLevel {
-  | None => Logging.setLogLevel(#silent)
-  | Some(_) => ()
-  }
 
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
@@ -809,7 +818,7 @@ let createTestIndexer = (): t<'processConfig> => {
 
           // Each run gets its own copy of the shared base registration so the
           // simulate-source registration it appends stays isolated.
-          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config))
+          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config, ~logger))
           let patchedConfig: Config.t = SimulateItems.patchConfig(
             ~config,
             ~processConfig=processConfigJson,
@@ -848,6 +857,7 @@ let createTestIndexer = (): t<'processConfig> => {
             await Promise.make((resolve, reject) => {
               let indexerState = IndexerState.makeFromDbState(
                 ~config=runConfig,
+                ~logger,
                 ~persistence,
                 ~initialState,
                 ~registrationsByChainId,

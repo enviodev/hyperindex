@@ -99,7 +99,7 @@ module InitApi = {
 
 type request<'ok, 'err> = Data('ok) | Loading | Err('err)
 
-let useMessages = (~config) => {
+let useMessages = (~config, ~logger) => {
   let (request, setRequest) = React.useState(_ => Loading)
   React.useEffect0(() => {
     InitApi.getMessages(~config)
@@ -107,7 +107,7 @@ let useMessages = (~config) => {
       switch res {
       | Ok(data) => setRequest(_ => Data(data))
       | Error(e) =>
-        Logging.error({
+        logger->Logging.error({
           "msg": "Failed to load messages from envio server",
           "err": e->Utils.prettifyExn,
         })
