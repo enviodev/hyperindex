@@ -41,6 +41,7 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
 }
 
 let getKnownRawBlockWithBackoff = async (
+  ~logger,
   ~client,
   ~sourceName,
   ~chain,
@@ -56,7 +57,7 @@ let getKnownRawBlockWithBackoff = async (
     switch await getKnownRawBlock(~client, ~blockNumber) {
     | exception err =>
       recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
-      Env.logger->Logging.childWarn({
+      logger->Logging.warn({
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
@@ -610,6 +611,7 @@ let makeThrowingGetEventTransaction = (
 }
 
 type options = {
+  logger: Pino.t,
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
@@ -623,6 +625,7 @@ type options = {
 
 let make = (
   {
+    logger,
     sourceFor,
     syncConfig,
     url,
@@ -685,7 +688,7 @@ let make = (
         })
       },
       ~onError=(am, ~exn) => {
-        Env.logger->Logging.childError({
+        logger->Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
@@ -705,6 +708,7 @@ let make = (
     LazyLoader.make(
       ~loaderFn=blockNumber => {
         getKnownRawBlockWithBackoff(
+          ~logger,
           ~client,
           ~sourceName=name,
           ~chain,
@@ -714,7 +718,7 @@ let make = (
         )
       },
       ~onError=(am, ~exn) => {
-        Env.logger->Logging.childError({
+        logger->Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
@@ -745,7 +749,7 @@ let make = (
         })
       },
       ~onError=(am, ~exn) => {
-        Env.logger->Logging.childError({
+        logger->Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
@@ -991,7 +995,7 @@ let make = (
     receiptLoader := makeReceiptLoader()
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
+  let getBlockHashes = (~blockNumbers, ~logger as _) => {
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
@@ -1019,7 +1023,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~logger, ~wsUrl, ~chainId, ~onHeight)
     )
 
   {

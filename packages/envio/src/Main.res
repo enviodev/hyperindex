@@ -472,7 +472,7 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool) => {
+let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool, ~logger) => {
   open Express
 
   let app = make()
@@ -542,12 +542,12 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   server->Express.onError(err => {
     let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
-      Env.logger->Logging.childError(
+      logger->Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
         `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
       )
     } else {
-      Env.logger->Logging.childErrorWithExn(err, "Failed to start indexer server")
+      logger->Logging.errorWithExn(err, "Failed to start indexer server")
     }
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })
@@ -567,7 +567,7 @@ let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
 let migrate = async (~reset) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Env.logger)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -575,14 +575,14 @@ let migrate = async (~reset) => {
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
   )
-  await persistence.storage.close()
+  await persistence->Persistence.close
 }
 
 let dropSchema = async () => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Env.logger)
   await persistence.storage.reset()
-  await persistence.storage.close()
+  await persistence->Persistence.close
 }
 
 // Rejection carried by `onError`: the failure is already logged with full
@@ -609,6 +609,9 @@ let start = async (
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
   let config = Config.load()
+  // One logger per indexer run. `envio start` runs a single indexer per
+  // process, so this is the process logger; in-process runners build their own.
+  let logger = Env.logger
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`
@@ -616,7 +619,7 @@ let start = async (
   let isDevelopmentMode = !isTest && config.isDev
   let persistence = switch persistence {
   | Some(p) => p
-  | None => PgStorage.makePersistenceFromConfig(~config)
+  | None => PgStorage.makePersistenceFromConfig(~config, ~logger)
   }
   setGlobalPersistence(persistence)
   await persistence->Persistence.init(
@@ -631,7 +634,7 @@ let start = async (
   // state into the global `HandlerRegister` registry as a side effect; this
   // returns that state resolved into per-chain registrations. `config` itself
   // is never mutated by registration — it holds only event definitions.
-  let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
+  let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config, ~logger)
   let config = if isTest {
     {...config, shouldRollbackOnReorg: false}
   } else {
@@ -661,7 +664,7 @@ let start = async (
   let envioVersion = Utils.EnvioPackage.value.version
 
   if !isTest {
-    startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
+    startServer(~persistence, ~isDevelopmentMode, ~logger, ~getState=() =>
       switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {
@@ -680,6 +683,7 @@ let start = async (
 
   let state = IndexerState.makeFromDbState(
     ~config,
+    ~logger,
     ~persistence,
     ~initialState=persistence->Persistence.getInitializedState,
     ~registrationsByChainId,

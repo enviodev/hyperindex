@@ -1280,7 +1280,7 @@ let make = (
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
-  ~logger=Env.logger,
+  ~logger: Pino.t,
 ): Persistence.storage => {
   // Must match PG_CONTAINER in packages/cli/src/docker_env.rs
   let containerName = "envio-postgres"
@@ -1370,7 +1370,7 @@ let make = (
     if withUpload {
       // Try to restore cache tables from the .envio/cache TSV files
       switch await scanCacheDir() {
-      | [] => logger->Logging.childInfo("No cache found to upload.")
+      | [] => logger->Logging.info("No cache found to upload.")
       | entries =>
         switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
         | Ok(psqlExec) =>
@@ -1398,9 +1398,9 @@ let make = (
             })
           })
           ->Promise.all
-          logger->Logging.childInfo("Successfully uploaded cache.")
+          logger->Logging.info("Successfully uploaded cache.")
         | Error(message) =>
-          logger->Logging.childError(`Failed to upload cache, continuing without it. ${message}`)
+          logger->Logging.error(`Failed to upload cache, continuing without it. ${message}`)
         }
       }
     }
@@ -1631,7 +1631,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
         switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
         | Ok(psqlExec) => {
-            logger->Logging.childInfo(
+            logger->Logging.info(
               `Dumping cache: ${cacheTableInfo
                 ->Array.map(({tableName, count}) =>
                   tableName ++ " (" ++ count->Int.toString ++ " rows)"
@@ -1673,15 +1673,15 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             })
 
             let _ = await promises->Promise.all
-            logger->Logging.childInfo(
+            logger->Logging.info(
               `Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`,
             )
           }
-        | Error(message) => logger->Logging.childError(`Failed to dump cache. ${message}`)
+        | Error(message) => logger->Logging.error(`Failed to dump cache. ${message}`)
         }
       }
     } catch {
-    | exn => logger->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
+    | exn => logger->Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to dump cache.`)
     }
   }
 
@@ -1898,6 +1898,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
 let makeStorageFromEnv = (
   ~config: Config.t,
+  ~logger: Pino.t,
   ~sql=makeClient(),
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled=Env.Hasura.enabled,
@@ -1942,6 +1943,7 @@ let makeStorageFromEnv = (
             ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
+            ~logger,
           ),
         )
       } else {
@@ -1963,10 +1965,10 @@ let makeStorageFromEnv = (
               ~responseLimit=Env.Hasura.responseLimit,
               ~schema=Schema.make(config.allEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
-              ~logger=config.logger,
+              ~logger,
             )->Promise.catch(err => {
-              config.logger
-              ->Logging.childErrorWithExn(err->Utils.prettifyExn, `Error tracking tables`)
+              logger
+              ->Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)
               ->Promise.resolve
             })
           },
@@ -1991,10 +1993,10 @@ let makeStorageFromEnv = (
                 description: None,
                 columnConfigs: dict{},
               }),
-              ~logger=config.logger,
+              ~logger,
             )->Promise.catch(err => {
-              config.logger
-              ->Logging.childErrorWithExn(err->Utils.prettifyExn, `Error tracking new tables`)
+              logger
+              ->Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking new tables`)
               ->Promise.resolve
             })
           },
@@ -2004,15 +2006,19 @@ let makeStorageFromEnv = (
       }
     },
     ~isHasuraEnabled,
-    ~logger=config.logger,
+    ~logger,
   )
 }
 
-let makePersistenceFromConfig = (~config: Config.t, ~storage=makeStorageFromEnv(~config)) => {
+let makePersistenceFromConfig = (
+  ~config: Config.t,
+  ~logger: Pino.t,
+  ~storage=makeStorageFromEnv(~config, ~logger),
+) => {
   Persistence.make(
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
     ~storage,
-    ~logger=config.logger,
+    ~logger,
   )
 }

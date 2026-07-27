@@ -26,7 +26,7 @@ let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
     ~contractRegister=None,
     ~where=None,
     ~chainId=1,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Env.logger).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
   )
 
 let tokenA = makeReg(

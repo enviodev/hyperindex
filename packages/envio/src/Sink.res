@@ -12,7 +12,7 @@ type t = {
   ) => promise<unit>,
 }
 
-let makeClickHouse = (~host, ~database, ~username, ~password): t => {
+let makeClickHouse = (~host, ~database, ~username, ~password, ~logger): t => {
   let client = ClickHouse.createClient({
     url: host,
     username,
@@ -27,18 +27,18 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   {
     name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(client, ~database, ~entities, ~enums)
+      ClickHouse.initialize(client, ~database, ~entities, ~enums, ~logger)
     },
     resume: (~checkpointId) => {
-      ClickHouse.resume(client, ~database, ~checkpointId)
+      ClickHouse.resume(client, ~database, ~checkpointId, ~logger)
     },
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
         updatedEntities->Array.map(({entityConfig, changes}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~database)
+          ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~database, ~logger)
         }),
       )->Utils.Promise.ignoreValue
-      await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
+      await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database, ~logger)
     },
   }
 }

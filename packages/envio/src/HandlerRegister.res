@@ -357,7 +357,7 @@ let getSimulateOnEventRegistrations = (
   }
 }
 
-let finishRegistration = (~config: Config.t): registrationsByChainId => {
+let finishRegistration = (~config: Config.t, ~logger: Pino.t): registrationsByChainId => {
   switch getActiveRegistration() {
   | Some(r) => {
       r.finished = true
@@ -468,9 +468,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
           )
           ->Array.joinUnsafe(", ")
-        config.logger->Logging.childInfo(
-          `Events without a handler, skipped for indexing: ${groups}`,
-        )
+        logger->Logging.info(`Events without a handler, skipped for indexing: ${groups}`)
       }
 
       registrationsByChainId
@@ -569,7 +567,6 @@ let registerOnBlock = (
     let config = registration.config
     let ecosystem = config.ecosystem
     let chainsDict = getChainsObject(config)
-    let logger = Logging.createChildFrom(~logger=config.logger, ~params={"onBlock": name})
 
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain
@@ -661,9 +658,12 @@ let registerOnBlock = (
     // Includes the ecosystem-specific method name so SVM users see "onSlot"
     // and don't get confused looking for a "Block handler" they never wrote.
     if !matchedAny.contents {
-      logger->Logging.childWarn(
-        `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
-      )
+      // Registration happens before an indexer instance exists, so this is
+      // the process-level logger.
+      Env.logger->Logging.warn({
+        "msg": `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
+        "onBlock": name,
+      })
     }
   })
 }

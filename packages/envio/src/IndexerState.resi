@@ -20,6 +20,7 @@ type t
 
 let make: (
   ~config: Config.t,
+  ~logger: Pino.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
@@ -35,6 +36,7 @@ let make: (
 
 let makeFromDbState: (
   ~config: Config.t,
+  ~logger: Pino.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,

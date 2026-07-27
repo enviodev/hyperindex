@@ -967,19 +967,17 @@ let updateInternal = (
 
 let warnDifferentContractType = (
   fetchState,
+  ~logger,
   ~existingContract: indexingAddress,
   ~dc: indexingAddress,
 ) => {
-  let logger = Logging.createChildFrom(
-    ~logger=Env.logger,
-    ~params={
-      "chainId": fetchState.chainId,
-      "contractAddress": dc.address->Address.toString,
-      "existingContractType": existingContract.contractName,
-      "newContractType": dc.contractName,
-    },
-  )
-  logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`)
+  logger->Logging.warn({
+    "msg": `Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`,
+    "chainId": fetchState.chainId,
+    "contractAddress": dc.address->Address.toString,
+    "existingContractType": existingContract.contractName,
+    "newContractType": dc.contractName,
+  })
 }
 
 let addressesByContractNameCount = (addressesByContractName: dict<array<Address.t>>) => {
@@ -1007,19 +1005,16 @@ let addClientFilteredContract = (
   ~chainId,
   ~addressCount,
   ~threshold,
+  ~logger: Pino.t,
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
-  Logging.createChildFrom(
-    ~logger=Env.logger,
-    ~params={
-      "chainId": chainId,
-      "contractName": contractName,
-      "addressCount": addressCount,
-      "threshold": threshold,
-    },
-  )->Logging.childTrace(
-    "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
-  )
+  logger->Logging.trace({
+    "msg": "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+    "chainId": chainId,
+    "contractName": contractName,
+    "addressCount": addressCount,
+    "threshold": threshold,
+  })
 }
 
 // Fold every client-filtered contract's server-side partitions into client-side
@@ -1408,6 +1403,7 @@ OptimizedPartitions.t => {
 let registerDynamicContracts = (
   fetchState: t,
   ~indexingAddresses: IndexingAddresses.t,
+  ~logger: Pino.t,
   // These are raw items which might have dynamic contracts received from contractRegister call.
   // Might contain duplicates which we should filter out
   items: array<Internal.item>,
@@ -1461,18 +1457,19 @@ let registerDynamicContracts = (
             // If new registration with earlier block number
             // we should register it for the missing block range
             if existingContract.contractName != dc.contractName {
-              fetchState->warnDifferentContractType(~existingContract, ~dc=dcWithStartBlock)
-            } else if existingContract.effectiveStartBlock > dcWithStartBlock.effectiveStartBlock {
-              let logger = Logging.createChildFrom(
-                ~logger=Env.logger,
-                ~params={
-                  "chainId": fetchState.chainId,
-                  "contractAddress": dc.address->Address.toString,
-                  "existingBlockNumber": existingContract.effectiveStartBlock,
-                  "newBlockNumber": dcWithStartBlock.effectiveStartBlock,
-                },
+              fetchState->warnDifferentContractType(
+                ~logger,
+                ~existingContract,
+                ~dc=dcWithStartBlock,
               )
-              logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`)
+            } else if existingContract.effectiveStartBlock > dcWithStartBlock.effectiveStartBlock {
+              logger->Logging.warn({
+                "msg": `Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`,
+                "chainId": fetchState.chainId,
+                "contractAddress": dc.address->Address.toString,
+                "existingBlockNumber": existingContract.effectiveStartBlock,
+                "newBlockNumber": dcWithStartBlock.effectiveStartBlock,
+              })
             }
             shouldRemove := true
           | None =>
@@ -1481,6 +1478,7 @@ let registerDynamicContracts = (
             ) {
             | Some(registeringContract) if registeringContract.contractName != dc.contractName =>
               fetchState->warnDifferentContractType(
+                ~logger,
                 ~existingContract=registeringContract,
                 ~dc=dcWithStartBlock,
               )
@@ -1521,7 +1519,11 @@ let registerDynamicContracts = (
           switch indexingAddresses->IndexingAddresses.get(dc.address->Address.toString) {
           | Some(existingContract) =>
             if existingContract.contractName != dc.contractName {
-              fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
+              fetchState->warnDifferentContractType(
+                ~logger,
+                ~existingContract,
+                ~dc=dcAsIndexingAddress,
+              )
             }
             shouldRemove := true
           | None =>
@@ -1530,23 +1532,24 @@ let registerDynamicContracts = (
             ) {
             | Some(existingContract) =>
               if existingContract.contractName != dc.contractName {
-                fetchState->warnDifferentContractType(~existingContract, ~dc=dcAsIndexingAddress)
+                fetchState->warnDifferentContractType(
+                  ~logger,
+                  ~existingContract,
+                  ~dc=dcAsIndexingAddress,
+                )
               }
               // Otherwise already queued for persistence by an earlier item in this batch.
               shouldRemove := true
             | None =>
-              let logger = Logging.createChildFrom(
-                ~logger=Env.logger,
-                ~params={
-                  "chainId": fetchState.chainId,
-                  "contractAddress": dc.address->Address.toString,
-                  "contractName": dc.contractName,
-                },
-              )
               // Persist the address to the db so a future config change that
               // adds events for this contract can pick it up on restart, but
               // skip partition registration since there's nothing to fetch.
-              logger->Logging.childWarn(`Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`)
+              logger->Logging.warn({
+                "msg": `Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`,
+                "chainId": fetchState.chainId,
+                "contractAddress": dc.address->Address.toString,
+                "contractName": dc.contractName,
+              })
               noEventsAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
               registeringAddresses->Dict.set(dc.address->Address.toString, dcAsIndexingAddress)
             }
@@ -1685,6 +1688,7 @@ let registerDynamicContracts = (
               ~chainId=fetchState.chainId,
               ~addressCount,
               ~threshold,
+              ~logger,
             )
           }
         })
@@ -2466,6 +2470,7 @@ let make = (
   ~chainId,
   ~maxOnBlockBufferSize,
   ~knownHeight,
+  ~logger: Pino.t,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockRegistrations=[],
   ~blockLag=0,
@@ -2553,6 +2558,7 @@ let make = (
           ~chainId,
           ~addressCount,
           ~threshold,
+          ~logger,
         )
       }
     })

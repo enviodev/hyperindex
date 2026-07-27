@@ -5,7 +5,7 @@ open Vitest
 // effect — that registry state (not `config`, which never changes) is what
 // `MockConfig.getEvmOnEventRegistration` reads below.
 let config = Config.load()
-let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config)
+let registrationsByChainId = await HandlerLoader.registerAllHandlers(~config, ~logger=Env.logger)
 
 let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config, ...)
 

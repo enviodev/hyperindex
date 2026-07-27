@@ -71,7 +71,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.timestamp
   }`)
 
-let make = (~logger: Pino.t): Ecosystem.t => {
+let make = (): Ecosystem.t => {
   name: Evm,
   blockNumberName: "number",
   blockTimestampName: "timestamp",
@@ -96,22 +96,18 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   onEventBlockFilterSchema: S.object(s =>
     s.field("block", S.option(S.object(s2 => s2.field("number", S.unknown))->S.strict))
   ),
-  logger,
   // The payload carries `transaction` by batch prep (HyperSync) or inline
   // (RPC/simulate), so the event is the payload as-is.
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  toEventLogger: eventItem =>
-    Logging.createChildFrom(
-      ~logger,
-      ~params={
-        "contract": eventItem.onEventRegistration.eventConfig.contractName,
-        "event": eventItem.onEventRegistration.eventConfig.name,
-        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
-        "block": eventItem.blockNumber,
-        "logIndex": eventItem.logIndex,
-        "address": (eventItem.payload->toPayload).srcAddress,
-      },
-    ),
+  toEventLogParams: eventItem =>
+    {
+      "contract": eventItem.onEventRegistration.eventConfig.contractName,
+      "event": eventItem.onEventRegistration.eventConfig.name,
+      "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+      "block": eventItem.blockNumber,
+      "logIndex": eventItem.logIndex,
+      "address": (eventItem.payload->toPayload).srcAddress,
+    }->Internal.toLogParams,
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
     let eventConfig =

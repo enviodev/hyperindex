@@ -2,6 +2,11 @@ type eventParams
 type eventBlock
 type eventTransaction
 
+// Context fields spread into log lines. Abstract so heterogeneous param
+// objects from different ecosystems share one type.
+type logParams
+let toLogParams = (params: 'a): logParams => params->(Utils.magic: 'a => logParams)
+
 // Field name variants for type-safe field selection.
 // @unboxed compiles to plain strings at runtime, matching JS property names.
 @unboxed
