@@ -309,7 +309,8 @@ module EventItems = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    maxNumLogs: int,
+    // Absent means no server-side cap on the number of logs returned.
+    maxNumLogs?: int,
     registrationIndexes: array<int>,
     addressesByContractName: dict<array<Address.t>>,
     // Contract names to fetch address-free even though their registrations

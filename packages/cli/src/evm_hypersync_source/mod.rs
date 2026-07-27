@@ -177,7 +177,7 @@ impl EvmHyperSyncClient {
                     .map(log_selection_from_built)
                     .collect(),
             ),
-            max_num_logs: Some(params.max_num_logs),
+            max_num_logs: params.max_num_logs,
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
                 transaction: Some(transaction_fields),
@@ -264,7 +264,8 @@ pub struct EventItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    pub max_num_logs: i64,
+    /// `None` sends no server-side cap on the number of logs returned.
+    pub max_num_logs: Option<i64>,
     pub registration_indexes: Vec<i64>,
     pub addresses_by_contract_name: HashMap<String, Vec<String>>,
     /// Contract names to fetch address-free even though their registrations
