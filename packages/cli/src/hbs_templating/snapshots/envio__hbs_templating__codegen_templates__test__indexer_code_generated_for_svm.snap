@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3671
 expression: project_template.indexer_code
 ---
 /**
@@ -79,6 +80,7 @@ module Entities = {
   type id = string
 
   module EmptyEntity = {
+    type id = string
     type t = {id: id, emptyField: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}

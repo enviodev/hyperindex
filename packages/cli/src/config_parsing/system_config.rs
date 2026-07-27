@@ -1,6 +1,6 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
-    entity_parsing::{Entity, GraphQLEnum, Schema},
+    entity_parsing::{Entity, GqlScalar, GraphQLEnum, Schema},
     env_interpolation::interpolate_config_variables,
     human_config::{
         self,
@@ -380,6 +380,11 @@ impl Storage {
     }
 }
 
+/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
+/// above this (or with no precision) it falls back to `String`. Kept in sync
+/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
+
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
@@ -418,6 +423,35 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                  - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
                  type {example} @storage(postgres: true) {{ ... }}"
             ));
+        }
+    }
+
+    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
+    // ceiling) as a String, which sorts lexicographically. `id` is ClickHouse's
+    // mandatory default sort key, so an id like that would order wrong. Reject
+    // it up front, mirroring `validate_clickhouse_order_by_fields`. See the
+    // BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
+    for entity in &entities {
+        let uses_clickhouse = if entity.has_storage_directive() {
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+        } else {
+            clickhouse_default
+        };
+        if !uses_clickhouse {
+            continue;
+        }
+        if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
+            let stored_as_numeric =
+                precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
+            if !stored_as_numeric {
+                return Err(anyhow!(
+                    "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse stores as a \
+                     String (sorted lexicographically, not numerically) unless a precision is set. \
+                     Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with \
+                     N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric Decimal.",
+                    entity.name
+                ));
+            }
         }
     }
 

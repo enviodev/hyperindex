@@ -265,7 +265,7 @@ describe("FetchState.make", () => {
   })
 
   it("Panics with nothing to fetch", t => {
-    t.expect(
+    t->toThrowErrorEqual(
       () => {
         makeFs(
           ~onEventRegistrations=[baseEventConfig],
@@ -279,7 +279,9 @@ describe("FetchState.make", () => {
         )
       },
       ~message=`Should panic if there's nothing to fetch`,
-    ).toThrowError("Invalid configuration: Nothing to fetch on chain")
+     
+      "Invalid configuration: Nothing to fetch on chain 0. addresses=0, onEventRegistrations=1, normalRegistrations=1. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+    )
   })
 
   it(

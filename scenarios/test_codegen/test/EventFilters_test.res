@@ -502,7 +502,7 @@ describe("Test eventFilters", () => {
       ~eventName="WithExcessField",
       ~chainId=137,
     )
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       EventConfigBuilder.buildEvmOnEventRegistration(
         ~eventConfig,
         ~isWildcard=true,
@@ -514,7 +514,7 @@ describe("Test eventFilters", () => {
         ~chainId=137,
         ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       )
-    ).toThrowError(`Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
+    , `Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
   })
 
   it("Registration path builds clientAddressFilter for address-filtered events only", t => {

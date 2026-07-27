@@ -116,19 +116,19 @@ describe("SourceManager creation", () => {
   })
 
   it("Fails to create without primary sources", t => {
-    t.expect(
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(~isRealtime=false, ~sources=[])
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
-    t.expect(
+     "Invalid configuration, no data-source for historical sync provided")
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(
           ~isRealtime=false,
           ~sources=[MockIndexer.Source.make([], ~sourceFor=Fallback).source],
         )
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
+     "Invalid configuration, no data-source for historical sync provided")
   })
 })
 
