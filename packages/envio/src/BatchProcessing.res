@@ -57,7 +57,6 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
         ->Array.every(ChainState.isFetchingAtHead)
       )
     ) {
-      // Attribute the idle gap until the next burst to fetch starvation.
       state->IndexerState.markProcessingStalledOnFetch
     }
   }

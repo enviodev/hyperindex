@@ -69,7 +69,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(0.),
-      scrapeTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
       targetBufferSize: 0,
       isInReorgThreshold: false,
       rollbackEnabled: false,
@@ -114,7 +114,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
-      scrapeTime: Date.fromTime(1700000123456.),
+      metricTime: Date.fromTime(1700000123456.),
       targetBufferSize: 5000,
       isInReorgThreshold: true,
       rollbackEnabled: true,

@@ -364,11 +364,26 @@ let createBatch = (
 
 let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
 
+// Close an open fetch-stall interval, accruing it into the counter. Called
+// whenever the reason for the idle changes, so the interval never spans into
+// time another counter owns.
+let settleStalledOnFetch = (state: t) =>
+  switch state.processingStalledOnFetchSince {
+  | Some(since) =>
+    state.processingStalledOnFetchSeconds =
+      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
+    state.processingStalledOnFetchSince = None
+  | None => ()
+  }
+
 // Begin a reorg rollback. Invalidates in-flight fetches and enters the
 // ReorgDetected state as one step, so the epoch bump can never be left out. The
 // caller has already mutated the chain states (restored counters, reset pending
 // queries). isResolvingReorg derives from rollbackState.
 let beginReorg = (state: t, ~chain, ~blockNumber) => {
+  // Settle here, or the rollback that follows would be folded into the stall on
+  // the next beginProcessing — time envio_rollback_seconds already counts.
+  state->settleStalledOnFetch
   state.epoch = state.epoch + 1
   state.rollbackState = ReorgDetected({chain, blockNumber})
 }
@@ -401,13 +416,7 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) =>
 // processing loop runs at a time.
 let isProcessing = (state: t) => state.isProcessing
 let beginProcessing = (state: t) => {
-  switch state.processingStalledOnFetchSince {
-  | Some(since) =>
-    state.processingStalledOnFetchSeconds =
-      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
-    state.processingStalledOnFetchSince = None
-  | None => ()
-  }
+  state->settleStalledOnFetch
   state.isProcessing = true
 }
 let endProcessing = (state: t) => state.isProcessing = false
@@ -499,7 +508,7 @@ let toMetrics = (state: t): Metrics.t => {
   )
   {
     startTime: state.indexerStartTime,
-    scrapeTime: Date.make(),
+    metricTime: Date.make(),
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
     rollbackEnabled: state.config.shouldRollbackOnReorg,
