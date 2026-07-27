@@ -346,28 +346,28 @@ module Entities = {
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("address") address?: Envio.whereOperator<string>, @as("gravatar_id") gravatar?: Envio.whereOperator<option<string>>, @as("updatesCountOnUserForTesting") updatesCountOnUserForTesting?: Envio.whereOperator<int>, @as("accountType") accountType?: Envio.whereOperator<Enums.AccountType.t>}
   }
 
-  type rec name<'entity> =
-    | @as("A") A: name<A.t>
-    | @as("B") B: name<B.t>
-    | @as("BigIntIdEntity") BigIntIdEntity: name<BigIntIdEntity.t>
-    | @as("C") C: name<C.t>
-    | @as("CustomSelectionTestPass") CustomSelectionTestPass: name<CustomSelectionTestPass.t>
-    | @as("D") D: name<D.t>
-    | @as("EntityWith63LenghtName______________________________________one") EntityWith63LenghtName______________________________________one: name<EntityWith63LenghtName______________________________________one.t>
-    | @as("EntityWith63LenghtName______________________________________two") EntityWith63LenghtName______________________________________two: name<EntityWith63LenghtName______________________________________two.t>
-    | @as("EntityWithAllNonArrayTypes") EntityWithAllNonArrayTypes: name<EntityWithAllNonArrayTypes.t>
-    | @as("EntityWithAllTypes") EntityWithAllTypes: name<EntityWithAllTypes.t>
-    | @as("EntityWithBigDecimal") EntityWithBigDecimal: name<EntityWithBigDecimal.t>
-    | @as("EntityWithRestrictedReScriptField") EntityWithRestrictedReScriptField: name<EntityWithRestrictedReScriptField.t>
-    | @as("EntityWithTimestamp") EntityWithTimestamp: name<EntityWithTimestamp.t>
-    | @as("Gravatar") Gravatar: name<Gravatar.t>
-    | @as("IntIdEntity") IntIdEntity: name<IntIdEntity.t>
-    | @as("NftCollection") NftCollection: name<NftCollection.t>
-    | @as("PostgresNumericPrecisionEntityTester") PostgresNumericPrecisionEntityTester: name<PostgresNumericPrecisionEntityTester.t>
-    | @as("SimpleEntity") SimpleEntity: name<SimpleEntity.t>
-    | @as("SimulateTestEvent") SimulateTestEvent: name<SimulateTestEvent.t>
-    | @as("Token") Token: name<Token.t>
-    | @as("User") User: name<User.t>
+  type rec name<'entity, 'id> =
+    | @as("A") A: name<A.t, A.id>
+    | @as("B") B: name<B.t, B.id>
+    | @as("BigIntIdEntity") BigIntIdEntity: name<BigIntIdEntity.t, BigIntIdEntity.id>
+    | @as("C") C: name<C.t, C.id>
+    | @as("CustomSelectionTestPass") CustomSelectionTestPass: name<CustomSelectionTestPass.t, CustomSelectionTestPass.id>
+    | @as("D") D: name<D.t, D.id>
+    | @as("EntityWith63LenghtName______________________________________one") EntityWith63LenghtName______________________________________one: name<EntityWith63LenghtName______________________________________one.t, EntityWith63LenghtName______________________________________one.id>
+    | @as("EntityWith63LenghtName______________________________________two") EntityWith63LenghtName______________________________________two: name<EntityWith63LenghtName______________________________________two.t, EntityWith63LenghtName______________________________________two.id>
+    | @as("EntityWithAllNonArrayTypes") EntityWithAllNonArrayTypes: name<EntityWithAllNonArrayTypes.t, EntityWithAllNonArrayTypes.id>
+    | @as("EntityWithAllTypes") EntityWithAllTypes: name<EntityWithAllTypes.t, EntityWithAllTypes.id>
+    | @as("EntityWithBigDecimal") EntityWithBigDecimal: name<EntityWithBigDecimal.t, EntityWithBigDecimal.id>
+    | @as("EntityWithRestrictedReScriptField") EntityWithRestrictedReScriptField: name<EntityWithRestrictedReScriptField.t, EntityWithRestrictedReScriptField.id>
+    | @as("EntityWithTimestamp") EntityWithTimestamp: name<EntityWithTimestamp.t, EntityWithTimestamp.id>
+    | @as("Gravatar") Gravatar: name<Gravatar.t, Gravatar.id>
+    | @as("IntIdEntity") IntIdEntity: name<IntIdEntity.t, IntIdEntity.id>
+    | @as("NftCollection") NftCollection: name<NftCollection.t, NftCollection.id>
+    | @as("PostgresNumericPrecisionEntityTester") PostgresNumericPrecisionEntityTester: name<PostgresNumericPrecisionEntityTester.t, PostgresNumericPrecisionEntityTester.id>
+    | @as("SimpleEntity") SimpleEntity: name<SimpleEntity.t, SimpleEntity.id>
+    | @as("SimulateTestEvent") SimulateTestEvent: name<SimulateTestEvent.t, SimulateTestEvent.id>
+    | @as("Token") Token: name<Token.t, Token.id>
+    | @as("User") User: name<User.t, User.id>
 }
 
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
@@ -2064,7 +2064,7 @@ type testIndexer = {
   \"User": testIndexerEntityOperations<Entities.User.t>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

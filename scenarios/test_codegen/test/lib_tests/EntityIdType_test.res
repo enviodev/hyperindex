@@ -132,6 +132,22 @@ let _testIndexerKeysOpsByIdScalar = async (indexer: Indexer.testIndexer) => {
   let _ = await indexer.\"BigIntIdEntity".get(1n)
 }
 
+// The name-keyed accessor resolves the id through the `name` GADT, so the helper
+// form is keyed by the same scalar as direct field access above — passing a
+// string id to a numeric entity here would fail to compile.
+let _testIndexerHelperKeysOpsByIdScalar = async (indexer: Indexer.testIndexer) => {
+  let intOps = indexer->Indexer.getTestIndexerEntityOperations(IntIdEntity)
+  let _: option<Indexer.Entities.IntIdEntity.t> = await intOps.get(1)
+  let _ = await intOps.getOrThrow(1)
+
+  let bigIntOps = indexer->Indexer.getTestIndexerEntityOperations(BigIntIdEntity)
+  let _: option<Indexer.Entities.BigIntIdEntity.t> = await bigIntOps.get(1n)
+
+  // A plain `ID!` entity still takes a string, unchanged.
+  let userOps = indexer->Indexer.getTestIndexerEntityOperations(User)
+  let _: option<Indexer.Entities.User.t> = await userOps.get("u1")
+}
+
 // End-to-end coverage through the in-process test indexer + Postgres: a schema
 // with Int!/BigInt! ids and foreign keys referencing them, driven by a real
 // handler, must round-trip the numeric values and delete by numeric id.

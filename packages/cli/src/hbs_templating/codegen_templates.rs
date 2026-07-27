@@ -126,11 +126,14 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
 
     if !entities.is_empty() {
         writeln!(code).unwrap();
-        writeln!(code, "type rec name<'entity> =").unwrap();
+        // Carries the entity's id type alongside the entity itself, so accessors
+        // keyed by a name (e.g. getTestIndexerEntityOperations) can type their
+        // by-id operations with that entity's real id scalar.
+        writeln!(code, "type rec name<'entity, 'id> =").unwrap();
         for entity in entities {
             writeln!(
                 code,
-                "  | @as(\"{0}\") {0}: name<{0}.t>",
+                "  | @as(\"{0}\") {0}: name<{0}.t, {0}.id>",
                 entity.name.capitalized
             )
             .unwrap();
@@ -1842,8 +1845,11 @@ type contractRegisterContext = {{
 
         // Generate entity ops fields for the testIndexer type. String ids use
         // the plain type; numeric ids use the custom-id variant.
-        let test_indexer_entity_ops_type = if has_custom_id_entity {
-            r#"/** Entity operations for direct access outside handlers. */
+        // The string-id form stays the default so entities with a plain `ID!`
+        // keep an id-argument-free shape. The custom-id form is always emitted
+        // because `getTestIndexerEntityOperations` returns it for every entity,
+        // resolving the id through the name GADT.
+        let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
 type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
@@ -1864,20 +1870,7 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
   getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
-}"#
-        } else {
-            r#"/** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
-  /** Get an entity by ID. */
-  get: string => promise<option<'entity>>,
-  /** Get all entities. */
-  getAll: unit => promise<array<'entity>>,
-  /** Get an entity by ID or throw if not found. */
-  getOrThrow: (string, ~message: string=?) => promise<'entity>,
-  /** Set (create or update) an entity. */
-  set: 'entity => unit,
-}"#
-        };
+}"#;
 
         let test_indexer_entity_fields = entities
             .iter()
@@ -1924,7 +1917,7 @@ type testIndexer = {{
         // The GADT name value compiles to a string at runtime via @as decorators,
         // so @get_index can use Entities.name directly as a dictionary key
         if !entities.is_empty() {
-            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = """#;
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = """#;
 
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
