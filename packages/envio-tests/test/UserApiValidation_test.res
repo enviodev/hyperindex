@@ -20,9 +20,6 @@ contracts:
       - event: Transfer()
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ${contractName}
@@ -82,9 +79,6 @@ chains:
 name: virtual-abi
 chains:
   - id: 1
-    rpc:
-      url: https://rpc.example.test
-      for: sync
     start_block: 0
     contracts:
       - name: Token
@@ -916,9 +910,6 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -944,9 +935,6 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: Token

@@ -108,7 +108,7 @@ indexer.onEvent({ contract: "Token", event: "Nonexistent" }, async () => {});
           ~configYaml=yaml,
         )->ignore,
      
-      "Handler type errors:\n__mock_indexer_handlers.ts(3,38): error TS2322: Type '\"Nonexistent\"' is not assignable to type '\"Transfer\"'.",
+      "Type errors:\n__mock_indexer_handlers.ts(3,38): error TS2322: Type '\"Nonexistent\"' is not assignable to type '\"Transfer\"'.",
     )
   })
 })
