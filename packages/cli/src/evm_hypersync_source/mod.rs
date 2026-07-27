@@ -131,11 +131,15 @@ impl EvmHyperSyncClient {
             .selection_builder
             .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
+        let set_cache = address_set.cache().clone();
         let selection_decoder = self
             .decoder
-            .selection(&params.registration_indexes, &client_filtered)
+            .selection(
+                &params.registration_indexes,
+                &client_filtered,
+                set_cache.clone(),
+            )
             .map_err(map_err)?;
-        let set_cache = address_set.cache().clone();
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
@@ -750,7 +754,7 @@ mod tests {
     fn empty_decoder() -> SelectionDecoder {
         Decoder::from_registrations(&[], false, &evm_store(&[]))
             .unwrap()
-            .selection(&[], &Default::default())
+            .selection(&[], &Default::default(), empty_set().cache().clone())
             .unwrap()
     }
 
@@ -794,7 +798,7 @@ mod tests {
             &evm_store(&[("Zero", &[])]),
         )
         .unwrap()
-        .selection(&[0], &Default::default())
+        .selection(&[0], &Default::default(), empty_set().cache().clone())
         .unwrap()
     }
 

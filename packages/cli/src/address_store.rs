@@ -176,7 +176,8 @@ impl StoreInner {
 pub struct AddressStoreContract {
     pub name: String,
     /// The minimum `startBlock` across the contract's registrations; absent
-    /// means the chain's own start block governs.
+    /// means block 0, since partitions never query below the chain's own start
+    /// block anyway.
     pub start_block: Option<i64>,
 }
 
@@ -449,25 +450,40 @@ impl AddressStore {
         }
     }
 
-    /// Canonical strings for one contract's addresses, in set order. Used by
-    /// `chain.<Contract>.addresses` and by tests.
+    /// Canonical strings for every address registered under one contract, in set
+    /// order. Used by `chain.<Contract>.addresses` and by tests. Addresses of a
+    /// contract with no events are included: they're registered and persisted,
+    /// just never fetched, so the getter must still report them.
     #[napi]
     pub fn contract_addresses(&self, contract_name: String) -> Vec<String> {
         let store = self.read();
-        let Some(contract_idx) = store.contract_idx(&contract_name) else {
-            return Vec::new();
+        let mut out: Vec<String> = match store.contract_idx(&contract_name) {
+            None => Vec::new(),
+            Some(contract_idx) => {
+                let ids: Vec<u64> = (0..store.entries.len() as u64)
+                    .filter(|&id| {
+                        let entry = store.entry(id);
+                        !entry.dead && entry.contract_idx == contract_idx
+                    })
+                    .collect();
+                store
+                    .sorted_ids(ids)
+                    .into_iter()
+                    .map(|id| address_string(store.ecosystem, &store.entry(id).key))
+                    .collect()
+            }
         };
-        let ids: Vec<u64> = (0..store.entries.len() as u64)
-            .filter(|&id| {
-                let entry = store.entry(id);
-                !entry.dead && entry.contract_idx == contract_idx
-            })
+        // No-events entries have no id to order by, so they follow, ordered by
+        // their own key to keep the listing reproducible.
+        let mut no_events: Vec<String> = store
+            .no_events
+            .iter()
+            .filter(|(_, entry)| entry.contract_name == contract_name)
+            .map(|(key, _)| address_string(store.ecosystem, key))
             .collect();
-        store
-            .sorted_ids(ids)
-            .into_iter()
-            .map(|id| address_string(store.ecosystem, &store.entry(id).key))
-            .collect()
+        no_events.sort();
+        out.append(&mut no_events);
+        out
     }
 
     /// Every registered address in set order, no-events ones last (ordered by
@@ -720,17 +736,6 @@ impl AddressSet {
     #[napi]
     pub fn size(&self) -> i64 {
         self.ids.len() as i64
-    }
-
-    /// Live addresses per contract name. The fetch state carries this alongside
-    /// the set so partition sizing never walks the addresses.
-    #[napi]
-    pub fn count_by_contract(&self) -> HashMap<String, i64> {
-        self.cache()
-            .contracts
-            .iter()
-            .map(|slice| (slice.name.clone(), slice.addresses.len() as i64))
-            .collect()
     }
 
     /// The chain-wide gate, reachable through any set of the store. Not set
@@ -989,6 +994,20 @@ pub(crate) mod test_support {
         store_of(Ecosystem::Svm, entries)
     }
 
+    /// Every live address the store holds, as one set — reachable from a store
+    /// handle alone, for routing tests that keep only the handle their client
+    /// cloned.
+    pub(crate) fn full_set(handle: &Arc<RwLock<StoreInner>>) -> AddressSet {
+        let ids = {
+            let store = handle.read().unwrap();
+            let live: Vec<u64> = (0..store.entries.len() as u64)
+                .filter(|&id| !store.entry(id).dead)
+                .collect();
+            store.sorted_ids(live)
+        };
+        AddressSet::new(handle.clone(), ids)
+    }
+
     /// One set spanning every named contract's addresses.
     pub(crate) fn set_of(store: &AddressStore, contract_names: &[&str]) -> AddressSet {
         contract_names
@@ -1108,15 +1127,45 @@ mod tests {
             reg(A, "Unknown", 30),
         ]);
         assert_eq!(kinds(&verdicts), vec!["noEvents", "conflict", "duplicate"]);
-        // Never fetched: no contract owns it in a set, but it is still counted
-        // and listed so it gets persisted.
+        // Never fetched: no contract owns it in a set, but it is still counted,
+        // listed and reported by `chain.<Contract>.addresses` so it gets
+        // persisted and stays visible to the user.
         assert_eq!(
             (
                 store.make_set("Unknown".to_string(), None).size(),
                 store.size(),
-                store.entries().len()
+                store.entries().len(),
+                store.contract_addresses("Unknown".to_string()),
             ),
-            (0, 1, 1)
+            (0, 1, 1, vec![A.to_string()])
+        );
+    }
+
+    #[test]
+    fn contract_addresses_lists_live_and_no_events_entries() {
+        // A contract can hold both at once after a config change removes the
+        // events of some addresses but not others; the getter reports every
+        // address registered under the name, fetched or not.
+        let store = AddressStore::new_evm(false, contracts(&[("C", None)]));
+        let verdicts = store.register_batch(vec![
+            reg(B, "C", 20),
+            reg(A, "C", 10),
+            reg(C, "NoEvents", 30),
+        ]);
+        assert_eq!(
+            (
+                kinds(&verdicts),
+                store.contract_addresses("C".to_string()),
+                store.contract_addresses("NoEvents".to_string()),
+                store.contract_addresses("Missing".to_string()),
+            ),
+            (
+                vec!["added", "added", "noEvents"],
+                // Set order: A(10) before B(20).
+                vec![A.to_string(), B.to_string()],
+                vec![C.to_string()],
+                vec![],
+            )
         );
     }
 
@@ -1232,13 +1281,15 @@ mod tests {
             (
                 merged.addresses(),
                 merged.slice(1, Some(1)).addresses(),
-                merged.count_by_contract(),
+                merged.count_for("C".to_string()),
+                merged.count_for("D".to_string()),
             ),
             (
                 // Ordered by effectiveStartBlock: B(100), C(200), A(300).
                 vec![B.to_string(), C.to_string(), A.to_string()],
                 vec![C.to_string()],
-                HashMap::from([("C".to_string(), 2), ("D".to_string(), 1)]),
+                2,
+                1,
             )
         );
     }

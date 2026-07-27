@@ -79,13 +79,6 @@ function makeFakeSet(unordered) {
     countFor: function (name) {
       return entries.filter(function (e) { return e.contractName === name }).length;
     },
-    countByContract: function () {
-      var counts = {};
-      entries.forEach(function (e) {
-        counts[e.contractName] = (counts[e.contractName] || 0) + 1;
-      });
-      return counts;
-    },
     filterByContracts: function (names) {
       return makeFakeSet(entries.filter(function (e) { return names.includes(e.contractName) }));
     },

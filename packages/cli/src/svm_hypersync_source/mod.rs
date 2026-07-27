@@ -337,6 +337,10 @@ impl SvmHyperSyncClient {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
+        // Materialise the set's cache before taking the store guard: `cache()`
+        // lazily initialises by reading the same lock, and a writer queued
+        // between the two reads would deadlock the pair.
+        let set_cache = address_set.cache().clone();
         // Route before filling the stores: an instruction that routes nowhere
         // keeps neither its transaction nor its block.
         let items = {
@@ -346,7 +350,7 @@ impl SvmHyperSyncClient {
                 std::mem::take(&mut resp.logs),
                 &built,
                 &self.schemas,
-                address_set.cache(),
+                &set_cache,
                 &client_filtered,
                 &store,
             )
@@ -386,11 +390,11 @@ impl SvmHyperSyncClient {
     }
 }
 
-/// The whole per-query input for `get_event_items`: the slot range, the
-/// partition's registration selection (by index), and its current addresses
-/// (program ids per program name). Instruction selections, field selection,
-/// and routing are all derived internally from the registrations passed at
-/// construction.
+/// The whole per-query input for `get_event_items`: the slot range and the
+/// partition's registration selection (by index). The partition's addresses
+/// arrive separately, as the `AddressSet` handle. Instruction selections, field
+/// selection, and routing are all derived internally from the registrations
+/// passed at construction.
 #[napi(object)]
 pub struct EventItemsQuery {
     pub from_slot: i64,

@@ -89,13 +89,17 @@ impl FuelHyperSyncClient {
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
 
+        // Materialise the set's cache before taking the store guard: `cache()`
+        // lazily initialises by reading the same lock, and a writer queued
+        // between the two reads would deadlock the pair.
+        let set_cache = address_set.cache().clone();
         let items = {
             let store = self.address_store.read().unwrap();
             route_receipts(
                 raw.receipts,
                 &raw.blocks,
                 &built,
-                address_set.cache(),
+                &set_cache,
                 &client_filtered,
                 &store,
             )
@@ -111,10 +115,11 @@ impl FuelHyperSyncClient {
     }
 }
 
-/// The whole per-query input for `get_event_items`: the block range, the
-/// partition's registration selection (by index), and its current addresses.
-/// Receipt selections, field selection, and routing are all derived internally
-/// from the registrations passed at construction.
+/// The whole per-query input for `get_event_items`: the block range and the
+/// partition's registration selection (by index). The partition's addresses
+/// arrive separately, as the `AddressSet` handle. Receipt selections, field
+/// selection, and routing are all derived internally from the registrations
+/// passed at construction.
 #[napi(object)]
 pub struct EventItemsQuery {
     pub from_block: i64,

@@ -736,6 +736,37 @@ mod tests {
     }
 
     #[test]
+    fn program_registered_after_the_instruction_slot_is_dropped() {
+        // SVM gets the same temporal gate as EVM and Fuel: an instruction from
+        // before the program's registration slot never reaches its handler.
+        let mut owned = reg(0, PROG_A, Some("0x21"), 1, false);
+        owned.contract_name = "Owned".to_string();
+        let store = AddressStore::new_svm(vec![crate::address_store::AddressStoreContract {
+            name: "Owned".to_string(),
+            start_block: None,
+        }]);
+        store.register_batch(vec![crate::address_store::AddressRegistration {
+            address: PROG_A.to_string(),
+            contract_name: "Owned".to_string(),
+            registration_block: 70,
+        }]);
+        let set = set_of(&store, &["Owned"]);
+        let built = SelectionBuilder::from_registrations(
+            std::slice::from_ref(&owned),
+            &store.handle().read().unwrap(),
+        )
+        .unwrap()
+        .build(&[0])
+        .unwrap();
+        let at = |slot: u64| {
+            let mut instr = instruction(PROG_A, &[0x21]);
+            instr.slot = slot;
+            route_indexes(&store, &set, &built, &instr)
+        };
+        assert_eq!((at(69), at(70)), (Vec::<i64>::new(), vec![0]));
+    }
+
+    #[test]
     fn routing_scoped_to_program() {
         let (store, set, built) = build(
             &[
