@@ -12,30 +12,6 @@ type parsed = {
   publicConfigJson: JSON.t,
 }
 
-// Parse the same YAML a user supplies, then cross the public JSON boundary used at runtime.
-// When `handlers` (TS source using `import {indexer} from "envio"`) is supplied, the same
-// parse also emits the generated types, and the handlers are type-checked against them;
-// any type error is thrown.
-let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~configYaml): parsed => {
-  let {config: configJson, indexerTypes} =
-    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes=handlers->Option.isSome, configYaml)
-
-  switch (handlers, indexerTypes->Null.toOption) {
-  | (Some(handlers), Some(typesDts)) =>
-    switch checkHandlerTypes(typesDts, handlers) {
-    | [] => ()
-    | errors => JsError.throwWithMessage("Handler type errors:\n" ++ errors->Array.join("\n"))
-    }
-  | _ => ()
-  }
-
-  let publicConfigJson = configJson->JSON.parseOrThrow
-  {
-    publicConfigJson,
-    config: Config.fromPublic(publicConfigJson),
-  }
-}
-
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
 @module("node:path") @variadic external pathJoin: array<string> => string = "join"
@@ -44,10 +20,12 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~configYaml): parse
 @module("node:crypto") external randomUUID: unit => string = "randomUUID"
 @val external importMetaUrl: string = "import.meta.url"
 
-// `describe` with a callback vitest awaits during collection, so tests
-// registered by a module imported inside it land in this suite.
+// Vitest awaits a suite's callback while building the suite tree, so tests
+// registered by a module imported inside it land in this suite — without the
+// caller having to await anything. That is what keeps `fromUserApi` synchronous
+// and lets fixtures be ordinary `_test.res` files.
 @module("vitest")
-external describeAsync: (string, unit => promise<unit>) => promise<unit> = "describe"
+external describeAsync: (string, unit => promise<unit>) => unit = "describe"
 
 // Emitted here rather than in envio so vite-node transforms the generated
 // module and its bare `envio` import resolves to the instance already loaded.
@@ -79,78 +57,106 @@ let writeModule = (~kind, ~site, ~source) => {
   file
 }
 
-type fixture = {
-  // Suite name; defaults to the `defineIndexerTest` call site.
-  name?: string,
-  configYaml: string,
-  schema?: string,
-  // Handler module source, exactly as a user's `src/handlers/*.ts`.
-  handlers: string,
-  // Test module source, exactly as a user's `src/indexer.test.ts`.
-  test: string,
-}
 
-// Config priming and the handler registry are process-global, so one fixture
-// owns the process. Under `pool: "forks"` that means one fixture per file.
-let definedAt: ref<option<string>> = ref(None)
+// Config priming and the handler registry are process-global, so a fixture that
+// runs tests owns the process. Under `pool: "forks"` that means one such fixture
+// per test file; parse-only calls are unrestricted.
+let ranTestAt: ref<option<string>> = ref(None)
 
-// Run a user-facing test module against a config parsed from YAML, with no
-// codegen'd project on disk. Both sources are type-checked against the config's
-// generated types and then evaluated: handlers register through the normal
-// global registry, and the test module's `it()` calls register into the calling
-// file's suite, so they get real vitest names, code frames and diffs.
+// Parse the same YAML a user supplies, then cross the public JSON boundary used
+// at runtime.
 //
-// Must be called with top-level `await` from a `.test.ts` file — the imported
-// tests only register while the caller is being collected.
-let defineIndexerTest = async (fixture: fixture) => {
-  let site = callSite()
-  let name = switch fixture.name {
-  | Some(name) => name
-  | None => `indexerTest(${site})`
-  }
+// `handlers` and `test` are ordinary user modules — the same source a project
+// puts in `src/handlers/*.ts` and `src/indexer.test.ts` — type-checked against
+// the config's generated types.
+//
+// With `test`, the sources are also evaluated: the config is primed so the real
+// `createTestIndexer` from "envio" runs with no project on disk, handlers
+// register through the normal global registry, and the test module's `it()`
+// calls register into the calling file's suite, so they get real vitest names,
+// code frames and diffs. Nothing needs to be awaited — vitest resolves the suite
+// callback while collecting — and failures setting the fixture up are reported
+// as a named test rather than a collection crash.
+//
+// Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
+// the source must be escaped.
+let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~name=?, ~configYaml): parsed => {
+  let withIndexerTypes = handlers->Option.isSome || test->Option.isSome
+  let {config: configJson, indexerTypes} =
+    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes, configYaml)
 
-  let result = try {
-    switch definedAt.contents {
-    | Some(previous) =>
-      JsError.throwWithMessage(
-        `defineIndexerTest was already called at ${previous}. The parsed config and handler registry are process-global, so each fixture needs its own test file.`,
-      )
-    | None => ()
-    }
-    definedAt := Some(site)
-
-    let {config: configJson, indexerTypes} =
-      Core.fromUserApi(~schema=?fixture.schema, ~withIndexerTypes=true, fixture.configYaml)
+  let typeErrors = if withIndexerTypes {
     let typesDts = switch indexerTypes->Null.toOption {
     | Some(typesDts) => typesDts
     | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
     }
+    switch checkSources(typesDts, {handlers: ?handlers, test: ?test}) {
+    | [] => None
+    | errors => Some("Type errors:\n" ++ errors->Array.join("\n"))
+    }
+  } else {
+    None
+  }
 
-    switch checkSources(typesDts, {handlers: fixture.handlers, test: fixture.test}) {
-    | [] => ()
-    | errors => JsError.throwWithMessage("Type errors:\n" ++ errors->Array.join("\n"))
+  let publicConfigJson = configJson->JSON.parseOrThrow
+  let config = Config.fromPublic(publicConfigJson)
+
+  switch test {
+  // Parse-only: type errors are thrown at the call site, as callers assert.
+  | None =>
+    switch typeErrors {
+    | Some(message) => JsError.throwWithMessage(message)
+    | None => ()
+    }
+  | Some(test) =>
+    let site = callSite()
+    let suiteName = switch name {
+    | Some(name) => name
+    | None => `indexerTest(${site})`
+    }
+    let setup = try {
+      switch typeErrors {
+      | Some(message) => JsError.throwWithMessage(message)
+      | None => ()
+      }
+      switch ranTestAt.contents {
+      | Some(previous) =>
+        JsError.throwWithMessage(
+          `fromUserApi already ran a test module at ${previous}. The parsed config and handler registry are process-global, so each one needs its own test file.`,
+        )
+      | None => ()
+      }
+      ranTestAt := Some(site)
+
+      // Makes `Config.load()` resolve to this fixture, which is what lets the
+      // real `createTestIndexer` from "envio" run with no project on disk.
+      Config.prime(publicConfigJson)
+      HandlerRegister.startRegistration(~config)
+
+      mkdirSync(tmpDir, {"recursive": true})
+      Ok((
+        handlers->Option.map(source => writeModule(~kind="handlers", ~site, ~source)),
+        writeModule(~kind="test", ~site, ~source=test),
+      ))
+    } catch {
+    | exn => Error(exn)
     }
 
-    let publicConfigJson = configJson->JSON.parseOrThrow
-    // Makes `Config.load()` resolve to this fixture, which is what lets the real
-    // `createTestIndexer` from "envio" run with no project on disk.
-    Config.prime(publicConfigJson)
-    HandlerRegister.startRegistration(~config=Config.fromPublic(publicConfigJson))
-
-    mkdirSync(tmpDir, {"recursive": true})
-    await importModule(writeModule(~kind="handlers", ~site, ~source=fixture.handlers))
-
-    let testFile = writeModule(~kind="test", ~site, ~source=fixture.test)
-    await describeAsync(name, () => importModule(testFile))
-    Ok()
-  } catch {
-  | exn => Error(exn)
+    switch setup {
+    | Ok((handlersFile, testFile)) =>
+      describeAsync(suiteName, async () => {
+        // Handlers must finish registering before the test module's bodies run.
+        switch handlersFile {
+        | Some(file) => await importModule(file)
+        | None => ()
+        }
+        await importModule(testFile)
+      })
+    // Surface setup failures as a named test rather than a collection crash, so
+    // the reporter attributes them to this fixture.
+    | Error(exn) => Vitest.it(`${suiteName} setup`, _ => throw(exn))
+    }
   }
 
-  switch result {
-  | Ok() => ()
-  // Surface setup failures as a named test rather than a collection crash, so
-  // the reporter attributes them to this fixture.
-  | Error(exn) => Vitest.it(`${name} setup`, _ => throw(exn))
-  }
+  {publicConfigJson, config}
 }

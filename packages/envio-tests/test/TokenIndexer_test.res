@@ -1,10 +1,8 @@
-import { defineIndexerTest } from "./helpers/InternalTestIndexer.res.mjs";
-
 // `handlers` and `test` are ordinary user modules — the same source a project
 // would put in `src/handlers/` and `src/indexer.test.ts` — type-checked against
 // this config's generated types and then actually executed.
-await defineIndexerTest({
-  configYaml: `
+let _ = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
 name: token-indexer
 chains:
   - id: 1
@@ -18,13 +16,13 @@ chains:
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
 `,
-  schema: `
+  ~schema=`
 type Account {
   id: ID!
   balance: BigInt!
 }
 `,
-  handlers: `
+  ~handlers=`
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
@@ -35,7 +33,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   });
 });
 `,
-  test: `
+  ~test=`
 import { describe, it } from "vitest";
 import { createTestIndexer, type Account, TestHelpers } from "envio";
 
@@ -91,4 +89,4 @@ describe("Token transfers", () => {
   });
 });
 `,
-});
+)
