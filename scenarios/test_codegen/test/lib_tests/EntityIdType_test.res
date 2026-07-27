@@ -252,7 +252,7 @@ chains:
 
   // The full error a rejected parse throws. `toThrowErrorEqual` asserts the
   // whole message (not a substring). The entity is named "Thing" in every case.
-  let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal."
+  let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal, or set `@storage(clickhouse: {orderBy: [...]})` to sort by other fields."
 
   it("rejects an unbounded BigInt id on a clickhouse entity", t => {
     t->toThrowErrorEqual(() =>
@@ -302,6 +302,144 @@ chains:
       ~schema=`type Thing { id: BigInt! }`,
       ~storage="  postgres:\n    default: true",
     )
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+})
+
+// The public `EntityChangeValue.deleted` type in index.d.ts is derived from the
+// entity id (`EntityId<Entity>`), so the ids the test indexer actually reports
+// must be the raw scalars rather than stringified ones.
+describe("Test indexer reports deleted ids with the entity's id type", () => {
+  let makeState = (~entityConfig: Internal.entityConfig): TestIndexer.testIndexerState => {
+    let entityConfigs = Dict.make()
+    entityConfigs->Dict.set(entityConfig.name, entityConfig)
+    {
+      processInProgress: false,
+      progressBlockByChain: Dict.make(),
+      entities: Dict.make(),
+      entityConfigs,
+      processChanges: [],
+    }
+  }
+
+  let deletedIdsOf = (~entityConfig: Internal.entityConfig, ~entityId: EntityId.t) => {
+    let state = makeState(~entityConfig)
+    state->TestIndexer.handleWriteBatch(
+      ~updatedEntities=[
+        {
+          entityConfig,
+          changes: [Change.Delete({entityId, checkpointId: 1n})],
+        },
+      ],
+      ~checkpointIds=[1n],
+      ~checkpointChainIds=[1337],
+      ~checkpointBlockNumbers=[5],
+      ~checkpointEventsProcessed=[1],
+    )
+    state.processChanges
+    ->Array.getUnsafe(0)
+    ->(Utils.magic: unknown => dict<dict<array<EntityId.t>>>)
+    ->Dict.getUnsafe(entityConfig.name)
+    ->Dict.getUnsafe("deleted")
+  }
+
+  it("keeps an Int id a number", t => {
+    let deleted = deletedIdsOf(
+      ~entityConfig=MockIndexer.entityConfig(IntIdEntity),
+      ~entityId=137->EntityId.unsafeOfAny,
+    )
+    // Compared against the raw number, so a stringified "137" fails here.
+    t.expect(deleted).toEqual([137->EntityId.unsafeOfAny])
+  })
+
+  it("keeps a BigInt id a bigint", t => {
+    let deleted = deletedIdsOf(
+      ~entityConfig=MockIndexer.entityConfig(BigIntIdEntity),
+      ~entityId=999n->EntityId.unsafeOfAny,
+    )
+    t.expect(deleted).toEqual([999n->EntityId.unsafeOfAny])
+  })
+
+  it("keeps a string id a string", t => {
+    let deleted = deletedIdsOf(
+      ~entityConfig=MockIndexer.entityConfig(User),
+      ~entityId="u1"->EntityId.unsafeOfString,
+    )
+    t.expect(deleted).toEqual(["u1"->EntityId.unsafeOfString])
+  })
+})
+
+// A custom `orderBy` replaces `id` in the ClickHouse sorting key, so the fields
+// it lists are what must sort numerically — and a relation sorts by the id it
+// stores, not by the entity it points at.
+describe("ClickHouse orderBy sort-key validation", () => {
+  let parseWithClickHouse = schema =>
+    InternalTestIndexer.fromUserApi(
+      ~schema,
+      ~configYaml=`
+name: clickhouse-order-by
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+`,
+    )
+
+  it("accepts an unbounded BigInt id when orderBy replaces id in the sort key", t => {
+    let {config} = parseWithClickHouse(`
+type Thing @storage(clickhouse: {orderBy: ["timestamp"]}) {
+  id: BigInt!
+  timestamp: Int!
+}
+`)
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+
+  it("rejects sorting by a relation whose target id is an unbounded BigInt", t => {
+    t->toThrowErrorEqual(
+      () =>
+        parseWithClickHouse(`
+type Parent {
+  id: BigInt!
+}
+type Thing @storage(clickhouse: {orderBy: ["parent"]}) {
+  id: ID!
+  parent: Parent!
+}
+`)->ignore,
+      "Config parse error: Invalid storage for `Thing`. `clickhouse.orderBy` sorts by `parent`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
+    )
+  })
+
+  it("accepts sorting by a relation whose target id is a bounded BigInt", t => {
+    let {config} = parseWithClickHouse(`
+type Parent {
+  id: BigInt! @config(precision: 20)
+}
+type Thing @storage(clickhouse: {orderBy: ["parent"]}) {
+  id: ID!
+  parent: Parent!
+}
+`)
+    t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
+  })
+
+  it("accepts sorting by a relation whose target id is an Int", t => {
+    let {config} = parseWithClickHouse(`
+type Parent {
+  id: Int!
+}
+type Thing @storage(clickhouse: {orderBy: ["parent"]}) {
+  id: ID!
+  parent: Parent!
+}
+`)
     t.expect(config.userEntitiesByName->Dict.get("Thing")->Option.isSome).toBe(true)
   })
 })

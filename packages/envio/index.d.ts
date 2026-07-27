@@ -1514,7 +1514,7 @@ type EntityChangeValue<Entity> = {
   /** Entities that were created or updated. */
   readonly sets?: readonly Entity[];
   /** IDs of entities that were deleted. */
-  readonly deleted?: readonly string[];
+  readonly deleted?: readonly EntityId<Entity>[];
 };
 
 /** A dynamic contract address registration. */

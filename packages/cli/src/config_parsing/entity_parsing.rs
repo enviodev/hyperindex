@@ -223,6 +223,20 @@ impl Schema {
         }
     }
 
+    /// Resolves a field's scalar to what its column actually stores: a relation
+    /// stores the referenced entity's id, every other scalar stores itself.
+    /// Storage validation has to reason about the stored column type, which for
+    /// a relation is not the schema-level type.
+    pub fn resolve_stored_scalar(&self, scalar: &GqlScalar) -> anyhow::Result<GqlScalar> {
+        match scalar {
+            GqlScalar::Custom(name) => match self.try_get_type_def(name)? {
+                TypeDef::Entity(entity) => entity.get_id_scalar(),
+                TypeDef::Enum => Ok(scalar.clone()),
+            },
+            _ => Ok(scalar.clone()),
+        }
+    }
+
     fn try_get_type_def(&self, name: &String) -> anyhow::Result<TypeDef<'_>> {
         match (self.entities.get(name), self.enums.get(name)) {
             (None, None) => Err(anyhow!("No type definition '{}' exists in schema", name)),
@@ -1769,7 +1783,7 @@ impl FieldType {
         self.to_user_defined_field_type().to_rescript_type(schema)
     }
 
-    fn get_underlying_scalar(&self) -> GqlScalar {
+    pub fn get_underlying_scalar(&self) -> GqlScalar {
         self.to_user_defined_field_type().get_underlying_scalar()
     }
 
