@@ -472,7 +472,7 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool) => {
+let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: bool, ~logger) => {
   open Express
 
   let app = make()
@@ -542,12 +542,12 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
   server->Express.onError(err => {
     let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
-      Env.logger->Logging.error(
+      logger->Logging.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
         `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
       )
     } else {
-      Env.logger->Logging.errorWithExn(err, "Failed to start indexer server")
+      logger->Logging.errorWithExn(err, "Failed to start indexer server")
     }
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })
@@ -664,7 +664,7 @@ let start = async (
   let envioVersion = Utils.EnvioPackage.value.version
 
   if !isTest {
-    startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
+    startServer(~persistence, ~isDevelopmentMode, ~logger, ~getState=() =>
       switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {

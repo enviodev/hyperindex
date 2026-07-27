@@ -18,14 +18,13 @@ module Entity = {
   }
 
   // Helper to extract entity ID from any entity
-  exception UnexpectedIdNotDefinedOnEntity
   let getEntityIdUnsafe = (entity: Internal.entity): string =>
     switch (entity->(Utils.magic: Internal.entity => {"id": option<string>}))["id"] {
     | Some(id) => id
     | None =>
       // Raised, not logged: this runs inside handler processing, whose error
       // boundary logs through the indexer's own logger with item context.
-      throw(UnexpectedIdNotDefinedOnEntity)
+      JsError.throwWithMessage("Property 'id' does not exist on expected entity object")
     }
 
   let getOrCreateEntityFilters = (self: t, ~entityId) =>

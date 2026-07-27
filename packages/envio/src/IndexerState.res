@@ -8,7 +8,6 @@ type rollbackState =
 
 module EntityTables = {
   type t = dict<InMemoryTable.Entity.t>
-  exception UndefinedEntity({entityName: string})
   let make = (entities: array<Internal.entityConfig>): t => {
     let init = Dict.make()
     entities->Array.forEach(entityConfig => {
@@ -21,9 +20,10 @@ module EntityTables = {
     switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
     | Some(table) => table
     | None =>
-      UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
-        ~logger=Env.logger,
-        ~msg="Unexpected, entity InMemoryTable is undefined",
+      // Raised, not logged: every caller runs inside an instance-scoped error
+      // boundary that logs through the indexer's own logger.
+      JsError.throwWithMessage(
+        `Unexpected, InMemoryTable for entity ${entityName} is undefined`,
       )
     }
   }
