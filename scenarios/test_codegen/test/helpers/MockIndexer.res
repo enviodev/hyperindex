@@ -395,6 +395,8 @@ module Indexer = {
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
+    // Releases this instance's logger.
+    close: unit => promise<unit>,
   }
 
   type chainConfig = {
@@ -712,6 +714,7 @@ module Indexer = {
           }
         )
       },
+      close: () => logger->Logging.close,
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
         await state->Writing.flush
@@ -724,6 +727,7 @@ module Indexer = {
         while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
           await Utils.delay(1)
         }
+        await logger->Logging.close
         await make(
           ~chains,
           ~config=?customConfig,
@@ -926,7 +930,7 @@ module Source = {
           poweredByHyperSync: false,
           chain,
           pollingInterval,
-          getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
+          getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _, ~params as _) => {
             getBlockHashesCalls->Array.push(blockNumbers)->ignore
             Promise.make((resolve, _reject) => {
               getBlockHashesResolveFns->Array.push(resolve)->ignore
@@ -950,6 +954,7 @@ module Source = {
             ~itemsTarget as _,
             ~retry,
             ~logger as _,
+            ~params as _,
           ) => {
             keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
               let payload = {

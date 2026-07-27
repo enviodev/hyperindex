@@ -100,7 +100,7 @@ describe("Indexer loop", () => {
     let reportedErrors = ref(0)
     let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
 
-    state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
+    state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom"), ~logger=Env.logger))
 
     t.expect(
       {"isStopped": state->IndexerState.isStopped, "reportedErrors": reportedErrors.contents},

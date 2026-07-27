@@ -30,7 +30,10 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   ) {
   | client => client
   | exception exn =>
-    exn->ErrorHandling.mkLogAndRaise(~msg="Failed to instantiate the HyperFuel client")
+    exn->ErrorHandling.mkLogAndRaise(
+      ~logger,
+      ~msg="Failed to instantiate the HyperFuel client",
+    )
   }
 
   let getItemsOrThrow = async (
@@ -44,6 +47,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~itemsTarget as _,
     ~retry,
     ~logger,
+    ~params,
   ) => {
     let totalTimeRef = Performance.now()
 
@@ -143,11 +147,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
             exn->ErrorHandling.mkLogAndRaise(
               ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
               ~logger,
-              ~params={
+              ~params=params->Logging.withParams({
                 "chainId": chainId,
                 "blockNumber": item.blockHeight,
                 "logIndex": item.receiptIndex,
-              },
+              }),
             )
           }
         }
@@ -228,7 +232,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
+  let getBlockHashes = (~blockNumbers as _, ~logger as _, ~params as _) =>
     JsError.throwWithMessage("HyperFuel does not support getting block hashes")
 
   {

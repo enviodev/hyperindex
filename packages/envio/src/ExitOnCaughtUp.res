@@ -16,7 +16,10 @@ let run = async (state: IndexerState.t) => {
         state->IndexerState.logger->Logging.info("Exiting with success")
         NodeJs.process->NodeJs.exitWithCode(Success)
       }
-    | Some(message) => state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make(message)))
+    | Some(message) =>
+      state->IndexerState.errorExit(
+        ErrorHandling.make(Utils.Error.make(message), ~logger=state->IndexerState.logger),
+      )
     }
   }
 }

@@ -14,7 +14,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
     chain,
     poweredByHyperSync: true,
     pollingInterval: 100,
-    getBlockHashes: (~blockNumbers, ~logger as _) => {
+    getBlockHashes: (~blockNumbers, ~logger as _, ~params as _) => {
       let current = callCount.contents
       callCount := current + 1
       if current < rateLimitedCalls {
@@ -41,6 +41,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
       ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
+      ~params as _,
     ) => JsError.throwWithMessage("Not used by rate limit test"),
   }
 }

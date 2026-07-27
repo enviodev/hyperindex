@@ -35,7 +35,13 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
       let processedBatchesBefore = state->IndexerState.processedBatchesCount
       switch await processNextBatch(state, ~scheduleFetch) {
       | exception exn =>
-        IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
+        IndexerState.errorExit(
+        state,
+        exn->ErrorHandling.make(
+          ~logger=state->IndexerState.logger,
+          ~msg=IndexerState.unexpectedErrorMsg,
+        ),
+      )
       | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
       }
     }
@@ -176,6 +182,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
               Utils.Error.make(
                 "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
               ),
+              ~logger=state->IndexerState.logger,
             ),
           )
         } else {

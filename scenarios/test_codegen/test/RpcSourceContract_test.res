@@ -99,6 +99,7 @@ let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, 
     ~itemsTarget=5_000,
     ~retry,
     ~logger=Env.logger,
+    ~params=Internal.toLogParams({"test": true}),
   )
 }
 
@@ -449,6 +450,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                 ~itemsTarget=5_000,
                 ~retry=0,
                 ~logger=Env.logger,
+                ~params=Internal.toLogParams({"test": true}),
               )
             )
           (await call(), await call())
@@ -590,6 +592,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               ~itemsTarget=5_000,
               ~retry=0,
               ~logger=Env.logger,
+              ~params=Internal.toLogParams({"test": true}),
             )
           ) {
           | Ok(page) => page
@@ -713,6 +716,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               ~itemsTarget=5_000,
               ~retry=0,
               ~logger=Env.logger,
+              ~params=Internal.toLogParams({"test": true}),
             )
           ) {
           | Ok(page) => page

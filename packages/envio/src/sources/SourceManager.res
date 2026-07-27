@@ -760,7 +760,6 @@ let executeQuery = async (
     // Written on every line below instead of bound to a child logger.
     let queryParams = {
       "chainId": source.chain->ChainMap.Chain.toChainId,
-      "logType": "Block Range Query",
       "partitionId": query.partitionId,
       "source": source.name,
       "fromBlock": query.fromBlock,
@@ -781,6 +780,7 @@ let executeQuery = async (
         ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,
+        ~params=queryParams,
       )
       sourceState->recordRequestStats(response.requestStats)
       sourceState.lastFailedAt = None
@@ -938,13 +938,12 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let logger = sourceManager.logger
     let queryParams = {
       "chainId": source.chain->ChainMap.Chain.toChainId,
-      "logType": "Block Hash Query",
       "source": source.name,
       "retry": retry,
     }->Internal.toLogParams
 
     try {
-      let res = await source.getBlockHashes(~blockNumbers, ~logger)
+      let res = await source.getBlockHashes(~blockNumbers, ~logger, ~params=queryParams)
       sourceState->recordRequestStats(res.requestStats)
       switch res.result {
       | Ok(data) =>

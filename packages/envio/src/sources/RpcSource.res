@@ -808,6 +808,7 @@ let make = (
     ~itemsTarget as _,
     ~retry,
     ~logger as _,
+    ~params as _,
   ) => {
     let startFetchingBatchTimeRef = Performance.now()
 
@@ -994,7 +995,7 @@ let make = (
     receiptLoader := makeReceiptLoader()
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
+  let getBlockHashes = (~blockNumbers, ~logger as _, ~params as _) => {
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all

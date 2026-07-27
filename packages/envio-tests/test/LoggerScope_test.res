@@ -95,6 +95,41 @@ describe("Per-indexer logger scope", () => {
     ])
   })
 
+  Async.it("flushes and releases a file-backed logger on close", async t => {
+    let makeTmpPath: unit => string = %raw(`() =>
+      require("path").join(require("os").tmpdir(), "envio-logger-close-" + process.hrtime.bigint() + ".log")`)
+    let readFile: string => string = %raw(`(path) => require("fs").readFileSync(path, "utf8")`)
+
+    let logFilePath = makeTmpPath()
+    let logger = Logging.makeLogger(
+      ~logStrategy=Logging.FileOnly,
+      ~logFilePath,
+      ~defaultFileLogLevel=#trace,
+      ~userLogLevel=#trace,
+    )
+    logger->Logging.info({"msg": "written before close"})
+
+    // Resolving proves the transport was ended; the file proves it flushed.
+    await logger->Logging.close
+
+    t.expect(readFile(logFilePath)->String.includes(`"written before close"`)).toBe(true)
+  })
+
+  // A console multistream has no closable resource and throws on `end`, so
+  // closing one must be a no-op rather than a rejected promise.
+  Async.it("closes a console logger without throwing", async t => {
+    let logger = Env.makeLogger(~userLogLevel=#silent)
+
+    let closed = try {
+      await logger->Logging.close
+      true
+    } catch {
+    | _ => false
+    }
+
+    t.expect(closed).toBe(true)
+  })
+
   it("builds a silent instance logger without touching the process logger", t => {
     let processLevel = Env.logger->Pino.getLevel
     let silent = Env.makeLogger(~userLogLevel=#silent)

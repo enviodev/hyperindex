@@ -22,6 +22,7 @@ module EntityTables = {
     | Some(table) => table
     | None =>
       UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
+        ~logger=Env.logger,
         ~msg="Unexpected, entity InMemoryTable is undefined",
       )
     }
@@ -738,7 +739,9 @@ let beginRollbackDiff = (
 // Stop the write loop and surface the failure; the error itself goes to onError.
 let recordWriteFailure = (state: t, exn) => {
   state.hasFailedWrite = true
-  state.onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database"))
+  state.onError(
+    exn->ErrorHandling.make(~logger=state.logger, ~msg="Failed writing batch to the database"),
+  )
 }
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)

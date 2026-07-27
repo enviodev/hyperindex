@@ -24,6 +24,7 @@ module Entity = {
     | Some(id) => id
     | None =>
       UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
+        ~logger=Env.logger,
         ~msg="Property 'id' does not exist on expected entity object",
       )
     }

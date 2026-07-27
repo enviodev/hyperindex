@@ -18,7 +18,12 @@ type chainConfig = {
 
 type processResult = {changes: array<unknown>}
 
-type t<'processConfig> = {process: 'processConfig => promise<processResult>}
+type t<'processConfig> = {
+  process: 'processConfig => promise<processResult>,
+  // Releases the instance's logger. Optional for callers — only matters when
+  // file logging is on, where each instance holds its own handle.
+  close: unit => promise<unit>,
+}
 
 type entityChange = {
   sets: array<unknown>,
@@ -705,6 +710,11 @@ let createTestIndexer = (): t<'processConfig> => {
     // types declare, matching the handler-context keys.
     result->Dict.set(name->Utils.String.capitalize, ops->(Utils.magic: entityOperations => unknown))
   })
+
+  result->Dict.set(
+    "close",
+    (() => persistence->Persistence.close)->(Utils.magic: (unit => promise<unit>) => unknown),
+  )
 
   result->Dict.set(
     "process",

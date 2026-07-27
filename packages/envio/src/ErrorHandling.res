@@ -1,6 +1,6 @@
 type t = {logger: Pino.t, exn: exn, msg: option<string>, params: option<Internal.logParams>}
 
-let make = (exn, ~logger=Env.logger, ~msg=?, ~params=?) => {
+let make = (exn, ~logger: Pino.t, ~msg=?, ~params=?) => {
   {logger, msg, exn, params: params->Option.map(Internal.toLogParams)}
 }
 
@@ -30,16 +30,16 @@ let raiseExn = (self: t) => {
   self.exn->Utils.prettifyExn->throw
 }
 
-let mkLogAndRaise = (~logger=?, ~msg=?, ~params=?, exn) => {
+let mkLogAndRaise = (~logger, ~msg=?, ~params=?, exn) => {
   let exn = exn->Utils.prettifyExn
-  exn->make(~logger?, ~msg?, ~params?)->log
+  exn->make(~logger, ~msg?, ~params?)->log
   exn->throw
 }
 
-let unwrapLogAndRaise = (~logger=?, ~msg=?, ~params=?, result) => {
+let unwrapLogAndRaise = (~logger, ~msg=?, ~params=?, result) => {
   switch result {
   | Ok(v) => v
-  | Error(exn) => exn->mkLogAndRaise(~logger?, ~msg?, ~params?)
+  | Error(exn) => exn->mkLogAndRaise(~logger, ~msg?, ~params?)
   }
 }
 

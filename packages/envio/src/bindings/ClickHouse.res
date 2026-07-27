@@ -172,7 +172,7 @@ let rec insertWithRetry = async (
     if Array.length(values) > 1 {
       logger->Logging.warn({
         "msg": "ClickHouse insert failed, splitting batch in half and retrying",
-        "context": "ClickHouse",
+        "storage": "clickhouse",
         "table": table,
         "batchSize": Array.length(values),
         "retriesLeft": retries,
@@ -187,7 +187,7 @@ let rec insertWithRetry = async (
     } else {
       logger->Logging.warn({
         "msg": "ClickHouse insert failed, retrying after delay",
-        "context": "ClickHouse",
+        "storage": "clickhouse",
         "table": table,
         "retriesLeft": retries,
         "err": exn->Utils.prettifyExn,
@@ -549,7 +549,7 @@ let initialize = async (
     if hasReplicatedDatabaseEngine && !envReplicated {
       logger->Logging.info({
         "msg": "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so tables use the ReplicatedMergeTree engine.",
-        "context": "ClickHouse",
+        "storage": "clickhouse",
       })
     }
     let databaseOnClusterClause = onClusterClause(~onCluster=replicated)
@@ -634,11 +634,15 @@ let initialize = async (
 
     logger->Logging.trace({
       "msg": "ClickHouse storage initialization completed successfully",
-      "context": "ClickHouse",
+      "storage": "clickhouse",
     })
   } catch {
   | exn => {
-      logger->Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
+      logger->Logging.error({
+        "msg": "Failed to initialize ClickHouse storage",
+        "storage": "clickhouse",
+        "err": exn->Utils.prettifyExn,
+      })
       JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
@@ -657,10 +661,11 @@ let resume = async (
       await client->exec({query: `USE ${database}`})
     } catch {
     | exn =>
-      logger->Logging.errorWithExn(
-        exn,
-        `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
-      )
+      logger->Logging.error({
+        "msg": `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
+        "storage": "clickhouse",
+        "err": exn->Utils.prettifyExn,
+      })
       JsError.throwWithMessage("ClickHouse resume failed")
     }
 
@@ -687,7 +692,11 @@ let resume = async (
   } catch {
   | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
-      logger->Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
+      logger->Logging.error({
+        "msg": "Failed to resume ClickHouse storage",
+        "storage": "clickhouse",
+        "err": exn->Utils.prettifyExn,
+      })
       JsError.throwWithMessage("ClickHouse resume failed")
     }
   }

@@ -8,7 +8,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
     chain,
     poweredByHyperSync: false,
     pollingInterval: 0,
-    getBlockHashes: (~blockNumbers as _, ~logger as _) => {
+    getBlockHashes: (~blockNumbers as _, ~logger as _, ~params as _) => {
       Promise.resolve({Source.result: Ok([]), requestStats: []})
     },
     getHeightOrThrow: () => {
@@ -26,6 +26,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
+      ~params as _,
     ) => {
       // Mirror a real backend: return only the items this query would match —
       // in the block range, part of the selection, and (for non-wildcard events)

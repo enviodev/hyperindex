@@ -575,14 +575,14 @@ let migrate = async (~reset) => {
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
   )
-  await persistence.storage.close()
+  await persistence->Persistence.close
 }
 
 let dropSchema = async () => {
   let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Env.logger)
   await persistence.storage.reset()
-  await persistence.storage.close()
+  await persistence->Persistence.close
 }
 
 // Rejection carried by `onError`: the failure is already logged with full

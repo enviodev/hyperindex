@@ -93,6 +93,7 @@ let make = (
     ~itemsTarget,
     ~retry,
     ~logger as _,
+    ~params as _,
   ) => {
     let totalTimeRef = Performance.now()
     let pageFetchRef = Performance.now()
@@ -242,7 +243,7 @@ let make = (
     (blockDatas, requestStats)
   }
 
-  let getBlockHashes = async (~blockNumbers, ~logger as _) =>
+  let getBlockHashes = async (~blockNumbers, ~logger as _, ~params as _) =>
     switch blockNumbers->Array.get(0) {
     | None => {Source.result: Ok([]), requestStats: []}
     | Some(firstSlot) =>

@@ -37,6 +37,30 @@ external levels: t => 'a = "levels"
 // Bind to the 'level' property setter
 @set external setLevel: (t, logLevel) => unit = "level"
 
+// Flush and release the logger's underlying stream. Only a file destination
+// or a worker-backed transport holds a resource, and those are the streams
+// that emit "close" once ended. A console multistream has nothing to release
+// (and throws on `end`, since its console stream is write-only).
+@module("pino") external symbols: {"streamSym": unknown} = "symbols"
+
+let closeStream: (t, unknown) => promise<unit> = %raw(`(logger, streamSym) =>
+  new Promise((resolve) => {
+    const stream = logger[streamSym]
+    if (!stream || typeof stream.end !== "function" || typeof stream.once !== "function") {
+      resolve()
+      return
+    }
+    stream.once("close", resolve)
+    stream.once("error", resolve)
+    try {
+      stream.end()
+    } catch (_) {
+      resolve()
+    }
+  })`)
+
+let close = (logger: t) => logger->closeStream(symbols["streamSym"])
+
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => message->(Utils.magic: 'a => pinoMessageBlob)
 let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
