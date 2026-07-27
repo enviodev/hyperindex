@@ -951,18 +951,24 @@ let addClientFilteredContract = (
   ~chainId,
   ~addressCount,
   ~threshold,
+  // A resumed fetch state re-derives the switch from the persisted addresses,
+  // but it already happened - and was logged - in the run that crossed the
+  // threshold.
+  ~shouldLog=true,
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
-  Logging.createChild(
-    ~params={
-      "chainId": chainId,
-      "contractName": contractName,
-      "addressCount": addressCount,
-      "threshold": threshold,
-    },
-  )->Logging.childTrace(
-    "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
-  )
+  if shouldLog {
+    Logging.createChild(
+      ~params={
+        "chainId": chainId,
+        "contractName": contractName,
+        "addressCount": addressCount,
+        "threshold": threshold,
+      },
+    )->Logging.childTrace(
+      "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+    )
+  }
 }
 
 // Fold every client-filtered contract's server-side partitions into client-side
@@ -996,6 +1002,10 @@ let collapseClientFilteredContracts = (
   ~normalSelection: selection,
   ~nextPartitionIndexRef: ref<int>,
   ~addressStore: AddressStore.t,
+  // Frontiers of the addresses that were never given a server-side partition
+  // because their contract is already client-filtered. They stand in for the
+  // partitions that would otherwise have been created only to be absorbed here.
+  ~clientFilteredFrontiers: array<blockNumberAndTimestamp>=[],
 ) => {
   if clientFilteredContracts->Utils.Set.size === 0 {
     partitions
@@ -1041,6 +1051,7 @@ let collapseClientFilteredContracts = (
     if (
       absorbedPartitions->Utils.Array.isEmpty &&
       strippedFrontiers->Utils.Array.isEmpty &&
+      clientFilteredFrontiers->Utils.Array.isEmpty &&
       !selectionChanged
     ) {
       // Nothing to fold in and no newly-switched contract: leave the standing
@@ -1056,6 +1067,7 @@ let collapseClientFilteredContracts = (
       absorbedPartitions->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
       backfills->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
       strippedFrontiers->Array.forEach(considerFrontier)
+      clientFilteredFrontiers->Array.forEach(considerFrontier)
 
       let regByIndex = Dict.make()
       let addRegs = (regs: array<Internal.onEventRegistration>) =>
@@ -1174,6 +1186,7 @@ OptimizedPartitions.t => {
   // ── Phase 1: Create per-contract-name partitions ──
   let dynamicPartitions = []
   let nonDynamicPartitions = []
+  let clientFilteredFrontiers = []
 
   let contractNames = registeringSetsByContract->Dict.keysToArray
   for cIdx in 0 to contractNames->Array.length - 1 {
@@ -1186,56 +1199,74 @@ OptimizedPartitions.t => {
     // A set is ordered by effectiveStartBlock, so its start-block groups are
     // ascending and each group's addresses are a contiguous slice.
     let groups = contractSet->AddressSet.startBlockGroups
-    let offsetRef = ref(0)
-    let groupIdx = ref(0)
-    while groupIdx.contents < groups->Array.length {
-      let startBlock = (groups->Array.getUnsafe(groupIdx.contents)).startBlock
-      // Addresses with different start blocks within range share a partition;
-      // events before each address's effectiveStartBlock are dropped by the
-      // source's address gate.
-      let countRef = ref(0)
-      let nextIdx = ref(groupIdx.contents)
-      let joining = ref(true)
-      while joining.contents && nextIdx.contents < groups->Array.length {
-        let group = groups->Array.getUnsafe(nextIdx.contents)
-        if group.startBlock - startBlock < OptimizedPartitions.tooFarBlockRange {
-          countRef := countRef.contents + group.count
-          nextIdx := nextIdx.contents + 1
-        } else {
-          joining := false
-        }
-      }
 
-      let latestFetchedBlock = {
-        blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
-        blockTimestamp: 0,
-      }
-      let remainingRef = ref(countRef.contents)
-      let chunkOffsetRef = ref(offsetRef.contents)
-      while remainingRef.contents > 0 {
-        let take = Pervasives.min(remainingRef.contents, maxAddrInPartition)
-        let pAddresses =
-          contractSet->AddressSet.slice(~offset=chunkOffsetRef.contents, ~limit=Some(take))
-        partitions->Array.push({
-          id: nextPartitionIndexRef.contents->Int.toString,
-          latestFetchedBlock,
-          selection: normalSelection,
-          dynamicContract: isDynamic ? Some(contractName) : None,
-          addresses: pAddresses,
-          mergeBlock: None,
-          mutPendingQueries: [],
-          sourceRangeCapacity: 0,
-          prevSourceRangeCapacity: 0,
-          eventDensity: None,
-          latestSourceRangeCapacityUpdateBlock: 0,
+    if clientFilteredContracts->Utils.Set.has(contractName) {
+      // The address-free partition already fetches this contract, so chunking
+      // its addresses by maxAddrInPartition would only build partitions for the
+      // collapse below to absorb - hundreds of them for a contract big enough to
+      // be client-filtered in the first place. All the collapse needs is the
+      // earliest block the addresses aren't covered from, which is the first
+      // group's since groups are ascending.
+      switch groups->Array.get(0) {
+      | Some({startBlock}) =>
+        clientFilteredFrontiers->Array.push({
+          blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
+          blockTimestamp: 0,
         })
-        nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
-        chunkOffsetRef := chunkOffsetRef.contents + take
-        remainingRef := remainingRef.contents - take
+      | None => ()
       }
+    } else {
+      let offsetRef = ref(0)
+      let groupIdx = ref(0)
+      while groupIdx.contents < groups->Array.length {
+        let startBlock = (groups->Array.getUnsafe(groupIdx.contents)).startBlock
+        // Addresses with different start blocks within range share a partition;
+        // events before each address's effectiveStartBlock are dropped by the
+        // source's address gate.
+        let countRef = ref(0)
+        let nextIdx = ref(groupIdx.contents)
+        let joining = ref(true)
+        while joining.contents && nextIdx.contents < groups->Array.length {
+          let group = groups->Array.getUnsafe(nextIdx.contents)
+          if group.startBlock - startBlock < OptimizedPartitions.tooFarBlockRange {
+            countRef := countRef.contents + group.count
+            nextIdx := nextIdx.contents + 1
+          } else {
+            joining := false
+          }
+        }
 
-      offsetRef := offsetRef.contents + countRef.contents
-      groupIdx := nextIdx.contents
+        let latestFetchedBlock = {
+          blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
+          blockTimestamp: 0,
+        }
+        let remainingRef = ref(countRef.contents)
+        let chunkOffsetRef = ref(offsetRef.contents)
+        while remainingRef.contents > 0 {
+          let take = Pervasives.min(remainingRef.contents, maxAddrInPartition)
+          let pAddresses =
+            contractSet->AddressSet.slice(~offset=chunkOffsetRef.contents, ~limit=Some(take))
+          partitions->Array.push({
+            id: nextPartitionIndexRef.contents->Int.toString,
+            latestFetchedBlock,
+            selection: normalSelection,
+            dynamicContract: isDynamic ? Some(contractName) : None,
+            addresses: pAddresses,
+            mergeBlock: None,
+            mutPendingQueries: [],
+            sourceRangeCapacity: 0,
+            prevSourceRangeCapacity: 0,
+            eventDensity: None,
+            latestSourceRangeCapacityUpdateBlock: 0,
+          })
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          chunkOffsetRef := chunkOffsetRef.contents + take
+          remainingRef := remainingRef.contents - take
+        }
+
+        offsetRef := offsetRef.contents + countRef.contents
+        groupIdx := nextIdx.contents
+      }
     }
   }
 
@@ -1299,6 +1330,7 @@ OptimizedPartitions.t => {
       ~normalSelection,
       ~nextPartitionIndexRef,
       ~addressStore,
+      ~clientFilteredFrontiers,
     )
   OptimizedPartitions.make(
     ~partitions=allPartitions,
@@ -2309,6 +2341,7 @@ let make = (
   ~blockLag=0,
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
+  ~isResumed=false,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -2404,6 +2437,7 @@ let make = (
           ~chainId,
           ~addressCount,
           ~threshold,
+          ~shouldLog=!isResumed,
         )
       }
     })
