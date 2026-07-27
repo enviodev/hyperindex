@@ -98,12 +98,19 @@ type sourceHeightMetrics = {
 
 type t = {
   startTime: Date.t,
+  // Wall clock when this snapshot was built, so a scrape can be dated.
+  metricTime: Date.t,
+  // Measured monotonically, not as metricTime - startTime: a wall-clock
+  // correction would otherwise skew the counter shares derived from it.
+  elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
   rollbackEnabled: bool,
   maxBatchSize: int,
   preloadSeconds: float,
   processingSeconds: float,
+  processingStalledOnFetchSeconds: float,
+  processingStalledOnStorageWriteSeconds: float,
   rollbackSeconds: float,
   rollbackCount: int,
   rollbackEventsCount: float,
@@ -242,6 +249,24 @@ let renderMetrics = (b: builder, metrics: t) => {
   }
 
   b->single(
+    ~name="envio_process_start_time_seconds",
+    ~help="Start time of the process since unix epoch in seconds.",
+    ~kind="gauge",
+    ~value=metrics.startTime->Date.getTime /. 1000.,
+  )
+  b->single(
+    ~name="envio_process_metric_time_seconds",
+    ~help="The time these metrics were collected. Use it to tell how fresh a snapshot is, or to measure rates between two snapshots.",
+    ~kind="gauge",
+    ~value=metrics.metricTime->Date.getTime /. 1000.,
+  )
+  b->single(
+    ~name="envio_process_elapsed_seconds",
+    ~help="How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.",
+    ~kind="gauge",
+    ~value=metrics.elapsedSeconds,
+  )
+  b->single(
     ~name="envio_preload_seconds",
     ~help="Cumulative time spent on preloading entities during batch processing.",
     ~kind="counter",
@@ -252,6 +277,18 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="Cumulative time spent executing event handlers during batch processing.",
     ~kind="counter",
     ~value=metrics.processingSeconds,
+  )
+  b->single(
+    ~name="envio_processing_stalled_on_fetch_seconds",
+    ~help="Time the indexer had nothing to process while waiting for events to be fetched. A high rate means fetching is the bottleneck: check the data-source latency and whether it can be queried with more concurrency. Waiting at the chain head for new blocks is not counted.",
+    ~kind="counter",
+    ~value=metrics.processingStalledOnFetchSeconds,
+  )
+  b->single(
+    ~name="envio_processing_stalled_on_storage_write_seconds",
+    ~help="Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.",
+    ~kind="counter",
+    ~value=metrics.processingStalledOnStorageWriteSeconds,
   )
   b->series(
     ~name="envio_progress_ready",
@@ -345,12 +382,6 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~kind="gauge",
     ~entries=chains,
     ~value=m => m.sourceBlockNumber->Int.toFloat,
-  )
-  b->single(
-    ~name="envio_process_start_time_seconds",
-    ~help="Start time of the process since unix epoch in seconds.",
-    ~kind="gauge",
-    ~value=metrics.startTime->Date.getTime /. 1000.,
   )
   b->series(
     ~name="envio_indexing_concurrency",

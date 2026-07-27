@@ -69,12 +69,16 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
       targetBufferSize: 0,
       isInReorgThreshold: false,
       rollbackEnabled: false,
       maxBatchSize: 0,
       preloadSeconds: 0.,
       processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
       rollbackSeconds: 0.,
       rollbackCount: 0,
       rollbackEventsCount: 0.,
@@ -111,12 +115,16 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
+      metricTime: Date.fromTime(1700000123456.),
+      elapsedSeconds: 123.456,
       targetBufferSize: 5000,
       isInReorgThreshold: true,
       rollbackEnabled: true,
       maxBatchSize: 5000,
       preloadSeconds: 12.3456,
       processingSeconds: 7.891,
+      processingStalledOnFetchSeconds: 6.02,
+      processingStalledOnStorageWriteSeconds: 1.33,
       rollbackSeconds: 0.25,
       rollbackCount: 2,
       rollbackEventsCount: 42.,
@@ -227,6 +235,18 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
+# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE envio_process_start_time_seconds gauge
+envio_process_start_time_seconds 1700000000
+
+# HELP envio_process_metric_time_seconds The time these metrics were collected. Use it to tell how fresh a snapshot is, or to measure rates between two snapshots.
+# TYPE envio_process_metric_time_seconds gauge
+envio_process_metric_time_seconds 1700000123.456
+
+# HELP envio_process_elapsed_seconds How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.
+# TYPE envio_process_elapsed_seconds gauge
+envio_process_elapsed_seconds 123.456
+
 # HELP envio_preload_seconds Cumulative time spent on preloading entities during batch processing.
 # TYPE envio_preload_seconds counter
 envio_preload_seconds 12.346
@@ -234,6 +254,14 @@ envio_preload_seconds 12.346
 # HELP envio_processing_seconds Cumulative time spent executing event handlers during batch processing.
 # TYPE envio_processing_seconds counter
 envio_processing_seconds 7.891
+
+# HELP envio_processing_stalled_on_fetch_seconds Time the indexer had nothing to process while waiting for events to be fetched. A high rate means fetching is the bottleneck: check the data-source latency and whether it can be queried with more concurrency. Waiting at the chain head for new blocks is not counted.
+# TYPE envio_processing_stalled_on_fetch_seconds counter
+envio_processing_stalled_on_fetch_seconds 6.02
+
+# HELP envio_processing_stalled_on_storage_write_seconds Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.
+# TYPE envio_processing_stalled_on_storage_write_seconds counter
+envio_processing_stalled_on_storage_write_seconds 1.33
 
 # HELP envio_progress_ready Whether the chain is fully synced to the head.
 # TYPE envio_progress_ready gauge
@@ -286,10 +314,6 @@ envio_fetching_block_range_size{chainId="1"} 250
 # HELP envio_indexing_known_height The latest known block number reported by the active indexing source. This value may lag behind the actual chain height, as it is updated only when needed.
 # TYPE envio_indexing_known_height gauge
 envio_indexing_known_height{chainId="1"} 305
-
-# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
-# TYPE envio_process_start_time_seconds gauge
-envio_process_start_time_seconds 1700000000
 
 # HELP envio_indexing_concurrency The number of executing concurrent queries to the chain data-source.
 # TYPE envio_indexing_concurrency gauge
