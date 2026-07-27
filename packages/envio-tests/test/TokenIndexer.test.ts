@@ -1,4 +1,4 @@
-import { defineIndexerTest } from "./helpers/defineIndexerTest.ts";
+import { defineIndexerTest } from "./helpers/InternalTestIndexer.res.mjs";
 
 // `handlers` and `test` are ordinary user modules — the same source a project
 // would put in `src/handlers/` and `src/indexer.test.ts` — type-checked against

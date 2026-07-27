@@ -333,4 +333,24 @@ describe("HandlerRegister multiple registrations", () => {
       registrations->describeRegistrations(~eventName="Approval", ~labels=[], ~crLabels=[]),
     )).toEqual(([], [(None, None, 0)]))
   })
+
+  // A registration matching no configured chain can never be dispatched, so it
+  // is reported at the call site instead of silently doing nothing.
+  it("throws when the event is not configured on the contract", t => {
+    HandlerRegister.resetOnEventRegistrations()
+    HandlerRegister.startRegistration(~config)
+    t.expect(() => setHandler(~eventName="Nonexistent", makeHandler())).toThrowError(
+      `Event "Nonexistent" is not configured on contract "ERC20", so its handler would never run. Add it to your config, or remove the registration. Configured events on "ERC20": Approval, Transfer.`,
+    )
+  })
+
+  it("throws when the contract is not configured on any chain", t => {
+    HandlerRegister.resetOnEventRegistrations()
+    HandlerRegister.startRegistration(~config)
+    t.expect(() =>
+      setContractRegister(~contractName="Missing", makeContractRegister())
+    ).toThrowError(
+      `Contract "Missing" is not configured on any chain, so its handler for "Transfer" would never run. Add it to your config, or remove the registration. Configured contracts: ERC20, ERC721.`,
+    )
+  })
 })
