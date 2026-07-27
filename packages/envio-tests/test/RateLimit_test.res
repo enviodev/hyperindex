@@ -33,8 +33,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
     getItemsOrThrow: (
       ~fromBlock as _,
       ~toBlock as _,
-      ~addressesByContractName as _,
-      ~contractNameByAddress as _,
+      ~addressSet as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection as _,

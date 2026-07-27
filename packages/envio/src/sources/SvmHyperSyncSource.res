@@ -6,6 +6,8 @@ type options = {
   apiToken: option<string>,
   onEventRegistrations: array<Internal.svmOnEventRegistration>,
   clientTimeoutMillis: int,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
 }
 
 // Synthesize a stable logIndex for an SVM instruction so the FetchState
@@ -66,7 +68,7 @@ let toSvmInstruction = (
 }
 
 let make = (
-  {chain, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis}: options,
+  {chain, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis, addressStore}: options,
 ): t => {
   let name = "SvmHyperSync"
 
@@ -80,13 +82,13 @@ let make = (
     ~eventRegistrations=SvmHyperSyncClient.Registration.fromOnEventRegistrations(
       onEventRegistrations,
     ),
+    ~addressStore,
   )
 
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress as _,
+    ~addressSet,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -102,10 +104,13 @@ let make = (
       toSlot: toBlock,
       maxNumInstructions: ?itemsTarget,
       registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-      addressesByContractName,
+      clientFilteredContracts: selection.clientFilteredContracts,
     }
 
-    let (resp, transactionStore, blockStore) = try await client.getEventItems(~query) catch {
+    let (resp, transactionStore, blockStore) = try await client.getEventItems(
+      ~query,
+      ~addressSet,
+    ) catch {
     | exn =>
       throw(
         Source.GetItemsError(

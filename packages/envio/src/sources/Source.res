@@ -73,8 +73,10 @@ type t = {
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~addressesByContractName: dict<array<Address.t>>,
-    ~contractNameByAddress: dict<string>,
+    // The partition's slice of the chain's address index. The source hands it
+    // straight to its Rust client, which builds the query's address filter from
+    // it and gates every returned item against the chain-wide store.
+    ~addressSet: AddressSet.t,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,

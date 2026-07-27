@@ -302,9 +302,9 @@ module Registration = {
 }
 
 module EventItems = {
-  // The whole per-query input: block range, the partition's registration
-  // selection (by id), and its current addresses. Log selections, field
-  // selection, and the routing index are derived on the Rust side.
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by id). Log selections, field selection,
+  // and the routing index are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
@@ -312,7 +312,6 @@ module EventItems = {
     // Absent means no server-side cap on the number of logs returned.
     maxNumLogs?: int,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
@@ -358,16 +357,27 @@ type t = {
   // and blocks.
   getEventItems: (
     ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 
 @send
-external classNew: (Core.evmHyperSyncClientCtor, cfg, string, array<Registration.input>) => t =
-  "new"
+external classNew: (
+  Core.evmHyperSyncClientCtor,
+  cfg,
+  string,
+  array<Registration.input>,
+  AddressStore.t,
+) => t = "new"
 
-let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations) =>
-  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations)
+let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
+  Core.getAddon().evmHyperSyncClient->classNew(
+    cfg,
+    userAgent,
+    eventRegistrations,
+    addressStore,
+  )
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -393,6 +403,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
   ~logLevel=#info,
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -412,5 +423,6 @@ let make = (
     },
     ~userAgent=`hyperindex/${envioVersion}`,
     ~eventRegistrations,
+    ~addressStore,
   )
 }

@@ -7,9 +7,10 @@ type t = {
   // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
-  // The chain-wide address index. Not `mutable`: the dict is mutated in place by
-  // register/rollback, so the reference is stable across fetchState versions.
-  indexingAddresses: IndexingAddresses.t,
+  // The chain-wide address index, kept in Rust. Not `mutable`: registration and
+  // rollback mutate it in place, so the handle is stable across fetchState
+  // versions — and it's the same handle this chain's source clients hold.
+  addressStore: AddressStore.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   mutable isProgressAtHead: bool,
@@ -83,7 +84,7 @@ let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
   ~onEventRegistrations=[],
-  ~indexingAddresses: IndexingAddresses.t,
+  ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
@@ -102,7 +103,7 @@ let make = (
     logger,
     onEventRegistrations,
     fetchState,
-    indexingAddresses,
+    addressStore,
     sourceManager,
     chainConfig,
     isProgressAtHead,
@@ -166,12 +167,18 @@ let makeInternal = (
     }
   })
 
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-  let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
+  let lowercaseAddresses = config.lowercaseAddresses
+  // Created before the fetch state and the sources: `make` registers this
+  // chain's addresses into it, and every source client holds the same handle.
+  let addressStore = AddressStore.make(
+    ~ecosystem=config.ecosystem.name,
+    ~shouldChecksum=!lowercaseAddresses,
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations),
+  )
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
-    ~contractConfigs,
+    ~addressStore,
     ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
@@ -187,12 +194,7 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
-    // Only EVM sources (HyperSync + RPC) honor client-side address filtering so
-    // far, so switching contracts to it is gated to EVM chains.
-    ~clientFilterAddressThreshold=switch config.ecosystem.name {
-    | Evm => Some(config.clientFilterAddressThreshold)
-    | Fuel | Svm => None
-    },
+    ~clientFilterAddressThreshold=Some(config.clientFilterAddressThreshold),
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
@@ -205,7 +207,6 @@ let makeInternal = (
 
   // Create sources lazily here - this is where API token validation happens
   let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-  let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
@@ -228,6 +229,7 @@ let makeInternal = (
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
+      ~addressStore,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
@@ -235,6 +237,7 @@ let makeInternal = (
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations,
+        addressStore,
       }),
     ]
   | Config.SvmSourceConfig({hypersync, rpc}) =>
@@ -255,6 +258,7 @@ let makeInternal = (
           apiToken,
           onEventRegistrations,
           clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+          addressStore,
         }),
       ]
     }
@@ -274,7 +278,7 @@ let makeInternal = (
     ~chainConfig,
     ~fetchState,
     ~onEventRegistrations,
-    ~indexingAddresses=indexingAddressIndex,
+    ~addressStore,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -415,7 +419,7 @@ let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = S
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let contractAddresses = (cs: t, ~contractName) =>
-  cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
+  cs.addressStore->AddressStore.contractAddresses(contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -802,9 +806,6 @@ let materializePageItems = async (
   ))
 }
 
-let filterByClientAddress = (cs: t, items: array<Internal.item>): array<Internal.item> =>
-  items->FetchState.filterByClientAddress(~indexingAddresses=cs.indexingAddresses)
-
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -830,7 +831,7 @@ let handleQueryResult = (
   | [] => cs.fetchState
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
-      ~indexingAddresses=cs.indexingAddresses,
+      ~addressStore=cs.addressStore,
       newItemsWithDcs,
     )
   }
@@ -906,7 +907,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   numBatchesFetched: 0,
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
-  numAddresses: cs.indexingAddresses->IndexingAddresses.size,
+  numAddresses: cs.addressStore->AddressStore.size,
   isReady: cs->isReady,
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
@@ -1111,7 +1112,7 @@ let rollback = (
     }
     cs.fetchState =
       cs.fetchState->FetchState.rollback(
-        ~indexingAddresses=cs.indexingAddresses,
+        ~addressStore=cs.addressStore,
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
@@ -1127,7 +1128,7 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(
-          ~indexingAddresses=cs.indexingAddresses,
+          ~addressStore=cs.addressStore,
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)

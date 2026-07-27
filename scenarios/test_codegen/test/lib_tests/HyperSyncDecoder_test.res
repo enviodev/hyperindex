@@ -46,7 +46,7 @@ let decodeSingle = async (
       },
     ],
     ~logs=[log],
-    ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+    ~ownedBy="TestContract",
   )
   (decoded[0]->Option.getUnsafe).params
 }
@@ -112,7 +112,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
       ],
       ~logs=[allIndexedLog, noneIndexedLog],
-      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+      ~ownedBy="TestContract",
     )
 
     let pick = i => (decoded[i]->Option.getUnsafe).params
@@ -174,7 +174,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
       ],
       ~logs=[([toEventSelector("event Empty()")], "0x")],
-      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+      ~ownedBy="TestContract",
     )
     let result = (decoded[0]->Option.getUnsafe).params
     t.expect(result).toEqual(%raw(`{}`))

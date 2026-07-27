@@ -343,8 +343,8 @@ let parse = (
       // run here the way real routing does (one item per registration).
       // Registrations are built the same way `HandlerRegister.finishRegistration`
       // does at startup (not stubs), so the address filter and `where` behave
-      // identically to real indexing — the dead-input tracker relies on
-      // `clientAddressFilter` actually gating unrouted items. Drop registrations
+      // identically to real indexing — the dead-input tracker relies on the
+      // source's address gate actually dropping unrouted items. Drop registrations
       // whose `where` excludes this chain (they wouldn't be fetched live), and
       // ignore the bare handler-less fallback so a missing handler surfaces below
       // instead of silently running nothing.

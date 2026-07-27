@@ -10,7 +10,14 @@ describe_skip("SvmHyperSyncClient live", () => {
   let tokenMetadataProgram = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 
   Async.it("returns Token Metadata instructions for a recent slot window", async t => {
-    let client = SvmHyperSyncClient.make(~url="https://solana.hypersync.xyz")
+    let client = SvmHyperSyncClient.make(
+    ~url="https://solana.hypersync.xyz",
+    ~addressStore=AddressStore.make(
+      ~ecosystem=Ecosystem.Svm,
+      ~shouldChecksum=false,
+      ~contracts=[],
+    ),
+  )
     let height = await client.getHeight()
     let query: SvmHyperSyncClient.query = {
       fromSlot: Pervasives.max(0, height - 10_000),

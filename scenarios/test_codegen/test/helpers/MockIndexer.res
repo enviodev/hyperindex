@@ -319,6 +319,7 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
     isWildcard: false,
     filterByAddresses: false,
     dependsOnAddresses: true,
+    addressFilterParamGroups: [],
     startBlock: None,
     handler: Some(handler),
     contractRegister: Some(contractRegister),
@@ -952,8 +953,7 @@ module Source = {
           getItemsOrThrow: implement(#getItemsOrThrow, (
             ~fromBlock,
             ~toBlock,
-            ~addressesByContractName as _addressesByContractName,
-            ~contractNameByAddress as _,
+            ~addressSet,
             ~knownHeight,
             ~partitionId,
             ~selection as _,
@@ -968,7 +968,10 @@ module Source = {
                 "retry": retry,
                 "p": partitionId,
               }
-              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addressesByContractName })`)
+              // Non-enumerable so it stays out of `toEqual` comparisons of the
+              // payload while remaining inspectable from a test.
+              let _addresses = addressSet->AddressSet.addresses
+              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addresses })`)
               {
                 payload,
                 resolve: (
@@ -1191,6 +1194,7 @@ let evmOnEventRegistration = (
     isWildcard,
     filterByAddresses,
     dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
+    addressFilterParamGroups: [],
     startBlock,
     handler: None,
     contractRegister: None,

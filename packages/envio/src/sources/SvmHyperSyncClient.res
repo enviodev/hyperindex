@@ -191,7 +191,10 @@ module EventItems = {
     // Absent means no server-side cap on the number of instructions returned.
     maxNumInstructions?: int,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Program names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means every
+    // address-dependent program is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   type log = {
@@ -240,6 +243,7 @@ type t = {
   // prep.
   getEventItems: (
     ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
 }
 
@@ -249,6 +253,7 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.input>,
+  AddressStore.t,
 ) => t = "fromConfig"
 
 let make = (
@@ -259,6 +264,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~eventRegistrations=[],
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
@@ -272,5 +278,6 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     eventRegistrations,
+    addressStore,
   )
 }

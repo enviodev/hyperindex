@@ -52,7 +52,7 @@ describe("Renamed event decoding (issue #1285)", () => {
         },
       ],
       ~logs=[approvalLog],
-      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+      ~ownedBy="TestContract",
     )
     let item = decoded[0]->Option.getUnsafe
 

@@ -16,6 +16,8 @@ type options = {
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
   logLevel: HyperSyncClient.logLevel,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
 }
 
 let make = (
@@ -29,6 +31,7 @@ let make = (
     serializationFormat,
     enableQueryCaching,
     logLevel,
+    addressStore,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -50,6 +53,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
+    ~addressStore,
   ) {
   | client => client
   | exception exn =>
@@ -86,8 +90,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress as _,
+    ~addressSet,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -106,7 +109,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~maxNumLogs=itemsTarget,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
-      ~addressesByContractName,
+      ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>

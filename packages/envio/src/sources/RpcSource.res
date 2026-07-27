@@ -617,6 +617,8 @@ type options = {
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   lowercaseAddresses: bool,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
   ws?: string,
   headers?: dict<string>,
 }
@@ -629,6 +631,7 @@ let make = (
     chain,
     onEventRegistrations,
     lowercaseAddresses,
+    addressStore,
     ?ws,
     ?headers,
   }: options,
@@ -650,6 +653,7 @@ let make = (
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
+    ~addressStore,
   )
 
   // Requests are made from shared, memoized loaders, so they can't be
@@ -796,8 +800,7 @@ let make = (
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress as _,
+    ~addressSet,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -830,14 +833,16 @@ let make = (
       )
     }
 
-    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage({
-      fromBlock,
-      toBlockCeiling: toBlock,
-      partitionId,
-      registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-      addressesByContractName,
-      clientFilteredContracts: selection.clientFilteredContracts,
-    }) catch {
+    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage(
+      {
+        fromBlock,
+        toBlockCeiling: toBlock,
+        partitionId,
+        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        clientFilteredContracts: selection.clientFilteredContracts,
+      },
+      addressSet,
+    ) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {
       | Some((attemptedToBlock, retry, requestStats)) =>

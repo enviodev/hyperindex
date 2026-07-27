@@ -228,6 +228,16 @@ describe("Test eventFilters", () => {
         HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations)
       let providerAddress = Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)
       let providerAddressString = providerAddress->Address.toString
+      // The chain's address index, holding the one emitter these logs come from.
+      let addressStore = TestAddresses.makeStore(
+        ~onEventRegistrations=onEventRegistrations->Array.map(reg => (
+          reg :> Internal.onEventRegistration
+        )),
+        ~addresses=[
+          {address: providerAddress, contractName: "TestEvents", registrationBlock: -1},
+        ],
+        ~shouldChecksum=true,
+      )
 
       let makeEmittedLog = (~topics, ~logIndex): emittedLog => {
         address: providerAddressString,
@@ -291,17 +301,19 @@ describe("Test eventFilters", () => {
         ~checksumAddresses=true,
         ~syncConfig=EvmChain.getSyncConfig({}),
         ~eventRegistrations=nativeRegistrations,
+        ~addressStore,
       )
-      let addressesByContractName = Dict.fromArray([("TestEvents", [providerAddress])])
 
-      let page = try await client.getNextPage({
-        fromBlock: 1,
-        toBlockCeiling: 1,
-        partitionId: "topic-filter-e2e",
-        registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
-        addressesByContractName,
-        clientFilteredContracts: None,
-      }) catch {
+      let page = try await client.getNextPage(
+        {
+          fromBlock: 1,
+          toBlockCeiling: 1,
+          partitionId: "topic-filter-e2e",
+          registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
+          clientFilteredContracts: None,
+        },
+        addressStore->AddressStore.makeSet(~contractName="TestEvents"),
+      ) catch {
       | exn =>
         mock.close()
         throw(exn)
@@ -517,7 +529,7 @@ describe("Test eventFilters", () => {
     ).toThrowError(`Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
   })
 
-  it("Registration path builds clientAddressFilter for address-filtered events only", t => {
+  it("Registration path collects address-param groups for address-filtered events only", t => {
     let wildcardWithAddress = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
@@ -529,8 +541,8 @@ describe("Test eventFilters", () => {
       ~chainId=137,
     )
     t.expect((
-      wildcardWithAddress.clientAddressFilter->Option.isSome,
-      transfer.clientAddressFilter->Option.isNone,
-    )).toEqual((true, true))
+      wildcardWithAddress.addressFilterParamGroups,
+      transfer.addressFilterParamGroups,
+    )).toEqual(([["to"]], []))
   })
 })

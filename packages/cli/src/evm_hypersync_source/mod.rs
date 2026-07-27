@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
+use crate::address_store::{AddressSet, AddressStore, SetCache};
 use crate::block_store::BlockStore;
 use crate::transaction_store::TransactionStore;
 
@@ -14,10 +15,8 @@ mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
-use std::collections::HashMap;
-
 use config::ClientConfig;
-use decode::{Decoder, SelectionDecoder};
+use decode::{Decoder, LogAddress, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{
@@ -57,14 +56,19 @@ impl EvmHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
+        address_store: &AddressStore,
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
-        let decoder = Decoder::from_registrations(&event_registrations, enable_checksum_addresses)
-            .context("build decoder")
-            .map_err(map_err)?;
+        let decoder = Decoder::from_registrations(
+            &event_registrations,
+            enable_checksum_addresses,
+            address_store,
+        )
+        .context("build decoder")
+        .map_err(map_err)?;
 
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
@@ -118,26 +122,20 @@ impl EvmHyperSyncClient {
     pub async fn get_event_items(
         &self,
         params: EventItemsQuery,
+        address_set: &AddressSet,
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let built = self
             .selection_builder
-            .build(
-                &params.registration_indexes,
-                &params.addresses_by_contract_name,
-                &client_filtered,
-            )
+            .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
         let selection_decoder = self
             .decoder
-            .selection(
-                &params.registration_indexes,
-                &params.addresses_by_contract_name,
-                &client_filtered,
-            )
+            .selection(&params.registration_indexes, &client_filtered)
             .map_err(map_err)?;
+        let set_cache = address_set.cache().clone();
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
@@ -197,7 +195,6 @@ impl EvmHyperSyncClient {
             },
             ..Default::default()
         };
-        let contract_name_by_address = built.contract_name_by_address;
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
         let res = self
@@ -225,7 +222,7 @@ impl EvmHyperSyncClient {
                 &requested_transaction_fields,
                 &transaction_store,
                 &block_store,
-                &contract_name_by_address,
+                &set_cache,
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -255,10 +252,10 @@ impl EvmHyperSyncClient {
     }
 }
 
-/// The whole per-query input for `get_event_items`: the block range, the
-/// partition's registration selection (by id), and its current addresses.
-/// Log selections, field selection, and the routing index are all derived
-/// internally from the registrations passed at construction.
+/// The whole per-query input for `get_event_items` beside the partition's
+/// address set: the block range and its registration selection (by id). Log
+/// selections, field selection, and the routing index are all derived
+/// internally from the registrations passed at construction and the set.
 #[napi(object)]
 pub struct EventItemsQuery {
     pub from_block: i64,
@@ -267,7 +264,6 @@ pub struct EventItemsQuery {
     /// `None` sends no server-side cap on the number of logs returned.
     pub max_num_logs: Option<i64>,
     pub registration_indexes: Vec<i64>,
-    pub addresses_by_contract_name: HashMap<String, Vec<String>>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -396,7 +392,7 @@ fn process_response(
     requested_transaction_fields: &[TransactionField],
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
-    contract_name_by_address: &std::collections::HashMap<String, String>,
+    set_cache: &SetCache,
 ) -> std::result::Result<(Vec<EventItem>, Vec<BlockHeader>), ConvertError> {
     // The server returns one block per number; items reference them by number,
     // so keep them owned and track which numbers are present for coverage.
@@ -494,20 +490,27 @@ fn process_response(
     // every block the config's always-included trio selection touches.
     block_store.insert_evm_blocks(response_blocks);
 
+    // One read lock for the whole page: registration from the JS thread waits
+    // only as long as routing takes.
+    let address_store = decoder.lock_store();
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
     for log in logs.into_iter().flatten() {
         let (log_index, src_address, block_number, transaction_index) =
             flatten_log_for_js(&log, should_checksum).context("mapping log")?;
+        // The emitter's raw 20 bytes are already the store's key, so ownership
+        // and the effectiveStartBlock gate cost one hash lookup each — no
+        // round-trip through the address string.
+        let address_key = log.address.as_ref().context("log.address missing")?;
+        let address = LogAddress {
+            key: address_key.as_slice(),
+            contract_name: set_cache.owner_of(address_key.as_slice()),
+            block_number,
+        };
         // Only structurally malformed logs (missing topic0, bad topic bytes)
         // surface here; per-registration decode failures are dropped inside
         // `route_and_decode`.
         let routed = decoder
-            .route_and_decode_simple(
-                &log,
-                contract_name_by_address
-                    .get(&src_address)
-                    .map(String::as_str),
-            )
+            .route_and_decode_simple(&log, &address, &address_store)
             .context("decode event params")?;
         for routed in routed {
             items.push(EventItem {
@@ -691,13 +694,21 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::address_store::test_support::{evm_store, set_of};
     use hypersync_client::simple_types;
 
     fn empty_decoder() -> SelectionDecoder {
-        Decoder::from_registrations(&[], false)
+        Decoder::from_registrations(&[], false, &evm_store(&[]))
             .unwrap()
-            .selection(&[], &HashMap::new(), &Default::default())
+            .selection(&[], &Default::default())
             .unwrap()
+    }
+
+    /// An address-free partition's set. Every fabricated log below emits from
+    /// the zero address, which no fixture registers, so only wildcard
+    /// registrations route — which is what these tests exercise.
+    fn empty_set() -> AddressSet {
+        set_of(&evm_store(&[]), &[])
     }
 
     // Routes `full_log` (zero topic0, one topic, empty data) to a wildcard
@@ -730,9 +741,10 @@ mod tests {
                 },
             ],
             false,
+            &evm_store(&[("Zero", &[])]),
         )
         .unwrap()
-        .selection(&[0], &HashMap::new(), &Default::default())
+        .selection(&[0], &Default::default())
         .unwrap()
     }
 
@@ -762,7 +774,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -790,7 +802,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -823,7 +835,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -860,7 +872,7 @@ mod tests {
             &[],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -887,7 +899,7 @@ mod tests {
             &[TransactionField::Hash],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -918,7 +930,7 @@ mod tests {
             &[TransactionField::Hash],
             &TransactionStore::new_evm(false),
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -956,7 +968,7 @@ mod tests {
             &[TransactionField::BlockNumber],
             &store,
             &BlockStore::new_evm(false),
-            &Default::default(),
+            empty_set().cache(),
         )
         .expect("expected success when block and transaction join");
 

@@ -18,8 +18,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
     getItemsOrThrow: (
       ~fromBlock,
       ~toBlock,
-      ~addressesByContractName as _,
-      ~contractNameByAddress,
+      ~addressSet,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection: FetchState.selection,
@@ -28,11 +27,11 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~logger as _,
     ) => {
       // Mirror a real backend: return only the items this query would match —
-      // in the block range, part of the selection, and (for non-wildcard events)
-      // emitted by an address the partition is querying. Wildcard events are
-      // over-fetched regardless of srcAddress, leaving the client-side address
-      // filter to gate them exactly as it does for a HyperSync response. Overlapping
-      // queries may return the same item more than once; the buffer dedups it.
+      // in the block range, part of the selection, and passing the same address
+      // gates a real source applies natively while routing (the emitter must be
+      // registered for the event's contract at or before the item's block, and
+      // any address-valued param filter must hold). Overlapping queries may
+      // return the same item more than once; the buffer dedups it.
       let toBlockQueried = switch toBlock {
       | Some(toBlock) => toBlock
       | None => reportedHeight
@@ -49,11 +48,26 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
           false
         } else if !(selectionEventIds->Utils.Set.has(onEventRegistration.eventConfig.id)) {
           false
-        } else if onEventRegistration.isWildcard {
-          true
         } else {
-          let sa = eventItem.payload->Internal.getPayloadSrcAddress->Address.toString
-          contractNameByAddress->Utils.Dict.dangerouslyGetNonOption(sa)->Option.isSome
+          let contractName = onEventRegistration.eventConfig.contractName
+          let emitterAllowed =
+            onEventRegistration.isWildcard ||
+              addressSet->AddressSet.has(
+                eventItem.payload->Internal.getPayloadSrcAddress,
+                contractName,
+                blockNumber,
+              )
+          emitterAllowed &&
+          switch onEventRegistration.addressFilterParamGroups {
+          | [] => true
+          | groups =>
+            let params = eventItem.payload->Internal.getPayloadAddressParams
+            groups->Array.some(group =>
+              group->Array.every(name =>
+                addressSet->AddressSet.has(params->Dict.getUnsafe(name), contractName, blockNumber)
+              )
+            )
+          }
         }
       })
 

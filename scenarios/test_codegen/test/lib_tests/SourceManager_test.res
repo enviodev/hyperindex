@@ -10,7 +10,7 @@ let defaultQuery: FetchState.query = {
   itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addressesByContractName: Dict.make(),
+  addresses: TestAddresses.unsafeSet([]),
 }
 
 type executeQueryMock = {
@@ -176,7 +176,7 @@ describe("SourceManager.getSourceRole", () => {
 
 describe("SourceManager source priority with Live sources", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.unsafeSet([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
@@ -186,7 +186,7 @@ describe("SourceManager source priority with Live sources", () => {
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it(
@@ -404,15 +404,11 @@ describe("SourceManager fetchNext", () => {
     ~latestFetchedBlockNumber,
     ~numContracts=2,
   ): FetchState.partition => {
-    let addressesByContractName = Dict.make()
     let addresses = []
-
     for i in 0 to numContracts - 1 {
       let address = Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getOrThrow
       addresses->Array.push(address)
     }
-
-    addressesByContractName->Dict.set("MockContract", addresses)
 
     {
       id: partitionIndex->Int.toString,
@@ -421,7 +417,7 @@ describe("SourceManager fetchNext", () => {
         blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
-      addressesByContractName,
+      addresses: TestAddresses.unsafeSet(addresses),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -464,7 +460,6 @@ describe("SourceManager fetchNext", () => {
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       maxOnBlockBufferSize: targetBufferSize,
       chainId: 0,
-      contractConfigs: Dict.make(),
       blockLag: 0,
       onBlockRegistrations: [],
       knownHeight,
@@ -556,7 +551,7 @@ describe("SourceManager fetchNext", () => {
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition2.addressesByContractName,
+          addresses: partition2.addresses,
         },
         {
           partitionId: "0",
@@ -568,7 +563,7 @@ describe("SourceManager fetchNext", () => {
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition0.addressesByContractName,
+          addresses: partition0.addresses,
         },
         {
           partitionId: "1",
@@ -579,7 +574,7 @@ describe("SourceManager fetchNext", () => {
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition1.addressesByContractName,
+          addresses: partition1.addresses,
         },
       ])
 
@@ -1436,7 +1431,7 @@ describe("SourceManager wait for new blocks", () => {
 })
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.unsafeSet([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
@@ -1446,7 +1441,7 @@ describe("SourceManager.executeQuery", () => {
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it("Successfully executes the query", async t => {

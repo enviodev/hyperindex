@@ -52,15 +52,18 @@ module Registration = {
 }
 
 module EventItems = {
-  // The whole per-query input: block range, the partition's registration
-  // selection (by index), and its current addresses. Receipt selections,
-  // field selection, and routing are derived on the Rust side.
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by index). Receipt selections, field
+  // selection, and routing are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Contract names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means every
+    // address-dependent contract is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   // One routed receipt with its kind-specific columns flattened: LogData
@@ -102,19 +105,22 @@ external classNew: (
   cfg,
   ~userAgent: string,
   array<Registration.input>,
+  AddressStore.t,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations) => {
+let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
     eventRegistrations,
+    addressStore,
   )
 }
 
 @send
-external getEventItems: (t, EventItems.query) => promise<EventItems.response> = "getEventItems"
+external getEventItems: (t, EventItems.query, AddressSet.t) => promise<EventItems.response> =
+  "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

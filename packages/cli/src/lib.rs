@@ -1,3 +1,4 @@
+mod address_store;
 mod block_store;
 mod cli_args;
 mod client_filtered_contracts;

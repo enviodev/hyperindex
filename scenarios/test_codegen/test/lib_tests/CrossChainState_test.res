@@ -28,13 +28,12 @@ let makeChainState = (
   ~onEventRegistrations=[],
 ) => {
   let addresses = []
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-  let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
+  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
   let base = FetchState.make(
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
     ~onEventRegistrations,
-    ~contractConfigs,
+    ~addressStore,
     ~addresses,
     ~onBlockRegistrations=[
       {
@@ -67,7 +66,7 @@ let makeChainState = (
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
     ~onEventRegistrations,
-    ~indexingAddresses,
+    ~addressStore,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints=[],
@@ -101,7 +100,7 @@ let makeFetchingChainState = (
     id: "0",
     latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
     selection: normalSelection,
-    addressesByContractName: Dict.fromArray([("MockContract", [address])]),
+    addresses: TestAddresses.unsafeSet([address]),
     mergeBlock: None,
     dynamicContract: None,
     mutPendingQueries: [],
@@ -110,13 +109,10 @@ let makeFetchingChainState = (
     eventDensity: None,
     latestSourceRangeCapacityUpdateBlock: 0,
   }
-  let indexingAddresses =
-    Dict.fromArray([
-      (
-        address->Address.toString,
-        ({contractName: "MockContract", address, registrationBlock: -1, effectiveStartBlock: 0}: Internal.indexingContract),
-      ),
-    ])->(Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t)
+  let addressStore = TestAddresses.makeStore(
+    ~onEventRegistrations=normalSelection.onEventRegistrations,
+    ~addresses=[{address, contractName: "MockContract", registrationBlock: -1}],
+  )
   let fetchState: FetchState.t = {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
       ~partitions=[partition],
@@ -132,7 +128,6 @@ let makeFetchingChainState = (
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
     chainId,
-    contractConfigs: Dict.make(),
     blockLag,
     onBlockRegistrations: [],
     knownHeight,
@@ -143,7 +138,7 @@ let makeFetchingChainState = (
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
-    ~indexingAddresses,
+    ~addressStore,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints=[],
@@ -433,7 +428,7 @@ describe("CrossChainState fetch control", () => {
         id: "0",
         latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
         selection: normalSelection,
-        addressesByContractName: Dict.fromArray([("MockContract", [address1])]),
+        addresses: TestAddresses.unsafeSet([address1]),
         mergeBlock: None,
         dynamicContract: None,
         mutPendingQueries: [],
@@ -442,18 +437,10 @@ describe("CrossChainState fetch control", () => {
         eventDensity: Some(10.), // density = 100 / 10 = 10 items/block
         latestSourceRangeCapacityUpdateBlock: 0,
       }
-      let indexingAddresses1 =
-        Dict.fromArray([
-          (
-            address1->Address.toString,
-            ({
-              contractName: "MockContract",
-              address: address1,
-              registrationBlock: -1,
-              effectiveStartBlock: 0,
-            }: Internal.indexingContract),
-          ),
-        ])->(Utils.magic: dict<Internal.indexingContract> => IndexingAddresses.t)
+      let addressStore1 = TestAddresses.makeStore(
+        ~onEventRegistrations=normalSelection.onEventRegistrations,
+        ~addresses=[{address: address1, contractName: "MockContract", registrationBlock: -1}],
+      )
       let fetchState1: FetchState.t = {
         optimizedPartitions: FetchState.OptimizedPartitions.make(
           ~partitions=[partition1],
@@ -469,7 +456,6 @@ describe("CrossChainState fetch control", () => {
         latestOnBlockBlockNumber: 0,
         maxOnBlockBufferSize: 10000,
         chainId: 1,
-        contractConfigs: Dict.make(),
         blockLag: 0,
         onBlockRegistrations: [],
         knownHeight: 1000,
@@ -480,7 +466,7 @@ describe("CrossChainState fetch control", () => {
       let a = ChainState.make(
         ~chainConfig={...baseChainConfig, id: 1},
         ~fetchState=fetchState1,
-        ~indexingAddresses=indexingAddresses1,
+        ~addressStore=addressStore1,
         ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
         ~reorgDetection=ReorgDetection.make(
           ~chainReorgCheckpoints=[],
