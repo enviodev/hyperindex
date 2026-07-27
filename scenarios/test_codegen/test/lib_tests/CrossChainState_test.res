@@ -180,7 +180,7 @@ let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
 
 describe("ChainState event registration ownership", () => {
   it("rejects a registration whose index differs from its ChainState position", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       makeChainState(
         ~chainId=1,
         ~knownHeight=10,
@@ -188,7 +188,7 @@ describe("ChainState event registration ownership", () => {
         ~firstEventBlock=0,
         ~onEventRegistrations=[makeRegistration(~contractName="ContractA", ~index=4)],
       )->ignore
-    ).toThrowError(
+    , 
       "Invalid onEvent registration index for chain 1: ContractA.EventWithoutFields has index 4, but its ChainState position is 0.",
     )
   })

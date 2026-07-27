@@ -215,6 +215,25 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
 let isDroppedByWhere = (~config: Config.t, reg: Internal.onEventRegistration) =>
   config.ecosystem.name === Evm && (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
 
+// Names configured across every chain, used to explain a registration that
+// matched nothing. Only built on the failure path.
+let describeConfigured = (registration: activeRegistration, ~contractName) => {
+  let contractNames = Utils.Set.make()
+  let eventNames = Utils.Set.make()
+  registration.config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig =>
+    chainConfig.contracts->Array.forEach(contract => {
+      contractNames->Utils.Set.add(contract.name)->ignore
+      if contract.name === contractName {
+        contract.events->Array.forEach(e => eventNames->Utils.Set.add(e.name)->ignore)
+      }
+    })
+  )
+  let sorted = set => set->Utils.Set.toArray->Array.toSorted(String.compare)
+  (sorted(contractNames), sorted(eventNames))
+}
+
 // Resolve one `onEvent`/`contractRegister` call into a registration for every
 // chain in the config (the full chain set) and store it in registration order.
 // Building runs the user's `where` callback here — once per chain — so a broken
@@ -230,6 +249,7 @@ let addOnEventRegistration = (
 ) => {
   let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
+  let matched = ref(false)
   registration.config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig =>
@@ -239,6 +259,7 @@ let addOnEventRegistration = (
       switch contract.events->Array.find(e => e.name === eventName) {
       | None => ()
       | Some(eventConfig) =>
+        matched := true
         let reg = buildOnEventRegistrationWith(
           ~config=registration.config,
           ~chainId=chainConfig.id,
@@ -255,6 +276,30 @@ let addOnEventRegistration = (
       }
     }
   )
+
+  // Nothing matched on any chain, so the callback could never be dispatched.
+  // Reported at the registration call site, where the stack still points at the
+  // offending `onEvent`/`contractRegister`.
+  if !matched.contents {
+    let (contractNames, eventNames) = registration->describeConfigured(~contractName)
+    let listOr = (names, empty) =>
+      names->Utils.Array.isEmpty ? empty : names->Array.joinUnsafe(", ")
+    if eventNames->Utils.Array.isEmpty {
+      JsError.throwWithMessage(
+        `Contract "${contractName}" is not configured on any chain, so its handler for "${eventName}" would never run. Add it to your config, or remove the registration. Configured contracts: ${listOr(
+            contractNames,
+            "none",
+          )}.`,
+      )
+    } else {
+      JsError.throwWithMessage(
+        `Event "${eventName}" is not configured on contract "${contractName}", so its handler would never run. Add it to your config, or remove the registration. Configured events on "${contractName}": ${listOr(
+            eventNames,
+            "none",
+          )}.`,
+      )
+    }
+  }
 }
 
 let setHandler = (~contractName, ~eventName, handler, ~eventOptions) => {
