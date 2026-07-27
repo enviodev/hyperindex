@@ -756,17 +756,20 @@ let executeQuery = async (
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
 
-    let logger = sourceManager.logger
-    // Written on every line below instead of bound to a child logger.
-    let queryParams = {
-      "chainId": source.chain->ChainMap.Chain.toChainId,
-      "partitionId": query.partitionId,
-      "source": source.name,
-      "fromBlock": query.fromBlock,
-      "toBlock": toBlock,
-      "addresses": query.addressesByContractName->FetchState.addressesByContractNameCount,
-      "retry": retry,
-    }->Internal.toLogParams
+    // A child: the source logs from inside its own module, where this context
+    // isn't in scope.
+    let logger = Logging.createChild(
+      ~logger=sourceManager.logger,
+      ~params={
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+        "partitionId": query.partitionId,
+        "source": source.name,
+        "fromBlock": query.fromBlock,
+        "toBlock": toBlock,
+        "addresses": query.addressesByContractName->FetchState.addressesByContractNameCount,
+        "retry": retry,
+      },
+    )
 
     try {
       let response = await source.getItemsOrThrow(
@@ -780,7 +783,6 @@ let executeQuery = async (
         ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,
-        ~params=queryParams,
       )
       sourceState->recordRequestStats(response.requestStats)
       sourceState.lastFailedAt = None
@@ -815,16 +817,14 @@ let executeQuery = async (
           if notAlreadyDisabled {
             switch error {
             | UnsupportedSelection({message}) =>
-              logger->Logging.error(queryParams->Logging.withParams({"msg": message}))
+              logger->Logging.error({"msg": message})
             | FailedGettingFieldSelection({exn, message, blockNumber, logIndex}) =>
-              logger->Logging.error(
-                queryParams->Logging.withParams({
-                  "msg": message,
-                  "err": exn->Utils.prettifyExn,
-                  "blockNumber": blockNumber,
-                  "logIndex": logIndex,
-                }),
-              )
+              logger->Logging.error({
+                "msg": message,
+                "err": exn->Utils.prettifyExn,
+                "blockNumber": blockNumber,
+                "logIndex": logIndex,
+              })
             | _ => ()
             }
           }
@@ -832,13 +832,11 @@ let executeQuery = async (
           retryRef := 0
         }
       | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
-        logger->Logging.trace(
-          queryParams->Logging.withParams({
-            "msg": "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
-            "toBlock": attemptedToBlock,
-            "suggestedToBlock": toBlock,
-          }),
-        )
+        logger->Logging.trace({
+          "msg": "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
+          "toBlock": attemptedToBlock,
+          "suggestedToBlock": toBlock,
+        })
         toBlockRef := Some(toBlock)
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
@@ -852,27 +850,23 @@ let executeQuery = async (
         }
         excludedSources->Utils.Set.add(sourceState)->ignore
 
-        logger->Logging.warn(
-          queryParams->Logging.withParams({
-            "msg": message ++ " - Attempting another source",
-            "toBlock": attemptedToBlock,
-            "err": exn->Utils.prettifyExn,
-          }),
-        )
+        logger->Logging.warn({
+          "msg": message ++ " - Attempting another source",
+          "toBlock": attemptedToBlock,
+          "err": exn->Utils.prettifyExn,
+        })
         retryRef := 0
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
         // Start displaying warnings after 4 failures
         let log = retry >= 4 ? Logging.warn : Logging.trace
-        logger->log(
-          queryParams->Logging.withParams({
-            "msg": message,
-            "toBlock": attemptedToBlock,
-            "backOffMilliseconds": backoffMillis,
-            "retry": retry,
-            "err": exn->Utils.prettifyExn,
-          }),
-        )
+        logger->log({
+          "msg": message,
+          "toBlock": attemptedToBlock,
+          "backOffMilliseconds": backoffMillis,
+          "retry": retry,
+          "err": exn->Utils.prettifyExn,
+        })
 
         let shouldSwitch = switch retry {
         // Don't attempt a switch on first two failures
@@ -909,7 +903,6 @@ let executeQuery = async (
       exn->ErrorHandling.mkLogAndRaise(
         ~logger,
         ~msg="Failed to fetch block Range",
-        ~params=queryParams,
       )
     }
   }
@@ -935,15 +928,17 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let source = sourceState.source
     let retry = retryRef.contents
 
-    let logger = sourceManager.logger
-    let queryParams = {
-      "chainId": source.chain->ChainMap.Chain.toChainId,
-      "source": source.name,
-      "retry": retry,
-    }->Internal.toLogParams
+    let logger = Logging.createChild(
+      ~logger=sourceManager.logger,
+      ~params={
+        "chainId": source.chain->ChainMap.Chain.toChainId,
+        "source": source.name,
+        "retry": retry,
+      },
+    )
 
     try {
-      let res = await source.getBlockHashes(~blockNumbers, ~logger, ~params=queryParams)
+      let res = await source.getBlockHashes(~blockNumbers, ~logger)
       sourceState->recordRequestStats(res.requestStats)
       switch res.result {
       | Ok(data) =>
@@ -967,14 +962,12 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       | _ => 1000 * retry
       }
       let log = retry >= 4 ? Logging.warn : Logging.trace
-      logger->log(
-        queryParams->Logging.withParams({
-          "msg": "Failed to fetch block hashes. Retrying.",
-          "retry": retry,
-          "backOffMilliseconds": backoffMillis,
-          "err": exn->Utils.prettifyExn,
-        }),
-      )
+      logger->log({
+        "msg": "Failed to fetch block hashes. Retrying.",
+        "retry": retry,
+        "backOffMilliseconds": backoffMillis,
+        "err": exn->Utils.prettifyExn,
+      })
 
       let shouldSwitch = switch retry {
       | 0 | 1 => false

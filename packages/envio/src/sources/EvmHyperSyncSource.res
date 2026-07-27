@@ -97,7 +97,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~itemsTarget,
     ~retry,
     ~logger as _,
-    ~params as _,
   ) => {
     let totalTimeRef = Performance.now()
 
@@ -248,14 +247,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger, ~params) =>
+  let getBlockHashes = (~blockNumbers, ~logger) =>
     HyperSync.queryBlockDataMulti(
       ~client,
       ~blockNumbers,
       ~sourceName=name,
       ~chainId=chain->ChainMap.Chain.toChainId,
       ~logger,
-      ~params,
     )->Promise.thenResolve(((queryRes, requestStats)) => {
       Source.result: queryRes->HyperSync.mapExn,
       requestStats,

@@ -127,7 +127,6 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~itemsTarget=5000,
     ~retry=0,
     ~logger=Env.logger,
-    ~params=Internal.toLogParams({"test": true}),
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {

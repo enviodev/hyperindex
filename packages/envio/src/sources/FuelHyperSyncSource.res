@@ -47,7 +47,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~itemsTarget as _,
     ~retry,
     ~logger,
-    ~params,
   ) => {
     let totalTimeRef = Performance.now()
 
@@ -147,11 +146,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
             exn->ErrorHandling.mkLogAndRaise(
               ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
               ~logger,
-              ~params=params->Logging.withParams({
+              ~params={
                 "chainId": chainId,
                 "blockNumber": item.blockHeight,
                 "logIndex": item.receiptIndex,
-              }),
+              },
             )
           }
         }
@@ -232,7 +231,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = (~blockNumbers as _, ~logger as _, ~params as _) =>
+  let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     JsError.throwWithMessage("HyperFuel does not support getting block hashes")
 
   {

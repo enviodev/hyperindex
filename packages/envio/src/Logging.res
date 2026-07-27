@@ -138,6 +138,12 @@ let mergeParams: (Internal.logParams, option<'a>) => 'a = %raw(`(base, params) =
 // written on every line instead of being bound to a child logger.
 let withParams: (Internal.logParams, 'a) => 'a = %raw(`(base, message) => ({...base, ...message})`)
 
+// Binds params for code we hand the logger to rather than call — a `Source.t`
+// implementation logs from inside its own module, where the caller's query
+// context isn't in scope and can't be spread per line. Everywhere the params
+// are in scope, write them on the line instead.
+let createChild = (~logger: t, ~params: 'a) => logger->child(params->createChildParams)
+
 // Wrap a logger as the user-facing `context.log`, routing through the custom
 // `u*` levels. `params` is the item context (built by the ecosystem) and is
 // merged into every line, with the user's own params taking precedence.

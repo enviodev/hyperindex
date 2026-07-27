@@ -375,6 +375,14 @@ let installMockSourceRegistrations = (
     }
   })
 
+// Shared by every mock indexer: nothing disposes one, so a logger per instance
+// would leak a handle per instance. Silent unless LOG_LEVEL is set, in which
+// case the process logger already has the requested level.
+let logger = switch Env.userLogLevel {
+| Some(_) => Env.logger
+| None => Env.makeLogger(~userLogLevel=#silent)
+}
+
 module Indexer = {
   type metric = {
     value: string,
@@ -395,8 +403,6 @@ module Indexer = {
     metric: string => promise<array<metric>>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
-    // Releases this instance's logger.
-    close: unit => promise<unit>,
   }
 
   type chainConfig = {
@@ -431,9 +437,6 @@ module Indexer = {
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
-    // A per-instance logger, silent unless LOG_LEVEL is set. Never the process
-    // logger — muting one mock indexer must not mute anything else.
-    let logger = Env.makeLogger(~userLogLevel=Env.userLogLevel->Option.getOr(#silent))
 
     // The full (un-narrowed) config. Handlers register against this so every
     // chain resolves once; `finishRegistration` then narrows to the per-test
@@ -714,7 +717,6 @@ module Indexer = {
           }
         )
       },
-      close: () => logger->Logging.close,
       restart: async () => {
         // Persist before restarting, else the resumed indexer loses uncommitted state.
         await state->Writing.flush
@@ -727,7 +729,6 @@ module Indexer = {
         while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
           await Utils.delay(1)
         }
-        await logger->Logging.close
         await make(
           ~chains,
           ~config=?customConfig,
@@ -930,7 +931,7 @@ module Source = {
           poweredByHyperSync: false,
           chain,
           pollingInterval,
-          getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _, ~params as _) => {
+          getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
             getBlockHashesCalls->Array.push(blockNumbers)->ignore
             Promise.make((resolve, _reject) => {
               getBlockHashesResolveFns->Array.push(resolve)->ignore
@@ -954,7 +955,6 @@ module Source = {
             ~itemsTarget as _,
             ~retry,
             ~logger as _,
-            ~params as _,
           ) => {
             keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
               let payload = {

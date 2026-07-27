@@ -68,13 +68,9 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
-  // `params` carries the caller's query context (chain, source, partition,
-  // retry) so a source can write it on the lines it logs itself.
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-    ~logger: Pino.t,
-    ~params: Internal.logParams,
-  ) => promise<getBlockHashesResponse>,
+  // The logger is a child bound with the caller's query context (chain,
+  // source, partition, retry), so lines a source logs itself carry it.
+  getBlockHashes: (~blockNumbers: array<int>, ~logger: Pino.t) => promise<getBlockHashesResponse>,
   getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (
     ~fromBlock: int,
@@ -92,7 +88,6 @@ type t = {
     ~itemsTarget: int,
     ~retry: int,
     ~logger: Pino.t,
-    ~params: Internal.logParams,
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
   // Invoked by SourceManager once a rollback target is known so the source can

@@ -85,7 +85,7 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
     chain,
     poweredByHyperSync: false,
     pollingInterval: 10_000,
-    getBlockHashes: (~blockNumbers as _, ~logger as _, ~params as _) =>
+    getBlockHashes: (~blockNumbers as _, ~logger as _) =>
       JsError.throwWithMessage("Svm does not support getting block hashes"),
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()
@@ -104,7 +104,6 @@ let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): S
       ~itemsTarget as _,
       ~retry as _,
       ~logger as _,
-      ~params as _,
     ) => JsError.throwWithMessage("Svm does not support getting items"),
   }
 }

@@ -180,7 +180,6 @@ module BlockData = {
     ~sourceName,
     ~chainId,
     ~logger,
-    ~params: Internal.logParams,
     ~requestStats: array<Source.requestStat>,
   ): queryResponse<array<ReorgDetection.blockDataWithTimestamp>> => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
@@ -201,14 +200,12 @@ module BlockData = {
     switch maybeSuccessfulRes {
     | None => {
         let delayMilliseconds = 100
-        logger->Logging.info(
-          params->Logging.withParams({
-            "msg": `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
-            "chainId": chainId,
-            "fromBlock": fromBlock,
-            "toBlock": toBlock,
-          }),
-        )
+        logger->Logging.info({
+          "msg": `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
+          "chainId": chainId,
+          "fromBlock": fromBlock,
+          "toBlock": toBlock,
+        })
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
         await queryBlockData(
           ~client,
@@ -217,7 +214,6 @@ module BlockData = {
           ~sourceName,
           ~chainId,
           ~logger,
-          ~params,
           ~requestStats,
         )
       }
@@ -232,7 +228,6 @@ module BlockData = {
             ~sourceName,
             ~chainId,
             ~logger,
-            ~params,
             ~requestStats,
           )
           restRes->Result.map(rest => datas->Array.concat(rest))
@@ -248,7 +243,6 @@ module BlockData = {
     ~sourceName,
     ~chainId,
     ~logger,
-    ~params,
   ): (queryResponse<array<ReorgDetection.blockDataWithTimestamp>>, array<Source.requestStat>) => {
     let requestStats = []
     let result = switch blockNumbers->Array.get(0) {
@@ -279,7 +273,6 @@ module BlockData = {
           ~sourceName,
           ~chainId,
           ~logger,
-          ~params,
           ~requestStats,
         )
         let filtered = res->Result.map(datas => {
@@ -299,7 +292,7 @@ module BlockData = {
   }
 }
 
-let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger, ~params) => {
+let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger) => {
   let requestStats = []
   BlockData.queryBlockData(
     ~client,
@@ -308,7 +301,6 @@ let queryBlockData = (~client, ~blockNumber, ~sourceName, ~chainId, ~logger, ~pa
     ~sourceName,
     ~chainId,
     ~logger,
-    ~params,
     ~requestStats,
   )->Promise.thenResolve(res => (res->Result.map(res => res->Array.get(0)), requestStats))
 }

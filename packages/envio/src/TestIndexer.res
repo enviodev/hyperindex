@@ -18,12 +18,7 @@ type chainConfig = {
 
 type processResult = {changes: array<unknown>}
 
-type t<'processConfig> = {
-  process: 'processConfig => promise<processResult>,
-  // Releases the instance's logger. Optional for callers — only matters when
-  // file logging is on, where each instance holds its own handle.
-  close: unit => promise<unit>,
-}
+type t<'processConfig> = {process: 'processConfig => promise<processResult>}
 
 type entityChange = {
   sets: array<unknown>,
@@ -550,6 +545,15 @@ let cloneRegistrations = (
   clone
 }
 
+// Shared by every test indexer in the process: nothing disposes a test
+// indexer, so a logger per instance would leak a handle per instance. Silent
+// unless LOG_LEVEL is set, in which case the process logger already has the
+// requested level.
+let logger = switch Env.userLogLevel {
+| Some(_) => Env.logger
+| None => Env.makeLogger(~userLogLevel=#silent)
+}
+
 // User handlers register into the process-global HandlerRegister as an import
 // side effect. Capture the resolved registrations once per process (imports are
 // module-cached anyway) and reuse them across every createTestIndexer run, so
@@ -566,9 +570,6 @@ let getRegistrations = (~config, ~logger) =>
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
-  // A per-instance logger, silent unless LOG_LEVEL is set. Never the process
-  // logger — muting one test indexer must not mute anything else.
-  let logger = Env.makeLogger(~userLogLevel=Env.userLogLevel->Option.getOr(#silent))
   let allEntities = config.allEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
@@ -710,11 +711,6 @@ let createTestIndexer = (): t<'processConfig> => {
     // types declare, matching the handler-context keys.
     result->Dict.set(name->Utils.String.capitalize, ops->(Utils.magic: entityOperations => unknown))
   })
-
-  result->Dict.set(
-    "close",
-    (() => persistence->Persistence.close)->(Utils.magic: (unit => promise<unit>) => unknown),
-  )
 
   result->Dict.set(
     "process",

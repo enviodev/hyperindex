@@ -61,6 +61,10 @@ let closeStream: (t, unknown) => promise<unit> = %raw(`(logger, streamSym) =>
 
 let close = (logger: t) => logger->closeStream(symbols["streamSym"])
 
+type childParams
+let createChildParams: 'a => childParams = v => v->(Utils.magic: 'a => childParams)
+@send external child: (t, childParams) => t = "child"
+
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => message->(Utils.magic: 'a => pinoMessageBlob)
 let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {

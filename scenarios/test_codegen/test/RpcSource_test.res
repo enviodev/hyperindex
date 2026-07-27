@@ -754,7 +754,6 @@ describe("RpcSource - empty selection", () => {
         ~itemsTarget=5000,
         ~retry=0,
         ~logger=Env.logger,
-        ~params=Internal.toLogParams({"test": true}),
       )
       None
     } catch {
@@ -846,7 +845,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~itemsTarget=5000,
             ~retry=0,
             ~logger=Env.logger,
-            ~params=Internal.toLogParams({"test": true}),
           )
           None
         } catch {
@@ -977,7 +975,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~itemsTarget=5000,
             ~retry=0,
             ~logger=Env.logger,
-            ~params=Internal.toLogParams({"test": true}),
           )
           ()
         } catch {
@@ -1128,7 +1125,6 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
             ~itemsTarget=5000,
             ~retry=0,
             ~logger=Env.logger,
-            ~params=Internal.toLogParams({"test": true}),
           )
           None
         } catch {
@@ -1225,7 +1221,6 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
               ~itemsTarget=5000,
               ~retry,
               ~logger=Env.logger,
-              ~params=Internal.toLogParams({"test": true}),
             )
             None
           } catch {
@@ -1377,7 +1372,6 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
           ~itemsTarget=5000,
           ~retry=0,
           ~logger=Env.logger,
-          ~params=Internal.toLogParams({"test": true}),
         )
         mock.close()
         page
@@ -1507,7 +1501,6 @@ describe("RpcSource - builds partition log selections end to end", () => {
           ~itemsTarget=5000,
           ~retry=0,
           ~logger=Env.logger,
-          ~params=Internal.toLogParams({"test": true}),
         )
         let filters =
           mock.requests
@@ -1597,7 +1590,6 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           ~itemsTarget=5000,
           ~retry=0,
           ~logger=Env.logger,
-          ~params=Internal.toLogParams({"test": true}),
         )
         mock.close()
         page
@@ -1760,7 +1752,6 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
           ~itemsTarget=5000,
           ~retry=0,
           ~logger=Env.logger,
-          ~params=Internal.toLogParams({"test": true}),
         )
         mock.close()
         page
