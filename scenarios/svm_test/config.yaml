@@ -1,6 +1,0 @@
-# yaml-language-server: $schema=../../packages/envio/svm.schema.json
-name: svm-onslot-test
-ecosystem: svm
-chains:
-  - rpc: https://api.mainnet-beta.solana.com
-    start_block: 0

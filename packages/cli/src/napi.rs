@@ -15,6 +15,9 @@ pub struct FromUserApiOptions {
     /// Also generate the `.envio/types.d.ts` contents, so a caller can
     /// type-check handlers against the config's generated `indexer` surface.
     pub with_indexer_types: Option<bool>,
+    /// Also generate the `src/Indexer.res` contents, so a caller can assert on
+    /// the ReScript bridge codegen without a project on disk.
+    pub with_indexer_code: Option<bool>,
 }
 
 #[napi_derive::napi(object)]
@@ -24,6 +27,11 @@ pub struct FromUserApiResult {
     /// The generated `.envio/types.d.ts`, present only when
     /// `with_indexer_types` was requested.
     pub indexer_types: Option<String>,
+    /// The generated `src/Indexer.res`, present only when
+    /// `with_indexer_code` was requested. Emitted regardless of whether the
+    /// config's project is a ReScript one — production codegen writes it only
+    /// for ReScript projects, but the code itself is config-derived.
+    pub indexer_code: Option<String>,
 }
 
 fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result<String> {
@@ -51,10 +59,11 @@ pub fn get_config_json(
 /// Parses an inline indexer config the way a user's project would, without
 /// consulting the filesystem or process environment. Schema text, interpolation
 /// variables, and ABI/IDL file bodies are supplied explicitly so callers can use
-/// this from any working directory. With `with_indexer_types`, also returns the
-/// generated `.envio/types.d.ts` — the same TypeScript production codegen writes
-/// — from the single parse, so a caller can type-check handlers against the
-/// config's `indexer` surface without re-parsing.
+/// this from any working directory. With `with_indexer_types` /
+/// `with_indexer_code`, also returns the generated `.envio/types.d.ts` and
+/// `src/Indexer.res` — the same artifacts production codegen writes — from the
+/// single parse, so a caller can type-check handlers against the config's
+/// `indexer` surface, or assert on the ReScript bridge, without re-parsing.
 #[napi_derive::napi]
 pub fn from_user_api(
     yaml: String,
@@ -70,18 +79,28 @@ pub fn from_user_api(
         .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))?;
 
-    let indexer_types = if options.with_indexer_types.unwrap_or(false) {
-        let template = ProjectTemplate::from_config(&config).map_err(|e| {
-            napi::Error::from_reason(format!("Failed generating indexer types: {e:#}"))
-        })?;
-        Some(template.indexer_types_dts().to_string())
+    let with_indexer_types = options.with_indexer_types.unwrap_or(false);
+    let with_indexer_code = options.with_indexer_code.unwrap_or(false);
+    let template = if with_indexer_types || with_indexer_code {
+        Some(ProjectTemplate::from_config(&config).map_err(|e| {
+            napi::Error::from_reason(format!("Failed generating indexer template: {e:#}"))
+        })?)
     } else {
         None
+    };
+
+    let (indexer_types, indexer_code) = match template {
+        Some(template) => (
+            with_indexer_types.then(|| template.indexer_types_dts().to_string()),
+            with_indexer_code.then(|| template.indexer_code().to_string()),
+        ),
+        None => (None, None),
     };
 
     Ok(FromUserApiResult {
         config: config_json,
         indexer_types,
+        indexer_code,
     })
 }
 

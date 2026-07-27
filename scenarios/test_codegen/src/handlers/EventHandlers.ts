@@ -956,9 +956,8 @@ indexer.onBlock(
 // `result.changes` deep-equal assertions. Pin it to chain 137 too; the
 // `where: undefined` branch in `Main.res::onBlockFn` is covered separately
 // by the no-`where` `indexer.onSlot` registration in
-// `scenarios/svm_test/src/handlers/SlotHandler.ts` (svm_test has no
-// `result.changes` deep-equals so the default-fires-everywhere handler
-// is harmless there).
+// `packages/envio-tests/test/SlotResume_test.res`, which asserts on entity
+// state rather than `result.changes`.
 indexer.onBlock(
   { name: "test_onblock_default", where: ({ chain }) => chain.id === 137 },
   async () => {},

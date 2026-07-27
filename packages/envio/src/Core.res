@@ -15,11 +15,13 @@ type fromUserApiOptions = {
   env?: dict<string>,
   files?: dict<string>,
   withIndexerTypes?: bool,
+  withIndexerCode?: bool,
 }
 
 type fromUserApiResult = {
   config: string,
   indexerTypes: Null.t<string>,
+  indexerCode: Null.t<string>,
 }
 
 type addon = {
@@ -212,10 +214,18 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 
 // Pure config entry point: no cwd, config file, schema file, .env, or process env lookup.
 // A supplied schema is authoritative; omitted or blank schema text means an empty schema.
-// With `withIndexerTypes`, the single parse also returns the generated
-// `.envio/types.d.ts`, so callers can type-check handlers against the config's
-// `indexer` surface without re-parsing.
-let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) => {
+// With `withIndexerTypes` / `withIndexerCode`, the single parse also returns the
+// generated `.envio/types.d.ts` and `src/Indexer.res`, so callers can type-check
+// handlers against the config's `indexer` surface, or assert on the ReScript
+// bridge, without re-parsing.
+let fromUserApi = (
+  ~schema=?,
+  ~env=?,
+  ~files=?,
+  ~withIndexerTypes=false,
+  ~withIndexerCode=false,
+  yaml,
+) => {
   let addon = getAddon()
   addon.fromUserApi(
     yaml,
@@ -224,6 +234,7 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) =
       ?env,
       ?files,
       withIndexerTypes,
+      withIndexerCode,
     },
   )
 }

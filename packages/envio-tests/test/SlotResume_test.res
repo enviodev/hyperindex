@@ -1,8 +1,7 @@
 // Regression: an onSlot-only indexer (no contracts, no event partitions) used
 // to get stuck after resuming from a checkpoint. On resume the buffer started
 // empty and nothing repopulated it, so getNextQuery never produced work and the
-// indexer never advanced past the resumed progress block. Migrated from
-// scenarios/svm_test.
+// indexer never advanced past the resumed progress block.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: svm-onslot
@@ -38,9 +37,18 @@ indexer.onSlot({ name: "SlotPingDefault" }, async () => {});
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer } from "envio";
+import { createTestIndexer, indexer } from "envio";
 
 describe("onSlot-only indexer", () => {
+  // \`indexer.onBlock\` is a compile error on SVM, so only the runtime shape of
+  // \`onSlot\` needs asserting — the type system covers the rest.
+  it("exposes onSlot and the configured SVM chain", (t) => {
+    t.expect({
+      onSlot: typeof indexer.onSlot,
+      chainIds: createTestIndexer().chainIds,
+    }).toEqual({ onSlot: "function", chainIds: [0] });
+  });
+
   it("keeps progressing after a resume", async (t) => {
     const indexer = createTestIndexer();
 

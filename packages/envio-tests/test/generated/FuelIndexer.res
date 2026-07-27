@@ -6,11 +6,17 @@
  */
 
 module Transaction = {
-  type t = {id: string}
+  type t = {
+    id: string,
+}
 }
 
 module Block = {
-  type t = {slot: int, hash: string, time: int}
+  type t = {
+    id: string,
+    height: int,
+    time: int,
+}
 }
 
 module SingleOrMultiple: {
@@ -74,15 +80,15 @@ module Enums = {
 module Entities = {
   type id = string
 
-  module SlotPing = {
+  module Account = {
     type id = string
-    type t = {id: id, slot: int}
+    type t = {id: id, balance: bigint}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("slot") slot?: Envio.whereOperator<int>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("balance") balance?: Envio.whereOperator<bigint>}
   }
 
   type rec name<'entity, 'id> =
-    | @as("SlotPing") SlotPing: name<SlotPing.t, SlotPing.id>
+    | @as("Account") Account: name<Account.t, Account.id>
 }
 
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
@@ -99,7 +105,7 @@ type handlerContext = {
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
   chain: Internal.chainInfo,
-  \"SlotPing": handlerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.getWhereFilter>,
+  \"Account": handlerEntityOperations<Entities.Account.t, Entities.Account.getWhereFilter>,
 }
 
 type chainId = [#0]
@@ -108,7 +114,7 @@ type contractRegisterContract = { add: Address.t => unit }
 
 type contractRegisterChain = {
   id: chainId,
-
+  \"Greeter": contractRegisterContract,
 }
 
 type contractRegisterContext = {
@@ -116,7 +122,94 @@ type contractRegisterContext = {
   chain: contractRegisterChain,
 }
 
+module Greeter = {
+let abi = FuelSDK.transpileAbi((await Utils.importPathWithJson(`../abis/greeter-abi.json`))["default"])
+/*Silence warning of label defined in multiple types*/
+@@warning("-30")
+type rec type0 = string
+ @tag("case") and type1 = | InvalidContractSender({payload: type8}) | ToThrow({payload: type8})
+ @tag("case") and type2<'t> = | None({payload: type8}) | Some({payload: 't})
+ and type4 = {user: type7}
+ and type5 = {value: type9}
+ and type6 = {user: type7, greeting: type5}
+ and type7 = {bits: type0}
+ and type8 = unit
+ and type9 = string
+@@warning("+30")
+let contractName = "Greeter"
 
+  module NewGreeting = {
+
+    let name = "NewGreeting"
+    let contractName = contractName
+    type params = type6
+    /** Event params with all fields optional. Missing fields use default values. */
+    type paramsConstructor = type6
+    type block = Block.t
+    type transaction = Transaction.t
+
+    type event = {
+      /** The name of the contract that emitted this event. */
+      contractName: string,
+      /** The name of the event. */
+      eventName: string,
+      /** The parameters or arguments associated with this event. */
+      params: params,
+      /** The unique identifier of the blockchain network where this event occurred. */
+      chainId: chainId,
+      /** The address of the contract that emitted this event. */
+      srcAddress: Address.t,
+      /** The index of this event's log within the block. */
+      logIndex: int,
+      /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+      transaction: transaction,
+      /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+      block: block,
+    }
+
+    type whereParams = {}
+
+    type onEventWhere = Internal.noOnEventWhere
+  }
+
+  module ClearGreeting = {
+
+    let name = "ClearGreeting"
+    let contractName = contractName
+    type params = type4
+    /** Event params with all fields optional. Missing fields use default values. */
+    type paramsConstructor = type4
+    type block = Block.t
+    type transaction = Transaction.t
+
+    type event = {
+      /** The name of the contract that emitted this event. */
+      contractName: string,
+      /** The name of the event. */
+      eventName: string,
+      /** The parameters or arguments associated with this event. */
+      params: params,
+      /** The unique identifier of the blockchain network where this event occurred. */
+      chainId: chainId,
+      /** The address of the contract that emitted this event. */
+      srcAddress: Address.t,
+      /** The index of this event's log within the block. */
+      logIndex: int,
+      /** The transaction that triggered this event. Configurable in `config.yaml` via the `field_selection` option. */
+      transaction: transaction,
+      /** The block in which this event was recorded. Configurable in `config.yaml` via the `field_selection` option. */
+      block: block,
+    }
+
+    type whereParams = {}
+
+    type onEventWhere = Internal.noOnEventWhere
+  }
+
+  type rec eventIdentity<'event, 'paramsConstructor, 'where> =
+    | @as("NewGreeting") NewGreeting: eventIdentity<NewGreeting.event, NewGreeting.paramsConstructor, NewGreeting.onEventWhere>
+    | @as("ClearGreeting") ClearGreeting: eventIdentity<ClearGreeting.event, ClearGreeting.paramsConstructor, ClearGreeting.onEventWhere>
+}
 
 /** Contract configuration with name and ABI. */
 type indexerContract = {
@@ -140,6 +233,7 @@ type indexerChain = {
   endBlock: option<int>,
   /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
   isRealtime: bool,
+  \"Greeter": indexerContract,
 }
 
 /** Strongly-typed record of chain configurations keyed by chain ID. */
@@ -147,7 +241,28 @@ type indexerChains = {
   \"0": indexerChain,
 }
 
-type eventIdentity<'event, 'paramsConstructor, 'where>
+@tag("contract")
+type eventIdentity<'event, 'paramsConstructor, 'where> =
+  | Greeter(Greeter.eventIdentity<'event, 'paramsConstructor, 'where>)
+
+@tag("kind")
+type simulateItemConstructor<'event, 'paramsConstructor, 'where> =
+  | OnEvent({
+      event: eventIdentity<'event, 'paramsConstructor, 'where>,
+      params: 'paramsConstructor,
+      block?: Envio.fuelBlockInput,
+      transaction?: Envio.fuelTransactionInput,
+    })
+
+let makeSimulateItem = (
+  constructor: simulateItemConstructor<'event, 'paramsConstructor, 'where>,
+): Envio.fuelSimulateItem => {
+  event: (constructor->Utils.magic)["event"]["_0"],
+  contract: (constructor->Utils.magic)["event"]["contract"],
+  params: (constructor->Utils.magic)["params"],
+  block: (constructor->Utils.magic)["block"],
+  transaction: (constructor->Utils.magic)["transaction"],
+}
 
 /** Metadata and configuration for the indexer. */
 type indexer = {
@@ -159,15 +274,20 @@ type indexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  /** Register an instruction handler. */
-  onInstruction: 'event 'paramsConstructor 'where. (
-    onInstructionOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+  /** Register an event handler. */
+  onEvent: 'event 'paramsConstructor 'where. (
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
     Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
   ) => unit,
-  /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
-  onSlot: (
+  /** Register a contract register handler for dynamic contract indexing. */
+  contractRegister: 'event 'paramsConstructor 'where. (
+    onEventOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
+    Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, contractRegisterContext>>,
+  ) => unit,
+  /** Register a Block Handler. Evaluates `where` once per configured chain at registration time. */
+  onBlock: (
     Envio.onBlockOptions<indexerChain>,
-    Envio.svmOnSlotArgs<handlerContext> => promise<unit>,
+    Envio.fuelOnBlockArgs<handlerContext> => promise<unit>,
   ) => unit,
 }
 
@@ -179,7 +299,7 @@ switch chainId {
 }
 
 type testIndexerProcessConfigChains = {
-  \"0"?: TestIndexer.chainConfig,
+  \"0"?: TestIndexer.fuelChainConfig,
 }
 
 type testIndexerProcessConfig = {
@@ -217,7 +337,7 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.t>,
+  \"Account": testIndexerEntityOperations<Entities.Account.t>,
 }
 
 @get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = ""

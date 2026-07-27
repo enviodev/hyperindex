@@ -4,7 +4,7 @@ type sources = {handlers?: string, test?: string}
 @module("./TypeChecker.ts")
 external checkSources: (string, sources) => array<string> = "checkSources"
 
-type parsed = {config: Config.t}
+type parsed = {config: Config.t, indexerCode: option<string>}
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
@@ -65,10 +65,18 @@ let ranTestAt: ref<option<string>> = ref(None)
 //
 // Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
 // the source must be escaped.
-let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~configYaml): parsed => {
+let fromUserApi = (
+  ~schema=?,
+  ~env=?,
+  ~files=?,
+  ~handlers=?,
+  ~test=?,
+  ~withIndexerCode=false,
+  ~configYaml,
+): parsed => {
   let withIndexerTypes = handlers->Option.isSome || test->Option.isSome
-  let {config: configJson, indexerTypes} =
-    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes, configYaml)
+  let {config: configJson, indexerTypes, indexerCode} =
+    Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes, ~withIndexerCode, configYaml)
 
   let typeErrors = if withIndexerTypes {
     let typesDts = switch indexerTypes->Null.toOption {
@@ -151,5 +159,5 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~configYam
     }
   }
 
-  {config: config}
+  {config, indexerCode: indexerCode->Null.toOption}
 }

@@ -175,31 +175,6 @@ importers:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
 
-  scenarios/fuel_test:
-    dependencies:
-      envio:
-        specifier: file:../../packages/envio
-        version: link:../../packages/envio
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
-      ts-expect:
-        specifier: 1.3.0
-        version: 1.3.0
-    devDependencies:
-      '@types/node':
-        specifier: 24.12.2
-        version: 24.12.2
-      tsx:
-        specifier: 4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 4.1.0
-        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-
   scenarios/svm_flow_xray:
     dependencies:
       envio:
@@ -221,25 +196,6 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
-    devDependencies:
-      '@types/node':
-        specifier: 24.12.2
-        version: 24.12.2
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 4.1.0
-        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
-
-  scenarios/svm_test:
-    dependencies:
-      envio:
-        specifier: file:../../packages/envio
-        version: link:../../packages/envio
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
     devDependencies:
       '@types/node':
         specifier: 24.12.2

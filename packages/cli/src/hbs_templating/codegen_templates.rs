@@ -976,6 +976,13 @@ impl ProjectTemplate {
         &self.envio_types_dts
     }
 
+    /// The generated `src/Indexer.res` contents (the ReScript bridge between
+    /// user handlers and the runtime), without the trailing newline
+    /// `generate_templates` appends when writing it to disk.
+    pub fn indexer_code(&self) -> &str {
+        &self.indexer_code
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.

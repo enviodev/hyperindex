@@ -187,3 +187,509 @@ let greeter = `{
   "configurables": []
 }
 `
+
+let allEvents = `{
+  "programType": "contract",
+  "specVersion": "1",
+  "encodingVersion": "1",
+  "concreteTypes": [
+    {
+      "type": "()",
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+    },
+    {
+      "type": "(u64, bool)",
+      "concreteTypeId": "5a05acd79ded5b8adc972345c8309f451c54aa0c27b2873554ac4758191aad5f",
+      "metadataTypeId": 0
+    },
+    {
+      "type": "[u8; 5]",
+      "concreteTypeId": "ace02512b5eb313c7f8334de3e7929a300dd2cea57c222b9e9567c19781290e9",
+      "metadataTypeId": 1
+    },
+    {
+      "type": "b256",
+      "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+    },
+    {
+      "type": "bool",
+      "concreteTypeId": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
+    },
+    {
+      "type": "enum Status",
+      "concreteTypeId": "66eef06c10a78bfec7643c7d553d635fc1edc145c4c1037d422dc6f9fc5ea100",
+      "metadataTypeId": 2
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335",
+      "metadataTypeId": 3
+    },
+    {
+      "type": "enum std::option::Option<enum std::option::Option<u32>>",
+      "concreteTypeId": "7893daf7f7ed3470aa6af59c3f31641288e2b1e56849e8520304e7e8258602e6",
+      "metadataTypeId": 4,
+      "typeArguments": [
+        "97a75a6d6e892f11f5032fa516e39675b76377c3313d64f465a2c77c34a9e600"
+      ]
+    },
+    {
+      "type": "enum std::option::Option<u32>",
+      "concreteTypeId": "97a75a6d6e892f11f5032fa516e39675b76377c3313d64f465a2c77c34a9e600",
+      "metadataTypeId": 4,
+      "typeArguments": [
+        "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+      ]
+    },
+    {
+      "type": "enum std::result::Result<u32,bool>",
+      "concreteTypeId": "06efefc22a4816d0d7b8f9653ed31112eef54439da76bcb2d915dc7cb967140e",
+      "metadataTypeId": 5,
+      "typeArguments": [
+        "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc",
+        "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
+      ]
+    },
+    {
+      "type": "str[4]",
+      "concreteTypeId": "94f0fa95c830be5e4f711963e83259fe7e8bc723278ab6ec34449e791a99b53a"
+    },
+    {
+      "type": "struct SimpleStruct",
+      "concreteTypeId": "75f7f7a06026cab5d7a70984d1fde56001e83505e3a091ff9722b92d7f56d8be",
+      "metadataTypeId": 9
+    },
+    {
+      "type": "struct SimpleStructWithOptionalField",
+      "concreteTypeId": "30ee7b3131eeba202c198f1e4ad16e1d1762cc0df35f35c95e7daacb49d633d1",
+      "metadataTypeId": 10
+    },
+    {
+      "type": "struct TagsEvent",
+      "concreteTypeId": "7abacb37e15e384afb26808d54b045d92d80aca3e5049269142b80ed9b97784a",
+      "metadataTypeId": 12
+    },
+    {
+      "type": "struct std::bytes::Bytes",
+      "concreteTypeId": "cdd87b7d12fe505416570c294c884bca819364863efe3bf539245fa18515fbbb",
+      "metadataTypeId": 14
+    },
+    {
+      "type": "struct std::string::String",
+      "concreteTypeId": "9a7f1d3e963c10e0a4ea70a8e20a4813d1dc5682e28f74cb102ae50d32f7f98c",
+      "metadataTypeId": 17
+    },
+    {
+      "type": "struct std::vec::Vec<u64>",
+      "concreteTypeId": "d5bfe1d4e1ace20166c9b50cadd47e862020561bde24f5189cfc2723f5ed76f4",
+      "metadataTypeId": 19,
+      "typeArguments": [
+        "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+      ]
+    },
+    {
+      "type": "u16",
+      "concreteTypeId": "29881aad8730c5ab11d275376323d8e4ff4179aae8ccb6c13fe4902137e162ef"
+    },
+    {
+      "type": "u256",
+      "concreteTypeId": "1b5759d94094368cfd443019e7ca5ec4074300e544e5ea993a979f5da627261e"
+    },
+    {
+      "type": "u32",
+      "concreteTypeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+    },
+    {
+      "type": "u64",
+      "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+    },
+    {
+      "type": "u8",
+      "concreteTypeId": "c89951a24c6ca28c13fd1cfdc646b2b656d69e61a92b91023be7eb58eb914b6b"
+    }
+  ],
+  "metadataTypes": [
+    {
+      "type": "(_, _)",
+      "metadataTypeId": 0,
+      "components": [
+        {
+          "name": "__tuple_element",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "__tuple_element",
+          "typeId": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
+        }
+      ]
+    },
+    {
+      "type": "[_; 5]",
+      "metadataTypeId": 1,
+      "components": [
+        {
+          "name": "__array_element",
+          "typeId": "c89951a24c6ca28c13fd1cfdc646b2b656d69e61a92b91023be7eb58eb914b6b"
+        }
+      ]
+    },
+    {
+      "type": "enum Status",
+      "metadataTypeId": 2,
+      "components": [
+        {
+          "name": "Pending",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Completed",
+          "typeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+        },
+        {
+          "name": "Failed",
+          "typeId": 11
+        }
+      ]
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "metadataTypeId": 3,
+      "components": [
+        {
+          "name": "Address",
+          "typeId": 13
+        },
+        {
+          "name": "ContractId",
+          "typeId": 16
+        }
+      ]
+    },
+    {
+      "type": "enum std::option::Option",
+      "metadataTypeId": 4,
+      "components": [
+        {
+          "name": "None",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Some",
+          "typeId": 7
+        }
+      ],
+      "typeParameters": [7]
+    },
+    {
+      "type": "enum std::result::Result",
+      "metadataTypeId": 5,
+      "components": [
+        {
+          "name": "Ok",
+          "typeId": 7
+        },
+        {
+          "name": "Err",
+          "typeId": 6
+        }
+      ],
+      "typeParameters": [7, 6]
+    },
+    {
+      "type": "generic E",
+      "metadataTypeId": 6
+    },
+    {
+      "type": "generic T",
+      "metadataTypeId": 7
+    },
+    {
+      "type": "raw untyped ptr",
+      "metadataTypeId": 8
+    },
+    {
+      "type": "struct SimpleStruct",
+      "metadataTypeId": 9,
+      "components": [
+        {
+          "name": "f1",
+          "typeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+        }
+      ]
+    },
+    {
+      "type": "struct SimpleStructWithOptionalField",
+      "metadataTypeId": 10,
+      "components": [
+        {
+          "name": "f1",
+          "typeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+        },
+        {
+          "name": "f2",
+          "typeId": 4,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "struct StatusFailure",
+      "metadataTypeId": 11,
+      "components": [
+        {
+          "name": "reason",
+          "typeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+        }
+      ]
+    },
+    {
+      "type": "struct TagsEvent",
+      "metadataTypeId": 12,
+      "components": [
+        {
+          "name": "tags",
+          "typeId": 4,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 19,
+              "typeArguments": [
+                {
+                  "name": "",
+                  "typeId": 17
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "struct std::address::Address",
+      "metadataTypeId": 13,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+        }
+      ]
+    },
+    {
+      "type": "struct std::bytes::Bytes",
+      "metadataTypeId": 14,
+      "components": [
+        {
+          "name": "buf",
+          "typeId": 15
+        },
+        {
+          "name": "len",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct std::bytes::RawBytes",
+      "metadataTypeId": 15,
+      "components": [
+        {
+          "name": "ptr",
+          "typeId": 8
+        },
+        {
+          "name": "cap",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct std::contract_id::ContractId",
+      "metadataTypeId": 16,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+        }
+      ]
+    },
+    {
+      "type": "struct std::string::String",
+      "metadataTypeId": 17,
+      "components": [
+        {
+          "name": "bytes",
+          "typeId": 14
+        }
+      ]
+    },
+    {
+      "type": "struct std::vec::RawVec",
+      "metadataTypeId": 18,
+      "components": [
+        {
+          "name": "ptr",
+          "typeId": 8
+        },
+        {
+          "name": "cap",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ],
+      "typeParameters": [7]
+    },
+    {
+      "type": "struct std::vec::Vec",
+      "metadataTypeId": 19,
+      "components": [
+        {
+          "name": "buf",
+          "typeId": 18,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 7
+            }
+          ]
+        },
+        {
+          "name": "len",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ],
+      "typeParameters": [7]
+    }
+  ],
+  "functions": [
+    {
+      "inputs": [
+        {
+          "name": "recipient",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "name": "deposit",
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "payable",
+          "arguments": []
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "name": "recipient",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "name": "withdraw",
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "payable",
+          "arguments": []
+        }
+      ]
+    },
+    {
+      "inputs": [],
+      "name": "log",
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": null
+    }
+  ],
+  "loggedTypes": [
+    {
+      "logId": "3330666440490685604",
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+    },
+    {
+      "logId": "13213829929622723620",
+      "concreteTypeId": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
+    },
+    {
+      "logId": "14454674236531057292",
+      "concreteTypeId": "c89951a24c6ca28c13fd1cfdc646b2b656d69e61a92b91023be7eb58eb914b6b"
+    },
+    {
+      "logId": "2992671284987479467",
+      "concreteTypeId": "29881aad8730c5ab11d275376323d8e4ff4179aae8ccb6c13fe4902137e162ef"
+    },
+    {
+      "logId": "15520703124961489725",
+      "concreteTypeId": "d7649d428b9ff33d188ecbf38a7e4d8fd167fa01b2e10fe9a8f9308e52f1d7cc"
+    },
+    {
+      "logId": "1515152261580153489",
+      "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+    },
+    {
+      "logId": "1970142151624111756",
+      "concreteTypeId": "1b5759d94094368cfd443019e7ca5ec4074300e544e5ea993a979f5da627261e"
+    },
+    {
+      "logId": "10732353433239600734",
+      "concreteTypeId": "94f0fa95c830be5e4f711963e83259fe7e8bc723278ab6ec34449e791a99b53a"
+    },
+    {
+      "logId": "11132648958528852192",
+      "concreteTypeId": "9a7f1d3e963c10e0a4ea70a8e20a4813d1dc5682e28f74cb102ae50d32f7f98c"
+    },
+    {
+      "logId": "8961848586872524460",
+      "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+    },
+    {
+      "logId": "6486780880364592010",
+      "concreteTypeId": "5a05acd79ded5b8adc972345c8309f451c54aa0c27b2873554ac4758191aad5f"
+    },
+    {
+      "logId": "12456997331598520636",
+      "concreteTypeId": "ace02512b5eb313c7f8334de3e7929a300dd2cea57c222b9e9567c19781290e9"
+    },
+    {
+      "logId": "499881700873475792",
+      "concreteTypeId": "06efefc22a4816d0d7b8f9653ed31112eef54439da76bcb2d915dc7cb967140e"
+    },
+    {
+      "logId": "10927802446890217233",
+      "concreteTypeId": "97a75a6d6e892f11f5032fa516e39675b76377c3313d64f465a2c77c34a9e600"
+    },
+    {
+      "logId": "8688528864679113840",
+      "concreteTypeId": "7893daf7f7ed3470aa6af59c3f31641288e2b1e56849e8520304e7e8258602e6"
+    },
+    {
+      "logId": "8500535089865083573",
+      "concreteTypeId": "75f7f7a06026cab5d7a70984d1fde56001e83505e3a091ff9722b92d7f56d8be"
+    },
+    {
+      "logId": "3525891009499019808",
+      "concreteTypeId": "30ee7b3131eeba202c198f1e4ad16e1d1762cc0df35f35c95e7daacb49d633d1"
+    },
+    {
+      "logId": "7417129983252335614",
+      "concreteTypeId": "66eef06c10a78bfec7643c7d553d635fc1edc145c4c1037d422dc6f9fc5ea100"
+    },
+    {
+      "logId": "15402277555065905665",
+      "concreteTypeId": "d5bfe1d4e1ace20166c9b50cadd47e862020561bde24f5189cfc2723f5ed76f4"
+    },
+    {
+      "logId": "8843604259160078410",
+      "concreteTypeId": "7abacb37e15e384afb26808d54b045d92d80aca3e5049269142b80ed9b97784a"
+    },
+    {
+      "logId": "14832741149864513620",
+      "concreteTypeId": "cdd87b7d12fe505416570c294c884bca819364863efe3bf539245fa18515fbbb"
+    }
+  ],
+  "messagesTypes": [],
+  "configurables": []
+}`

@@ -36,6 +36,7 @@ type rec expectation<'a> = {
   toThrow: unit => unit,
   // Snapshot matchers
   toMatchSnapshot: unit => unit,
+  toMatchFileSnapshot: string => promise<unit>,
   // Negation
   not: expectation<'a>,
 }

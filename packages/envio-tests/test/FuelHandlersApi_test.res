@@ -274,4 +274,42 @@ const _badEnum: EnumName = "NotAnEnum";
 expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
 `)
   )
+
+  // https://github.com/enviodev/hyperindex/pull/1131 aliased `FuelOnEventWhere`
+  // to `EvmOnEventWhere`, which bypassed `FuelOnEventWhereFilter` and quietly
+  // typed Fuel users against EVM's `block.number` — a silent runtime no-op.
+  it("keeps the Fuel and EVM where-filter surfaces distinct", _ =>
+    check(`
+import type {
+  EvmOnEventWhere,
+  EvmOnEventWhereFilter,
+  FuelOnEventWhere,
+  FuelOnEventWhereFilter,
+} from "envio";
+
+// Filter-shape invariant: Fuel's block key is \`height\`, EVM's is \`number\`.
+type _FuelBlockKeys = keyof NonNullable<FuelOnEventWhereFilter<{}>["block"]>;
+type _EvmBlockKeys = keyof NonNullable<EvmOnEventWhereFilter<{}>["block"]>;
+const _fuelHeight: "height" extends _FuelBlockKeys ? true : false = true;
+const _fuelNoNumber: "number" extends _FuelBlockKeys ? false : true = true;
+const _evmNumber: "number" extends _EvmBlockKeys ? true : false = true;
+const _evmNoHeight: "height" extends _EvmBlockKeys ? false : true = true;
+
+// Wrapper-alias guard: if the two wrappers collapse to the same structural
+// type, their component filters unify and this asymmetry check flips to true.
+type _FuelAssignableToEvm = FuelOnEventWhere<{}, "C"> extends EvmOnEventWhere<{}, "C"> ? true : false;
+type _EvmAssignableToFuel = EvmOnEventWhere<{}, "C"> extends FuelOnEventWhere<{}, "C"> ? true : false;
+const _fuelNotEvm: _FuelAssignableToEvm = false;
+const _evmNotFuel: _EvmAssignableToFuel = false;
+
+// Inner-range invariant: only \`_gte\` is public on event filters. \`_ExactlyGte\`
+// is bidirectional because \`[never] extends ["_gte"]\` is true, so a one-way
+// check would silently pass if \`_gte\` were removed altogether.
+type _FuelRangeKeys = keyof NonNullable<NonNullable<FuelOnEventWhereFilter<{}>["block"]>["height"]>;
+type _EvmRangeKeys = keyof NonNullable<NonNullable<EvmOnEventWhereFilter<{}>["block"]>["number"]>;
+type _ExactlyGte<T> = [T] extends ["_gte"] ? (["_gte"] extends [T] ? true : false) : false;
+const _fuelGteOnly: _ExactlyGte<_FuelRangeKeys> = true;
+const _evmGteOnly: _ExactlyGte<_EvmRangeKeys> = true;
+`)
+  )
 })

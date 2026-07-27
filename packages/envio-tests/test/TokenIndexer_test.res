@@ -31,7 +31,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
 });
 `,
   ~test=`
-import { describe, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createTestIndexer, type Account, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
@@ -83,6 +83,33 @@ describe("Token transfers", () => {
     });
 
     t.expect(await indexer.Account.getOrThrow(to)).toEqual({ id: to, balance: 7n });
+  });
+
+  it("defaults endBlock to the highest simulated block", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            {
+              contract: "Token",
+              event: "Transfer",
+              params: {
+                from: Addresses.mockAddresses[1],
+                to: Addresses.defaultAddress,
+                value: 1n,
+              },
+              block: { number: 50 },
+            },
+          ],
+        },
+      },
+    });
+
+    t.expect(result.changes).toEqual([
+      expect.objectContaining({ block: 50, chainId: 1, eventsProcessed: 1 }),
+    ]);
   });
 });
 `,

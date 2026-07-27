@@ -1,4 +1,0 @@
-type SlotPing {
-  id: ID!
-  slot: Int!
-}
