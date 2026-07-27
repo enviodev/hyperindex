@@ -249,6 +249,19 @@ impl Schema {
         }
     }
 
+    /// The storage kind an id scalar maps to, or `None` for a scalar that can't
+    /// hold an id. Two ids are interchangeable when their kinds match: `ID` and
+    /// `String` share a text column, and a BigInt's precision only sets the
+    /// column width, not its type.
+    fn id_scalar_kind(scalar: &GqlScalar) -> Option<&'static str> {
+        match scalar {
+            GqlScalar::ID | GqlScalar::String => Some("String"),
+            GqlScalar::Int => Some("Int"),
+            GqlScalar::BigInt(_) => Some("BigInt"),
+            _ => None,
+        }
+    }
+
     fn check_related_type_defs_exist(self) -> anyhow::Result<Self> {
         for entity in self.entities.values() {
             for rel in entity.get_relationships() {
@@ -273,19 +286,36 @@ impl Schema {
                                         "Derived field {derived_from_field} does not exist on \
                                          entity {name}."
                                     ))?,
-                                    Some(field) => match field.field_type.get_underlying_scalar() {
-                                        GqlScalar::Custom(name) if name == entity.name => (),
-                                        GqlScalar::ID
-                                        | GqlScalar::String
-                                        | GqlScalar::Int
-                                        | GqlScalar::BigInt(_) => (),
-                                        _ => Err(anyhow!(
-                                            "Derived field '{derived_from_field}' on entity \
-                                             '{name}' must either be an ID, String, Int, BigInt, or \
-                                             an Object relationship with Entity '{}'",
-                                            entity.name
-                                        ))?,
-                                    },
+                                    Some(field) => {
+                                        let scalar = field.field_type.get_underlying_scalar();
+                                        match &scalar {
+                                            // A relation back to this entity stores its id, so the
+                                            // two columns match by construction.
+                                            GqlScalar::Custom(related)
+                                                if related == &entity.name => {}
+                                            // Hasura maps this entity's `id` onto the derived column
+                                            // (see the `"id": relationalKey` mapping in Hasura.res),
+                                            // so a scalar column has to hold the same kind of id.
+                                            _ => {
+                                                let entity_id_scalar = entity.get_id_scalar()?;
+                                                // The entity's id is validated to an id scalar, so
+                                                // its kind is always known; a mismatch (or a field
+                                                // that isn't an id scalar at all) fails here.
+                                                if Self::id_scalar_kind(&scalar)
+                                                    != Self::id_scalar_kind(&entity_id_scalar)
+                                                {
+                                                    Err(anyhow!(
+                                                        "Derived field '{derived_from_field}' on entity \
+                                                         '{name}' is a {scalar}, but it is matched against \
+                                                         the id of '{0}', which is a {entity_id_scalar}. \
+                                                         Give it the same type as '{0}'.id, or make it an \
+                                                         Object relationship with Entity '{0}'.",
+                                                        entity.name
+                                                    ))?
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2426,6 +2456,85 @@ type User { id: ID! }
                 && message.contains("User (from User, user)"),
             "unexpected error: {message}"
         );
+    }
+
+    // Hasura matches the deriving entity's `id` against the derived column, so a
+    // scalar derived-from field has to hold the same kind of id.
+    #[test]
+    fn rejects_derived_from_scalar_that_mismatches_the_deriving_entity_id() {
+        let schema_str = r#"
+type Parent {
+  id: ID!
+  children: [Child!]! @derivedFrom(field: "parentId")
+}
+type Child {
+  id: ID!
+  parentId: Int!
+}
+        "#;
+        let err = Schema::from_string(schema_str)
+            .expect_err("expected a derivedFrom id-type mismatch error");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Derived field 'parentId' on entity 'Child'")
+                && message.contains("matched against the id of 'Parent'"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn allows_derived_from_scalars_matching_the_deriving_entity_id() {
+        // Int id derived from an Int column, BigInt id from a BigInt column
+        // (precision only sets the width), and a String id from an `ID` column —
+        // `ID` and `String` share a text column, so they stay interchangeable.
+        let schema_str = r#"
+type NumericParent {
+  id: Int!
+  children: [NumericChild!]! @derivedFrom(field: "parentId")
+}
+type NumericChild {
+  id: ID!
+  parentId: Int!
+}
+
+type BigParent {
+  id: BigInt!
+  children: [BigChild!]! @derivedFrom(field: "parentId")
+}
+type BigChild {
+  id: ID!
+  parentId: BigInt! @config(precision: 20)
+}
+
+type StringParent {
+  id: String!
+  children: [StringChild!]! @derivedFrom(field: "parentId")
+}
+type StringChild {
+  id: ID!
+  parentId: ID!
+}
+        "#;
+        let schema = Schema::from_string(schema_str).unwrap();
+        assert_eq!(schema.entities.len(), 6);
+    }
+
+    // A relation back to the deriving entity stores that entity's id, so it
+    // matches by construction whatever the id scalar is.
+    #[test]
+    fn allows_derived_from_object_relationship_for_a_numeric_id() {
+        let schema_str = r#"
+type NumericParent {
+  id: Int!
+  children: [NumericChild!]! @derivedFrom(field: "parent")
+}
+type NumericChild {
+  id: ID!
+  parent: NumericParent!
+}
+        "#;
+        let schema = Schema::from_string(schema_str).unwrap();
+        assert_eq!(schema.entities.len(), 2);
     }
 
     #[test]
