@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -52,10 +52,22 @@ use types::{opt_hex, to_hex, QueryResponse};
 /// instructions in one transaction collapse to a single stored row, and token
 /// balances land in the store's companion table joined back by key at
 /// materialisation.
+///
+/// `keys` restricts what is stored to the transactions routed items reference;
+/// `None` stores the whole response (the raw `get` query, which builds no
+/// items).
 fn build_svm_store(
-    transactions: Vec<simple::Transaction>,
-    token_balances: Vec<simple::TokenBalance>,
+    mut transactions: Vec<simple::Transaction>,
+    mut token_balances: Vec<simple::TokenBalance>,
+    keys: Option<&HashSet<(u64, u32)>>,
 ) -> TransactionStore {
+    if let Some(keys) = keys {
+        transactions.retain(|tx| keys.contains(&(tx.slot, tx.transaction_index)));
+        token_balances.retain(|b| {
+            b.transaction_index
+                .is_some_and(|i| keys.contains(&(b.slot, i)))
+        });
+    }
     let store = TransactionStore::new_svm();
     store.insert_svm_txs(transactions);
     store.insert_svm_token_balances(token_balances);
@@ -230,9 +242,10 @@ impl SvmHyperSyncClient {
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.token_balances),
+            None,
         );
 
-        let (block_headers, block_store) = take_blocks(&mut resp).map_err(map_err)?;
+        let (block_headers, block_store) = take_blocks(&mut resp, None).map_err(map_err)?;
 
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
@@ -321,15 +334,11 @@ impl SvmHyperSyncClient {
             .context("solana get")
             .map_err(map_err)?;
 
-        let store = build_svm_store(
-            std::mem::take(&mut resp.transactions),
-            std::mem::take(&mut resp.token_balances),
-        );
-        let (block_headers, block_store) = take_blocks(&mut resp).map_err(map_err)?;
-
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
+        // Route before filling the stores: an instruction that routes nowhere
+        // keeps neither its transaction nor its block.
         let items = {
             let store = self.address_store.read().unwrap();
             build_event_items(
@@ -343,6 +352,28 @@ impl SvmHyperSyncClient {
             )
             .map_err(map_err)?
         };
+
+        let referenced_transactions: HashSet<(u64, u32)> = items
+            .iter()
+            .filter_map(|item| {
+                Some((
+                    u64::try_from(item.slot).ok()?,
+                    u32::try_from(item.transaction_index).ok()?,
+                ))
+            })
+            .collect();
+        let referenced_slots: HashSet<u64> = referenced_transactions
+            .iter()
+            .map(|(slot, _)| *slot)
+            .collect();
+
+        let store = build_svm_store(
+            std::mem::take(&mut resp.transactions),
+            std::mem::take(&mut resp.token_balances),
+            Some(&referenced_transactions),
+        );
+        let (block_headers, block_store) =
+            take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
         let response = EventItemsResponse {
             next_slot: i64::try_from(resp.next_slot)
@@ -530,14 +561,25 @@ where
 /// Take the raw blocks out of the response, build the lean per-slot header
 /// from a borrow, then move the owned raw blocks into the store — avoiding a
 /// full raw-`Block` clone per block. slot/time/hash decode from the store like
-/// any other field, so every response block needs a store entry.
-fn take_blocks(resp: &mut simple::SolanaResponse) -> Result<(Vec<types::Block>, BlockStore)> {
-    let raw_blocks = std::mem::take(&mut resp.blocks);
+/// any other field, so every block an item reads needs a store entry.
+///
+/// `slots` restricts what is stored to the slots routed items reference;
+/// `None` stores every block (the raw `get` query, which builds no items).
+/// Headers are built for every returned block either way — reorg detection and
+/// the batch's latest timestamp read them whether an item landed there or not.
+fn take_blocks(
+    resp: &mut simple::SolanaResponse,
+    slots: Option<&HashSet<u64>>,
+) -> Result<(Vec<types::Block>, BlockStore)> {
+    let mut raw_blocks = std::mem::take(&mut resp.blocks);
     let block_headers: Vec<types::Block> = raw_blocks
         .iter()
         .map(types::Block::from_raw)
         .collect::<Result<Vec<_>>>()
         .context("mapping solana block headers")?;
+    if let Some(slots) = slots {
+        raw_blocks.retain(|b| slots.contains(&b.slot));
+    }
     let block_store = BlockStore::new_svm();
     block_store.insert_svm_blocks(raw_blocks);
     Ok((block_headers, block_store))
@@ -795,6 +837,117 @@ mod tests {
         assert_eq!(
             schemas.keys().collect::<Vec<_>>(),
             vec![TOKEN_METADATA_PROGRAM]
+        );
+    }
+
+    fn column<'a>(
+        cols: &'a crate::field_columns::Columns,
+        name: &str,
+    ) -> Option<&'a crate::field_columns::Column> {
+        cols.columns
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, c)| c)
+    }
+
+    fn str_column(cols: &crate::field_columns::Columns, name: &str) -> Vec<Option<String>> {
+        match column(cols, name) {
+            Some(crate::field_columns::Column::Str(values)) => values.clone(),
+            _ => panic!("expected a {name} string column"),
+        }
+    }
+
+    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn store_keeps_only_the_transactions_and_balances_items_reference() {
+        let tx = |slot, index| simple::Transaction {
+            slot,
+            transaction_index: index,
+            fee_payer: Some(format!("payer{slot}")),
+            ..Default::default()
+        };
+        let balance = |slot, index| simple::TokenBalance {
+            slot,
+            transaction_index: Some(index),
+            account: Some(format!("acct{slot}")),
+            mint: Some(format!("mint{slot}")),
+            ..Default::default()
+        };
+        // Only (42, 7) is routed; (43, 7) came back on the same page unreferenced.
+        let referenced: HashSet<(u64, u32)> = [(42u64, 7u32)].into_iter().collect();
+        let store = build_svm_store(
+            vec![tx(42, 7), tx(43, 7)],
+            vec![balance(42, 7), balance(43, 7)],
+            Some(&referenced),
+        );
+
+        let mask = ((1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32))
+            | (1u64 << (crate::transaction_store::SvmTxField::TokenBalances as u32)))
+            as f64;
+        let cols = store
+            .materialize(vec![42, 43], vec![7, 7], vec![mask, mask])
+            .await
+            .expect("materialize");
+
+        let mints: Vec<Option<Vec<Option<String>>>> = match column(&cols, "tokenBalances") {
+            Some(crate::field_columns::Column::TokenBalances(rows)) => rows
+                .iter()
+                .map(|r| {
+                    r.as_ref()
+                        .map(|v| v.iter().map(|tb| tb.mint.clone()).collect())
+                })
+                .collect(),
+            _ => panic!("expected a tokenBalances column"),
+        };
+        assert_eq!(
+            (str_column(&cols, "feePayer"), mints),
+            (
+                vec![Some("payer42".to_string()), None],
+                // The unreferenced transaction keeps no balances either; a
+                // selected row with none materialises as `[]`.
+                vec![Some(vec![Some("mint42".to_string())]), Some(vec![])],
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_store_keeps_only_referenced_slots_while_headers_keep_all() {
+        let mut resp = simple::SolanaResponse {
+            blocks: vec![
+                simple::Block {
+                    slot: 42,
+                    blockhash: "hash42".to_string(),
+                    ..Default::default()
+                },
+                simple::Block {
+                    slot: 43,
+                    blockhash: "hash43".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let referenced: HashSet<u64> = [42u64].into_iter().collect();
+        let (headers, block_store) =
+            take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
+
+        let mask = (1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64;
+        let cols = block_store
+            .materialize(vec![42, 43], vec![mask, mask])
+            .await
+            .expect("materialize");
+
+        assert_eq!(
+            (
+                headers.iter().map(|b| b.slot).collect::<Vec<_>>(),
+                str_column(&cols, "hash"),
+            ),
+            (
+                // Reorg detection and the batch's latest timestamp read every
+                // returned slot, so headers aren't filtered.
+                vec![42, 43],
+                vec![Some("hash42".to_string()), None],
+            )
         );
     }
 }
