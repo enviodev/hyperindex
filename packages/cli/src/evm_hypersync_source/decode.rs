@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
-use crate::address_store::{AddressStore, StoreInner};
+use crate::address_store::{AddressStore, SetCache, StoreInner};
 use crate::evm_hypersync_source::selection::TopicSelectionInput;
 use crate::evm_hypersync_source::types::{
     sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
@@ -20,10 +20,12 @@ enum TopicConstraint {
     /// Matches when the log's topic is one of these values.
     Values(Vec<[u8; 32]>),
     /// A `ContractAddresses` marker: the topic must be the padded form of an
-    /// address registered for the registration's own contract, at or before the
-    /// log's block. Both halves are answered by the chain's address store, so a
-    /// merged partition that over-fetches a param value registered later in the
-    /// chain drops it here instead of downstream.
+    /// address this partition holds for the registration's own contract, at or
+    /// before the log's block. Ownership is the partition set's answer — the
+    /// query materialised this position from that same set, so a sibling
+    /// selection's log carrying another partition's address must not fan out
+    /// here. The store answers only the temporal half, dropping a value
+    /// registered after the log's block that a merged partition over-fetched.
     ContractAddresses,
 }
 
@@ -39,7 +41,7 @@ pub(crate) struct LogAddress<'a> {
 /// The 20 address bytes of a padded indexed topic, or `None` when the topic's
 /// upper bytes aren't zero — then it isn't an address at all.
 fn topic_address(topic: &LogArgument) -> Option<&[u8]> {
-    let bytes: &[u8; 32] = &***topic;
+    let bytes: &[u8; 32] = topic;
     bytes[..12].iter().all(|b| *b == 0).then(|| &bytes[12..])
 }
 
@@ -88,13 +90,19 @@ impl TopicFilters {
     }
 
     /// Whether a log's topics satisfy any DNF alternative. `ContractAddresses`
-    /// markers resolve against the chain's address store under `contract_idx`,
-    /// gated on the log's block.
+    /// markers resolve against the partition's set under `contract_name`, then
+    /// against the store for the `effectiveStartBlock` gate. A client-filtered
+    /// contract (`force_wildcard`) has no addresses in the set, so there the
+    /// store answers ownership too.
+    #[allow(clippy::too_many_arguments)]
     fn matches(
         &self,
         topics: &[Option<LogArgument>],
+        contract_name: &str,
         contract_idx: u32,
         block_number: i64,
+        force_wildcard: bool,
+        cache: &SetCache,
         store: &StoreInner,
     ) -> bool {
         // No explicit empty-DNF guard: `any` over zero alternatives is already
@@ -115,7 +123,8 @@ impl TopicFilters {
                         TopicConstraint::Values(values) => values.iter().any(|v| v == &***topic),
                         TopicConstraint::ContractAddresses => {
                             topic_address(topic).is_some_and(|key| {
-                                store.is_indexed_at(key, contract_idx, block_number)
+                                (force_wildcard || cache.owner_of(key) == Some(contract_name))
+                                    && store.is_indexed_at(key, contract_idx, block_number)
                             })
                         }
                     }
@@ -177,13 +186,13 @@ impl OnEventRegistration {
     /// filters.
     ///
     /// Emitter rules. A wildcard registration accepts any address. A
-    /// contract-bound one accepts only an address the store holds for its own
-    /// contract, at or before the log's block — the temporal half matters even
-    /// when the partition fetched the address server-side, because a merged
-    /// partition's addresses don't all start at the same block. Which addresses
-    /// the *partition* may claim is the set's job (`contract_name`); a
-    /// client-filtered contract has none in the query, so the store answers
-    /// ownership on its own.
+    /// contract-bound one accepts only an address this partition's set holds for
+    /// its own contract (`address.contract_name`), registered at or before the
+    /// log's block — the temporal half matters even when the partition fetched
+    /// the address server-side, because a merged partition's addresses don't all
+    /// start at the same block. A client-filtered contract has none of its
+    /// addresses in the query, so there the store answers ownership on its own.
+    #[allow(clippy::too_many_arguments)]
     fn matches(
         &self,
         topic0: &[u8; 32],
@@ -191,6 +200,7 @@ impl OnEventRegistration {
         topics: &[Option<LogArgument>],
         address: &LogAddress,
         force_wildcard: bool,
+        cache: &SetCache,
         store: &StoreInner,
     ) -> bool {
         self.sighash == *topic0
@@ -198,9 +208,15 @@ impl OnEventRegistration {
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.block_number)))
-            && self
-                .topic_filters
-                .matches(topics, self.contract_idx, address.block_number, store)
+            && self.topic_filters.matches(
+                topics,
+                &self.contract_name,
+                self.contract_idx,
+                address.block_number,
+                force_wildcard,
+                cache,
+                store,
+            )
     }
 }
 
@@ -244,6 +260,11 @@ impl Decoder {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn store_handle(&self) -> &Arc<RwLock<StoreInner>> {
+        &self.store
+    }
+
     /// Resolves a query's registration selection into the decoder its response
     /// logs route through, so a log can only ever route to a registration
     /// belonging to the selection that fetched it.
@@ -251,6 +272,7 @@ impl Decoder {
         &self,
         registration_indexes: &[i64],
         client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
+        cache: Arc<SetCache>,
     ) -> Result<SelectionDecoder> {
         let mut registrations = registration_indexes
             .iter()
@@ -275,6 +297,7 @@ impl Decoder {
             registrations,
             checksummed_addresses: self.checksummed_addresses,
             store: self.store.clone(),
+            cache,
         })
     }
 }
@@ -294,6 +317,10 @@ pub(crate) struct SelectionDecoder {
     registrations: Vec<SelectedRegistration>,
     checksummed_addresses: bool,
     store: Arc<RwLock<StoreInner>>,
+    /// The querying partition's set, materialised. Address-valued topic filters
+    /// resolve ownership against it, so a log only ever routes to the addresses
+    /// this partition asked for.
+    cache: Arc<SetCache>,
 }
 
 impl SelectionDecoder {
@@ -380,6 +407,7 @@ impl SelectionDecoder {
                 topics,
                 address,
                 sel.force_wildcard,
+                &self.cache,
                 store,
             ) {
                 continue;
@@ -572,6 +600,20 @@ mod tests {
         routed.iter().map(|r| r.index).collect()
     }
 
+    /// A query selection carrying the partition set a whole-store query would.
+    /// Tests that need a narrower partition build their own set and call
+    /// `Decoder::selection` directly.
+    fn selection_of(
+        core: &Decoder,
+        indexes: &[i64],
+        client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
+    ) -> Result<SelectionDecoder> {
+        let cache = crate::address_store::test_support::full_set(core.store_handle())
+            .cache()
+            .clone();
+        core.selection(indexes, client_filtered, cache)
+    }
+
     /// Route one log, holding the store read lock the way a response does.
     fn route(decoder: &SelectionDecoder, log: &Log, address: &LogAddress) -> Vec<RoutedEvent> {
         let store = decoder.lock_store();
@@ -627,7 +669,9 @@ mod tests {
     #[test]
     fn unknown_registration_index_errors() {
         let core = Decoder::from_registrations(&[], false, &store(&[], None)).unwrap();
-        let err = core.selection(&[7], &Default::default()).err().unwrap();
+        let err = selection_of(&core, &[7], &Default::default())
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
 
@@ -674,7 +718,7 @@ mod tests {
             ..Default::default()
         };
 
-        let decoder = core.selection(&[7], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[7], &Default::default()).unwrap();
         let mut routed = route(&decoder, &log, &owned("TestContract"));
         assert_eq!(routed.len(), 1);
         let routed = routed
@@ -708,7 +752,7 @@ mod tests {
             &store(&["Owned", "W1", "W2", "Other"], Some("Owned")),
         )
         .unwrap();
-        let decoder = core.selection(&[0, 1, 2, 3], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0, 1, 2, 3], &Default::default()).unwrap();
         let log = value_log(VALID_SIGHASH);
 
         assert_eq!(
@@ -741,7 +785,7 @@ mod tests {
             crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
                 "Owned".to_string()
             ]);
-        let decoder = core.selection(&[0, 1], &client_filtered).unwrap();
+        let decoder = selection_of(&core, &[0, 1], &client_filtered).unwrap();
         let registered = LogAddress {
             key: &EMITTER_KEY,
             contract_name: None,
@@ -785,7 +829,7 @@ mod tests {
             &address_store,
         )
         .unwrap();
-        let decoder = core.selection(&[0], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
         let log = value_log(VALID_SIGHASH);
         let at = |block_number| LogAddress {
             key: &EMITTER_KEY,
@@ -813,7 +857,7 @@ mod tests {
         )
         .unwrap();
         let log = value_log(VALID_SIGHASH);
-        let decoder = core.selection(&[0], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
         assert_eq!(
             routed_indexes(&route(&decoder, &log, &owned("Owned"))),
             vec![0]
@@ -836,7 +880,7 @@ mod tests {
             &store(&["Disabled", "Live"], None),
         )
         .unwrap();
-        let decoder = core.selection(&[0, 1], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
         assert_eq!(
             routed_indexes(&route(&decoder, &value_log(VALID_SIGHASH), &unowned())),
             vec![1]
@@ -885,7 +929,7 @@ mod tests {
             data: value_log(VALID_SIGHASH).data,
             ..Default::default()
         };
-        let decoder = core.selection(&[0, 1], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
         assert_eq!(routed_indexes(&route(&decoder, &log, &unowned())), vec![0]);
     }
 
@@ -912,12 +956,211 @@ mod tests {
         }
     }
 
+    /// A second address the marker fixtures register alongside `EMITTER`.
+    const SECOND: &str = "0x00000000000000000000000000000000000000cc";
+
+    /// A registration filtering two indexed address params by
+    /// `chain.C.addresses`. `and_group` puts both markers in one DNF
+    /// alternative (both must hold); otherwise each gets its own alternative
+    /// (either may hold).
+    fn two_marker_reg(contract: &str, and_group: bool) -> OnEventRegistrationInput {
+        let mut reg = value_reg(0, contract, true, VALID_SIGHASH);
+        reg.topic_count = 3;
+        reg.params = vec![
+            pm("from", "address", true),
+            pm("to", "address", true),
+            pm("value", "uint256", false),
+        ];
+        let sighash = || vec![VALID_SIGHASH.to_string()];
+        reg.topic_selections = if and_group {
+            vec![TopicSelectionInput {
+                topic0: sighash(),
+                topic1: None,
+                topic2: None,
+                topic3: Some(vec![]),
+            }]
+        } else {
+            vec![
+                TopicSelectionInput {
+                    topic0: sighash(),
+                    topic1: None,
+                    topic2: Some(vec![]),
+                    topic3: Some(vec![]),
+                },
+                TopicSelectionInput {
+                    topic0: sighash(),
+                    topic1: Some(vec![]),
+                    topic2: None,
+                    topic3: Some(vec![]),
+                },
+            ]
+        };
+        reg
+    }
+
+    fn two_address_param_log(topic1: &str, topic2: &str) -> Log {
+        Log {
+            topics: vec![
+                Some(VALID_SIGHASH.to_string()),
+                Some(topic1.to_string()),
+                Some(topic2.to_string()),
+            ],
+            data: value_log(VALID_SIGHASH).data,
+            ..Default::default()
+        }
+    }
+
+    /// An emitter no contract owns, at `block_number` — for wildcard marker
+    /// registrations, where only the log's block feeds the gate.
+    fn at_block(block_number: i64) -> LogAddress<'static> {
+        LogAddress {
+            key: &FOREIGN_KEY,
+            contract_name: None,
+            block_number,
+        }
+    }
+
+    #[test]
+    fn marker_param_registered_after_the_log_block_is_dropped() {
+        // The temporal half of the param gate: a wildcard query over-fetches
+        // logs whose address param was only registered later, and the marker
+        // drops them at the log's own block rather than downstream.
+        let address_store = crate::address_store::AddressStore::new_evm(
+            false,
+            vec![crate::address_store::AddressStoreContract {
+                name: "C".to_string(),
+                start_block: None,
+            }],
+        );
+        address_store.register_batch(vec![crate::address_store::AddressRegistration {
+            address: EMITTER.to_string(),
+            contract_name: "C".to_string(),
+            registration_block: 100,
+        }]);
+        let core =
+            Decoder::from_registrations(&[marker_reg(0, "C")], false, &address_store).unwrap();
+        let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
+        let log = address_param_log(&addr_topic("aa"));
+        assert_eq!(
+            (
+                routed_indexes(&route(&decoder, &log, &at_block(99))),
+                routed_indexes(&route(&decoder, &log, &at_block(100))),
+            ),
+            (vec![], vec![0])
+        );
+    }
+
+    #[test]
+    fn marker_scoped_to_the_partitions_addresses() {
+        // The querying partition holds only D's address, so it materialised the
+        // marker from that slice. A sibling selection's log carrying C's
+        // address — registered chain-wide, but not by this partition — must not
+        // route here, or the same log would be emitted from every partition.
+        let address_store = evm_store(&[("C", &[EMITTER]), ("D", &[SECOND])]);
+        let core =
+            Decoder::from_registrations(&[marker_reg(0, "C")], false, &address_store).unwrap();
+        let d_only = crate::address_store::test_support::set_of(&address_store, &["D"]);
+        let decoder = core
+            .selection(&[0], &Default::default(), d_only.cache().clone())
+            .unwrap();
+        assert_eq!(
+            routed_indexes(&route(
+                &decoder,
+                &address_param_log(&addr_topic("aa")),
+                &unowned()
+            )),
+            Vec::<i64>::new()
+        );
+    }
+
+    #[test]
+    fn client_filtered_marker_routes_on_the_store_alone() {
+        // A client-filtered contract is queried address-free, so its markers
+        // materialise to match-any and the partition set holds none of its
+        // addresses. The store has to answer ownership on its own — scoping to
+        // the (empty) set here would drop every one of the contract's events.
+        let address_store = evm_store(&[("C", &[EMITTER])]);
+        let core =
+            Decoder::from_registrations(&[marker_reg(0, "C")], false, &address_store).unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C".to_string()
+            ]);
+        let decoder = core
+            .selection(
+                &[0],
+                &client_filtered,
+                address_store.empty_set().cache().clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                routed_indexes(&route(
+                    &decoder,
+                    &address_param_log(&addr_topic("aa")),
+                    &unowned()
+                )),
+                // Still gated: an address the store doesn't hold is dropped.
+                routed_indexes(&route(
+                    &decoder,
+                    &address_param_log(&addr_topic("bb")),
+                    &unowned()
+                )),
+            ),
+            (vec![0], vec![])
+        );
+    }
+
+    #[test]
+    fn marker_and_group_requires_every_param_registered() {
+        let core = Decoder::from_registrations(
+            &[two_marker_reg("C", true)],
+            false,
+            &evm_store(&[("C", &[EMITTER, SECOND])]),
+        )
+        .unwrap();
+        let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
+        let routed = |t1: &str, t2: &str| {
+            routed_indexes(&route(
+                &decoder,
+                &two_address_param_log(&addr_topic(t1), &addr_topic(t2)),
+                &unowned(),
+            ))
+        };
+        assert_eq!(
+            (routed("aa", "cc"), routed("aa", "bb"), routed("bb", "cc")),
+            (vec![0], vec![], vec![])
+        );
+    }
+
+    #[test]
+    fn marker_or_of_groups_matches_either_alternative() {
+        let core = Decoder::from_registrations(
+            &[two_marker_reg("C", false)],
+            false,
+            &evm_store(&[("C", &[EMITTER, SECOND])]),
+        )
+        .unwrap();
+        let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
+        let routed = |t1: &str, t2: &str| {
+            routed_indexes(&route(
+                &decoder,
+                &two_address_param_log(&addr_topic(t1), &addr_topic(t2)),
+                &unowned(),
+            ))
+        };
+        assert_eq!(
+            (routed("aa", "bb"), routed("bb", "cc"), routed("bb", "bb")),
+            (vec![0], vec![0], vec![])
+        );
+    }
+
     #[test]
     fn contract_addresses_marker_materialized_from_query_addresses() {
         let core =
             Decoder::from_registrations(&[marker_reg(0, "C")], false, &store(&["C"], Some("C")))
                 .unwrap();
-        let decoder = core.selection(&[0], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
         assert_eq!(
             (
                 // topic1 is C's registered address → the marker matches.
@@ -954,7 +1197,7 @@ mod tests {
             &store(&["C", "S"], Some("C")),
         )
         .unwrap();
-        let decoder = core.selection(&[0, 1], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
         // Foreign address (0x..bb) in topic1: only the broad sibling matches.
         assert_eq!(
             routed_indexes(&route(
@@ -1006,7 +1249,7 @@ mod tests {
             data: Some(format!("0x{}", hex::encode(data))),
             ..Default::default()
         };
-        let decoder = core.selection(&[0, 1], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
         let routed = route(&decoder, &log, &unowned());
         // Both declarations decode this log (same word-sized types either
         // way), each reading the topic/body split its own registration
@@ -1075,14 +1318,14 @@ mod tests {
             data: Some(format!("0x{}", hex::encode(data))),
             ..Default::default()
         };
-        let decoder = core.selection(&[0, 1], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
         assert_eq!(routed_indexes(&route(&decoder, &log, &unowned())), vec![0]);
 
         // With only the failing declaration matched, the log drops rather than
         // erroring — a decode failure is a benign "not this declaration's log",
         // not malformed data (a wildcard registration routinely fetches foreign
         // same-signature logs it can't read under its own indexed split).
-        let decoder = core.selection(&[1], &Default::default()).unwrap();
+        let decoder = selection_of(&core, &[1], &Default::default()).unwrap();
         assert!(route(&decoder, &log, &unowned()).is_empty());
     }
 }

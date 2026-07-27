@@ -279,7 +279,11 @@ impl EvmRpcClient {
         let set_cache = address_set.cache().clone();
         let selection_decoder = std::sync::Arc::new(
             self.decoder
-                .selection(&params.registration_indexes, &client_filtered)
+                .selection(
+                    &params.registration_indexes,
+                    &client_filtered,
+                    set_cache.clone(),
+                )
                 .map_err(map_err)?,
         );
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);

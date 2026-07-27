@@ -94,7 +94,11 @@ describe("AddressStore", () => {
     t.expect({
       "verdicts": verdicts,
       "added": added->AddressSet.addresses,
-      "noEventsIsNotFetched": store->AddressStore.contractAddresses("NoEvents"),
+      // A no-events address is never fetched — it has no set — but it's still
+      // registered, so the chain reports and persists it.
+      "noEventsIsNotFetched": (store->AddressStore.makeSet(~contractName="NoEvents"))
+        ->AddressSet.size,
+      "noEventsIsStillReported": store->AddressStore.contractAddresses("NoEvents"),
       // No-events addresses still count towards what the chain tracks.
       "size": store->AddressStore.size,
     }).toEqual({
@@ -106,7 +110,8 @@ describe("AddressStore", () => {
       ],
       // Ordered by effectiveStartBlock, so addr(4) (10) precedes addr(3) (30).
       "added": [addr(4), addr(3)],
-      "noEventsIsNotFetched": [],
+      "noEventsIsNotFetched": 0,
+      "noEventsIsStillReported": [addr(5)],
       "size": 3,
     })
   })
