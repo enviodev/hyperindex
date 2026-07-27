@@ -22,7 +22,7 @@ type t<'processConfig> = {process: 'processConfig => promise<processResult>}
 
 type entityChange = {
   sets: array<unknown>,
-  deleted: array<string>,
+  deleted: array<EntityId.t>,
 }
 
 type testIndexerState = {
@@ -136,11 +136,12 @@ let handleWriteBatch = (
       switch change {
       | Set({entityId, entity, checkpointId}) =>
         // The store keeps decoded entities so load comparisons (bigint /
-        // BigDecimal) work on real values.
-        entityDict->Dict.set(entityId, entity)
+        // BigDecimal) work on real values. Ids are keyed by their string form
+        // since they may be string/int/bigint.
+        entityDict->Dict.set(entityId->EntityId.toKey, entity)
         entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
       | Delete({entityId, checkpointId}) =>
-        Dict.delete(entityDict->Obj.magic, entityId)
+        Dict.delete(entityDict->Obj.magic, entityId->EntityId.toKey)
         entityChangeFor(checkpointId).deleted->Array.push(entityId)->ignore
       }
     }
@@ -197,7 +198,7 @@ let handleWriteBatch = (
             entityObj->Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
           }
           if deleted->Array.length > 0 {
-            entityObj->Dict.set("deleted", deleted->(Utils.magic: array<string> => unknown))
+            entityObj->Dict.set("deleted", deleted->(Utils.magic: array<EntityId.t> => unknown))
           }
           // Match the capitalized entity accessor the generated change types expose.
           change->Dict.set(

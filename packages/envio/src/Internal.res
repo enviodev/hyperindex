@@ -356,11 +356,11 @@ type genericHandlerArgs<'event, 'context> = {
 type genericHandler<'args> = 'args => promise<unit>
 
 type entityHandlerContext<'entity> = {
-  get: string => promise<option<'entity>>,
-  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  get: EntityId.t => promise<option<'entity>>,
+  getOrThrow: (EntityId.t, ~message: string=?) => promise<'entity>,
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
-  deleteUnsafe: string => unit,
+  deleteUnsafe: EntityId.t => unit,
 }
 
 type chainInfo = {

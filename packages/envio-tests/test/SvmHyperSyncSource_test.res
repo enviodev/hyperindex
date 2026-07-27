@@ -167,7 +167,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~contractNameByAddress,
         ~knownHeight=slot + 1000,
         ~partitionId="0",
-        ~itemsTarget=5000,
+        ~itemsTarget=Some(5000),
         ~selection={
           onEventRegistrations: [reg],
           dependsOnAddresses: true,

@@ -107,6 +107,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~maxNumLogs=itemsTarget,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressesByContractName,
+      ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | HyperSync.GetLogs.Error(error) =>
       throw(

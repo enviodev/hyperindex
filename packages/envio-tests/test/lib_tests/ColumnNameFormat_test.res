@@ -158,11 +158,12 @@ ORDER BY (id, envio_checkpoint_id)`)
 
   it("serializes ClickHouse set updates with ClickHouse column keys", t => {
     let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
+      ~idSchema=snapshotEntity.table->Table.getIdSchema,
       ClickHouse.makeClickHouseEntitySchema(snapshotEntity.table),
     )
     let json =
       Change.Set({
-        entityId: "1",
+        entityId: "1"->EntityId.unsafeOfString,
         entity: snapshot1->(Utils.magic: snapshot => Internal.entity),
         checkpointId: 5n,
       })->S.reverseConvertToJsonOrThrow(setUpdateSchema)

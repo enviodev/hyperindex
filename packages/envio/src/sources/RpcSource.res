@@ -836,6 +836,7 @@ let make = (
       partitionId,
       registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       addressesByContractName,
+      clientFilteredContracts: selection.clientFilteredContracts,
     }) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {

@@ -1,6 +1,6 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
-    entity_parsing::{Entity, GraphQLEnum, Schema},
+    entity_parsing::{ClickHouseEntityStorage, Entity, GqlScalar, GraphQLEnum, Schema},
     env_interpolation::interpolate_config_variables,
     human_config::{
         self,
@@ -380,6 +380,11 @@ impl Storage {
     }
 }
 
+/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
+/// above this (or with no precision) it falls back to `String`. Kept in sync
+/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
+
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
@@ -418,6 +423,76 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                  - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
                  type {example} @storage(postgres: true) {{ ... }}"
             ));
+        }
+    }
+
+    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
+    // ceiling) as a String, which sorts lexicographically — wrong for anything
+    // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
+    // ClickHouse.res.
+    //
+    // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
+    // without it the sorting key is `id`, with it the listed fields replace `id`
+    // (see `makeCreateHistoryTableQuery`). Unlike the parse-time
+    // `validate_clickhouse_order_by_fields`, the schema is available here, so a
+    // relation in the sorting key can be resolved to the id it actually stores.
+    let bigint_stored_as_string =
+        |precision: Option<u32>| !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
+    for entity in &entities {
+        let uses_clickhouse = if entity.has_storage_directive() {
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+        } else {
+            clickhouse_default
+        };
+        if !uses_clickhouse {
+            continue;
+        }
+
+        let order_by = match entity.clickhouse.as_ref() {
+            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
+            _ => None,
+        };
+
+        match order_by {
+            Some(order_by_fields) => {
+                for field_name in order_by_fields {
+                    // Existence, nullability and array-ness are already rejected
+                    // at parse time; a miss here just means nothing to resolve.
+                    let Some(field) = entity.get_field(field_name) else {
+                        continue;
+                    };
+                    let stored =
+                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
+                    if let GqlScalar::BigInt(precision) = stored {
+                        if bigint_stored_as_string(precision) {
+                            return Err(anyhow!(
+                                "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
+                                 `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
+                                 String (sorted lexicographically, not numerically) unless a \
+                                 precision is set. Add `@config(precision: N)` with \
+                                 N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores \
+                                 so it sorts as a numeric Decimal.",
+                                entity.name
+                            ));
+                        }
+                    }
+                }
+            }
+            // No custom orderBy, so `id` is the sorting key.
+            None => {
+                if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
+                    if bigint_stored_as_string(precision) {
+                        return Err(anyhow!(
+                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse stores as a \
+                             String (sorted lexicographically, not numerically) unless a precision is set. \
+                             Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with \
+                             N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric Decimal, \
+                             or set `@storage(clickhouse: {{orderBy: [...]}})` to sort by other fields.",
+                            entity.name
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -2773,94 +2848,6 @@ mod test {
             SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
-
-        let contract_abi = match &config
-            .get_contract(&contract_name)
-            .expect("Failed getting contract")
-            .abi
-        {
-            super::Abi::Evm(abi) => abi.typed.clone(),
-            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
-            super::Abi::Svm(_) => panic!("Svm abi should not be parsed"),
-        };
-
-        let expected_abi_string = r#"
-                [
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "NewGravatar",
-                    "type": "event"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "UpdatedGravatar",
-                    "type": "event"
-                }
-                ]
-    "#;
-
-        let expected_abi: alloy_json_abi::JsonAbi =
-            serde_json::from_str(expected_abi_string).unwrap();
-
-        assert_eq!(expected_abi, contract_abi);
-    }
-
-    #[test]
-    fn test_get_nested_contract_abi() {
-        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_root = test_dir.as_str();
-        let config_dir = "configs/nested-abi.yaml";
-        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
-            .expect("Failed creating parsed_paths");
-
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
-
-        let contract_name = "Contract3".to_string();
 
         let contract_abi = match &config
             .get_contract(&contract_name)

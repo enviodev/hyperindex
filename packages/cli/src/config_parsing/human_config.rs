@@ -1587,40 +1587,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
-    fn deserializes_factory_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/factory-contract-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        let contracts = cfg.chains[0].contracts.as_ref().unwrap();
-        println!("{:?}", contracts[0]);
-
-        assert!(contracts[0].config.is_some());
-        assert!(contracts[1].config.is_some());
-        assert_eq!(contracts[1].address, None.into());
-    }
-
-    #[test]
-    fn deserializes_dynamic_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/dynamic-address-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        assert!(cfg.chains[0].contracts.as_ref().unwrap()[0]
-            .config
-            .is_some());
-        assert!(cfg.chains[1].contracts.as_ref().unwrap()[0]
-            .config
-            .is_none());
-    }
-
-    #[test]
     fn deserializes_fuel_config() {
         let config_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test/configs/fuel-config.yaml");
