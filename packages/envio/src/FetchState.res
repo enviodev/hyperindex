@@ -1009,7 +1009,8 @@ let addClientFilteredContract = (
   ~threshold,
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
-  Logging.createChild(
+  Logging.createChildFrom(
+    ~logger=Env.logger,
     ~params={
       "chainId": chainId,
       "contractName": contractName,
