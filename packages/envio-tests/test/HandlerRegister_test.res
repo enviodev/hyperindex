@@ -17,9 +17,6 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -39,9 +36,6 @@ contracts:
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 137
-    rpc:
-      url: https://polygon.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -60,17 +54,11 @@ contracts:
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
         address: "0x1111111111111111111111111111111111111111"
   - id: 137
-    rpc:
-      url: https://polygon.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -90,9 +78,6 @@ contracts:
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20

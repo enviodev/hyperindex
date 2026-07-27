@@ -6,9 +6,6 @@ let _ = InternalTestIndexer.fromUserApi(
 name: token-indexer
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: Token
