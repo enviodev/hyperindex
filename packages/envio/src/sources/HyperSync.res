@@ -93,13 +93,15 @@ module GetLogs = {
     ~maxNumLogs,
     ~registrationIndexes,
     ~addressesByContractName,
+    ~clientFilteredContracts,
   ): logsQueryPage => {
     let query: HyperSyncClient.EventItems.query = {
       fromBlock,
       toBlock,
-      maxNumLogs,
+      ?maxNumLogs,
       registrationIndexes,
       addressesByContractName,
+      clientFilteredContracts,
     }
 
     let (res, transactionStore, blockStore) = switch await client.getEventItems(~query) {
