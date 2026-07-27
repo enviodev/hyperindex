@@ -319,10 +319,10 @@ module OptimizedPartitions = {
   let mergeSelections = (a, b) => {
     let registrations = Dict.make()
     a.onEventRegistrations->Array.forEach(reg =>
-      registrations->Dict.set(`${reg.eventConfig.contractName}:${reg.eventConfig.id}`, reg)
+      registrations->Dict.set(reg.index->Int.toString, reg)
     )
     b.onEventRegistrations->Array.forEach(reg =>
-      registrations->Dict.set(`${reg.eventConfig.contractName}:${reg.eventConfig.id}`, reg)
+      registrations->Dict.set(reg.index->Int.toString, reg)
     )
     {
       dependsOnAddresses: true,

@@ -92,15 +92,15 @@ let dcToItem = (dc: Internal.indexingAddress) => {
   item
 }
 
-let baseEventConfig = (MockIndexer.evmOnEventRegistration(
-  ~id="0",
-  ~contractName="Gravatar",
-) :> Internal.onEventRegistration)
+let baseEventConfig = ({
+  ...MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar"),
+  index: 0,
+} :> Internal.onEventRegistration)
 
-let baseEventConfig2 = (MockIndexer.evmOnEventRegistration(
-  ~id="0",
-  ~contractName="NftFactory",
-) :> Internal.onEventRegistration)
+let baseEventConfig2 = ({
+  ...MockIndexer.evmOnEventRegistration(~id="0", ~contractName="NftFactory"),
+  index: 1,
+} :> Internal.onEventRegistration)
 
 let makeInitial = (
   ~knownHeight=knownHeight,
@@ -1386,8 +1386,18 @@ describe("FetchState.registerDynamicContracts", () => {
     let (fetchState, indexingAddresses) = makeFs(
       ~onEventRegistrations=[
         baseEventConfig,
-        (MockIndexer.evmOnEventRegistration(~id="pool", ~contractName="NftFactory") :> Internal.onEventRegistration),
-        (MockIndexer.evmOnEventRegistration(~id="child", ~contractName="SimpleNft") :> Internal.onEventRegistration),
+        ({
+          ...MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar"),
+          index: 1,
+        } :> Internal.onEventRegistration),
+        ({
+          ...MockIndexer.evmOnEventRegistration(~id="pool", ~contractName="NftFactory"),
+          index: 2,
+        } :> Internal.onEventRegistration),
+        ({
+          ...MockIndexer.evmOnEventRegistration(~id="child", ~contractName="SimpleNft"),
+          index: 3,
+        } :> Internal.onEventRegistration),
       ],
       ~addresses=[makeConfigContract("NftFactory", mockAddress0)],
       ~startBlock=0,
@@ -1429,7 +1439,11 @@ describe("FetchState.registerDynamicContracts", () => {
     t.expect(
       aligned.optimizedPartitions.entities
       ->Dict.valuesToArray
-      ->Array.map(p => (p.latestFetchedBlock.blockNumber, p.addressesByContractName)),
+      ->Array.map(p => (
+        p.latestFetchedBlock.blockNumber,
+        p.addressesByContractName,
+        p.selection.onEventRegistrations->Array.map(reg => reg.index),
+      )),
     ).toEqual([
       (
         0,
@@ -1438,6 +1452,7 @@ describe("FetchState.registerDynamicContracts", () => {
           ("NftFactory", [mockAddress0]),
           ("SimpleNft", [mockAddress2]),
         ]),
+        [0, 1, 2, 3],
       ),
     ])
 
@@ -1572,6 +1587,74 @@ describe("FetchState.registerDynamicContracts", () => {
         ("NftFactory", [mockAddress0]),
       ]),
     )
+  })
+
+  it("rebuilds a coalescing backfill safely when rolling back between frontiers", t => {
+    let (fetchState, indexingAddresses) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[makeConfigContract("NftFactory", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~chainId,
+      ~knownHeight=200,
+    )
+    let leaderQuery: FetchState.query = {
+      partitionId: "0",
+      itemsTarget: None,
+      itemsEst: 100,
+      fromBlock: 0,
+      toBlock: Some(100),
+      isChunk: true,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Dict.fromArray([("NftFactory", [mockAddress0])]),
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[leaderQuery])
+    let leaderAt100 = fetchState->FetchState.handleQueryResult(
+      ~query=leaderQuery,
+      ~latestFetchedBlock=getBlockData(~blockNumber=100),
+      ~newItems=[],
+    )
+    let withChild = leaderAt100->FetchState.registerDynamicContracts(~indexingAddresses, [
+      makeDynContractRegistration(
+        ~blockNumber=20,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )->dcToItem,
+    ])
+    let rolledBack = withChild->FetchState.rollback(~indexingAddresses, ~targetBlockNumber=50)
+    let partitions = rolledBack.optimizedPartitions.entities->Dict.valuesToArray
+    let coversAddress = address =>
+      partitions->Array.some(p =>
+        p.addressesByContractName
+        ->Dict.valuesToArray
+        ->Array.some(addresses => addresses->Array.includes(address))
+      )
+
+    t.expect(
+      {
+        "childRegistrationRetained": indexingAddresses
+          ->IndexingAddresses.get(mockAddress1->Address.toString)
+          ->Option.map(indexingAddress => indexingAddress.registrationBlock),
+        "allFrontiersRolledBack": partitions->Array.every(
+          p => p.latestFetchedBlock.blockNumber <= 50,
+        ),
+        "allMergeBlocksRolledBack": partitions->Array.every(p =>
+          p.mergeBlock->Option.map(block => block <= 50)->Option.getOr(true)
+        ),
+        "staticAddressCovered": coversAddress(mockAddress0),
+        "childAddressCovered": coversAddress(mockAddress1),
+      },
+      ~message=`rollback retains the discovered child and rebuilds both address coverages
+        without leaving a fetch or merge frontier beyond the valid block`,
+    ).toEqual({
+      "childRegistrationRetained": Some(20),
+      "allFrontiersRolledBack": true,
+      "allMergeBlocksRolledBack": true,
+      "staticAddressCovered": true,
+      "childAddressCovered": true,
+    })
   })
 
   it(
@@ -2612,15 +2695,24 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Wildcard partition never merges to another one", t => {
-    let wildcard = (MockIndexer.evmOnEventRegistration(
-      ~id="wildcard",
-      ~contractName="ContractA",
-      ~isWildcard=true,
-    ) :> Internal.onEventRegistration)
+    let wildcard = ({
+      ...MockIndexer.evmOnEventRegistration(
+        ~id="wildcard",
+        ~contractName="ContractA",
+        ~isWildcard=true,
+      ),
+      index: 2,
+    } :> Internal.onEventRegistration)
     let (fetchState, indexingAddresses) = makeFs(
       ~onEventRegistrations=[
-        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
-        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
+        ({
+          ...MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar"),
+          index: 0,
+        } :> Internal.onEventRegistration),
+        ({
+          ...MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA"),
+          index: 1,
+        } :> Internal.onEventRegistration),
         wildcard,
       ],
       ~addresses=[makeConfigContract("ContractA", mockAddress1)],
