@@ -1631,6 +1631,10 @@ describe("FetchState.registerDynamicContracts", () => {
         ->Dict.valuesToArray
         ->Array.some(addresses => addresses->Array.includes(address))
       )
+    let continuingAddresses =
+      partitions
+      ->Array.find(p => p.mergeBlock === None)
+      ->Option.map(p => p.addressesByContractName)
 
     t.expect(
       {
@@ -1645,6 +1649,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ),
         "staticAddressCovered": coversAddress(mockAddress0),
         "childAddressCovered": coversAddress(mockAddress1),
+        "continuingAddresses": continuingAddresses,
       },
       ~message=`rollback retains the discovered child and rebuilds both address coverages
         without leaving a fetch or merge frontier beyond the valid block`,
@@ -1654,6 +1659,10 @@ describe("FetchState.registerDynamicContracts", () => {
       "allMergeBlocksRolledBack": true,
       "staticAddressCovered": true,
       "childAddressCovered": true,
+      "continuingAddresses": Some(Dict.fromArray([
+        ("Gravatar", [mockAddress1]),
+        ("NftFactory", [mockAddress0]),
+      ])),
     })
   })
 
