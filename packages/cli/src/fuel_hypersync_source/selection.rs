@@ -243,7 +243,13 @@ impl SelectionBuilder {
                 RegistrationKind::Transfer => needs_transfer = true,
                 RegistrationKind::Call => needs_call = true,
             }
-            match (reg.kind, reg.is_wildcard) {
+            // A client-filtered contract is fetched address-free — the query
+            // carries none of its addresses — so its receipt types pool with the
+            // wildcards. Routing gates the over-fetched receipts on the store
+            // alone (`force_wildcard`); dropping them from the query instead
+            // would mean never fetching the contract at all.
+            let address_free = reg.is_wildcard || client_filtered.applies(&reg.contract_name);
+            match (reg.kind, address_free) {
                 (RegistrationKind::LogData { rb }, true) => push_unique(&mut wildcard_rbs, rb),
                 (RegistrationKind::LogData { rb }, false) => push_unique(
                     rbs_by_contract
@@ -265,10 +271,7 @@ impl SelectionBuilder {
                     }
                 }
             }
-            if !reg.is_wildcard
-                && !client_filtered.applies(&reg.contract_name)
-                && !ordered_contracts.contains(&reg.contract_name.as_str())
-            {
+            if !address_free && !ordered_contracts.contains(&reg.contract_name.as_str()) {
                 ordered_contracts.push(reg.contract_name.as_str());
             }
         }
@@ -501,6 +504,84 @@ mod tests {
         .unwrap();
         let built = builder.build(&[0], &set, &Default::default()).unwrap();
         assert!(built.receipt_selections.is_empty());
+    }
+
+    #[test]
+    fn client_filtered_contract_is_fetched_address_free() {
+        // A contract switched to client-side filtering carries none of its
+        // addresses in the query, so its receipt types have to pool with the
+        // wildcards. Leaving them out of the selection would mean never
+        // fetching the contract at all, while routing — which accepts its
+        // receipts under `force_wildcard` — waited for receipts that were
+        // never requested.
+        let store = fuel_store(&[("C1", &[ADDR_1]), ("C2", &[ADDR_2])]);
+        let set = set_of(&store, &["C2"]);
+        let builder = SelectionBuilder::from_registrations(
+            &[
+                reg(0, "C1", FuelEventKind::Mint, false, None),
+                reg(1, "C1", FuelEventKind::LogData, false, Some("1")),
+                reg(2, "C2", FuelEventKind::Mint, false, None),
+            ],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C1".to_string()
+            ]);
+        let built = builder.build(&[0, 1, 2], &set, &client_filtered).unwrap();
+
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        let c1_reg = built.registrations.iter().find(|r| r.index == 0).unwrap();
+        let addr_1 = key_of(ADDR_1);
+        let addr_2 = key_of(ADDR_2);
+        // The partition's set can't claim a client-filtered address, so routing
+        // leans on the store alone.
+        let route_forced = |key: &Hash| {
+            c1_reg.matches(
+                RECEIPT_MINT,
+                None,
+                &ReceiptAddress {
+                    key: &key[..],
+                    contract_name: None,
+                    block_height: 0,
+                },
+                true,
+                &address_store,
+            )
+        };
+        assert_eq!(
+            (
+                built
+                    .receipt_selections
+                    .iter()
+                    .map(selection_view)
+                    .collect::<Vec<_>>(),
+                route_forced(&addr_1),
+                // Registered, but for C2 — still not C1's receipt.
+                route_forced(&addr_2),
+            ),
+            (
+                vec![
+                    (vec![], vec![RECEIPT_MINT], vec![], vec![TX_STATUS_SUCCESS]),
+                    (
+                        vec![],
+                        vec![RECEIPT_LOG_DATA],
+                        vec![1],
+                        vec![TX_STATUS_SUCCESS],
+                    ),
+                    (
+                        vec![ADDR_2.to_string()],
+                        vec![RECEIPT_MINT],
+                        vec![],
+                        vec![TX_STATUS_SUCCESS],
+                    ),
+                ],
+                true,
+                false,
+            )
+        );
     }
 
     #[test]

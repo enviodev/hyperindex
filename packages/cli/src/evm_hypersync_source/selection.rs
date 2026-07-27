@@ -236,8 +236,8 @@ impl SelectionBuilder {
             } else {
                 // Address-free: genuine wildcards, plus client-filtered contracts
                 // whose ContractAddresses markers materialize to match-any (empty
-                // address topics). The JS clientAddressFilter re-applies the
-                // address gate on the returned items.
+                // address topics). Routing re-applies the address gate on the
+                // returned items, against the store alone.
                 no_address.extend(reg.topic_selections.iter().map(|ts| ts.materialize(&[])));
             }
         }

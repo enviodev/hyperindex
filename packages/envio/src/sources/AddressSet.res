@@ -11,10 +11,8 @@ type startBlockGroup = {startBlock: int, count: int}
 
 @send external size: t => int = "size"
 
-// Live addresses per contract name, derived once per set inside Rust — so the
+// Live addresses of one contract, derived once per set inside Rust — so the
 // fetch state can size and split partitions without ever walking the addresses.
-@send external countByContract: t => dict<int> = "countByContract"
-
 @send external countFor: (t, string) => int = "countFor"
 
 // The chain-wide address gate, reachable through any set of the store. Not set
@@ -48,14 +46,3 @@ type startBlockGroup = {startBlock: int, count: int}
 @send external entries: t => array<Internal.indexingContract> = "entries"
 
 let isEmpty = (set: t) => set->size === 0
-
-let mergeAll = (sets: array<t>) =>
-  switch sets {
-  | [] => None
-  | _ =>
-    let merged = ref(sets->Array.getUnsafe(0))
-    for idx in 1 to sets->Array.length - 1 {
-      merged := merged.contents->merge(sets->Array.getUnsafe(idx))
-    }
-    Some(merged.contents)
-  }

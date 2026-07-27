@@ -667,8 +667,7 @@ type t = {
   knownHeight: int,
   firstEventBlock: option<int>,
   // Per-contract registered-address count past which a dynamic contract is
-  // switched to client-side filtering. None disables the switch
-  // (sources that can't filter client-side, e.g. SVM/Fuel), leaving every
+  // switched to client-side filtering. None disables the switch, leaving every
   // contract filtered server-side.
   clientFilterAddressThreshold: option<int>,
 }
@@ -945,22 +944,6 @@ let updateInternal = (
   updatedFetchState
 }
 
-let warnDifferentContractType = (
-  fetchState,
-  ~existingContract: indexingAddress,
-  ~dc: indexingAddress,
-) => {
-  let logger = Logging.createChild(
-    ~params={
-      "chainId": fetchState.chainId,
-      "contractAddress": dc.address->Address.toString,
-      "existingContractType": existingContract.contractName,
-      "newContractType": dc.contractName,
-    },
-  )
-  logger->Logging.childWarn(`Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`)
-}
-
 // Move a contract to client-side address filtering, recording why.
 let addClientFilteredContract = (
   clientFilteredContracts: Utils.Set.t<string>,
@@ -1231,7 +1214,8 @@ OptimizedPartitions.t => {
       let chunkOffsetRef = ref(offsetRef.contents)
       while remainingRef.contents > 0 {
         let take = Pervasives.min(remainingRef.contents, maxAddrInPartition)
-        let pAddresses = contractSet->AddressSet.slice(~offset=chunkOffsetRef.contents, ~limit=Some(take))
+        let pAddresses =
+          contractSet->AddressSet.slice(~offset=chunkOffsetRef.contents, ~limit=Some(take))
         partitions->Array.push({
           id: nextPartitionIndexRef.contents->Int.toString,
           latestFetchedBlock,
@@ -1346,7 +1330,7 @@ let registerDynamicContracts = (
   let sourceDcs: array<Internal.dcs> = []
   let sourceIndexes: array<int> = []
   for itemIdx in 0 to items->Array.length - 1 {
-    switch (items->Array.getUnsafe(itemIdx))->Internal.getItemDcs {
+    switch items->Array.getUnsafe(itemIdx)->Internal.getItemDcs {
     | None => ()
     | Some(dcs) =>
       for dcIdx in 0 to dcs->Array.length - 1 {
@@ -1439,18 +1423,14 @@ let registerDynamicContracts = (
     if !keep {
       // Mark for removal; the splice happens below, back to front, so earlier
       // indexes stay valid.
-      sourceIndexes->Array.setUnsafe(idx, -1 - (sourceIndexes->Array.getUnsafe(idx)))
+      sourceIndexes->Array.setUnsafe(idx, -1 - sourceIndexes->Array.getUnsafe(idx))
     }
   }
   for idx in verdicts->Array.length - 1 downto 0 {
     let marked = sourceIndexes->Array.getUnsafe(idx)
     if marked < 0 {
       let _ =
-        (sourceDcs->Array.getUnsafe(idx))->Array.splice(
-          ~start=-1 - marked,
-          ~remove=1,
-          ~insert=[],
-        )
+        sourceDcs->Array.getUnsafe(idx)->Array.splice(~start=-1 - marked, ~remove=1, ~insert=[])
     }
   }
 
@@ -1514,8 +1494,7 @@ let registerDynamicContracts = (
                         p->withAddresses(p.addresses->AddressSet.filterByContracts(restNames)),
                       )
 
-                      let splitAddresses =
-                        p.addresses->AddressSet.filterByContracts([contractName])
+                      let splitAddresses = p.addresses->AddressSet.filterByContracts([contractName])
                       newPartitions->Array.push({
                         id: newPartitionId,
                         latestFetchedBlock: p.latestFetchedBlock,
