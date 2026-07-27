@@ -276,9 +276,6 @@ storage:
   clickhouse: true
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
         ).config
@@ -343,9 +340,6 @@ storage:
     column_name_format: snake_case
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
         ).config
@@ -395,9 +389,6 @@ storage:
     column_name_format: snake_case
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
         ).config

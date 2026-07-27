@@ -143,7 +143,7 @@ describe("Concurrent batch write and processing", () => {
         [
           Set({
             checkpointId: 2n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "created",
@@ -151,11 +151,11 @@ describe("Concurrent batch write and processing", () => {
           }),
           Delete({
             checkpointId: 3n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
           }),
           Set({
             checkpointId: 4n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "recreated",

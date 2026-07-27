@@ -31,7 +31,6 @@ type fieldType =
   | Json
   | Date
   | Enum({config: enumConfig<enum>})
-  | Entity({name: string})
 
 type field = {
   fieldName: string,
@@ -168,7 +167,6 @@ let getPgFieldType = (
   | Date =>
     (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
   | Enum({config}) => `"${pgSchema}".${config.name}`
-  | Entity(_) => (Postgres.Text :> string) // FIXME: Will it work correctly if id is not a text column?
   }
 
   // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
@@ -248,6 +246,40 @@ let getDerivedFromFields = table =>
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
 
+exception NoIdField(string)
+
+// The `id` primary-key field. Its type drives both the id column and every
+// foreign key that references the entity, so id-typed SQL (delete-by-id,
+// history backfill) reads the column type and value schema from here.
+let getIdFieldOrThrow = (table): field =>
+  switch table->getFieldByName(idFieldName) {
+  | Some(Field(field)) => field
+  | _ => throw(NoIdField(table.tableName))
+  }
+
+let getIdPgFieldType = (table, ~pgSchema) =>
+  getPgFieldType(
+    ~fieldType=(table->getIdFieldOrThrow).fieldType,
+    ~pgSchema,
+    ~isArray=false,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+  )
+
+// Schema for a single id value, typed opaquely so id-generic code can serialize
+// ids regardless of the underlying scalar.
+let getIdSchema = (table): S.t<EntityId.t> =>
+  (table->getIdFieldOrThrow).fieldSchema->(Utils.magic: S.t<unknown> => S.t<EntityId.t>)
+
+// Serializes an array of ids to the JSON form the SQL layer binds. The array
+// schema is memoized per table so its serializer compiles once, not on every
+// (high-frequency) delete/history write.
+let idsArraySchema: table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
+  S.array(table->getIdSchema)
+)
+let encodeIdsToJson = (table, ids: array<EntityId.t>): JSON.t =>
+  ids->S.reverseConvertToJsonOrThrow(table->idsArraySchema)
+
 // TODO: Test whether it should be passed via args and match the column type
 
 let getFieldByApiName = (table, apiFieldName) =>
@@ -297,13 +329,12 @@ let makeRowsSchema = (table, ~rowFieldName) =>
   S.array(
     S.object(s => {
       let dict = Dict.make()
-      table.fields->Array.forEach(
-        field =>
-          switch field {
-          | Field(field) =>
-            dict->Dict.set(field->getApiFieldName, s.field(field->rowFieldName, field.fieldSchema))
-          | DerivedFrom(_) => ()
-          },
+      table.fields->Array.forEach(field =>
+        switch field {
+        | Field(field) =>
+          dict->Dict.set(field->getApiFieldName, s.field(field->rowFieldName, field.fieldSchema))
+        | DerivedFrom(_) => ()
+        }
       )
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
