@@ -458,13 +458,17 @@ fn process_response(
     if !requested_transaction_fields.is_empty() {
         let mut kept: Vec<simple_types::Transaction> = Vec::new();
         for tx in transactions.into_iter().flatten() {
-            let key = match (tx.block_number, tx.transaction_index) {
-                (Some(block_number), Some(transaction_index)) => {
-                    Some(transaction_key(block_number, transaction_index))
-                }
-                _ => None,
+            // A row the source returned without its key backs no item — there
+            // is nothing to join it to — so it is dropped unjudged. If a routed
+            // item did want it, the coverage check below still reports the
+            // transaction as missing.
+            let (Some(block_number), Some(transaction_index)) =
+                (tx.block_number, tx.transaction_index)
+            else {
+                continue;
             };
-            if key.is_some_and(|key| !referenced_transactions.contains(&key)) {
+            let key = transaction_key(block_number, transaction_index);
+            if !referenced_transactions.contains(&key) {
                 continue;
             }
             for &field in requested_transaction_fields {
@@ -472,10 +476,8 @@ fn process_response(
                     push_unique(&mut missing, format!("transaction.{}", name));
                 }
             }
-            if let Some(key) = key {
-                transaction_keys.insert(key);
-                kept.push(tx);
-            }
+            transaction_keys.insert(key);
+            kept.push(tx);
         }
         transaction_store.insert_evm_txs(kept);
     }
@@ -488,10 +490,19 @@ fn process_response(
     let present_block_numbers: HashSet<u64> =
         response_blocks.iter().filter_map(|b| b.number).collect();
 
-    // Validate every block field we requested — the user's selection plus the
-    // always-required number/timestamp/hash — once per distinct block.
+    // Validate the requested block fields once per distinct block. The
+    // always-required number/timestamp/hash back every header, so they are
+    // checked on every returned block; the rest of the user's selection is only
+    // ever read through the store, so it is checked only where an item can
+    // reach it — same rule as transactions.
     for block in &response_blocks {
+        let referenced = block
+            .number
+            .is_some_and(|number| referenced_blocks.contains(&number));
         for &field in validated_block_fields {
+            if !referenced && !REQUIRED_BLOCK_FIELDS.contains(&field) {
+                continue;
+            }
             if let Some(name) = block_field_missing(block, field) {
                 push_unique(&mut missing, format!("block.{}", name));
             }
@@ -1138,6 +1149,84 @@ mod tests {
         .expect("an unrouted log's absent block and transaction are not missing fields");
 
         assert_eq!((items.len(), blocks.len()), (0, 0));
+    }
+
+    #[test]
+    fn unreferenced_block_is_judged_only_on_its_header_fields() {
+        // Block 2 backs no item, so its absent `gasUsed` can't fail the page —
+        // nothing can read it. The header trio is still required of it, since
+        // every returned block yields a header.
+        let block = |number: u64| simple_types::Block {
+            number: Some(number),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            gas_used: (number == 1).then(Default::default),
+            ..Default::default()
+        };
+        let (items, blocks) = process_response(
+            vec![vec![block(1), block(2)]],
+            vec![],
+            vec![vec![full_log(1), unrouted_log(2)]],
+            &zero_event_decoder(),
+            false,
+            &[
+                BlockField::Number,
+                BlockField::Hash,
+                BlockField::Timestamp,
+                BlockField::GasUsed,
+            ],
+            &[],
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
+            empty_set().cache(),
+        )
+        .expect("an unreferenced block's absent selected field is not a missing field");
+
+        assert_eq!(
+            (
+                items.len(),
+                blocks.iter().map(|b| b.number).collect::<Vec<_>>()
+            ),
+            (1, vec![1, 2])
+        );
+    }
+
+    #[test]
+    fn keyless_transaction_is_dropped_unjudged() {
+        // The source returned a transaction with no (blockNumber, txIndex), so
+        // it joins to nothing; its absent `hash` must not fail a page whose
+        // routed item got the transaction it asked for.
+        let mut block = simple_types::Block::default();
+        block.number = Some(1);
+        block.hash = Some(Default::default());
+        block.timestamp = Some(Default::default());
+
+        let mut keyless = simple_types::Transaction::default();
+        keyless.hash = None;
+
+        let (items, _blocks) = process_response(
+            vec![vec![block]],
+            vec![vec![
+                simple_types::Transaction {
+                    block_number: Some(1u64.into()),
+                    transaction_index: Some(0u64.into()),
+                    hash: Some(Default::default()),
+                    ..Default::default()
+                },
+                keyless,
+            ]],
+            vec![vec![full_log(1)]],
+            &zero_event_decoder(),
+            false,
+            REQUIRED_BLOCK_FIELDS,
+            &[TransactionField::Hash],
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
+            empty_set().cache(),
+        )
+        .expect("a keyless transaction's absent field is not a missing field");
+
+        assert_eq!(items.len(), 1);
     }
 
     #[test]
