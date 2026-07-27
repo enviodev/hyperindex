@@ -254,13 +254,13 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->single(
     ~name="envio_process_metric_time_seconds",
-    ~help="Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.",
+    ~help="The time these metrics were collected. Use it to tell how fresh a snapshot is, or to measure rates between two snapshots.",
     ~kind="gauge",
     ~value=metrics.metricTime->Date.getTime /. 1000.,
   )
   b->single(
     ~name="envio_process_elapsed_seconds",
-    ~help="Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.",
+    ~help="How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.",
     ~kind="gauge",
     ~value=(metrics.metricTime->Date.getTime -. metrics.startTime->Date.getTime) /. 1000.,
   )
@@ -278,13 +278,13 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->single(
     ~name="envio_processing_stalled_on_fetch_seconds",
-    ~help="Cumulative time batch processing was stalled with an empty buffer, waiting for fetched events. A high rate points to fetching as the bottleneck, unless the chain is caught up to the head (compare with envio_indexing_source_waiting_seconds).",
+    ~help="Time the indexer had nothing to process while waiting for events to be fetched. A high rate means fetching is the bottleneck: check the data-source latency and whether it can be queried with more concurrency. Waiting at the chain head for new blocks is not counted.",
     ~kind="counter",
     ~value=metrics.processingStalledOnFetchSeconds,
   )
   b->single(
     ~name="envio_processing_stalled_on_storage_write_seconds",
-    ~help="Cumulative time batch processing was stalled waiting for storage write capacity to free up (backpressure). A high rate points to storage writes as the bottleneck.",
+    ~help="Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.",
     ~kind="counter",
     ~value=metrics.processingStalledOnStorageWriteSeconds,
   )

@@ -237,11 +237,11 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 # TYPE envio_process_start_time_seconds gauge
 envio_process_start_time_seconds 1700000000
 
-# HELP envio_process_metric_time_seconds Unix timestamp when this metrics snapshot was generated, so a single scrape can be dated without an external clock.
+# HELP envio_process_metric_time_seconds The time these metrics were collected. Use it to tell how fresh a snapshot is, or to measure rates between two snapshots.
 # TYPE envio_process_metric_time_seconds gauge
 envio_process_metric_time_seconds 1700000123.456
 
-# HELP envio_process_elapsed_seconds Seconds elapsed since the indexer started. Divide a cumulative counter (e.g. envio_processing_seconds) by this to get its share of the whole run without a query-time clock.
+# HELP envio_process_elapsed_seconds How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.
 # TYPE envio_process_elapsed_seconds gauge
 envio_process_elapsed_seconds 123.456
 
@@ -253,11 +253,11 @@ envio_preload_seconds 12.346
 # TYPE envio_processing_seconds counter
 envio_processing_seconds 7.891
 
-# HELP envio_processing_stalled_on_fetch_seconds Cumulative time batch processing was stalled with an empty buffer, waiting for fetched events. A high rate points to fetching as the bottleneck, unless the chain is caught up to the head (compare with envio_indexing_source_waiting_seconds).
+# HELP envio_processing_stalled_on_fetch_seconds Time the indexer had nothing to process while waiting for events to be fetched. A high rate means fetching is the bottleneck: check the data-source latency and whether it can be queried with more concurrency. Waiting at the chain head for new blocks is not counted.
 # TYPE envio_processing_stalled_on_fetch_seconds counter
 envio_processing_stalled_on_fetch_seconds 6.02
 
-# HELP envio_processing_stalled_on_storage_write_seconds Cumulative time batch processing was stalled waiting for storage write capacity to free up (backpressure). A high rate points to storage writes as the bottleneck.
+# HELP envio_processing_stalled_on_storage_write_seconds Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.
 # TYPE envio_processing_stalled_on_storage_write_seconds counter
 envio_processing_stalled_on_storage_write_seconds 1.33
 
