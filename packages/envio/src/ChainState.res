@@ -826,19 +826,22 @@ let handleQueryResult = (
   | None => ()
   }
 
-  let fs = switch newItemsWithDcs {
-  | [] => cs.fetchState
+  // Complete the triggering query before registering contracts it discovered.
+  // This gives the optimizer the partition's real scheduled frontier instead
+  // of treating the just-completed query as permanently in flight.
+  let fs =
+    cs.fetchState
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.updateKnownHeight(~knownHeight)
+
+  cs.fetchState = switch newItemsWithDcs {
+  | [] => fs
   | _ =>
-    cs.fetchState->FetchState.registerDynamicContracts(
+    fs->FetchState.registerDynamicContracts(
       ~indexingAddresses=cs.indexingAddresses,
       newItemsWithDcs,
     )
   }
-
-  cs.fetchState =
-    fs
-    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
-    ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsEst->Int.toFloat)

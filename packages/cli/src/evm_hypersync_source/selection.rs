@@ -403,6 +403,36 @@ mod tests {
     }
 
     #[test]
+    fn different_contracts_keep_address_topic_pairings() {
+        let builder = SelectionBuilder::from_registrations(&[
+            reg(0, SIGHASH_A, "Token", false, true, Some(vec![])),
+            reg(1, SIGHASH_B, "Pool", false, true, Some(vec![])),
+        ])
+        .unwrap();
+        let pool_address = "0x2222222222222222222222222222222222222222";
+        let built = builder
+            .build(
+                &[0, 1],
+                &addresses(&[("Token", &[ADDR]), ("Pool", &[pool_address])]),
+                &Default::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![
+                BuiltLogSelection {
+                    addresses: vec![ADDR.to_string()],
+                    topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                },
+                BuiltLogSelection {
+                    addresses: vec![pool_address.to_string()],
+                    topics: vec![vec![SIGHASH_B.to_string()], vec![], vec![], vec![]],
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn wildcard_selection_stays_address_free() {
         let builder = SelectionBuilder::from_registrations(&[reg(
             0,

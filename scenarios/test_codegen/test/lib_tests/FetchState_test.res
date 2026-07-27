@@ -1382,6 +1382,198 @@ describe("FetchState.registerDynamicContracts", () => {
     ])
   })
 
+  it("Coalesces aligned static and dynamic contract types into one partition", t => {
+    let (fetchState, indexingAddresses) = makeFs(
+      ~onEventRegistrations=[
+        baseEventConfig,
+        (MockIndexer.evmOnEventRegistration(~id="pool", ~contractName="NftFactory") :> Internal.onEventRegistration),
+        (MockIndexer.evmOnEventRegistration(~id="child", ~contractName="SimpleNft") :> Internal.onEventRegistration),
+      ],
+      ~addresses=[makeConfigContract("NftFactory", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~chainId,
+      ~knownHeight,
+    )
+
+    let updated = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      makeDynContractRegistration(
+        ~blockNumber=0,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )->dcToItem,
+      makeDynContractRegistration(
+        ~blockNumber=0,
+        ~contractAddress=mockAddress2,
+        ~contractName="SimpleNft",
+      )->dcToItem,
+    ])
+
+    let updated = {...updated, knownHeight: 10}
+    let backfillQuery = switch updated->FetchState.getNextQuery(
+      ~chainTargetBlock=10,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) => queries->Array.find(q => q.toBlock === Some(0))->Option.getUnsafe
+    | _ => JsError.throwWithMessage("Expected dynamic partition backfill")
+    }
+    updated->FetchState.startFetchingQueries(~queries=[backfillQuery])
+    let aligned = updated->FetchState.handleQueryResult(
+      ~query=backfillQuery,
+      ~latestFetchedBlock={blockNumber: 0, blockTimestamp: 0},
+      ~newItems=[],
+    )
+
+    t.expect(
+      aligned.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.map(p => (p.latestFetchedBlock.blockNumber, p.addressesByContractName)),
+    ).toEqual([
+      (
+        0,
+        Dict.fromArray([
+          ("Gravatar", [mockAddress1]),
+          ("NftFactory", [mockAddress0]),
+          ("SimpleNft", [mockAddress2]),
+        ]),
+      ),
+    ])
+
+    t.expect(
+      aligned->FetchState.getNextQuery(~chainTargetBlock=10, ~chainTargetItems=10_000.),
+    ).toEqual(
+      Ready([
+        {
+          partitionId: aligned.optimizedPartitions.idsInAscOrder->Utils.Array.firstUnsafe,
+          itemsTarget: Some(10_000),
+          itemsEst: 10_000,
+          fromBlock: 1,
+          toBlock: None,
+          isChunk: false,
+          selection: aligned.normalSelection,
+          addressesByContractName: Dict.fromArray([
+            ("Gravatar", [mockAddress1]),
+            ("NftFactory", [mockAddress0]),
+            ("SimpleNft", [mockAddress2]),
+          ]),
+        },
+      ]),
+    )
+  })
+
+  it("retires a dynamic backfill into a leader with bounded queries in flight", t => {
+    let (fetchState, indexingAddresses) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[makeConfigContract("NftFactory", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~chainId,
+      ~knownHeight=200,
+    )
+    let leaderQuery: FetchState.query = {
+      partitionId: "0",
+      itemsTarget: None,
+      itemsEst: 100,
+      fromBlock: 0,
+      toBlock: Some(100),
+      isChunk: true,
+      selection: fetchState.normalSelection,
+      addressesByContractName: Dict.fromArray([("NftFactory", [mockAddress0])]),
+    }
+    fetchState->FetchState.startFetchingQueries(~queries=[leaderQuery])
+
+    let withChild = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      makeDynContractRegistration(
+        ~blockNumber=20,
+        ~contractAddress=mockAddress1,
+        ~contractName="Gravatar",
+      )->dcToItem,
+    ])
+    let leader = withChild.optimizedPartitions.entities->Dict.getUnsafe("0")
+    let backfill =
+      withChild.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.find(p => p.id !== "0")
+      ->Option.getOrThrow
+
+    t.expect(
+      (
+        leader.addressesByContractName,
+        leader.mutPendingQueries,
+        backfill.latestFetchedBlock.blockNumber,
+        backfill.mergeBlock,
+      ),
+      ~message=`the leader's already-issued query remains unchanged, future queries include
+        the child address, and the child-only backfill retires at the leader frontier`,
+    ).toEqual((
+      Dict.fromArray([
+        ("Gravatar", [mockAddress1]),
+        ("NftFactory", [mockAddress0]),
+      ]),
+      [
+        {
+          fromBlock: 0,
+          toBlock: Some(100),
+          isChunk: true,
+          itemsTarget: None,
+          itemsEst: 100,
+          fetchedBlock: None,
+        },
+      ],
+      19,
+      Some(100),
+    ))
+    // The query object itself is the immutable source request snapshot.
+    t.expect(leaderQuery.addressesByContractName).toEqual(
+      Dict.fromArray([("NftFactory", [mockAddress0])]),
+    )
+
+    let nextQueries = switch withChild->FetchState.getNextQuery(
+      ~chainTargetBlock=200,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) => queries
+    | _ => JsError.throwWithMessage("Expected child backfill and pipelined leader queries")
+    }
+    let backfillQuery =
+      nextQueries->Array.find(query => query.partitionId === backfill.id)->Option.getOrThrow
+    let futureLeaderQuery =
+      nextQueries->Array.find(query => query.partitionId === leader.id)->Option.getOrThrow
+    t.expect((backfillQuery.fromBlock, backfillQuery.toBlock)).toEqual((20, Some(100)))
+    t.expect(
+      (
+        futureLeaderQuery.fromBlock,
+        futureLeaderQuery.addressesByContractName,
+      ),
+      ~message="the next leader query begins after its snapshot and includes the child",
+    ).toEqual((
+      101,
+      Dict.fromArray([
+        ("Gravatar", [mockAddress1]),
+        ("NftFactory", [mockAddress0]),
+      ]),
+    ))
+    withChild->FetchState.startFetchingQueries(~queries=[backfillQuery])
+    let caughtUp = withChild->FetchState.handleQueryResult(
+      ~query=backfillQuery,
+      ~latestFetchedBlock=getBlockData(~blockNumber=100),
+      ~newItems=[],
+    )
+
+    t.expect(caughtUp.optimizedPartitions.idsInAscOrder).toEqual(["0"])
+    let caughtUpLeader = caughtUp.optimizedPartitions.entities->Dict.getUnsafe("0")
+    t.expect(caughtUpLeader.addressesByContractName).toEqual(
+      Dict.fromArray([
+        ("Gravatar", [mockAddress1]),
+        ("NftFactory", [mockAddress0]),
+      ]),
+    )
+  })
+
   it(
     "Dcs for a contract with event filtering by addresses are grouped like any other contract",
     // The client-side address filter drops events before each dc's registration
@@ -1472,7 +1664,10 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           "0",
           Some("Gravatar"),
-          Dict.fromArray([("Gravatar", [mockAddress0, mockAddress1])]),
+          Dict.fromArray([
+            ("Gravatar", [mockAddress0, mockAddress1]),
+            ("NftFactory", [mockAddress5]),
+          ]),
           None,
           9,
         ),
@@ -1484,7 +1679,13 @@ describe("FetchState.registerDynamicContracts", () => {
           None,
           2,
         ),
-        ("3", Some("NftFactory"), Dict.fromArray([("NftFactory", [mockAddress5])]), None, 5),
+        (
+          "3",
+          Some("NftFactory"),
+          Dict.fromArray([("NftFactory", [mockAddress5])]),
+          Some(9),
+          5,
+        ),
       ])
     },
   )
@@ -2445,9 +2646,8 @@ describe("FetchState.getNextQuery & integration", () => {
 
     t.expect(
       nextQuery,
-      ~message=`Wildcard partition "0" is untouched.
-      Partitions "1" and "2" split in optimized way for further dynamic contract registrations.
-      All queries performed in parallel without locking.`,
+      ~message=`Wildcard partition "0" is untouched while compatible address-bound
+      partitions backfill once and continue as one exact query.`,
     ).toEqual(
       Ready([
         {
@@ -2468,7 +2668,7 @@ describe("FetchState.getNextQuery & integration", () => {
           itemsTarget: Some(3333),
           itemsEst: 3333,
           fromBlock: 0,
-          toBlock: None,
+          toBlock: Some(1),
           isChunk: false,
           selection: fetchState.normalSelection,
           addressesByContractName: Dict.fromArray([("ContractA", [mockAddress1])]),
@@ -2482,7 +2682,10 @@ describe("FetchState.getNextQuery & integration", () => {
           toBlock: None,
           isChunk: false,
           selection: fetchState.normalSelection,
-          addressesByContractName: Dict.fromArray([("Gravatar", [mockAddress2])]),
+          addressesByContractName: Dict.fromArray([
+            ("ContractA", [mockAddress1]),
+            ("Gravatar", [mockAddress2]),
+          ]),
         },
       ]),
     )

@@ -51,8 +51,9 @@ type partition = {
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
   mergeBlock: option<int>,
-  // When set, partition indexes a single dynamic contract type.
-  // The addressesByContractName must contain only addresses for this contract.
+  // Identifies a single dynamic contract type while its partitions are being
+  // aligned. A coalesced address-bound partition may contain additional
+  // dynamic or static contract types and may retain either parent's marker.
   dynamicContract: option<string>,
   // Mutated in place and shared across fetchState versions (updateInternal
   // copies the record, not this array): startFetchingQueries inserts,
@@ -287,12 +288,127 @@ module OptimizedPartitions = {
   let ascSortFn = (a, b) =>
     Int.compare(a.latestFetchedBlock.blockNumber, b.latestFetchedBlock.blockNumber)
 
+  let mergeAddressGroups = (a, b) => {
+    let merged = b->Utils.Dict.shallowCopy
+    a
+    ->Dict.keysToArray
+    ->Array.forEach(contractName => {
+      let addresses = a->Dict.getUnsafe(contractName)
+      switch merged->Utils.Dict.dangerouslyGetNonOption(contractName) {
+      | Some(existing) => merged->Dict.set(contractName, existing->Array.concat(addresses))
+      | None => merged->Dict.set(contractName, addresses)
+      }
+    })
+    merged
+  }
+
+  let mergeDensity = (a, b) =>
+    switch (a->getTrustedDensity, b->getTrustedDensity) {
+    | (Some(aDensity), Some(bDensity)) => Some(aDensity +. bDensity)
+    | (Some(density), None) | (None, Some(density)) => Some(density)
+    | (None, None) => None
+    }
+
+  let addressGroupCount = addressesByContractName =>
+    addressesByContractName
+    ->Dict.keysToArray
+    ->Array.reduce(0, (count, contractName) =>
+      count + addressesByContractName->Dict.getUnsafe(contractName)->Array.length
+    )
+
+  let mergeSelections = (a, b) => {
+    let registrations = Dict.make()
+    a.onEventRegistrations->Array.forEach(reg =>
+      registrations->Dict.set(`${reg.eventConfig.contractName}:${reg.eventConfig.id}`, reg)
+    )
+    b.onEventRegistrations->Array.forEach(reg =>
+      registrations->Dict.set(`${reg.eventConfig.contractName}:${reg.eventConfig.id}`, reg)
+    )
+    {
+      dependsOnAddresses: true,
+      onEventRegistrations: registrations->Dict.valuesToArray,
+    }
+  }
+
+  // A partition can join another partition after every query it has already
+  // scheduled is complete. Query values snapshot their selection and address
+  // map, so extending the partition record only affects future queries.
+  let potentialJoinBlock = p =>
+    switch p.mutPendingQueries->Utils.Array.last {
+    | Some({toBlock: Some(toBlock)}) => Some(toBlock)
+    | Some({toBlock: None}) => None
+    | None => Some(p.latestFetchedBlock.blockNumber)
+    }
+
+  let coalesceAddressBoundPartitions = (~partitions, ~maxAddrInPartition) => {
+    let stable = []
+    let candidates: array<(partition, int)> = []
+    partitions->Array.forEach(p =>
+      switch p {
+      | {
+          selection: {dependsOnAddresses: true},
+          mergeBlock: None,
+        } if p.selection.clientFilteredContracts->Option.isNone =>
+        switch p->potentialJoinBlock {
+        | Some(joinBlock) => candidates->Array.push((p, joinBlock))->ignore
+        | None => stable->Array.push(p)->ignore
+        }
+      | _ => stable->Array.push(p)->ignore
+      }
+    )
+
+    if candidates->Array.length === 0 {
+      stable
+    } else {
+      candidates->Array.sort(((_, a), (_, b)) => Int.compare(a, b))->ignore
+      let currentRef = ref(candidates->Utils.Array.firstUnsafe)
+      for idx in 1 to candidates->Array.length - 1 {
+        let (current, currentJoinBlock) = currentRef.contents
+        let (next, nextJoinBlock) = candidates->Array.getUnsafe(idx)
+        let combinedAddressCount =
+          current.addressesByContractName->addressGroupCount +
+            next.addressesByContractName->addressGroupCount
+
+        if combinedAddressCount > maxAddrInPartition {
+          stable->Array.push(current)->ignore
+          currentRef := (next, nextJoinBlock)
+        } else {
+          let mergedAddresses =
+            current.addressesByContractName->mergeAddressGroups(next.addressesByContractName)
+          let minRange = getMinQueryRange([current, next])
+          if currentJoinBlock < nextJoinBlock {
+            stable->Array.push({...current, mergeBlock: Some(nextJoinBlock)})->ignore
+          } else if current.mutPendingQueries->Array.length > 0 {
+            // Both partitions have already scheduled through the same block.
+            // Keep the current one only long enough to consume its response.
+            stable->Array.push({...current, mergeBlock: Some(nextJoinBlock)})->ignore
+          }
+          currentRef := (
+            {
+                ...next,
+                selection: mergeSelections(current.selection, next.selection),
+                addressesByContractName: mergedAddresses,
+                sourceRangeCapacity: minRange,
+                prevSourceRangeCapacity: minRange,
+                eventDensity: mergeDensity(current, next),
+                latestSourceRangeCapacityUpdateBlock: 0,
+              },
+            nextJoinBlock,
+          )
+        }
+      }
+      let (current, _) = currentRef.contents
+      stable->Array.push(current)->ignore
+      stable
+    }
+  }
+
   /**
    * Optimizes partitions by finding opportunities to merge partitions that
-   * are behind other partitions with same/superset of contract names.
+   * are behind other partitions with compatible address-bound selections.
    *
-   * Only partitions with dynamicContract set are eligible for optimization.
-   * This way we don't have optimization overhead when partitions are stable.
+   * Same-contract dynamic partitions are aligned first, then compatible
+   * address-bound partitions are coalesced across contract types.
    */
   let make = (
     ~partitions: array<partition>,
@@ -320,41 +436,47 @@ module OptimizedPartitions = {
       {mergeBlock: Some(_)} =>
         newPartitions->Array.push(p)->ignore
       | {dynamicContract: Some(contractName)} =>
-        let pAddressesCount = p.addressesByContractName->Dict.getUnsafe(contractName)->Array.length
-        // Compute merge block: last pending query's toBlock, or lfb if idle
-        let potentialMergeBlock = switch p.mutPendingQueries->Utils.Array.last {
-        | Some({isChunk: true, toBlock: Some(toBlock)}) => Some(toBlock)
-        | Some(_) => None // unbounded query -- can't merge
-        | None => Some(p.latestFetchedBlock.blockNumber)
-        }
-        switch potentialMergeBlock {
-        | None => newPartitions->Array.push(p)->ignore
-        | Some(potentialMergeBlock) =>
-          if pAddressesCount >= maxAddrInPartition {
-            newPartitions->Array.push(p)->ignore
-          } else {
-            let partitionsByMergeBlock =
-              mergingPartitions->Utils.Dict.getOrInsertEmptyDict(contractName)
-            switch partitionsByMergeBlock->Utils.Dict.dangerouslyGetByIntNonOption(
-              potentialMergeBlock,
-            ) {
-            | Some(existingPartition) =>
-              let result = mergePartitionsAtBlock(
-                ~p1=existingPartition,
-                ~p2=p,
-                ~potentialMergeBlock,
-                ~contractName,
-                ~maxAddrInPartition,
-                ~nextPartitionIndexRef,
-              )
-              for i in 0 to result->Array.length - 2 {
-                newPartitions->Array.push(result->Array.getUnsafe(i))->ignore
-              }
-              partitionsByMergeBlock->Utils.Dict.setByInt(
+        let contractNames = p.addressesByContractName->Dict.keysToArray
+        if contractNames->Array.length !== 1 || contractNames->Array.getUnsafe(0) !== contractName {
+          newPartitions->Array.push(p)->ignore
+        } else {
+          let pAddressesCount =
+            p.addressesByContractName->Dict.getUnsafe(contractName)->Array.length
+          // Compute merge block: last pending query's toBlock, or lfb if idle
+          let potentialMergeBlock = switch p.mutPendingQueries->Utils.Array.last {
+          | Some({isChunk: true, toBlock: Some(toBlock)}) => Some(toBlock)
+          | Some(_) => None // unbounded query -- can't merge
+          | None => Some(p.latestFetchedBlock.blockNumber)
+          }
+          switch potentialMergeBlock {
+          | None => newPartitions->Array.push(p)->ignore
+          | Some(potentialMergeBlock) =>
+            if pAddressesCount >= maxAddrInPartition {
+              newPartitions->Array.push(p)->ignore
+            } else {
+              let partitionsByMergeBlock =
+                mergingPartitions->Utils.Dict.getOrInsertEmptyDict(contractName)
+              switch partitionsByMergeBlock->Utils.Dict.dangerouslyGetByIntNonOption(
                 potentialMergeBlock,
-                result->Utils.Array.lastUnsafe,
-              )
-            | None => partitionsByMergeBlock->Utils.Dict.setByInt(potentialMergeBlock, p)
+              ) {
+              | Some(existingPartition) =>
+                let result = mergePartitionsAtBlock(
+                  ~p1=existingPartition,
+                  ~p2=p,
+                  ~potentialMergeBlock,
+                  ~contractName,
+                  ~maxAddrInPartition,
+                  ~nextPartitionIndexRef,
+                )
+                for i in 0 to result->Array.length - 2 {
+                  newPartitions->Array.push(result->Array.getUnsafe(i))->ignore
+                }
+                partitionsByMergeBlock->Utils.Dict.setByInt(
+                  potentialMergeBlock,
+                  result->Utils.Array.lastUnsafe,
+                )
+              | None => partitionsByMergeBlock->Utils.Dict.setByInt(potentialMergeBlock, p)
+              }
             }
           }
         }
@@ -414,6 +536,9 @@ module OptimizedPartitions = {
 
       newPartitions->Array.push(currentPRef.contents)->ignore
     }
+
+    let newPartitions =
+      coalesceAddressBoundPartitions(~partitions=newPartitions, ~maxAddrInPartition)
 
     // Sort partitions by latestFetchedBlock ascending
     let _ = newPartitions->Array.sort(ascSortFn)
@@ -1583,8 +1708,8 @@ let registerDynamicContracts = (
         // Walks through existing partitions that have addresses for this contract name
         // - If partition has ONLY this contract's addresses -> sets dynamicContract field
         // - If partition has this contract's addresses AND other contracts -> splits them
-        // For the sake of merging simplicity we want to make sure that
-        // partition has addresses of only one contract
+        // Temporarily isolate the newly dynamic contract. The optimizer can
+        // coalesce it again once the resulting partitions have compatible frontiers.
         if !(dynamicContractsRef.contents->Utils.Set.has(contractName)) {
           dynamicContractsRef := dynamicContractsRef.contents->Utils.Set.immutableAdd(contractName)
 
