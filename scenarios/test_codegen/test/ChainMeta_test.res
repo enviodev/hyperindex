@@ -51,7 +51,7 @@ let makeStore = () => {
     },
   }
   let persistence = {
-    ...PgStorage.makePersistenceFromConfig(~config=MockIndexer.config, ~storage),
+    ...PgStorage.makePersistenceFromConfig(~logger=Env.logger, ~config=MockIndexer.config, ~storage),
     storageStatus: Persistence.Ready({
       cleanRun: false,
       cache: Dict.make(),
@@ -61,7 +61,7 @@ let makeStore = () => {
       envioInfo: None,
     }),
   }
-  let store = IndexerState.make(
+  let store = IndexerState.make(~logger=Env.logger, 
     ~config=MockIndexer.config,
     ~persistence,
     ~chainStates=Dict.make(),

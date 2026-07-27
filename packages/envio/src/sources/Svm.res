@@ -27,7 +27,7 @@ let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 // event at config build and cached on the event config.
 let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
 
-let make = (~logger: Pino.t): Ecosystem.t => {
+let make = (): Ecosystem.t => {
   name: Svm,
   blockNumberName: "height",
   blockTimestampName: "time",
@@ -40,21 +40,17 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // SVM has no event handlers, so there is no `onEvent` `where` value to
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
-  logger,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  toEventLogger: eventItem => {
+  toEventLogParams: eventItem => {
     let instruction =
       eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
-    Logging.createChildFrom(
-      ~logger,
-      ~params={
-        "program": eventItem.onEventRegistration.eventConfig.contractName,
-        "instruction": eventItem.onEventRegistration.eventConfig.name,
-        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
-        "slot": eventItem.blockNumber,
-        "programId": instruction.programId,
-      },
-    )
+    {
+      "program": eventItem.onEventRegistration.eventConfig.contractName,
+      "instruction": eventItem.onEventRegistration.eventConfig.name,
+      "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+      "slot": eventItem.blockNumber,
+      "programId": instruction.programId,
+    }->Internal.toLogParams
   },
   toRawEvent: _ => JsError.throwWithMessage("Raw events are not supported for SVM"),
 }

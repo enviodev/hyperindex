@@ -102,10 +102,6 @@ type options = {
 @module("pino") external make: options => t = "pino"
 @module("pino") external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
 
-type childParams
-let createChildParams: 'a => childParams = v => v->(Utils.magic: 'a => childParams)
-@send external child: (t, childParams) => t = "child"
-
 module ECS = {
   @module("@elastic/ecs-pino-format")
   external make: 'a => options = "default"

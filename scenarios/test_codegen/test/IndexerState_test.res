@@ -129,7 +129,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~chainConfig,
       ~fetchState=fetchState.contents,
       ~indexingAddresses,
-      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
       ~reorgDetection=ReorgDetection.make(
         ~chainReorgCheckpoints=[],
@@ -143,7 +143,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     chainStates->Utils.Dict.setByInt(id, mockChainState)
   })
 
-  let state = IndexerState.make(
+  let state = IndexerState.make(~logger=Env.logger, 
     ~config,
     ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,
@@ -322,7 +322,7 @@ describe("IndexerState", () => {
                 ~chainConfig,
                 ~fetchState,
                 ~indexingAddresses,
-                ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+                ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource.source], ~isRealtime=false),
                 ~reorgDetection=ReorgDetection.make(
                   ~chainReorgCheckpoints=[],
                   ~maxReorgDepth=200,
@@ -334,7 +334,7 @@ describe("IndexerState", () => {
               chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
             },
           )
-          IndexerState.make(
+          IndexerState.make(~logger=Env.logger, 
             ~config,
             ~persistence=MockIndexer.defaultPersistence(),
             ~chainStates,

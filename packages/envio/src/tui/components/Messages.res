@@ -20,8 +20,8 @@ module Notifications = {
 }
 
 @react.component
-let make = (~config) => {
-  let messages = CustomHooks.useMessages(~config)
+let make = (~config, ~logger) => {
+  let messages = CustomHooks.useMessages(~config, ~logger)
   <>
     {switch messages {
     | Data([]) | Loading => React.null //Don't show anything while loading or no messages

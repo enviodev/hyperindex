@@ -28,7 +28,7 @@ let make = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~targetBufferSize=calculateTargetBufferSize(),
-  ~logger=Env.logger,
+  ~logger: Pino.t,
 ): t => {
   {
     logger,
@@ -121,7 +121,7 @@ let createBatch = (
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.
 let enterReorgThreshold = (crossChainState: t) => {
-  crossChainState.logger->Logging.childInfo("Reorg threshold reached")
+  crossChainState.logger->Logging.info("Reorg threshold reached")
 
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -342,8 +342,9 @@ let checkAndFetch = async (
           )
           cs
           ->ChainState.logger
-          ->Logging.childTrace({
+          ->Logging.trace({
             "msg": "Started querying",
+            "chainId": chainId,
             "partitions": partitions,
           })
 

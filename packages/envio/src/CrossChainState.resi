@@ -10,7 +10,7 @@ let make: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
-  ~logger: Pino.t=?,
+  ~logger: Pino.t,
 ) => t
 
 // Accessors.

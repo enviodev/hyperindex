@@ -45,7 +45,7 @@ let makeResumedChainState = (
 }
 
 let makeChainState = resumedChainState =>
-  ChainState.makeFromDbState(
+  ChainState.makeFromDbState(~logger=Env.logger, 
     baseChainConfig,
     ~resumedChainState,
     ~reorgCheckpoints=[],

@@ -85,31 +85,27 @@ let setLogLevel = (logger: t, level: Pino.logLevel) => {
   logger->setLevel(level)
 }
 
-let childTrace = (logger, params: 'a) => {
+let trace = (logger, params: 'a) => {
   logger.trace(params->createPinoMessage)
 }
-let childDebug = (logger, params: 'a) => {
+let debug = (logger, params: 'a) => {
   logger.debug(params->createPinoMessage)
 }
-let childInfo = (logger, params: 'a) => {
+let info = (logger, params: 'a) => {
   logger.info(params->createPinoMessage)
 }
-let childWarn = (logger, params: 'a) => {
+let warn = (logger, params: 'a) => {
   logger.warn(params->createPinoMessage)
 }
-let childError = (logger, params: 'a) => {
+let error = (logger, params: 'a) => {
   logger.error(params->createPinoMessage)
 }
-let childErrorWithExn = (logger, error, params: 'a) => {
-  logger->Pino.errorExn(params->createPinoMessageWithError(error))
+let errorWithExn = (logger, err, params: 'a) => {
+  logger->Pino.errorExn(params->createPinoMessageWithError(err))
 }
 
-let childFatal = (logger, params: 'a) => {
+let fatal = (logger, params: 'a) => {
   logger.fatal(params->createPinoMessage)
-}
-
-let createChildFrom = (~logger: t, ~params: 'a) => {
-  logger->child(params->createChildParams)
 }
 
 @inline
@@ -129,13 +125,30 @@ let noopLogger: Envio.logger = {
   errorWithExn: (_message: string, _exn) => (),
 }
 
-// Wrap a (child) logger as the user-facing `context.log`, routing through the
-// custom `u*` levels. The caller builds the per-item logger via the ecosystem.
-let userLogger = (logger: t): Envio.logger => {
-  info: (message: string, ~params=?) => logger->logAtLevel(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => logger->logAtLevel(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => logger->logAtLevel(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => logger->logAtLevel(#uerror, message, ~params?),
+let mergeParams: (Internal.logParams, option<'a>) => 'a = %raw(`(base, params) =>
+  params === undefined ? base : {...base, ...params}`)
+
+// Spread a shared context object into a log message. Used where a block of
+// code emits several lines about the same subject; the fields are still
+// written on every line instead of being bound to a child logger.
+let withParams: (Internal.logParams, 'a) => 'a = %raw(`(base, message) => ({...base, ...message})`)
+
+// Wrap a logger as the user-facing `context.log`, routing through the custom
+// `u*` levels. `params` is the item context (built by the ecosystem) and is
+// merged into every line, with the user's own params taking precedence.
+let userLogger = (logger: t, ~params as itemParams: Internal.logParams): Envio.logger => {
+  info: (message: string, ~params=?) =>
+    logger->logAtLevel(#uinfo, message, ~params=itemParams->mergeParams(params)),
+  debug: (message: string, ~params=?) =>
+    logger->logAtLevel(#udebug, message, ~params=itemParams->mergeParams(params)),
+  warn: (message: string, ~params=?) =>
+    logger->logAtLevel(#uwarn, message, ~params=itemParams->mergeParams(params)),
+  error: (message: string, ~params=?) =>
+    logger->logAtLevel(#uerror, message, ~params=itemParams->mergeParams(params)),
   errorWithExn: (message: string, exn) =>
-    logger->logAtLevel(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+    logger->logAtLevel(
+      #uerror,
+      message,
+      ~params=itemParams->mergeParams(Some({"err": exn->Utils.prettifyExn})),
+    ),
 }

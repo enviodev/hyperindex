@@ -138,7 +138,7 @@
 //   })
 
 //   Async.it("Creating tables and functions works", async () => {
-//     let storage = PgStorage.make(
+//     let storage = PgStorage.make(~logger=Env.logger, 
 //       ~sql=Db.sql,
 //       ~pgSchema=Env.Db.publicSchema,
 //       ~pgUser=Env.Db.user,
@@ -540,7 +540,7 @@
 //   Async.beforeEach(async () => {
 //     try {
 //       let _ = DbHelpers.resetPostgresClient()
-//       let storage = PgStorage.make(
+//       let storage = PgStorage.make(~logger=Env.logger, 
 //         ~sql=Db.sql,
 //         ~pgSchema=Env.Db.publicSchema,
 //         ~pgUser=Env.Db.user,
@@ -718,7 +718,7 @@
 //   Async.beforeEach(async () => {
 //     try {
 //       let _ = DbHelpers.resetPostgresClient()
-//       let storage = PgStorage.make(
+//       let storage = PgStorage.make(~logger=Env.logger, 
 //         ~sql=Db.sql,
 //         ~pgSchema=Env.Db.publicSchema,
 //         ~pgUser=Env.Db.user,
@@ -854,7 +854,7 @@
 // describe_skip("Prune performance test", () => {
 //   Async.it("Print benchmark of prune function", async () => {
 //     let _ = DbHelpers.resetPostgresClient()
-//     let storage = PgStorage.make(
+//     let storage = PgStorage.make(~logger=Env.logger, 
 //       ~sql=Db.sql,
 //       ~pgSchema=Env.Db.publicSchema,
 //       ~pgUser=Env.Db.user,

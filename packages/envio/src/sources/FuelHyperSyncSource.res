@@ -3,6 +3,7 @@ open Source
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
+  logger: Pino.t,
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   apiToken: option<string>,
@@ -10,7 +11,7 @@ type options = {
   onEventRegistrations: array<Internal.fuelOnEventRegistration>,
 }
 
-let make = ({chain, endpointUrl, apiToken, onEventRegistrations}: options): t => {
+let make = ({logger, chain, endpointUrl, apiToken, onEventRegistrations}: options): t => {
   let name = "HyperFuel"
 
   let apiToken = switch apiToken {
@@ -139,15 +140,14 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         let data = item.data->Option.getOr("")
         try decode(data) catch {
         | exn => {
-            let params = {
-              "chainId": chainId,
-              "blockNumber": item.blockHeight,
-              "logIndex": item.receiptIndex,
-            }
-            let logger = Logging.createChildFrom(~logger, ~params)
             exn->ErrorHandling.mkLogAndRaise(
               ~msg="Failed to decode Fuel LogData receipt, please double check your ABI.",
               ~logger,
+              ~params={
+                "chainId": chainId,
+                "blockNumber": item.blockHeight,
+                "logIndex": item.receiptIndex,
+              },
             )
           }
         }
@@ -244,7 +244,10 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       | JsExn(e) =>
         switch e->JsExn.message {
         | Some(message) if message->isUnauthorizedError =>
-          Env.logger->Logging.childError(`Your ENVIO_API_TOKEN was rejected by HyperFuel (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          logger->Logging.error({
+            "msg": `Your ENVIO_API_TOKEN was rejected by HyperFuel (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`,
+            "chainId": chain->ChainMap.Chain.toChainId,
+          })
           // Retrying an unauthorized request can never succeed, so block forever
           let _ = await Promise.make((_, _) => ())
           0

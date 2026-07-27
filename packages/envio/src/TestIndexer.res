@@ -550,17 +550,20 @@ let cloneRegistrations = (
 // module-cached anyway) and reuse them across every createTestIndexer run, so
 // the global registration cycle runs a single time and never races.
 let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
-let getRegistrations = (~config) =>
+let getRegistrations = (~config, ~logger) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
-    let promise = HandlerLoader.registerAllHandlers(~config)
+    let promise = HandlerLoader.registerAllHandlers(~config, ~logger)
     registrationsRef := Some(promise)
     promise
   }
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
+  // A per-instance logger, silent unless LOG_LEVEL is set. Never the process
+  // logger — muting one test indexer must not mute anything else.
+  let logger = Env.makeLogger(~userLogLevel=Env.userLogLevel->Option.getOr(#silent))
   let allEntities = config.allEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
@@ -606,14 +609,8 @@ let createTestIndexer = (): t<'processConfig> => {
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
     ~storage,
-    ~logger=config.logger,
+    ~logger,
   )
-
-  // Silence logs by default in test mode unless LOG_LEVEL is explicitly set.
-  switch Env.userLogLevel {
-  | None => config.logger->Logging.setLogLevel(#silent)
-  | Some(_) => ()
-  }
 
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
@@ -809,7 +806,7 @@ let createTestIndexer = (): t<'processConfig> => {
 
           // Each run gets its own copy of the shared base registration so the
           // simulate-source registration it appends stays isolated.
-          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config))
+          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config, ~logger))
           let patchedConfig: Config.t = SimulateItems.patchConfig(
             ~config,
             ~processConfig=processConfigJson,
@@ -848,6 +845,7 @@ let createTestIndexer = (): t<'processConfig> => {
             await Promise.make((resolve, reject) => {
               let indexerState = IndexerState.makeFromDbState(
                 ~config=runConfig,
+                ~logger,
                 ~persistence,
                 ~initialState,
                 ~registrationsByChainId,

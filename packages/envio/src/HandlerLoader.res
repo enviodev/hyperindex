@@ -26,7 +26,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
     } catch {
     | exn =>
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Env.logger->Logging.childErrorWithExn(
+      Env.logger->Logging.errorWithExn(
         exn,
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
       )
@@ -65,7 +65,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   ->Array.map(file => {
     Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Env.logger->Logging.childErrorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+      Env.logger->Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
       JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
     })
   })
@@ -77,7 +77,10 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // `HandlerRegister.finishRegistration`. This loads the user handler files
 // (populating the global `HandlerRegister` registry as a side effect) and
 // returns the resulting per-chain registrations.
-let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
+let registerAllHandlers = async (
+  ~config: Config.t,
+  ~logger: Pino.t,
+): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
 
   // Auto-load all .js files from src/handlers directory
@@ -90,5 +93,5 @@ let registerAllHandlers = async (~config: Config.t): HandlerRegister.registratio
   })
   ->Promise.all
 
-  HandlerRegister.finishRegistration(~config)
+  HandlerRegister.finishRegistration(~config, ~logger)
 }

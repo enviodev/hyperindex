@@ -164,7 +164,7 @@ let make = (
   // TODO: Should only pass userEnums and create internal config in runtime
   ~allEnums,
   ~storage,
-  ~logger=Env.logger,
+  ~logger: Pino.t,
 ) => {
   let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
   let allEnums =
@@ -197,14 +197,14 @@ let init = {
         })
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
-          persistence.logger->Logging.childInfo(`Initializing the indexer storage...`)
+          persistence.logger->Logging.info(`Initializing the indexer storage...`)
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
             ~envioInfo,
           )
-          persistence.logger->Logging.childInfo(`The indexer storage is ready. Starting indexing!`)
+          persistence.logger->Logging.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -214,7 +214,7 @@ let init = {
           | _ => false
           }
         ) {
-          persistence.logger->Logging.childInfo(`Found existing indexer storage. Resuming indexing state...`)
+          persistence.logger->Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState()
           // Compat-check the running config against what was stored on the
           // last successful initialize. None means the schema pre-dates
@@ -245,7 +245,7 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
           })
-          persistence.logger->Logging.childInfo({
+          persistence.logger->Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
             "progress": progress,
           })

@@ -9,6 +9,7 @@ type partitionQueryResponse = {
 }
 
 let runContractRegistersOrThrow = async (
+  ~logger: Pino.t,
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
   ~transactionStore: option<TransactionStore.t>,
@@ -62,6 +63,7 @@ let runContractRegistersOrThrow = async (
     try {
       let params: ContractRegisterContext.contractRegisterParams = {
         item,
+        logger,
         onRegister,
         config,
         isResolved: false,
@@ -81,7 +83,8 @@ let runContractRegistersOrThrow = async (
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(
               ~msg=errorMessage,
-              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+              ~logger,
+              ~params=Ecosystem.getItemLogParams(item, ~ecosystem=config.ecosystem),
             )
           }),
         )
@@ -92,7 +95,8 @@ let runContractRegistersOrThrow = async (
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg=errorMessage,
-        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+        ~logger,
+        ~params=Ecosystem.getItemLogParams(item, ~ecosystem=config.ecosystem),
       )
     }
   }
@@ -142,8 +146,9 @@ let rec onQueryResponse = async (
     if numContractRegisterEvents === 0 {
       chainState
       ->ChainState.logger
-      ->Logging.childTrace({
+      ->Logging.trace({
         "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,
@@ -152,8 +157,9 @@ let rec onQueryResponse = async (
     } else {
       chainState
       ->ChainState.logger
-      ->Logging.childTrace({
+      ->Logging.trace({
         "msg": "Finished querying",
+        "chainId": chain->ChainMap.Chain.toChainId,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,
@@ -168,9 +174,10 @@ let rec onQueryResponse = async (
     | ReorgDetected(reorgDetected) => {
         chainState
         ->ChainState.logger
-        ->Logging.childInfo(
+        ->Logging.info(
           reorgDetected->ReorgDetection.reorgDetectedToLogParams(
             ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
+            ~chainId=chain->ChainMap.Chain.toChainId,
           ),
         )
         chainState->ChainState.recordReorgDetected(
@@ -252,6 +259,7 @@ let rec onQueryResponse = async (
       | [] => proceed(~newItemsWithDcs=[])
       | _ =>
         switch await runContractRegistersOrThrow(
+          ~logger=state->IndexerState.logger,
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
           ~transactionStore,
@@ -303,7 +311,12 @@ and applyQueryResponse = (
     !(chainState->ChainState.isReady) &&
     chainState->ChainState.isFetchingAtHead
   ) {
-    chainState->ChainState.logger->Logging.childInfo("All events have been fetched")
+    chainState
+    ->ChainState.logger
+    ->Logging.info({
+      "msg": "All events have been fetched",
+      "chainId": (chainState->ChainState.chainConfig).id,
+    })
   }
 }
 

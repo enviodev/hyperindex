@@ -96,7 +96,7 @@ let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t, ~logger) => {
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
-        logger->Logging.childWarn({
+        logger->Logging.warn({
           "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
           "err": exn->Utils.prettifyExn,
         })
@@ -113,10 +113,10 @@ let clearHasuraMetadata = async (~endpoint, ~auth, ~logger) => {
     | QuerySucceeded => "Hasura metadata cleared"
     | AlreadyDone => "Hasura metadata already cleared"
     }
-    logger->Logging.childTrace(msg)
+    logger->Logging.trace(msg)
   } catch {
   | exn =>
-    logger->Logging.childError({
+    logger->Logging.error({
       "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "err": exn->Utils.prettifyExn,
     })
@@ -138,10 +138,10 @@ let reloadHasuraMetadata = async (~endpoint, ~auth, ~logger) => {
     | QuerySucceeded => "Hasura metadata reloaded"
     | AlreadyDone => "Hasura metadata reload acknowledged"
     }
-    logger->Logging.childTrace(msg)
+    logger->Logging.trace(msg)
   } catch {
   | exn =>
-    logger->Logging.childError({
+    logger->Logging.error({
       "msg": `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
       "err": exn->Utils.prettifyExn,
     })
@@ -242,13 +242,13 @@ let trackTables = async (
     | QuerySucceeded => "Hasura finished tracking tables"
     | AlreadyDone => "Hasura tables already tracked"
     }
-    logger->Logging.childTrace({
+    logger->Logging.trace({
       "msg": msg,
       "tableNames": tableConfigs->Array.map(c => c.tableName),
     })
   } catch {
   | exn =>
-    logger->Logging.childError({
+    logger->Logging.error({
       "msg": `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableNames": tableConfigs->Array.map(c => c.tableName),
       "err": exn->Utils.prettifyExn,
@@ -376,7 +376,7 @@ let trackDatabase = async (
   let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
-  logger->Logging.childInfo("Tracking tables in Hasura")
+  logger->Logging.info("Tracking tables in Hasura")
 
   let _ = await clearHasuraMetadata(~endpoint, ~auth, ~logger)
 
@@ -447,5 +447,5 @@ let trackDatabase = async (
     }
   }
 
-  logger->Logging.childInfo("Hasura configuration completed")
+  logger->Logging.info("Hasura configuration completed")
 }

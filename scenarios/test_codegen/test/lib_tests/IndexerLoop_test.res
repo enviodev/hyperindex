@@ -33,7 +33,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~chainConfig,
       ~fetchState,
       ~indexingAddresses,
-      ~sourceManager=SourceManager.make(
+      ~sourceManager=SourceManager.make(~logger=Env.logger, 
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -48,7 +48,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
   })
 
-  IndexerState.make(
+  IndexerState.make(~logger=Env.logger, 
     ~config,
     ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,

@@ -73,6 +73,7 @@ type historyPruneStat = {
 
 type t = {
   config: Config.t,
+  logger: Pino.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
@@ -144,6 +145,7 @@ type t = {
 
 let make = (
   ~config: Config.t,
+  ~logger: Pino.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isInReorgThreshold: bool,
@@ -160,18 +162,17 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      ~logger=Logging.createChildFrom(
-        ~logger=config.logger,
-        ~params={
-          "context": "Throttler for chain metadata writes",
-          "intervalMillis": intervalMillis,
-        },
-      ),
+      ~logger,
+      ~params={
+        "context": "Throttler for chain metadata writes",
+        "intervalMillis": intervalMillis,
+      }->Internal.toLogParams,
     )
   }
 
   {
     config,
+    logger,
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities),
@@ -193,7 +194,7 @@ let make = (
       ~isInReorgThreshold,
       ~isRealtime,
       ~targetBufferSize,
-      ~logger=config.logger,
+      ~logger,
     ),
     indexerStartTime: Date.make(),
     rollbackState: NoRollback,
@@ -229,6 +230,7 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
 
 let makeFromDbState = (
   ~config: Config.t,
+  ~logger: Pino.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId,
@@ -272,6 +274,7 @@ let makeFromDbState = (
         ~isInReorgThreshold,
         ~isRealtime,
         ~config,
+        ~logger,
         ~registrationsByChainId,
         ~reducedPollingInterval?,
       ),
@@ -280,6 +283,7 @@ let makeFromDbState = (
 
   let state = make(
     ~config,
+    ~logger,
     ~persistence,
     ~chainStates,
     ~isInReorgThreshold,
@@ -405,7 +409,7 @@ let recordProcessedBatch = (state: t) =>
 // the container in place (eg insert an entity table). ---
 
 let config = (state: t) => state.config
-let logger = (state: t) => state.config.logger
+let logger = (state: t) => state.logger
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities

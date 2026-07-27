@@ -215,6 +215,7 @@ let makeInternal = (
       }
     })
     EvmChain.makeSources(
+      ~logger,
       ~chain,
       ~onEventRegistrations=onEventRegistrations->(
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
@@ -225,6 +226,7 @@ let makeInternal = (
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
+        logger,
         chain,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
@@ -300,11 +302,10 @@ let makeInternal = (
 let makeFromConfig = (
   chainConfig: Config.chain,
   ~config: Config.t,
+  ~logger: Pino.t,
   ~registrationsByChainId,
   ~knownHeight,
 ) => {
-  let logger = Logging.createChildFrom(~logger=config.logger, ~params={"chainId": chainConfig.id})
-
   makeInternal(
     ~chainConfig,
     ~config,
@@ -334,12 +335,10 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config: Config.t,
+  ~logger: Pino.t,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
-  let chainId = chainConfig.id
-  let logger = Logging.createChildFrom(~logger=config.logger, ~params={"chainId": chainId})
-
   let progressBlockNumber =
     // Can be -1 when not set
     resumedChainState.progressBlockNumber >= 0
@@ -840,6 +839,7 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~indexingAddresses=cs.indexingAddresses,
+      ~logger=cs.logger,
       newItemsWithDcs,
     )
   }
