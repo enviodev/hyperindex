@@ -39,7 +39,7 @@ pub(crate) struct LogAddress<'a> {
 /// The 20 address bytes of a padded indexed topic, or `None` when the topic's
 /// upper bytes aren't zero — then it isn't an address at all.
 fn topic_address(topic: &LogArgument) -> Option<&[u8]> {
-    let bytes: &[u8; 32] = &***topic;
+    let bytes: &[u8; 32] = topic;
     bytes[..12].iter().all(|b| *b == 0).then(|| &bytes[12..])
 }
 

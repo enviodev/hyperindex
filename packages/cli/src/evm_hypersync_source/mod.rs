@@ -410,8 +410,7 @@ fn process_response(
         // only as long as routing takes.
         let address_store = decoder.lock_store();
         for log in logs.into_iter().flatten() {
-            let (log_index, src_address, block_number, transaction_index) =
-                flatten_log_for_js(&log, should_checksum).context("mapping log")?;
+            let flat = flatten_log_for_js(&log, should_checksum).context("mapping log")?;
             // The emitter's raw 20 bytes are already the store's key, so ownership
             // and the effectiveStartBlock gate cost one hash lookup each — no
             // round-trip through the address string.
@@ -419,7 +418,7 @@ fn process_response(
             let address = LogAddress {
                 key: address_key.as_slice(),
                 contract_name: set_cache.owner_of(address_key.as_slice()),
-                block_number,
+                block_number: flat.block_number,
             };
             // Only structurally malformed logs (missing topic0, bad topic bytes)
             // surface here; per-registration decode failures are dropped inside
@@ -430,14 +429,15 @@ fn process_response(
             if routed.is_empty() {
                 continue;
             }
-            referenced_blocks.insert(block_number as u64);
-            referenced_transactions.insert((block_number as u64, transaction_index as u32));
+            let (block_key, _) = flat.transaction_key;
+            referenced_blocks.insert(block_key);
+            referenced_transactions.insert(flat.transaction_key);
             for routed in routed {
                 items.push(EventItem {
-                    log_index,
-                    src_address: src_address.clone(),
-                    block_number,
-                    transaction_index,
+                    log_index: flat.log_index,
+                    src_address: flat.src_address.clone(),
+                    block_number: flat.block_number,
+                    transaction_index: flat.transaction_index,
                     on_event_registration_index: routed.index,
                     params: routed.params,
                 });
@@ -456,7 +456,7 @@ fn process_response(
         for tx in transactions.into_iter().flatten() {
             let key = match (tx.block_number, tx.transaction_index) {
                 (Some(block_number), Some(transaction_index)) => {
-                    Some((u64::from(block_number), u64::from(transaction_index) as u32))
+                    Some(transaction_key(block_number, transaction_index))
                 }
                 _ => None,
             };
@@ -551,10 +551,28 @@ fn process_response(
     Ok((items, out_blocks))
 }
 
+/// Key into the `TransactionStore`. The log side (which decides what a routed
+/// item references) and the transaction side (which fills the store) must
+/// produce identical keys or rows silently stop matching — a drift shows up as
+/// a phantom "transaction missing", not as a compile error — so both derive
+/// their keys here.
+fn transaction_key(block_number: impl Into<u64>, transaction_index: impl Into<u64>) -> (u64, u32) {
+    (block_number.into(), transaction_index.into() as u32)
+}
+
+/// A log's flattened JS fields, plus its transaction-store key.
+struct FlatLog {
+    log_index: i64,
+    src_address: String,
+    block_number: i64,
+    transaction_index: i64,
+    transaction_key: (u64, u32),
+}
+
 fn flatten_log_for_js(
     log: &hypersync_client::simple_types::Log,
     should_checksum: bool,
-) -> Result<(i64, String, i64, i64)> {
+) -> Result<FlatLog> {
     let log_index: i64 = u64::from(log.log_index.context("log.logIndex missing")?)
         .try_into()
         .context("log.logIndex overflow")?;
@@ -565,16 +583,23 @@ fn flatten_log_for_js(
     // block_number + transaction_index are force-selected in the query's log
     // field selection so they're always present, independent of the user's
     // field selection — they key the transaction store.
-    let block_number: i64 = u64::from(log.block_number.context("log.blockNumber missing")?)
+    let raw_block_number = log.block_number.context("log.blockNumber missing")?;
+    let raw_transaction_index = log
+        .transaction_index
+        .context("log.transactionIndex missing")?;
+    let block_number: i64 = u64::from(raw_block_number)
         .try_into()
         .context("log.blockNumber overflow")?;
-    let transaction_index: i64 = u64::from(
-        log.transaction_index
-            .context("log.transactionIndex missing")?,
-    )
-    .try_into()
-    .context("log.transactionIndex overflow")?;
-    Ok((log_index, src_address, block_number, transaction_index))
+    let transaction_index: i64 = u64::from(raw_transaction_index)
+        .try_into()
+        .context("log.transactionIndex overflow")?;
+    Ok(FlatLog {
+        log_index,
+        src_address,
+        block_number,
+        transaction_index,
+        transaction_key: transaction_key(raw_block_number, raw_transaction_index),
+    })
 }
 
 /// Failure modes specific to event-items conversion. `MissingFields` is the
@@ -719,6 +744,7 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{evm_store, set_of};
+    use crate::field_columns::test_support::str_column;
     use hypersync_client::simple_types;
 
     fn empty_decoder() -> SelectionDecoder {
@@ -1068,21 +1094,13 @@ mod tests {
             .await
             .expect("materialize blocks");
 
-        let column = |cols: &crate::field_columns::Columns, name: &str| match cols
-            .columns
-            .iter()
-            .find(|(n, _)| *n == name)
-        {
-            Some((_, crate::field_columns::Column::Str(values))) => values.clone(),
-            _ => panic!("expected a {name} string column"),
-        };
         let zero_hash = format!("0x{}", "00".repeat(32));
         assert_eq!(
             (
                 items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
                 blocks.iter().map(|b| b.number).collect::<Vec<_>>(),
-                column(&stored_transaction_hashes, "hash"),
-                column(&stored_block_hashes, "hash"),
+                str_column(&stored_transaction_hashes, "hash"),
+                str_column(&stored_block_hashes, "hash"),
             ),
             (
                 vec![1],
@@ -1092,6 +1110,30 @@ mod tests {
                 vec![Some(zero_hash), None],
             )
         );
+    }
+
+    #[test]
+    fn unrouted_logs_do_not_demand_their_block_and_transaction() {
+        // The mirror of `missing_transaction_when_not_returned`: the source
+        // returned neither the block nor the transaction for this log, but it
+        // routes nowhere, so nothing will ever read them and the page stands.
+        // Without this, filtering the stores would silently diverge from what
+        // the coverage check still insists the source deliver.
+        let (items, blocks) = process_response(
+            vec![],
+            vec![],
+            vec![vec![unrouted_log(1)]],
+            &zero_event_decoder(),
+            false,
+            REQUIRED_BLOCK_FIELDS,
+            &[TransactionField::Hash],
+            &TransactionStore::new_evm(false),
+            &BlockStore::new_evm(false),
+            empty_set().cache(),
+        )
+        .expect("an unrouted log's absent block and transaction are not missing fields");
+
+        assert_eq!((items.len(), blocks.len()), (0, 0));
     }
 
     #[test]

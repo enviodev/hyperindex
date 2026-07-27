@@ -840,22 +840,7 @@ mod tests {
         );
     }
 
-    fn column<'a>(
-        cols: &'a crate::field_columns::Columns,
-        name: &str,
-    ) -> Option<&'a crate::field_columns::Column> {
-        cols.columns
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, c)| c)
-    }
-
-    fn str_column(cols: &crate::field_columns::Columns, name: &str) -> Vec<Option<String>> {
-        match column(cols, name) {
-            Some(crate::field_columns::Column::Str(values)) => values.clone(),
-            _ => panic!("expected a {name} string column"),
-        }
-    }
+    use crate::field_columns::test_support::{column, str_column};
 
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
@@ -906,6 +891,55 @@ mod tests {
                 // The unreferenced transaction keeps no balances either; a
                 // selected row with none materialises as `[]`.
                 vec![Some(vec![Some("mint42".to_string())]), Some(vec![])],
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_key_set_stores_the_whole_response() {
+        // The raw `get` query builds no items, so it has no reference set to
+        // filter by and must keep everything.
+        let mut resp = simple::SolanaResponse {
+            blocks: vec![simple::Block {
+                slot: 43,
+                blockhash: "hash43".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let store = build_svm_store(
+            vec![simple::Transaction {
+                slot: 43,
+                transaction_index: 7,
+                fee_payer: Some("payer43".to_string()),
+                ..Default::default()
+            }],
+            vec![],
+            None,
+        );
+        let (_, block_store) = take_blocks(&mut resp, None).expect("take blocks");
+
+        let txs = store
+            .materialize(
+                vec![43],
+                vec![7],
+                vec![(1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32)) as f64],
+            )
+            .await
+            .expect("materialize transactions");
+        let blocks = block_store
+            .materialize(
+                vec![43],
+                vec![(1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64],
+            )
+            .await
+            .expect("materialize blocks");
+
+        assert_eq!(
+            (str_column(&txs, "feePayer"), str_column(&blocks, "hash")),
+            (
+                vec![Some("payer43".to_string())],
+                vec![Some("hash43".to_string())],
             )
         );
     }

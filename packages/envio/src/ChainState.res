@@ -710,6 +710,9 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
           }
         }
       }
+    // onBlock items build their block from the handler's own block number, not
+    // from the stores — which is what lets the sources keep only the blocks and
+    // transactions an event item references.
     | Internal.Block(_) => ()
     }
   )
