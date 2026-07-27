@@ -33,7 +33,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~chainConfig,
       ~fetchState,
       ~indexingAddresses,
-      ~sourceManager=SourceManager.make(
+      ~sourceManager=SourceManager.make(~logger=Env.logger, 
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -48,7 +48,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
   })
 
-  IndexerState.make(
+  IndexerState.make(~logger=Env.logger, 
     ~config,
     ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,
@@ -100,7 +100,7 @@ describe("Indexer loop", () => {
     let reportedErrors = ref(0)
     let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
 
-    state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom")))
+    state->IndexerState.errorExit(ErrorHandling.make(Utils.Error.make("boom"), ~logger=Env.logger))
 
     t.expect(
       {"isStopped": state->IndexerState.isStopped, "reportedErrors": reportedErrors.contents},

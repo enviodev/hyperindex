@@ -17,7 +17,7 @@ let toImportUrl = (relativePath: string) => {
   NodeJs.Url.pathToFileURL(absolutePath)->NodeJs.Url.toString
 }
 
-let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
+let registerContractHandlers = async (~contractName, ~handler: option<string>, ~logger) => {
   switch handler {
   | None => ()
   | Some(handlerPath) =>
@@ -26,7 +26,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
     } catch {
     | exn =>
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Env.logger->Logging.childErrorWithExn(
+      logger->Logging.errorWithExn(
         exn,
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
       )
@@ -37,7 +37,7 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
   }
 }
 
-let autoLoadFromSrcHandlers = async (~handlers: string) => {
+let autoLoadFromSrcHandlers = async (~handlers: string, ~logger) => {
   // Relative to cwd (project root)
   let srcPattern = `./${handlers}/**/*.{js,mjs,ts}`
   let handlerFiles = try {
@@ -65,7 +65,7 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
   ->Array.map(file => {
     Utils.importPath(toImportUrl(file))->Promise.catch(exn => {
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Env.logger->Logging.childErrorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+      logger->Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
       JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
     })
   })
@@ -77,18 +77,21 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // `HandlerRegister.finishRegistration`. This loads the user handler files
 // (populating the global `HandlerRegister` registry as a side effect) and
 // returns the resulting per-chain registrations.
-let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
+let registerAllHandlers = async (
+  ~config: Config.t,
+  ~logger: Pino.t,
+): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
 
   // Auto-load all .js files from src/handlers directory
-  await autoLoadFromSrcHandlers(~handlers=config.handlers)
+  await autoLoadFromSrcHandlers(~handlers=config.handlers, ~logger)
 
   // Load contract-specific handlers
   let _ = await config.contractHandlers
   ->Array.map(({name, handler}) => {
-    registerContractHandlers(~contractName=name, ~handler)
+    registerContractHandlers(~contractName=name, ~handler, ~logger)
   })
   ->Promise.all
 
-  HandlerRegister.finishRegistration(~config)
+  HandlerRegister.finishRegistration(~config, ~logger)
 }

@@ -855,7 +855,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let (fetchState, indexingAddresses) = makeInitial()
 
     t.expect(
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, []),
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, []),
       ~message="Should return fetchState without updating it",
     ).toBe(fetchState)
   })
@@ -864,7 +864,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let (fetchState, indexingAddresses) = makeInitial()
 
     t.expect(
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress0)->dcToItem,
       ]),
       ~message="Should return fetchState without updating it",
@@ -884,7 +884,7 @@ describe("FetchState.registerDynamicContracts", () => {
       let item = dc->dcToItem
 
       let updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [item])
+        fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [item])
 
       t.expect(
         (
@@ -923,7 +923,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ~contractName="UnknownContract",
       )
       let item1 = dc1->dcToItem
-      let afterFirst = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [item1])
+      let afterFirst = fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [item1])
 
       // Register the SAME address for a DIFFERENT contract name that also has
       // no events. This should be spliced out of the item (already tracked)
@@ -934,7 +934,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ~contractName="AnotherUnknownContract",
       )
       let item2 = dc2->dcToItem
-      let afterSecond = afterFirst->FetchState.registerDynamicContracts(~indexingAddresses, [item2])
+      let afterSecond = afterFirst->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [item2])
 
       // Register the same address a third time for the same "UnknownContract"
       // - should dedup silently (no duplicate db write).
@@ -944,7 +944,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ~contractName="UnknownContract",
       )
       let item3 = dc3->dcToItem
-      let afterThird = afterSecond->FetchState.registerDynamicContracts(~indexingAddresses, [item3])
+      let afterThird = afterSecond->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [item3])
 
       t.expect(
         (
@@ -984,6 +984,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let updatedFetchState =
         fetchState->FetchState.registerDynamicContracts(
+          ~logger=Env.logger,
           ~indexingAddresses,
           [noEventsDc->dcToItem, regularDc->dcToItem],
         )
@@ -1037,7 +1038,7 @@ describe("FetchState.registerDynamicContracts", () => {
       let item = conflictingDc->dcToItem
 
       let updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [item])
+        fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [item])
 
       t.expect(
         (
@@ -1072,7 +1073,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let item2 = dc2->dcToItem
 
     let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dc1->dcToItem, item2])
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc1->dcToItem, item2])
 
     t.expect(
       (
@@ -1115,6 +1116,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let _updatedFetchState =
         fetchState->FetchState.registerDynamicContracts(
+          ~logger=Env.logger,
           ~indexingAddresses,
           [eventsDc->dcToItem, noEventsItem],
         )
@@ -1150,6 +1152,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
       let updatedFetchState =
         fetchState->FetchState.registerDynamicContracts(
+          ~logger=Env.logger,
           ~indexingAddresses,
           [noEventsDc->dcToItem, eventsItem],
         )
@@ -1190,7 +1193,7 @@ describe("FetchState.registerDynamicContracts", () => {
     event->Internal.setItemDcs([dc1, dc2, dc3])
 
     let _updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [event])
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [event])
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
@@ -1213,7 +1216,7 @@ describe("FetchState.registerDynamicContracts", () => {
       let dc1 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress1)
 
       let fetchStateWithDc1 =
-        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dc1->dcToItem])
+        fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc1->dcToItem])
 
       t.expect(
         (
@@ -1224,14 +1227,14 @@ describe("FetchState.registerDynamicContracts", () => {
       ).toEqual((1, 2))
 
       t.expect(
-        fetchStateWithDc1->FetchState.registerDynamicContracts(~indexingAddresses, [dc1->dcToItem]),
+        fetchStateWithDc1->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc1->dcToItem]),
         ~message="Calling it with the same dc for the second time shouldn't change anything",
       ).toBe(fetchStateWithDc1)
 
       // This is an edge case we currently don't cover
       // But show a warning in the logs
       t.expect(
-        fetchStateWithDc1->FetchState.registerDynamicContracts(~indexingAddresses, [
+        fetchStateWithDc1->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
           makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)->dcToItem,
         ]),
         ~message=`BROKEN: Calling it with the same dc
@@ -1250,7 +1253,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let dc4 = makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress4)
 
     let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         dc1->dcToItem,
         dc2->dcToItem,
         dc3->dcToItem,
@@ -1317,7 +1320,7 @@ describe("FetchState.registerDynamicContracts", () => {
     // the one already populated by the registration above.
     let (fetchState, indexingAddresses) = makeInitial()
     let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         dc1FromAnotherContract->dcToItem,
         dc2->dcToItem,
         dc3->dcToItem,
@@ -1437,7 +1440,7 @@ describe("FetchState.registerDynamicContracts", () => {
       )
 
       let updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+        fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
           dc1->dcToItem,
           dc2->dcToItem,
           dc3->dcToItem,
@@ -1487,7 +1490,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let dcItem1 = dc1->dcToItem
     let dcItem2 = dc2->dcToItem
 
-    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcItem2, dcItem1])
+    let updatedFetchState = fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dcItem2, dcItem1])
 
     t.expect(
       (dcItem1->Internal.getItemDcs, dcItem2->Internal.getItemDcs),
@@ -1554,7 +1557,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let dc3 = makeDynContractRegistration(~blockNumber=300_000, ~contractAddress=mockAddress3)
 
     let updatedFetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, // Order of dcs doesn't matter
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, // Order of dcs doesn't matter
       // but they are not sorted in fetch state
       [dc1->dcToItem, dc3->dcToItem, dc2->dcToItem])
     t.expect(indexingAddresses->IndexingAddresses.size).toBe(4)
@@ -1735,6 +1738,7 @@ describe("FetchState.getNextQuery & integration", () => {
     let (fs, indexingAddresses) = makeInitial()
     let _ =
       fs->FetchState.registerDynamicContracts(
+        ~logger=Env.logger,
         ~indexingAddresses,
         [dc1->dcToItem, dc2->dcToItem, dc3->dcToItem],
       )
@@ -2057,8 +2061,8 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let fetchStateWithDcs =
       fetchState
-      ->FetchState.registerDynamicContracts(~indexingAddresses, [dc2->dcToItem, dc1->dcToItem])
-      ->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
+      ->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc2->dcToItem, dc1->dcToItem])
+      ->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc3->dcToItem])
 
     t.expect(
       fetchStateWithDcs.optimizedPartitions.entities->Dict.valuesToArray,
@@ -2414,7 +2418,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~knownHeight,
     )
     let fetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
 
@@ -2623,7 +2627,7 @@ describe("FetchState.getNextQuery & integration", () => {
       ~knownHeight,
     )
     let fetchState =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         makeDynContractRegistration(~blockNumber=2, ~contractAddress=mockAddress2)->dcToItem,
       ])
 
@@ -2950,7 +2954,7 @@ describe("FetchState unit tests for specific cases", () => {
     )
 
     let fetchStateWithDc =
-      fetchStateWithEvents->FetchState.registerDynamicContracts(~indexingAddresses, [
+      fetchStateWithEvents->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         makeDynContractRegistration(
           ~contractAddress=mockAddress1,
           ~blockNumber=registeringBlockNumber,
@@ -3069,7 +3073,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     t.expect(
       fetchState
-      ->FetchState.registerDynamicContracts(~indexingAddresses, [
+      ->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [
         makeDynContractRegistration(~contractAddress=mockAddress1, ~blockNumber=2)->dcToItem,
       ])
       ->getEarliestEvent,
@@ -3210,7 +3214,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       //Dynamic contract A registered at block 100
       let dcA = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=100)
-      let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dcA->dcToItem])
+      let fetchStateWithDcA = fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dcA->dcToItem])
 
       let queries = switch fetchStateWithDcA->FetchState.getNextQuery(
         ~chainTargetBlock=knownHeight,
@@ -3243,7 +3247,7 @@ describe("FetchState unit tests for specific cases", () => {
       //Next registration happens at block 200, between the first register and the upperbound of it's query
       let dc3 = makeDynContractRegistration(~contractAddress=mockAddress3, ~blockNumber=200)
       let fetchStateWithDcB =
-        fetchStateWithDcA->FetchState.registerDynamicContracts(~indexingAddresses, [dc3->dcToItem])
+        fetchStateWithDcA->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc3->dcToItem])
 
       let queries = switch fetchStateWithDcB->FetchState.getNextQuery(
         ~chainTargetBlock=knownHeight,
@@ -3623,7 +3627,7 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Register the contract at block 100 (before its startBlock)
     let _ =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dynamicContract->dcToItem])
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dynamicContract->dcToItem])
 
     // The contract should be registered in indexingAddresses
     t.expect(
@@ -3660,7 +3664,7 @@ describe("Dynamic contracts with start blocks", () => {
     )
 
     let _ =
-      fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [contract1->dcToItem, contract2->dcToItem])
+      fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [contract1->dcToItem, contract2->dcToItem])
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
@@ -3754,7 +3758,7 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       // affect this partition's own proposal.
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress1)
       let fetchStateWithTwoPartitions =
-        fetchState->FetchState.registerDynamicContracts(~indexingAddresses, [dc->dcToItem])
+        fetchState->FetchState.registerDynamicContracts(~logger=Env.logger, ~indexingAddresses, [dc->dcToItem])
 
       // Buffer 15 items (blocks 6..20), far more than targetBufferSize=10. Admission
       // against the shared budget happens in CrossChainState, not here — getNextQuery

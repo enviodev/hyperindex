@@ -49,7 +49,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it("recovers after a rate limit and tracks wait time", async t => {
     // 500ms resetMs * 2 rate-limited calls = ~1s minimum total wait
     let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
-    let sourceManager = SourceManager.make(
+    let sourceManager = SourceManager.make(~logger=Env.logger, 
       ~sources=[source],
       ~isRealtime=false,
     )
@@ -67,7 +67,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
 
   Async.it("succeeds immediately when no rate limit", async t => {
     let source = makeMockSource(~rateLimitedCalls=0, ~resetMs=100)
-    let sourceManager = SourceManager.make(
+    let sourceManager = SourceManager.make(~logger=Env.logger, 
       ~sources=[source],
       ~isRealtime=false,
     )
@@ -85,7 +85,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     "concurrent rate-limited calls only count the overlapping wall-clock window once",
     async t => {
       let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
-      let sourceManager = SourceManager.make(
+      let sourceManager = SourceManager.make(~logger=Env.logger, 
         ~sources=[source],
         ~isRealtime=false,
       )

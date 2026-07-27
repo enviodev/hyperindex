@@ -153,8 +153,6 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   })
 }
 
-let logger = Logging.createChildFrom(~logger=Env.logger, ~params={"context": "ClickHouse"})
-
 // On transient failure, split values in half and retry each half.
 // If only 1 row remains, retry with delay.
 // Delay scales from 100ms to 1000ms as retries decrease.
@@ -163,6 +161,7 @@ let rec insertWithRetry = async (
   ~table: string,
   ~values: array<'a>,
   ~format: string,
+  ~logger: Pino.t,
   ~retries=8,
 ) => {
   try {
@@ -171,8 +170,9 @@ let rec insertWithRetry = async (
   | exn if retries > 0 =>
     let delayMs = Math.Int.min(1000, 100 + 900 * (8 - retries) / 7)
     if Array.length(values) > 1 {
-      logger->Logging.childWarn({
+      logger->Logging.warn({
         "msg": "ClickHouse insert failed, splitting batch in half and retrying",
+        "storage": "clickhouse",
         "table": table,
         "batchSize": Array.length(values),
         "retriesLeft": retries,
@@ -182,22 +182,23 @@ let rec insertWithRetry = async (
       let mid = Array.length(values) / 2
       let first = values->Array.slice(~start=0, ~end=mid)
       let second = values->Array.slice(~start=mid)
-      await insertWithRetry(client, ~table, ~values=first, ~format, ~retries=retries - 1)
-      await insertWithRetry(client, ~table, ~values=second, ~format, ~retries=retries - 1)
+      await insertWithRetry(client, ~table, ~values=first, ~format, ~logger, ~retries=retries - 1)
+      await insertWithRetry(client, ~table, ~values=second, ~format, ~logger, ~retries=retries - 1)
     } else {
-      logger->Logging.childWarn({
+      logger->Logging.warn({
         "msg": "ClickHouse insert failed, retrying after delay",
+        "storage": "clickhouse",
         "table": table,
         "retriesLeft": retries,
         "err": exn->Utils.prettifyExn,
       })
       await Utils.delay(delayMs)
-      await insertWithRetry(client, ~table, ~values, ~format, ~retries=retries - 1)
+      await insertWithRetry(client, ~table, ~values, ~format, ~logger, ~retries=retries - 1)
     }
   }
 }
 
-let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) => {
+let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string, ~logger: Pino.t) => {
   let checkpointsCount = batch.checkpointIds->Array.length
   if checkpointsCount === 0 {
     ()
@@ -222,6 +223,7 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
         ~table=`${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
         ~values=checkpointRows,
         ~format="JSONCompactEachRow",
+        ~logger,
       )
     } catch {
     | exn =>
@@ -246,6 +248,7 @@ let setUpdatesOrThrow = async (
   ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~database: string,
+  ~logger: Pino.t,
 ) => {
   if changes->Array.length === 0 {
     ()
@@ -294,7 +297,7 @@ let setUpdatesOrThrow = async (
       // intermediate change must be persisted, not only the current value.
       let values = changes->convertOrThrow
 
-      await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
+      await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow", ~logger)
     } catch {
     | exn =>
       throw(
@@ -526,6 +529,7 @@ let initialize = async (
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
+  ~logger: Pino.t,
 ) => {
   try {
     let databaseEngine = Env.ClickHouse.databaseEngine()
@@ -543,9 +547,10 @@ let initialize = async (
     // ENVIO_CLICKHOUSE_REPLICATED is unset.
     let replicated = envReplicated || hasReplicatedDatabaseEngine
     if hasReplicatedDatabaseEngine && !envReplicated {
-      logger->Logging.childInfo(
-        "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so tables use the ReplicatedMergeTree engine.",
-      )
+      logger->Logging.info({
+        "msg": "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so tables use the ReplicatedMergeTree engine.",
+        "storage": "clickhouse",
+      })
     }
     let databaseOnClusterClause = onClusterClause(~onCluster=replicated)
     // DDL that a Replicated database engine propagates itself must not carry
@@ -627,27 +632,40 @@ let initialize = async (
       ),
     )->Utils.Promise.ignoreValue
 
-    logger->Logging.childTrace("ClickHouse storage initialization completed successfully")
+    logger->Logging.trace({
+      "msg": "ClickHouse storage initialization completed successfully",
+      "storage": "clickhouse",
+    })
   } catch {
   | exn => {
-      logger->Logging.childErrorWithExn(exn, "Failed to initialize ClickHouse storage")
+      logger->Logging.error({
+        "msg": "Failed to initialize ClickHouse storage",
+        "storage": "clickhouse",
+        "err": exn->Utils.prettifyExn,
+      })
       JsError.throwWithMessage("ClickHouse initialization failed")
     }
   }
 }
 
 // Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
-let resume = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
+let resume = async (
+  client,
+  ~database: string,
+  ~checkpointId: Internal.checkpointId,
+  ~logger: Pino.t,
+) => {
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
       await client->exec({query: `USE ${database}`})
     } catch {
     | exn =>
-      logger->Logging.childErrorWithExn(
-        exn,
-        `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
-      )
+      logger->Logging.error({
+        "msg": `ClickHouse storage database "${database}" not found. Please run 'envio start -r' to reinitialize the indexer (it'll also drop Postgres database).`,
+        "storage": "clickhouse",
+        "err": exn->Utils.prettifyExn,
+      })
       JsError.throwWithMessage("ClickHouse resume failed")
     }
 
@@ -674,7 +692,11 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
   } catch {
   | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
-      logger->Logging.childErrorWithExn(exn, "Failed to resume ClickHouse storage")
+      logger->Logging.error({
+        "msg": "Failed to resume ClickHouse storage",
+        "storage": "clickhouse",
+        "err": exn->Utils.prettifyExn,
+      })
       JsError.throwWithMessage("ClickHouse resume failed")
     }
   }

@@ -37,6 +37,48 @@ external levels: t => 'a = "levels"
 // Bind to the 'level' property setter
 @set external setLevel: (t, logLevel) => unit = "level"
 
+// Flush and release the logger's underlying stream: a file destination or a
+// worker-backed transport holds a resource, a console stream doesn't. A
+// multistream can nest either, so its members are closed individually — it
+// exposes `end` itself but throws when a member is write-only.
+@module("pino") external symbols: {"streamSym": unknown} = "symbols"
+
+let closeStream: (t, unknown) => promise<unit> = %raw(`(logger, streamSym) => {
+  const closeOne = (stream) =>
+    new Promise((resolve) => {
+      if (!stream || typeof stream.end !== "function" || typeof stream.once !== "function") {
+        resolve()
+        return
+      }
+      stream.once("close", resolve)
+      stream.once("error", resolve)
+      try {
+        stream.end()
+      } catch (_) {
+        // e.g. a sonic-boom destination ended before it was ready.
+        try {
+          stream.flushSync()
+        } catch (_) {}
+        resolve()
+      }
+    })
+
+  const stream = logger[streamSym]
+  if (stream && Array.isArray(stream.streams)) {
+    try {
+      stream.flushSync()
+    } catch (_) {}
+    return Promise.all(stream.streams.map((s) => closeOne(s.stream))).then(() => undefined)
+  }
+  return closeOne(stream)
+}`)
+
+let close = (logger: t) => logger->closeStream(symbols["streamSym"])
+
+type childParams
+let createChildParams: 'a => childParams = v => v->(Utils.magic: 'a => childParams)
+@send external child: (t, childParams) => t = "child"
+
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => message->(Utils.magic: 'a => pinoMessageBlob)
 let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
@@ -101,10 +143,6 @@ type options = {
 
 @module("pino") external make: options => t = "pino"
 @module("pino") external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
-
-type childParams
-let createChildParams: 'a => childParams = v => v->(Utils.magic: 'a => childParams)
-@send external child: (t, childParams) => t = "child"
 
 module ECS = {
   @module("@elastic/ecs-pino-format")

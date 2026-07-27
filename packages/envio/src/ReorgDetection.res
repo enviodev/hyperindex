@@ -17,12 +17,13 @@ type reorgDetected = {
   receivedBlock: blockData,
 }
 
-let reorgDetectedToLogParams = (reorgDetected: reorgDetected, ~shouldRollbackOnReorg) => {
+let reorgDetectedToLogParams = (reorgDetected: reorgDetected, ~shouldRollbackOnReorg, ~chainId) => {
   let {scannedBlock, receivedBlock} = reorgDetected
   {
     "msg": `Blockchain reorg detected. ${shouldRollbackOnReorg
         ? "Initiating indexer rollback"
         : "NOT initiating indexer rollback due to configuration"}.`,
+    "chainId": chainId,
     "blockNumber": scannedBlock.blockNumber,
     "indexedBlockHash": scannedBlock.blockHash,
     "receivedBlockHash": receivedBlock.blockHash,

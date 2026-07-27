@@ -24,6 +24,7 @@ let mockLog = (
 describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
+    logger: Env.logger,
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
       onEventRegistrations: [],
@@ -38,6 +39,7 @@ describe("RpcSource - name", () => {
 describe("RpcSource - getHeightOrThrow", () => {
   Async.it("Returns the current height of the chain", async t => {
     let source = RpcSource.make({
+    logger: Env.logger,
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
       onEventRegistrations: [],
@@ -731,6 +733,7 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
     let source = RpcSource.make({
+    logger: Env.logger,
       url: "http://localhost:1",
       chain,
       onEventRegistrations: [],
@@ -750,7 +753,7 @@ describe("RpcSource - empty selection", () => {
         ~selection={dependsOnAddresses: true, onEventRegistrations: []},
         ~itemsTarget=5000,
         ~retry=0,
-        ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource empty selection"}),
+        ~logger=Env.logger,
       )
       None
     } catch {
@@ -814,6 +817,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       })
 
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -840,7 +844,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=5000,
             ~retry=0,
-            ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource response too large"}),
+            ~logger=Env.logger,
           )
           None
         } catch {
@@ -943,6 +947,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       })
 
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -969,7 +974,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=5000,
             ~retry=0,
-            ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource re-grow"}),
+            ~logger=Env.logger,
           )
           ()
         } catch {
@@ -1093,6 +1098,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       })
 
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1118,7 +1124,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
             },
             ~itemsTarget=5000,
             ~retry=0,
-            ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource classify " ++ name}),
+            ~logger=Env.logger,
           )
           None
         } catch {
@@ -1187,6 +1193,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       )
 
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1213,7 +1220,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
               },
               ~itemsTarget=5000,
               ~retry,
-              ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource missing transaction data"}),
+              ~logger=Env.logger,
             )
             None
           } catch {
@@ -1339,6 +1346,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       )
 
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1363,7 +1371,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource fan-out"}),
+          ~logger=Env.logger,
         )
         mock.close()
         page
@@ -1467,6 +1475,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         }
       )
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: allRegistrations,
@@ -1491,7 +1500,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource selection e2e"}),
+          ~logger=Env.logger,
         )
         let filters =
           mock.requests
@@ -1557,6 +1566,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       )
 
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1579,7 +1589,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource skip-all"}),
+          ~logger=Env.logger,
         )
         mock.close()
         page
@@ -1718,6 +1728,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
 
       let addressesByContractName = Dict.fromArray([("ContractA", [addrA]), ("ContractB", [addrB])])
       let source = RpcSource.make({
+    logger: Env.logger,
         url: mock.url,
         chain,
         onEventRegistrations: [eventA, eventB],
@@ -1740,7 +1751,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
           },
           ~itemsTarget=5000,
           ~retry=0,
-          ~logger=Logging.createChildFrom(~logger=Env.logger, ~params={"test": "RpcSource pooled leak"}),
+          ~logger=Env.logger,
         )
         mock.close()
         page

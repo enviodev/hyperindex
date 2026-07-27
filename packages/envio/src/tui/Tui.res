@@ -330,7 +330,7 @@ module App = {
         </Box>
       | _ => React.null
       }}
-      <Messages config={state->IndexerState.config} />
+      <Messages config={state->IndexerState.config} logger={state->IndexerState.logger} />
     </Box>
   }
 }

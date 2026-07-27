@@ -50,7 +50,7 @@ describe("Chains State", () => {
         let handlerContext = UserContext.getHandlerContext({
           item,
           loadManager,
-          persistence: PgStorage.makePersistenceFromConfig(
+          persistence: PgStorage.makePersistenceFromConfig(~logger=Env.logger, 
             ~config=Config.load(),
           ),
           indexerState,

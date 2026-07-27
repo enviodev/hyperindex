@@ -184,15 +184,6 @@ module BlockData = {
   ): queryResponse<array<ReorgDetection.blockDataWithTimestamp>> => {
     let body = makeRequestBody(~fromBlock, ~toBlock)
 
-    let logger = Logging.createChildFrom(
-      ~logger,
-      ~params={
-        "logType": "HyperSync get block hash query",
-        "fromBlock": fromBlock,
-        "toBlock": toBlock,
-      },
-    )
-
     let timerRef = Performance.now()
     let maybeSuccessfulRes = switch await client.get(~query=body) {
     | exception exn =>
@@ -209,9 +200,12 @@ module BlockData = {
     switch maybeSuccessfulRes {
     | None => {
         let delayMilliseconds = 100
-        logger->Logging.childInfo(
-          `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
-        )
+        logger->Logging.info({
+          "msg": `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${delayMilliseconds->Int.toString}ms.`,
+          "chainId": chainId,
+          "fromBlock": fromBlock,
+          "toBlock": toBlock,
+        })
         await Time.resolvePromiseAfterDelay(~delayMilliseconds)
         await queryBlockData(
           ~client,

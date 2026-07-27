@@ -31,7 +31,8 @@ let loadById = (
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(
-        ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+        ~logger=indexerState->IndexerState.logger,
+        ~params=Ecosystem.getItemLogParams(item, ~ecosystem),
         ~msg=message,
       )
     }
@@ -256,11 +257,15 @@ let loadEffect = (
         )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
-        Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
-          "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
-          "err": exn->Utils.prettifyExn,
-          "effect": effectName,
-        })
+        indexerState
+        ->IndexerState.logger
+        ->Logging.warn(
+          Ecosystem.getItemLogParams(item, ~ecosystem)->Logging.withParams({
+            "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
+            "err": exn->Utils.prettifyExn,
+            "effect": effectName,
+          }),
+        )
         []
       }
 
@@ -272,12 +277,16 @@ let loadEffect = (
         } catch {
         | S.Raised(error) =>
           inMemTable->EffectState.recordInvalidation
-          Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
-            "msg": "Invalidated effect cache",
-            "input": dbEntity.id,
-            "effect": effectName,
-            "err": error->S.Error.message,
-          })
+          indexerState
+          ->IndexerState.logger
+          ->Logging.trace(
+            Ecosystem.getItemLogParams(item, ~ecosystem)->Logging.withParams({
+              "msg": "Invalidated effect cache",
+              "input": dbEntity.id,
+              "effect": effectName,
+              "err": error->S.Error.message,
+            }),
+          )
         }
       })
 
@@ -370,17 +379,15 @@ let loadByFilter = (
       } catch {
       | Persistence.StorageError({message, reason}) =>
         reason->ErrorHandling.mkLogAndRaise(
-          ~logger=Logging.createChildFrom(
-            ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
-            // The executed query might be merged from multiple getWhere
-            // calls, so report it as the operation users write with the
-            // values bound to its placeholders, instead of an internal
-            // filter representation they never constructed.
-            ~params={
-              "operation": key,
-              "params": filter->EntityFilter.getParams,
-            },
-          ),
+          ~logger=indexerState->IndexerState.logger,
+          // The executed query might be merged from multiple getWhere
+          // calls, so report it as the operation users write with the
+          // values bound to its placeholders, instead of an internal
+          // filter representation they never constructed.
+          ~params=Ecosystem.getItemLogParams(item, ~ecosystem)->Logging.withParams({
+            "operation": key,
+            "params": filter->EntityFilter.getParams,
+          }),
           ~msg=message,
         )
       }

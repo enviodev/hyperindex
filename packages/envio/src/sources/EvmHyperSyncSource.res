@@ -6,6 +6,7 @@ open Source
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
+  logger: Pino.t,
   chain: ChainMap.Chain.t,
   endpointUrl: string,
   // The chain's registrations, indexed by their sequential `index`.
@@ -20,6 +21,7 @@ type options = {
 
 let make = (
   {
+    logger,
     chain,
     endpointUrl,
     onEventRegistrations,
@@ -54,6 +56,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   | client => client
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(
+      ~logger,
       ~msg="Failed to instantiate the hypersync client, please double check your ABI",
     )
   }
@@ -271,7 +274,10 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       | JsExn(e) =>
         switch e->JsExn.message {
         | Some(message) if message->isUnauthorizedError =>
-          Env.logger->Logging.childError(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+          logger->Logging.error({
+            "msg": `Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`,
+            "chainId": chain->ChainMap.Chain.toChainId,
+          })
           // Retrying an unauthorized request can never succeed, so block forever
           let _ = await Promise.make((_, _) => ())
           0
@@ -284,6 +290,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>
       HyperSyncHeightStream.subscribe(
+        ~logger,
         ~hyperSyncUrl=endpointUrl,
         ~apiToken,
         ~chainId=chain->ChainMap.Chain.toChainId,

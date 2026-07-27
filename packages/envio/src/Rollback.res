@@ -74,7 +74,7 @@ let rec rollback = async (
     | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
       state
       ->IndexerState.logger
-      ->Logging.childTrace("Waiting for batch to finish processing before executing rollback")
+      ->Logging.trace("Waiting for batch to finish processing before executing rollback")
     | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(
         state,
@@ -86,7 +86,13 @@ let rec rollback = async (
     }
   } catch {
   | exn =>
-    IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
+    IndexerState.errorExit(
+        state,
+        exn->ErrorHandling.make(
+          ~logger=state->IndexerState.logger,
+          ~msg=IndexerState.unexpectedErrorMsg,
+        ),
+      )
   }
 
 and executeRollback = async (
@@ -98,18 +104,15 @@ and executeRollback = async (
 ) => {
   let startTime = Performance.now()
 
-  // Not derived from the reorg chain's logger: that would bind its chainId onto
-  // every line, colliding with the per-chain chainId on the "Rollbacked" logs.
-  // The reorg chain is identified by the reorgChain param instead.
-  let logger = Logging.createChildFrom(
-    ~logger=state->IndexerState.logger,
-    ~params={
-      "action": "Rollback",
-      "reorgChain": reorgChain,
-      "targetBlockNumber": rollbackTargetBlockNumber,
-    },
-  )
-  logger->Logging.childInfo("Started rollback on reorg")
+  let logger = state->IndexerState.logger
+  // The reorg chain is reported as `reorgChain`, not `chainId`: the per-chain
+  // `chainId` on the "Rollbacked" logs below refers to a different chain.
+  let rollbackParams = {
+    "action": "Rollback",
+    "reorgChain": reorgChain,
+    "targetBlockNumber": rollbackTargetBlockNumber,
+  }->Internal.toLogParams
+  logger->Logging.info(rollbackParams->Logging.withParams({"msg": "Started rollback on reorg"}))
   state
   ->IndexerState.getChainState(~chain=reorgChain)
   ->ChainState.setRollbackTargetBlock(~blockNumber=rollbackTargetBlockNumber)
@@ -201,19 +204,23 @@ and executeRollback = async (
   )
 
   rolledBackChains->Array.forEach(chain => {
-    logger->Logging.childInfo({
-      "msg": "Rollbacked",
-      "chainId": chain["chainId"],
-      "fromBlock": chain["fromBlock"],
-      "toBlock": chain["toBlock"],
-      "rollbackedEvents": chain["rollbackedEvents"],
-    })
+    logger->Logging.info(
+      rollbackParams->Logging.withParams({
+        "msg": "Rollbacked",
+        "chainId": chain["chainId"],
+        "fromBlock": chain["fromBlock"],
+        "toBlock": chain["toBlock"],
+        "rollbackedEvents": chain["rollbackedEvents"],
+      }),
+    )
   })
-  logger->Logging.childTrace({
-    "msg": "Rollback entity changes",
-    "deleted": diff["deletedEntities"],
-    "upserted": diff["setEntities"],
-  })
+  logger->Logging.trace(
+    rollbackParams->Logging.withParams({
+      "msg": "Rollback entity changes",
+      "deleted": diff["deletedEntities"],
+      "upserted": diff["setEntities"],
+    }),
+  )
   state->IndexerState.recordRollbackSuccess(
     ~timeSeconds=Performance.secondsSince(startTime),
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,

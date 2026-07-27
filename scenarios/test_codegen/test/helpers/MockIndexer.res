@@ -17,9 +17,9 @@ let defaultPersistence = () =>
   | Some(persistence) => persistence
   | None =>
     let config = Config.load()
-    let persistence = PgStorage.makePersistenceFromConfig(
+    let persistence = PgStorage.makePersistenceFromConfig(~logger=Env.logger, 
       ~config,
-      ~storage=PgStorage.makeStorageFromEnv(
+      ~storage=PgStorage.makeStorageFromEnv(~logger=Env.logger, 
         ~config,
         ~sql=PgStorage.makeClient(),
         ~pgSchema=Env.Db.publicSchema,
@@ -49,7 +49,7 @@ module InMemoryStore = {
     | Some(config) => config
     | None => Config.load()
     }
-    let indexerState = IndexerState.make(
+    let indexerState = IndexerState.make(~logger=Env.logger, 
       ~config,
       ~persistence=defaultPersistence(),
       // A trivial chain state map for store-only tests that never run the loop.
@@ -229,7 +229,7 @@ module Storage = {
     | None => Config.load()
     }
     {
-      ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
+      ...PgStorage.makePersistenceFromConfig(~logger=Env.logger, ~config, ~storage=storageMock.storage),
       storageStatus: Ready({
         cleanRun: false,
         cache: Dict.make(),
@@ -375,6 +375,19 @@ let installMockSourceRegistrations = (
     }
   })
 
+// Shared by every mock indexer: nothing disposes one, so a logger per instance
+// would leak a handle per instance. Silent unless LOG_LEVEL is set, in which
+// case the process logger already has the requested level.
+let logger = switch Env.userLogLevel {
+| Some(_) => Env.logger
+| None =>
+  let logger = Env.makeLogger(~userLogLevel=#silent)
+  // The file-backed strategies build the logger at their own file level and
+  // ignore `userLogLevel`, so silence has to be set on the instance.
+  logger->Logging.setLogLevel(#silent)
+  logger
+}
+
 module Indexer = {
   type metric = {
     value: string,
@@ -429,11 +442,6 @@ module Indexer = {
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
-    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-    switch Env.userLogLevel {
-    | None => Env.logger->Logging.setLogLevel(#silent)
-    | Some(_) => ()
-    }
 
     // The full (un-narrowed) config. Handlers register against this so every
     // chain resolves once; `finishRegistration` then narrows to the per-test
@@ -479,21 +487,21 @@ module Indexer = {
     // Register handlers once against the full chain set (idempotent +
     // import-cached, so re-`make` reuses), then narrow to this run's chains.
     switch customConfig {
-    | None => let _ = await HandlerLoader.registerAllHandlers(~config=baseConfig)
+    | None => let _ = await HandlerLoader.registerAllHandlers(~config=baseConfig, ~logger)
     | Some(_) =>
       // A supplied config has no handler files on disk; register inline
       // handlers (if any) through the same public registry lifecycle.
       HandlerRegister.startRegistration(~config=baseConfig)
     }
-    let registrationsByChainId = HandlerRegister.finishRegistration(~config)
+    let registrationsByChainId = HandlerRegister.finishRegistration(~config, ~logger)
     installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
     let storage = mapStorage(
-      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura),
+      PgStorage.makeStorageFromEnv(~logger, ~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura),
     )
-    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    let persistence = PgStorage.makePersistenceFromConfig(~logger, ~config, ~storage)
 
     let onError = switch onError {
     | Some(onError) => onError
@@ -519,7 +527,7 @@ module Indexer = {
       ~reset,
     )
 
-    let state = IndexerState.makeFromDbState(
+    let state = IndexerState.makeFromDbState(~logger, 
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,
