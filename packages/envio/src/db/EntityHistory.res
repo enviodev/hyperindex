@@ -148,7 +148,7 @@ let backfillHistory = (
   sql
   ->Postgres.preparedUnsafe(
     makeBackfillHistoryQuery(~entityName=table.tableName, ~entityIndex, ~pgSchema, ~idPgType),
-    [table->Table.encodeIdsToJson(ids)]->Obj.magic,
+    [table->Table.encodeIdsToJson(ids)]->(Utils.magic: array<JSON.t> => unknown),
   )
   ->Utils.Promise.ignoreValue
 }

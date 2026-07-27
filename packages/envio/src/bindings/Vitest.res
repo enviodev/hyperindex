@@ -167,12 +167,8 @@ let messageOfThrown: (unit => 'a) => option<string> = %raw(`function (fn) {
 // the whole message to match, so a test can pin the complete error text.
 // A plain ReScript function (not a custom `expect.extend` matcher), so it needs
 // no per-package vitest setup.
+// Compared as options rather than through a "didn't throw" placeholder string,
+// so a function that throws nothing can never match — not even when `expected`
+// happens to equal the placeholder.
 let toThrowErrorEqual = (t: testContext, fn: unit => 'a, ~message=?, expected: string) =>
-  switch fn->messageOfThrown {
-  | Some(thrown) => t.expect(thrown, ~message?).toBe(expected)
-  | None =>
-    t.expect(
-      "<the function did not throw>",
-      ~message=message->Option.getOr("Expected the function to throw an error, but it did not."),
-    ).toBe(expected)
-  }
+  t.expect(fn->messageOfThrown, ~message?).toEqual(Some(expected))

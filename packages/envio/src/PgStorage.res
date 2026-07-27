@@ -1261,6 +1261,13 @@ let rollbackRowStateSchema: Table.table => S.t<(
   ))
 )
 
+// Same reason as above for the id-only rows: both rollback queries must yield
+// ids in the entity's own representation, or the two halves of the diff would
+// disagree (Postgres hands back a NUMERIC id as a string, not a bigint).
+let rollbackRemovedIdsSchema: Table.table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
+  S.array(S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema)))
+)
+
 let make = (
   ~sql: Postgres.sql,
   ~pgHost,
@@ -1783,7 +1790,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": EntityId.t}>>),
+      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
       // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
@@ -1793,7 +1800,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
 
-    let removedIds = removedIdRows->Array.map(row => row["id"])
+    let removedIds = removedIdRows->S.parseOrThrow(rollbackRemovedIdsSchema(entityConfig.table))
     let restoredEntitiesResult = []
     rollbackRows->Array.forEach(row => {
       let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema(entityConfig.table))
