@@ -23,10 +23,9 @@ module Entity = {
     switch (entity->(Utils.magic: Internal.entity => {"id": option<string>}))["id"] {
     | Some(id) => id
     | None =>
-      UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
-        ~logger=Env.logger,
-        ~msg="Property 'id' does not exist on expected entity object",
-      )
+      // Raised, not logged: this runs inside handler processing, whose error
+      // boundary logs through the indexer's own logger with item context.
+      throw(UnexpectedIdNotDefinedOnEntity)
     }
 
   let getOrCreateEntityFilters = (self: t, ~entityId) =>

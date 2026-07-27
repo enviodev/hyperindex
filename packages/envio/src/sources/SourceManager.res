@@ -196,13 +196,12 @@ let stopRateLimitTimeout = sourceManager => {
 // pathologically large server values. Escalates the log from trace to
 // warn after the second consecutive retry so the indexer doesn't go
 // silent under chronic throttling.
-let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger, ~chainId) => {
+let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
   let waitMs = Pervasives.min(resetMs, 300_000)
   let log = retry >= 2 ? Logging.warn : Logging.trace
   logger->log({
     "msg": `HyperSync source is rate-limited — not critical, the indexer will retry in ${(waitMs / 1000)
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
-    "chainId": chainId,
     "retry": retry,
     "waitMs": waitMs,
   })
@@ -796,12 +795,7 @@ let executeQuery = async (
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs}) =>
-      await sourceManager->waitForRateLimitReset(
-        ~resetMs,
-        ~retry,
-        ~logger,
-        ~chainId=source.chain->ChainMap.Chain.toChainId,
-      )
+      await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
     | Source.GetItemsError(error) =>
@@ -948,12 +942,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       }
     } catch {
     | Source.RateLimited({resetMs}) =>
-      await sourceManager->waitForRateLimitReset(
-        ~resetMs,
-        ~retry,
-        ~logger,
-        ~chainId=source.chain->ChainMap.Chain.toChainId,
-      )
+      await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
     | exn =>

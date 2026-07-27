@@ -380,7 +380,12 @@ let installMockSourceRegistrations = (
 // case the process logger already has the requested level.
 let logger = switch Env.userLogLevel {
 | Some(_) => Env.logger
-| None => Env.makeLogger(~userLogLevel=#silent)
+| None =>
+  let logger = Env.makeLogger(~userLogLevel=#silent)
+  // The file-backed strategies build the logger at their own file level and
+  // ignore `userLogLevel`, so silence has to be set on the instance.
+  logger->Logging.setLogLevel(#silent)
+  logger
 }
 
 module Indexer = {
@@ -496,7 +501,7 @@ module Indexer = {
     let storage = mapStorage(
       PgStorage.makeStorageFromEnv(~logger, ~config, ~sql, ~pgSchema, ~isHasuraEnabled=enableHasura),
     )
-    let persistence = PgStorage.makePersistenceFromConfig(~logger=Env.logger, ~config, ~storage)
+    let persistence = PgStorage.makePersistenceFromConfig(~logger, ~config, ~storage)
 
     let onError = switch onError {
     | Some(onError) => onError

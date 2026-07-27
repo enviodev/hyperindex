@@ -551,7 +551,12 @@ let cloneRegistrations = (
 // requested level.
 let logger = switch Env.userLogLevel {
 | Some(_) => Env.logger
-| None => Env.makeLogger(~userLogLevel=#silent)
+| None =>
+  let logger = Env.makeLogger(~userLogLevel=#silent)
+  // The file-backed strategies build the logger at their own file level and
+  // ignore `userLogLevel`, so silence has to be set on the instance.
+  logger->Logging.setLogLevel(#silent)
+  logger
 }
 
 // User handlers register into the process-global HandlerRegister as an import

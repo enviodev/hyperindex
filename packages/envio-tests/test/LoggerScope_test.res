@@ -23,6 +23,10 @@ let makeCaptureLogger = () => {
 
 let parse = lines => lines->Array.map(line => line->JSON.parseOrThrow)
 
+let makeTmpPath: unit => string = %raw(`() =>
+  require("path").join(require("os").tmpdir(), "envio-logger-close-" + process.hrtime.bigint() + ".log")`)
+let readFile: string => string = %raw(`(path) => require("fs").readFileSync(path, "utf8")`)
+
 describe("Per-indexer logger scope", () => {
   it("routes each indexer's logs to its own logger only", t => {
     let (loggerA, linesA) = makeCaptureLogger()
@@ -54,14 +58,14 @@ describe("Per-indexer logger scope", () => {
 
   it("writes context params on every line instead of binding a child", t => {
     let (logger, lines) = makeCaptureLogger()
-    let params = {"chainId": 1, "logType": "Block Range Query"}->Internal.toLogParams
+    let params = {"chainId": 1, "partitionId": "0"}->Internal.toLogParams
 
     logger->Logging.trace(params->Logging.withParams({"msg": "first", "fromBlock": 10}))
     logger->Logging.warn(params->Logging.withParams({"msg": "second", "fromBlock": 20}))
 
     t.expect(lines->parse).toEqual([
-      %raw(`{level: 10, chainId: 1, logType: "Block Range Query", msg: "first", fromBlock: 10}`),
-      %raw(`{level: 40, chainId: 1, logType: "Block Range Query", msg: "second", fromBlock: 20}`),
+      %raw(`{level: 10, chainId: 1, partitionId: "0", msg: "first", fromBlock: 10}`),
+      %raw(`{level: 40, chainId: 1, partitionId: "0", msg: "second", fromBlock: 20}`),
     ])
   })
 
@@ -96,10 +100,6 @@ describe("Per-indexer logger scope", () => {
   })
 
   Async.it("flushes and releases a file-backed logger on close", async t => {
-    let makeTmpPath: unit => string = %raw(`() =>
-      require("path").join(require("os").tmpdir(), "envio-logger-close-" + process.hrtime.bigint() + ".log")`)
-    let readFile: string => string = %raw(`(path) => require("fs").readFileSync(path, "utf8")`)
-
     let logFilePath = makeTmpPath()
     let logger = Logging.makeLogger(
       ~logStrategy=Logging.FileOnly,
@@ -113,6 +113,24 @@ describe("Per-indexer logger scope", () => {
     await logger->Logging.close
 
     t.expect(readFile(logFilePath)->String.includes(`"written before close"`)).toBe(true)
+  })
+
+  // `both-prettyconsole` nests a file destination inside a multistream, which
+  // has to be closed through its members — the multistream itself throws on
+  // `end` because its console member is write-only.
+  Async.it("flushes the file nested in a console+file multistream", async t => {
+    let logFilePath = makeTmpPath()
+    let logger = Logging.makeLogger(
+      ~logStrategy=Logging.Both,
+      ~logFilePath,
+      ~defaultFileLogLevel=#trace,
+      ~userLogLevel=#trace,
+    )
+    logger->Logging.error({"msg": "nested destination line"})
+
+    await logger->Logging.close
+
+    t.expect(readFile(logFilePath)->String.includes(`"nested destination line"`)).toBe(true)
   })
 
   // A console multistream has no closable resource and throws on `end`, so
