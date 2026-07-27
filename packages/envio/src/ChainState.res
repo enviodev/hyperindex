@@ -822,7 +822,7 @@ let handleQueryResult = (
   ~query: FetchState.query,
   ~newItems,
   ~newItemsWithDcs,
-  ~latestFetchedBlock,
+  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
   ~blockStore as blockPage: option<BlockStore.t>,
@@ -843,6 +843,11 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~addressStore=cs.addressStore,
+      // This response is applied below, after the addresses land. It was routed
+      // before they existed, so whatever it claims has to be inside the
+      // catch-up range — and an unbounded query can reach past the height that
+      // was known when it went out.
+      ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock.blockNumber),
       newItemsWithDcs,
     )
   }

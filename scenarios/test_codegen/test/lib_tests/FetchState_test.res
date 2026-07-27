@@ -5234,6 +5234,40 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual((None, [(19, Some(100), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
   })
 
+  it("extends the backfill to the arriving response's own frontier", t => {
+    let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
+    // The unbounded query came back at 120 — past the height known when it went
+    // out — and its registrations land before it is applied, so a catch-up
+    // stopping at the old height of 100 would leave [101, 120] fetched for
+    // every address but this one.
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(
+        ~addressStore,
+        ~claimCeiling=120,
+        [makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem],
+      )
+    t.expect(
+      afterReg->frontierShape,
+      ~message="catch-up reaches the response's frontier, not the stale known height",
+    ).toEqual([(19, Some(120), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))])
+  })
+
+  it("backfills an address registered above the stale known height", t => {
+    let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
+    // Registered at 110: above both the frontier and the height known when the
+    // query went out, yet inside the range that query came back with.
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(
+        ~addressStore,
+        ~claimCeiling=120,
+        [makeDynContractRegistration(~blockNumber=110, ~contractAddress=mockAddress3)->dcToItem],
+      )
+    t.expect(
+      afterReg->frontierShape,
+      ~message="catch-up covers [109, 120] instead of being skipped entirely",
+    ).toEqual([(50, None, Some(["Gravatar"])), (109, Some(120), Some(["Gravatar"]))])
+  })
+
   it("backfills an address registered above the frontier but inside a query in flight", t => {
     let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
     // Registered at 60: above the standing frontier of 50, so nothing is behind

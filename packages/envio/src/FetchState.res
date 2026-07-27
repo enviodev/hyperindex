@@ -1338,6 +1338,13 @@ OptimizedPartitions.t => {
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
+  // How far an in-flight open-ended query may end up claiming. These
+  // registrations usually come out of a response that is applied right after
+  // this call, and an unbounded query can reach past the height known when it
+  // was dispatched — so the caller folds that response's own frontier and
+  // height in here. Defaults to what the fetch state knows, which is all
+  // there is to go on when no response is being applied.
+  ~claimCeiling=fetchState.knownHeight,
   // These are raw items which might have dynamic contracts received from contractRegister call.
   // Might contain duplicates which we should filter out
   items: array<Internal.item>,
@@ -1593,7 +1600,7 @@ let registerDynamicContracts = (
         newPartitions->Array.length,
         ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
         ~progressBlockNumber=0,
-        ~knownHeight=fetchState.knownHeight,
+        ~knownHeight=Pervasives.max(claimCeiling, fetchState.knownHeight),
       )
 
       fetchState->updateInternal(~optimizedPartitions)
