@@ -107,6 +107,10 @@ type t = {
   crossChainState: CrossChainState.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
+  // Monotonic peer of indexerStartTime. Elapsed run time is derived from this so
+  // an NTP correction can't move it out of step with the Performance-based
+  // counters that get divided by it.
+  indexerStartTimeRef: Performance.timeRef,
   // When an entity's history was last pruned. No key = never pruned yet,
   // which counts as overdue.
   lastPrunedAtMillis: dict<float>,
@@ -133,6 +137,12 @@ type t = {
   // --- Metric counters, rendered by Metrics at scrape time. ---
   mutable preloadSeconds: float,
   mutable processingSeconds: float,
+  mutable processingStalledOnFetchSeconds: float,
+  // Set while the processing loop is idle after starving on an empty buffer;
+  // None while processing or when the loop stopped for a reorg/shutdown. The
+  // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
+  mutable processingStalledOnFetchSince: option<Performance.timeRef>,
+  mutable processingStalledOnStorageWriteSeconds: float,
   handlerStats: dict<handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
@@ -194,6 +204,7 @@ let make = (
       ~targetBufferSize,
     ),
     indexerStartTime: Date.make(),
+    indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
     loadManager: LoadManager.make(),
@@ -206,6 +217,9 @@ let make = (
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
     preloadSeconds: 0.,
     processingSeconds: 0.,
+    processingStalledOnFetchSeconds: 0.,
+    processingStalledOnFetchSince: None,
+    processingStalledOnStorageWriteSeconds: 0.,
     handlerStats: Dict.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
@@ -315,8 +329,22 @@ let isResolvingReorg = (state: t) =>
 // reports the first error so redundant handlers (eg an error caught in two
 // nested scopes) don't double-report.
 @inline
+let // Close an open fetch-stall interval, accruing it into the counter. Called
+// whenever the reason for the idle changes, so the interval never spans into
+// time another counter owns — or, at shutdown, past the point where the loops
+// stop and nothing would ever close it.
+settleStalledOnFetch = (state: t) =>
+  switch state.processingStalledOnFetchSince {
+  | Some(since) =>
+    state.processingStalledOnFetchSeconds =
+      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
+    state.processingStalledOnFetchSince = None
+  | None => ()
+  }
+
 let errorExit = (state: t, errHandler) =>
   if !state.isStopped {
+    state->settleStalledOnFetch
     state.isStopped = true
     state.onError(errHandler)
   }
@@ -325,7 +353,10 @@ let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
 
 // Halt the loops without reporting an error, eg to hand the shared db over to a
 // resumed indexer in tests.
-let stop = (state: t) => state.isStopped = true
+let stop = (state: t) => {
+  state->settleStalledOnFetch
+  state.isStopped = true
+}
 
 let getChainState = (state: t, ~chain: chain): ChainState.t =>
   switch state.crossChainState
@@ -360,6 +391,9 @@ let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.e
 // caller has already mutated the chain states (restored counters, reset pending
 // queries). isResolvingReorg derives from rollbackState.
 let beginReorg = (state: t, ~chain, ~blockNumber) => {
+  // Settle here, or the rollback that follows would be folded into the stall on
+  // the next beginProcessing — time envio_rollback_seconds already counts.
+  state->settleStalledOnFetch
   state.epoch = state.epoch + 1
   state.rollbackState = ReorgDetected({chain, blockNumber})
 }
@@ -391,8 +425,23 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) =>
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
 let isProcessing = (state: t) => state.isProcessing
-let beginProcessing = (state: t) => state.isProcessing = true
+let beginProcessing = (state: t) => {
+  state->settleStalledOnFetch
+  state.isProcessing = true
+}
 let endProcessing = (state: t) => state.isProcessing = false
+
+// Start attributing idle time to fetch starvation. Called when the processing
+// loop exits with no work left; skipped when it exits for a reorg or shutdown,
+// so only genuine buffer starvation is counted.
+let markProcessingStalledOnFetch = (state: t) =>
+  if state.processingStalledOnFetchSince->Option.isNone {
+    state.processingStalledOnFetchSince = Some(Performance.now())
+  }
+
+let recordStalledOnStorageWrite = (state: t, ~seconds) =>
+  state.processingStalledOnStorageWriteSeconds =
+    state.processingStalledOnStorageWriteSeconds +. seconds
 
 let recordProcessedBatch = (state: t) =>
   state.processedBatchesCount = state.processedBatchesCount + 1
@@ -469,12 +518,20 @@ let toMetrics = (state: t): Metrics.t => {
   )
   {
     startTime: state.indexerStartTime,
+    metricTime: Date.make(),
+    elapsedSeconds: state.indexerStartTimeRef->Performance.secondsSince,
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
     rollbackEnabled: state.config.shouldRollbackOnReorg,
     maxBatchSize: state.config.batchSize,
     preloadSeconds: state.preloadSeconds,
     processingSeconds: state.processingSeconds,
+    processingStalledOnFetchSeconds: state.processingStalledOnFetchSeconds +.
+    switch state.processingStalledOnFetchSince {
+    | Some(since) => since->Performance.secondsSince
+    | None => 0.
+    },
+    processingStalledOnStorageWriteSeconds: state.processingStalledOnStorageWriteSeconds,
     rollbackSeconds: state.rollbackSeconds,
     rollbackCount: state.rollbackCount,
     rollbackEventsCount: state.rollbackEventsCount,

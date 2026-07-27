@@ -91,7 +91,6 @@ let getClickHouseFieldType = (
         ->Array.joinUnsafe(", ")
       `${enumType}(${enumValues})`
     }
-  | Entity(_) => "String"
   }
 
   let baseType = if isArray {
@@ -261,11 +260,14 @@ let setUpdatesOrThrow = async (
         convertOrThrow: S.compile(
           S.array(
             S.union([
-              EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
+              EntityHistory.makeSetUpdateSchema(
+                ~idSchema=entityConfig.table->Table.getIdSchema,
+                makeClickHouseEntitySchema(entityConfig.table),
+              ),
               S.object(s => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Change.Delete({
-                  entityId: s.field(Table.idFieldName, S.string),
+                  entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
                   checkpointId: s.field(
                     EntityHistory.checkpointIdFieldName,
                     EntityHistory.unsafeCheckpointIdSchema,

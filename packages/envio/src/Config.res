@@ -78,6 +78,9 @@ type t = {
   ecosystem: Ecosystem.t,
   enableRawEvents: bool,
   maxAddrInPartition: int,
+  // Per-contract registered-address count past which a dynamic contract switches
+  // to client-side filtering. Overridable in tests.
+  clientFilterAddressThreshold: int,
   batchSize: int,
   // Slack (in blocks) below the lagged head within which a chain still counts as
   // ready to enter the reorg threshold, absorbing head advances between catch-up
@@ -386,10 +389,6 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
       // Fuel doesn't have reorgs, SVM reorg handling is not supported
       let enumConfig = enumConfigsByName->Dict.get(enumName)->Option.getOrThrow
       (Table.Enum({config: enumConfig}), enumConfig.schema->S.toUnknown)
-    }
-  | "entity" => {
-      let entityName = prop["entity"]->Option.getOrThrow
-      (Table.Entity({name: entityName}), S.string->S.toUnknown)
     }
   | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
@@ -1033,6 +1032,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
+    clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
