@@ -327,6 +327,10 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
 
+let defineAddresses: ({..}, array<Address.t>) => unit = %raw(`(payload, addresses) => {
+  Object.defineProperty(payload, "addresses", {value: addresses});
+}`)
+
 type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef}
 
@@ -768,7 +772,8 @@ module Indexer = {
 
 module Source = {
   module CallPayload = {
-    @get external addresses: {..} => dict<array<Address.t>> = "addresses"
+    // The partition's addresses as the query carried them, in set order.
+    @get external addresses: {..} => array<Address.t> = "addresses"
   }
 
   type method = [
@@ -970,8 +975,7 @@ module Source = {
               }
               // Non-enumerable so it stays out of `toEqual` comparisons of the
               // payload while remaining inspectable from a test.
-              let _addresses = addressSet->AddressSet.addresses
-              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addresses })`)
+              payload->defineAddresses(addressSet->AddressSet.addresses)
               {
                 payload,
                 resolve: (

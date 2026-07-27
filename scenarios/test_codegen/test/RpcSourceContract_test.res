@@ -75,6 +75,9 @@ let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
     ~addresses=[
       {address, contractName: registration.eventConfig.contractName, registrationBlock: -1},
     ],
+    // The source lowercases addresses, so the set must render them that way for
+    // the pinned eth_getLogs request bodies to match.
+    ~shouldChecksum=false,
   )
 
 let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
@@ -691,6 +694,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               {address: addressA, contractName: "ContractA", registrationBlock: -1},
               {address: addressB, contractName: "ContractB", registrationBlock: -1},
             ],
+            ~shouldChecksum=false,
           )
           let options: RpcSource.options = {
             url: mock.url,

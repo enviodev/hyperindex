@@ -10,7 +10,7 @@ let defaultQuery: FetchState.query = {
   itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addresses: TestAddresses.unsafeSet([]),
+  addresses: TestAddresses.setOf([]),
 }
 
 type executeQueryMock = {
@@ -176,7 +176,7 @@ describe("SourceManager.getSourceRole", () => {
 
 describe("SourceManager source priority with Live sources", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addresses = TestAddresses.unsafeSet([])
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
@@ -417,7 +417,7 @@ describe("SourceManager fetchNext", () => {
         blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
-      addresses: TestAddresses.unsafeSet(addresses),
+      addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -1431,7 +1431,7 @@ describe("SourceManager wait for new blocks", () => {
 })
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addresses = TestAddresses.unsafeSet([])
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",

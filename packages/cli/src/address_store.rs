@@ -323,6 +323,25 @@ impl AddressStore {
         AddressSet::new(self.inner.clone(), ids)
     }
 
+    /// A set over exactly these addresses, in set order. Addresses the store
+    /// doesn't hold are skipped. Every set of a chain must come from that
+    /// chain's one store — ids are store-scoped, so sets from different stores
+    /// can't be merged.
+    #[napi]
+    pub fn make_set_of(&self, addresses: Vec<String>) -> AddressSet {
+        let store = self.read();
+        let ids: Vec<u64> = addresses
+            .iter()
+            .filter_map(|address| {
+                let key = address_key(store.ecosystem, address)?;
+                store.live_id(&key)
+            })
+            .collect();
+        let ids = store.sorted_ids(ids);
+        drop(store);
+        AddressSet::new(self.inner.clone(), ids)
+    }
+
     /// A set holding nothing — what an address-free (wildcard) partition
     /// carries, so every partition is queried through the same handle.
     #[napi]

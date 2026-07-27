@@ -461,7 +461,6 @@ let buildSvmOnEventRegistration = (
   isWildcard,
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  addressFilterParamGroups: [],
   startBlock,
 }
 
@@ -539,6 +538,5 @@ let buildFuelOnEventRegistration = (
   isWildcard,
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  addressFilterParamGroups: [],
   startBlock,
 }

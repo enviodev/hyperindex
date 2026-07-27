@@ -124,10 +124,10 @@ describe("the registration carries its address-param groups", () => {
       "orOfGroupsDependsOnAddresses": orOfGroups.dependsOnAddresses,
       "staticFilterDependsOnAddresses": staticFilter.dependsOnAddresses,
     }).toEqual({
-      "orOfGroups": [["to"], ["from"]],
-      "andWithinGroup": [["from", "to"]],
-      "staticFilter": [],
-      "blockFilter": [],
+      "orOfGroups": Some([["to"], ["from"]]),
+      "andWithinGroup": Some([["from", "to"]]),
+      "staticFilter": Some([]),
+      "blockFilter": Some([]),
       "orOfGroupsDependsOnAddresses": true,
       "staticFilterDependsOnAddresses": false,
     })

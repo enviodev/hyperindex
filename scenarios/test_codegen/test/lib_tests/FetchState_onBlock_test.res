@@ -12,7 +12,7 @@ let defaultQuery: FetchState.query = {
   itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addresses: TestAddresses.unsafeSet([]),
+  addresses: TestAddresses.setOf([]),
 }
 
 let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
@@ -98,7 +98,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addresses: TestAddresses.unsafeSet([mockAddress0]),
+      addresses: TestAddresses.setOf([mockAddress0]),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -146,7 +146,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addresses: TestAddresses.unsafeSet([mockAddress0]),
+      addresses: TestAddresses.setOf([mockAddress0]),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -195,7 +195,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addresses: TestAddresses.unsafeSet([mockAddress0]),
+      addresses: TestAddresses.setOf([mockAddress0]),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -248,7 +248,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addresses: TestAddresses.unsafeSet([mockAddress0]),
+      addresses: TestAddresses.setOf([mockAddress0]),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
@@ -304,7 +304,7 @@ describe("FetchState onBlock functionality", () => {
       toBlock: None,
       isChunk: false,
       selection: fetchState.normalSelection,
-      addresses: TestAddresses.unsafeSet([mockAddress0]),
+      addresses: TestAddresses.setOf([mockAddress0]),
       fromBlock: 0,
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])

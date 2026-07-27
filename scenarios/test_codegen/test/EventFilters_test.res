@@ -543,6 +543,6 @@ describe("Test eventFilters", () => {
     t.expect((
       wildcardWithAddress.addressFilterParamGroups,
       transfer.addressFilterParamGroups,
-    )).toEqual(([["to"]], []))
+    )).toEqual((Some([["to"], ["from"]]), Some([])))
   })
 })

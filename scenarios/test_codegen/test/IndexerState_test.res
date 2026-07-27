@@ -10,7 +10,7 @@ let defaultQuery: FetchState.query = {
   itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addresses: TestAddresses.unsafeSet([]),
+  addresses: TestAddresses.setOf([]),
 }
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
@@ -98,7 +98,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             dependsOnAddresses: false,
             onEventRegistrations,
           },
-          addresses: TestAddresses.unsafeSet([]),
+          addresses: TestAddresses.setOf([]),
         }
 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -282,7 +282,7 @@ describe("IndexerState", () => {
                 toBlock: None,
                 isChunk: false,
                 selection: {dependsOnAddresses: false, onEventRegistrations},
-                addresses: TestAddresses.unsafeSet([]),
+                addresses: TestAddresses.setOf([]),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
@@ -365,7 +365,7 @@ describe("IndexerState", () => {
           toBlock: None,
           isChunk: false,
           selection: {dependsOnAddresses: false, onEventRegistrations},
-          addresses: TestAddresses.unsafeSet([]),
+          addresses: TestAddresses.setOf([]),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
         cs->ChainState.handleQueryResult(

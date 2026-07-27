@@ -96,6 +96,11 @@ let contractsOf = (~onEventRegistrations: array<Internal.onEventRegistration>): 
 // A set holding nothing — what an address-free (wildcard) partition carries, so
 // every partition is queried through the same handle.
 @send external emptySet: t => AddressSet.t = "emptySet"
+
+// A set over exactly these addresses, in set order. Every set of a chain must
+// come from that chain's one store — ids are store-scoped, so sets from
+// different stores can't be merged.
+@send external makeSetOf: (t, array<Address.t>) => AddressSet.t = "makeSetOf"
 @send external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
 @send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
 @send
@@ -112,9 +117,7 @@ external startBlockGroups: (t, string) => array<AddressSet.startBlockGroup> = "s
 // rollback still point at the right entries.
 @send external rollback: (t, int) => int = "rollback"
 
-// The entry an address is registered under, whichever contract holds it —
-// addresses are unique chain-wide. `None` once rolled back.
-@send external get: (t, Address.t) => option<Internal.indexingContract> = "get"
+@send external getRaw: (t, Address.t) => Null.t<Internal.indexingContract> = "get"
 
 @send external contractAddresses: (t, string) => array<Address.t> = "contractAddresses"
 
@@ -143,3 +146,7 @@ let registerBatch = (store: t, registrations: array<registration>): array<verdic
 
 let makeSet = (store: t, ~contractName, ~options={}: makeSetOptions) =>
   store->makeSetRaw(contractName, options)
+
+// The entry an address is registered under, whichever contract holds it —
+// addresses are unique chain-wide. `None` once rolled back.
+let get = (store: t, address) => store->getRaw(address)->Null.toOption

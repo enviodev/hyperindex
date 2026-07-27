@@ -1620,7 +1620,7 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "4")->Option.getOrThrow
     let addresses = partition4Call.payload->MockIndexer.Source.CallPayload.addresses
     t.expect(
-      addresses->Dict.getUnsafe("Gravatar")->Array.length,
+      addresses->Array.length,
       ~message="Merged partition should have addresses from both DCs",
     ).toEqual(2)
   })

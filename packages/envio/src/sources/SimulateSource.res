@@ -59,8 +59,9 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
               )
           emitterAllowed &&
           switch onEventRegistration.addressFilterParamGroups {
-          | [] => true
-          | groups =>
+          | None
+          | Some([]) => true
+          | Some(groups) =>
             let params = eventItem.payload->Internal.getPayloadAddressParams
             groups->Array.some(group =>
               group->Array.every(name =>
