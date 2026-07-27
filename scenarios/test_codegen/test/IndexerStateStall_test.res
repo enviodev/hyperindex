@@ -23,11 +23,15 @@ describe("IndexerState fetch stall accounting", () => {
       let state = MockIndexer.InMemoryStore.make()
 
       state->IndexerState.markProcessingStalledOnFetch
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
       state->IndexerState.beginReorg(
         ~chain=ChainMap.Chain.makeUnsafe(~chainId=1),
         ~blockNumber=100,
       )
+      // Settled, not discarded: the wait before the reorg still has to land in
+      // the counter.
       let settledOnReorg = state->stalledOnFetchSeconds
+      t.expect(settledOnReorg).toBeGreaterThanOrEqual(0.04)
 
       // Stands in for the rollback. Without the settle in beginReorg this span
       // would fold into the stall on the next beginProcessing, double-counting

@@ -98,9 +98,11 @@ type sourceHeightMetrics = {
 
 type t = {
   startTime: Date.t,
-  // Wall clock when this snapshot was built, so a single scrape carries both its
-  // own timestamp and (via startTime) the elapsed run time.
+  // Wall clock when this snapshot was built, so a scrape can be dated.
   metricTime: Date.t,
+  // Measured monotonically, not as metricTime - startTime: a wall-clock
+  // correction would otherwise skew the counter shares derived from it.
+  elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
   rollbackEnabled: bool,
@@ -262,7 +264,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~name="envio_process_elapsed_seconds",
     ~help="How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.",
     ~kind="gauge",
-    ~value=(metrics.metricTime->Date.getTime -. metrics.startTime->Date.getTime) /. 1000.,
+    ~value=metrics.elapsedSeconds,
   )
   b->single(
     ~name="envio_preload_seconds",

@@ -107,6 +107,10 @@ type t = {
   crossChainState: CrossChainState.t,
   mutable rollbackState: rollbackState,
   indexerStartTime: Date.t,
+  // Monotonic peer of indexerStartTime. Elapsed run time is derived from this so
+  // an NTP correction can't move it out of step with the Performance-based
+  // counters that get divided by it.
+  indexerStartTimeRef: Performance.timeRef,
   // When an entity's history was last pruned. No key = never pruned yet,
   // which counts as overdue.
   lastPrunedAtMillis: dict<float>,
@@ -200,6 +204,7 @@ let make = (
       ~targetBufferSize,
     ),
     indexerStartTime: Date.make(),
+    indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
     lastPrunedAtMillis: Dict.make(),
     loadManager: LoadManager.make(),
@@ -324,8 +329,22 @@ let isResolvingReorg = (state: t) =>
 // reports the first error so redundant handlers (eg an error caught in two
 // nested scopes) don't double-report.
 @inline
+let // Close an open fetch-stall interval, accruing it into the counter. Called
+// whenever the reason for the idle changes, so the interval never spans into
+// time another counter owns — or, at shutdown, past the point where the loops
+// stop and nothing would ever close it.
+settleStalledOnFetch = (state: t) =>
+  switch state.processingStalledOnFetchSince {
+  | Some(since) =>
+    state.processingStalledOnFetchSeconds =
+      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
+    state.processingStalledOnFetchSince = None
+  | None => ()
+  }
+
 let errorExit = (state: t, errHandler) =>
   if !state.isStopped {
+    state->settleStalledOnFetch
     state.isStopped = true
     state.onError(errHandler)
   }
@@ -334,7 +353,10 @@ let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
 
 // Halt the loops without reporting an error, eg to hand the shared db over to a
 // resumed indexer in tests.
-let stop = (state: t) => state.isStopped = true
+let stop = (state: t) => {
+  state->settleStalledOnFetch
+  state.isStopped = true
+}
 
 let getChainState = (state: t, ~chain: chain): ChainState.t =>
   switch state.crossChainState
@@ -363,18 +385,6 @@ let createBatch = (
   )
 
 let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
-
-// Close an open fetch-stall interval, accruing it into the counter. Called
-// whenever the reason for the idle changes, so the interval never spans into
-// time another counter owns.
-let settleStalledOnFetch = (state: t) =>
-  switch state.processingStalledOnFetchSince {
-  | Some(since) =>
-    state.processingStalledOnFetchSeconds =
-      state.processingStalledOnFetchSeconds +. since->Performance.secondsSince
-    state.processingStalledOnFetchSince = None
-  | None => ()
-  }
 
 // Begin a reorg rollback. Invalidates in-flight fetches and enters the
 // ReorgDetected state as one step, so the epoch bump can never be left out. The
@@ -509,6 +519,7 @@ let toMetrics = (state: t): Metrics.t => {
   {
     startTime: state.indexerStartTime,
     metricTime: Date.make(),
+    elapsedSeconds: state.indexerStartTimeRef->Performance.secondsSince,
     targetBufferSize: state.crossChainState->CrossChainState.targetBufferSize,
     isInReorgThreshold: state.crossChainState->CrossChainState.isInReorgThreshold,
     rollbackEnabled: state.config.shouldRollbackOnReorg,
