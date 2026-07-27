@@ -5203,6 +5203,66 @@ describe("FetchState client-side address filtering", () => {
     (advanced, addressStore)
   }
 
+  // The same standing partition, but with a query in flight past its frontier.
+  // A query already dispatched was routed against the address store before the
+  // next batch registers, so its response carries nothing for those addresses —
+  // yet it still advances the frontier over its range when it lands.
+  let makeCollapsedAt50WithQueryInFlight = () => {
+    let (advanced, addressStore) = makeCollapsedAt50()
+    let query = switch advanced->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready([query]) => query
+    | _ => JsError.throwWithMessage("Expected a single query past the frontier")
+    }
+    advanced->FetchState.startFetchingQueries(~queries=[query])
+    (advanced, addressStore, query)
+  }
+
+  it("extends the backfill over an open-ended query in flight past the standing frontier", t => {
+    let (advanced, addressStore, inFlight) = makeCollapsedAt50WithQueryInFlight()
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    t.expect(
+      (inFlight.toBlock, afterReg->frontierShape),
+      // An open-ended probe carries no toBlock of its own, so the known height
+      // bounds what it can claim.
+      ~message="backfill reaches the known height, not the frontier at 50",
+    ).toEqual((None, [(19, Some(100), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
+  })
+
+  it("backfills an address registered above the frontier but inside a query in flight", t => {
+    let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
+    // Registered at 60: above the standing frontier of 50, so nothing is behind
+    // to backfill — but the query covering [51, 100] was routed before the
+    // address existed, so [59, 100] still needs a catch-up.
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=60, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    t.expect(
+      afterReg->frontierShape,
+      ~message="catch-up covers the in-flight range above the frontier",
+    ).toEqual([(50, None, Some(["Gravatar"])), (59, Some(100), Some(["Gravatar"]))])
+  })
+
+  it("adds no catch-up above the frontier when nothing is in flight", t => {
+    let (advanced, addressStore) = makeCollapsedAt50()
+    // Same registration, no query dispatched: the standing partition has not
+    // fetched past 50, so it covers block 60 going forward on its own.
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=60, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    t.expect(
+      afterReg->frontierShape,
+      ~message="no backfill; the standing partition still covers everything ahead",
+    ).toEqual([(50, None, Some(["Gravatar"]))])
+  })
+
   it("adds a bounded backfill instead of rebuilding when a client-filtered contract registers a new address", t => {
     let (advanced, addressStore) = makeCollapsedAt50()
     let afterReg =
