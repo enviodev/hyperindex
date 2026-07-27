@@ -1925,8 +1925,15 @@ impl GqlScalar {
             GqlScalar::Timestamp => TypeIdent::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 // A foreign key adopts the referenced entity's id type so the
-                // relation is keyed on matching types on both sides.
-                TypeDef::Entity(entity) => entity.get_id_scalar()?.to_rescript_type(schema)?,
+                // relation is keyed on matching types on both sides. An `ID`
+                // target resolves to the concrete `string` rather than the `id`
+                // alias: every entity module declares its own `type id`, which
+                // shadows the shared alias and would silently retype a string
+                // foreign key as the owning entity's numeric id.
+                TypeDef::Entity(entity) => match entity.get_id_scalar()? {
+                    GqlScalar::ID => TypeIdent::String,
+                    id_scalar => id_scalar.to_rescript_type(schema)?,
+                },
                 TypeDef::Enum => TypeIdent::SchemaEnum(name.to_capitalized_options()),
             },
         };
@@ -2062,8 +2069,10 @@ type NumericEntity {
         let schema = Schema::from_string(schema_str).unwrap();
         let referencer = schema.entities.get("Referencer").unwrap();
 
-        // A String-id relation renders through the shared `id` alias, a numeric
-        // relation renders as the concrete scalar.
+        // Foreign keys render as the concrete id scalar, never the `id` alias:
+        // each entity module declares its own `type id`, so a numeric-id entity
+        // holding a relation to a string-id entity would otherwise resolve that
+        // foreign key to its own numeric `id` while the column stays text.
         let string_related = referencer.get_field("stringRelated").unwrap();
         assert_eq!(
             string_related
@@ -2071,7 +2080,7 @@ type NumericEntity {
                 .to_rescript_type(&schema)
                 .unwrap()
                 .to_string(),
-            "option<id>".to_owned()
+            "option<string>".to_owned()
         );
 
         let numeric_related = referencer.get_field("numericRelated").unwrap();

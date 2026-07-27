@@ -122,7 +122,7 @@ let prepareRollbackDiff = async (
       entityTable->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Delete({
-          entityId: entityId->EntityId.unsafeOfString,
+          entityId,
           checkpointId: rollbackDiffCheckpointId,
         }),
       )

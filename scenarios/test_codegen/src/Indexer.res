@@ -201,16 +201,16 @@ module Entities = {
 
   module A = {
     type id = string
-    type t = {id: id, b_id: id, optionalStringToTestLinkedEntities: option<string>}
+    type t = {id: id, b_id: string, optionalStringToTestLinkedEntities: option<string>}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("b_id") b?: Envio.whereOperator<id>, @as("optionalStringToTestLinkedEntities") optionalStringToTestLinkedEntities?: Envio.whereOperator<option<string>>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("b_id") b?: Envio.whereOperator<string>, @as("optionalStringToTestLinkedEntities") optionalStringToTestLinkedEntities?: Envio.whereOperator<option<string>>}
   }
 
   module B = {
     type id = string
-    type t = {id: id, c_id: option<id>}
+    type t = {id: id, c_id: option<string>}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c_id") c?: Envio.whereOperator<option<id>>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c_id") c?: Envio.whereOperator<option<string>>}
   }
 
   module BigIntIdEntity = {
@@ -222,9 +222,9 @@ module Entities = {
 
   module C = {
     type id = string
-    type t = {id: id, a_id: id, stringThatIsMirroredToA: string}
+    type t = {id: id, a_id: string, stringThatIsMirroredToA: string}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("a_id") a?: Envio.whereOperator<id>, @as("stringThatIsMirroredToA") stringThatIsMirroredToA?: Envio.whereOperator<string>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("a_id") a?: Envio.whereOperator<string>, @as("stringThatIsMirroredToA") stringThatIsMirroredToA?: Envio.whereOperator<string>}
   }
 
   module CustomSelectionTestPass = {
@@ -292,9 +292,9 @@ module Entities = {
 
   module Gravatar = {
     type id = string
-    type t = {id: id, owner_id: id, displayName: string, imageUrl: string, updatesCount: bigint, size: Enums.GravatarSize.t}
+    type t = {id: id, owner_id: string, displayName: string, imageUrl: string, updatesCount: bigint, size: Enums.GravatarSize.t}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<id>, @as("displayName") displayName?: Envio.whereOperator<string>, @as("imageUrl") imageUrl?: Envio.whereOperator<string>, @as("updatesCount") updatesCount?: Envio.whereOperator<bigint>, @as("size") size?: Envio.whereOperator<Enums.GravatarSize.t>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<string>, @as("displayName") displayName?: Envio.whereOperator<string>, @as("imageUrl") imageUrl?: Envio.whereOperator<string>, @as("updatesCount") updatesCount?: Envio.whereOperator<bigint>, @as("size") size?: Envio.whereOperator<Enums.GravatarSize.t>}
   }
 
   module IntIdEntity = {
@@ -334,16 +334,16 @@ module Entities = {
 
   module Token = {
     type id = string
-    type t = {id: id, tokenId: bigint, collection_id: id, owner_id: id}
+    type t = {id: id, tokenId: bigint, collection_id: string, owner_id: string}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("tokenId") tokenId?: Envio.whereOperator<bigint>, @as("collection_id") collection?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<id>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("tokenId") tokenId?: Envio.whereOperator<bigint>, @as("collection_id") collection?: Envio.whereOperator<string>, @as("owner_id") owner?: Envio.whereOperator<string>}
   }
 
   module User = {
     type id = string
-    type t = {id: id, address: string, gravatar_id: option<id>, updatesCountOnUserForTesting: int, accountType: Enums.AccountType.t}
+    type t = {id: id, address: string, gravatar_id: option<string>, updatesCountOnUserForTesting: int, accountType: Enums.AccountType.t}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("address") address?: Envio.whereOperator<string>, @as("gravatar_id") gravatar?: Envio.whereOperator<option<id>>, @as("updatesCountOnUserForTesting") updatesCountOnUserForTesting?: Envio.whereOperator<int>, @as("accountType") accountType?: Envio.whereOperator<Enums.AccountType.t>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("address") address?: Envio.whereOperator<string>, @as("gravatar_id") gravatar?: Envio.whereOperator<option<string>>, @as("updatesCountOnUserForTesting") updatesCountOnUserForTesting?: Envio.whereOperator<int>, @as("accountType") accountType?: Envio.whereOperator<Enums.AccountType.t>}
   }
 
   type rec name<'entity> =

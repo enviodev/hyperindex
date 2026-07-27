@@ -1248,10 +1248,18 @@ let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgS
     )`
 }
 
-let rollbackRowStateSchema = S.object(s => (
-  s.field(Table.idFieldName, S.string),
-  s.field(EntityHistory.changeFieldName, EntityHistory.RowAction.schema),
-))
+// Memoized per table so the id is parsed with that entity's id schema (a
+// numeric id comes back from Postgres as a number, not a string) and the
+// schema's operations compile once rather than per rollback row.
+let rollbackRowStateSchema: Table.table => S.t<(
+  EntityId.t,
+  EntityHistory.RowAction.t,
+)> = Utils.WeakMap.memoize(table =>
+  S.object(s => (
+    s.field(Table.idFieldName, table->Table.getIdSchema),
+    s.field(EntityHistory.changeFieldName, EntityHistory.RowAction.schema),
+  ))
+)
 
 let make = (
   ~sql: Postgres.sql,
@@ -1775,7 +1783,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
         [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
       )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
+      ->(Utils.magic: promise<unknown> => promise<array<{"id": EntityId.t}>>),
       // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
@@ -1788,7 +1796,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     let removedIds = removedIdRows->Array.map(row => row["id"])
     let restoredEntitiesResult = []
     rollbackRows->Array.forEach(row => {
-      let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema)
+      let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema(entityConfig.table))
       switch action {
       | SET => restoredEntitiesResult->Array.push(row)->ignore
       | DELETE => removedIds->Array.push(entityId)->ignore
