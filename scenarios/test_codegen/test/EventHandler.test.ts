@@ -1214,6 +1214,21 @@ describe("Use Envio test framework to test event handlers", () => {
           TypeEqual<typeof userChange.deleted, readonly string[] | undefined>
         >(true);
       }
+
+      // Deleted ids follow the entity's id scalar, matching the raw values the
+      // test indexer reports at runtime.
+      const intIdChange = change.IntIdEntity;
+      if (intIdChange) {
+        expectType<
+          TypeEqual<typeof intIdChange.deleted, readonly number[] | undefined>
+        >(true);
+      }
+      const bigIntIdChange = change.BigIntIdEntity;
+      if (bigIntIdChange) {
+        expectType<
+          TypeEqual<typeof bigIntIdChange.deleted, readonly bigint[] | undefined>
+        >(true);
+      }
     }
   });
 

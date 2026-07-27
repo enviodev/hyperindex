@@ -75,13 +75,14 @@ module Entities = {
   type id = string
 
   module SlotPing = {
+    type id = string
     type t = {id: id, slot: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("slot") slot?: Envio.whereOperator<int>}
   }
 
-  type rec name<'entity> =
-    | @as("SlotPing") SlotPing: name<SlotPing.t>
+  type rec name<'entity, 'id> =
+    | @as("SlotPing") SlotPing: name<SlotPing.t, SlotPing.id>
 }
 
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
@@ -197,6 +198,17 @@ type testIndexerEntityOperations<'entity> = {
   set: 'entity => unit,
 }
 
+type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+  /** Get an entity by ID. */
+  get: 'id => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
 /** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {
   /** Process blocks for the specified chains and return progress with changes. */
@@ -208,7 +220,7 @@ type testIndexer = {
   \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.t>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

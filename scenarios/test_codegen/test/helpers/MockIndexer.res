@@ -6,8 +6,8 @@ let config = Config.load()
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let entityConfig = (name: Indexer.Entities.name<_>): Internal.entityConfig =>
-  config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<_> => string))
+let entityConfig = (name: Indexer.Entities.name<_, _>): Internal.entityConfig =>
+  config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<_, _> => string))
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
@@ -37,7 +37,7 @@ module InMemoryStore = {
     inMemTable->InMemoryTable.Entity.set(
       ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
       Set({
-        entityId: (entity: Internal.entity).id,
+        entityId: (entity: Internal.entity).id->EntityId.unsafeOfString,
         checkpointId: 0n,
         entity,
       }),
@@ -384,8 +384,8 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity. Indexer.Entities.name<'entity> => promise<array<'entity>>,
-    queryHistory: 'entity. Indexer.Entities.name<'entity> => promise<array<Change.t<'entity>>>,
+    query: 'entity 'id. Indexer.Entities.name<'entity, 'id> => promise<array<'entity>>,
+    queryHistory: 'entity 'id. Indexer.Entities.name<'entity, 'id> => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: 'input 'output. (
@@ -590,9 +590,9 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity, name: Indexer.Entities.name<entity>) => {
+      query: (type entity id, name: Indexer.Entities.name<entity, id>) => {
         let ec =
-          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity> => string))
+          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity, id> => string))
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
@@ -600,9 +600,9 @@ module Indexer = {
         })
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
-      queryHistory: (type entity, name: Indexer.Entities.name<entity>) => {
+      queryHistory: (type entity id, name: Indexer.Entities.name<entity, id>) => {
         let ec =
-          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity> => string))
+          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity, id> => string))
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
@@ -621,7 +621,7 @@ module Indexer = {
                 S.object((s): Change.t<'entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
-                    entityId: s.field("id", S.string),
+                    entityId: s.field("id", ec.table->Table.getIdSchema),
                     checkpointId: s.field(
                       EntityHistory.checkpointIdFieldName,
                       EntityHistory.unsafeCheckpointIdSchema,
@@ -632,7 +632,10 @@ module Indexer = {
             ),
           )
           ->Array.toSorted((a, b) => {
-            switch String.compare(a->Change.getEntityId, b->Change.getEntityId) {
+            switch String.compare(
+              (a->Change.getEntityId)->EntityId.toKey,
+              (b->Change.getEntityId)->EntityId.toKey,
+            ) {
             | 0. =>
               Float.compare(
                 a->Change.getCheckpointId->BigInt.toFloat,

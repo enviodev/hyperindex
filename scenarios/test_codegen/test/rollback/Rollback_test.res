@@ -142,7 +142,7 @@ describe("E2E rollback tests", () => {
       [
         Set({
           checkpointId: firstHistoryCheckpointId,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "value-2",
@@ -150,7 +150,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId,
-          entityId: "2",
+          entityId: "2"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
@@ -158,7 +158,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
-          entityId: "3",
+          entityId: "3"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "3",
             value: "value-1",
@@ -166,7 +166,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId,
-          entityId: "4",
+          entityId: "4"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "4",
             value: "value-1",
@@ -174,7 +174,7 @@ describe("E2E rollback tests", () => {
         }),
         Delete({
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
-          entityId: "4",
+          entityId: "4"->EntityId.unsafeOfString,
         }),
       ],
     ))
@@ -286,7 +286,7 @@ describe("E2E rollback tests", () => {
       [
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "value-1",
@@ -294,7 +294,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
-          entityId: "2",
+          entityId: "2"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
@@ -544,13 +544,13 @@ describe("E2E rollback tests", () => {
       [
         Set({
           checkpointId: 2n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {Indexer.Entities.SimpleEntity.id: "1", value: "before-delete"},
         }),
-        Delete({checkpointId: 3n, entityId: "1"}),
+        Delete({checkpointId: 3n, entityId: "1"->EntityId.unsafeOfString}),
         Set({
           checkpointId: 4n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {Indexer.Entities.SimpleEntity.id: "1", value: "after-recreate"},
         }),
       ],
@@ -1283,7 +1283,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [
         Set({
           checkpointId: 3n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-0",
@@ -1291,7 +1291,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 4n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-2",
@@ -1299,7 +1299,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 5n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-3",
@@ -1307,7 +1307,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 6n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-4",
@@ -1315,7 +1315,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 7n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-5",
@@ -1531,7 +1531,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [
         Set({
           checkpointId: 3n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-0",
@@ -1539,7 +1539,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 4n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-2",
@@ -1547,7 +1547,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 10n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-4",
@@ -1751,7 +1751,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 3n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
@@ -1759,7 +1759,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 4n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
@@ -1767,7 +1767,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 5n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-3",
@@ -1775,7 +1775,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 6n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
@@ -1783,7 +1783,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 7n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-5",
@@ -1807,7 +1807,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 6n,
-            entityId: "foo",
+            entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.EntityWithBigDecimal.id: "foo",
               bigDecimal: BigDecimal.fromFloat(0.),
@@ -1946,7 +1946,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 3n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
@@ -1954,7 +1954,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 4n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
@@ -1962,7 +1962,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 10n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
@@ -1986,7 +1986,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 10n,
-            entityId: "foo",
+            entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.EntityWithBigDecimal.id: "foo",
               bigDecimal: BigDecimal.fromFloat(0.),
@@ -3200,7 +3200,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 4n,
-            entityId: "reorg",
+            entityId: "reorg"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "reorg",
               value: "valid",
@@ -3208,7 +3208,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 3n,
-            entityId: "victim",
+            entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "victim",
               value: "before",
@@ -3216,7 +3216,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 8n,
-            entityId: "victim",
+            entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "victim",
               value: "reapplied",
