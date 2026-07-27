@@ -416,6 +416,8 @@ module Indexer = {
     ~enableRawEvents=false,
     ~reset=true,
     ~batchSize=?,
+    ~maxAddrInPartition=?,
+    ~clientFilterAddressThreshold=?,
     ~shouldRollbackOnReorg=true,
     ~reducedPollingInterval=?,
     ~targetBufferSize=?,
@@ -472,6 +474,10 @@ module Indexer = {
         enableRawEvents,
         chainMap,
         batchSize: batchSize->Option.getOr(baseConfig.batchSize),
+        maxAddrInPartition: maxAddrInPartition->Option.getOr(baseConfig.maxAddrInPartition),
+        clientFilterAddressThreshold: clientFilterAddressThreshold->Option.getOr(
+          baseConfig.clientFilterAddressThreshold,
+        ),
         reorgThresholdReadyTolerance,
       }
     }
@@ -734,6 +740,8 @@ module Indexer = {
           ~saveFullHistory,
           ~reset=false,
           ~batchSize?,
+          ~maxAddrInPartition?,
+          ~clientFilterAddressThreshold?,
           ~shouldRollbackOnReorg,
           ~reducedPollingInterval?,
           ~targetBufferSize?,

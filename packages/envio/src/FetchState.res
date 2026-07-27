@@ -9,18 +9,27 @@ type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
+  // Whether the partition's queries are built from its own address list
+  // (server-side address filtering). This is the *partition* property; not to
+  // be confused with the per-registration `Internal.onEventRegistration.dependsOnAddresses`.
   dependsOnAddresses: bool,
+  // Contract names this query fetches address-free even though their
+  // registrations depend on addresses. The source passes these to the client so
+  // their log selections carry no server-side address filter and routing accepts
+  // any emitter; the JS `clientAddressFilter` still gates each item by registered
+  // address + effectiveStartBlock. Absent for normal partitions.
+  clientFilteredContracts?: array<string>,
 }
 
 type pendingQuery = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Items this in-flight query is targeting (server maxNumLogs-style cap).
-  itemsTarget: int,
-  // Estimated items this in-flight query will actually return (no headroom),
-  // carried from the query so the shared buffer budget can account for what's
-  // already being fetched without the cap's safety margin inflating it.
+  // Server maxNumLogs-style cap for this in-flight query. None for bounded
+  // chunk/gap-fill queries, which send no cap (their toBlock is the bound).
+  itemsTarget: option<int>,
+  // Estimated items this in-flight query will return, carried from the query so
+  // the shared buffer budget can account for what's already being fetched.
   itemsEst: int,
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
@@ -72,14 +81,15 @@ type query = {
   fromBlock: int,
   toBlock: option<int>,
   isChunk: bool,
-  // Items this query targets: the server-side maxNumLogs-style cap, sized
-  // with headroom (chunkItemsMultiplier) so a denser-than-expected range
-  // doesn't truncate the response.
-  itemsTarget: int,
-  // Expected items without headroom: density × the query's block range for a
-  // known-density partition, the query's budget share otherwise. This is the
-  // unit the chain's per-tick budget is reserved/consumed in — reserving the
-  // headroomed cap instead would throttle the pipeline by the safety margin.
+  // Server-side maxNumLogs-style cap. Some only for open-ended probes, whose
+  // range isn't otherwise bounded; None for bounded chunk/gap-fill queries,
+  // whose toBlock already bounds the response so a cap would only self-truncate
+  // (worse under client-side address filtering, which counts filtered-out items
+  // toward the cap).
+  itemsTarget: option<int>,
+  // Density × the query's block range for a known-density partition, the
+  // query's budget share otherwise. This is the unit the chain's per-tick
+  // budget is reserved/consumed in and that sizes every query.
   itemsEst: int,
   selection: selection,
   addressesByContractName: dict<array<Address.t>>,
@@ -103,13 +113,13 @@ let deriveContractNameByAddress: dict<array<Address.t>> => dict<
   result
 })
 
-// itemsTarget for a query over [fromBlock, toBlock] at the given event density
+// itemsEst for a query over [fromBlock, toBlock] at the given event density
 // (items/block). toBlock None is the open-ended tail, capped at
 // chainTargetBlock — the soft per-tick horizon the owning chain wants to reach
 // (see getNextQuery).
 let densityItemsTarget = (~density, ~fromBlock, ~toBlock, ~chainTargetBlock) => {
-  // Floor at 1: the reservation must equal the server-side cap SourceManager
-  // sends, and a 0 cap would ask the backend for nothing.
+  // Floor at 1: this is the budget reservation, and for a probe also its server
+  // cap — a 0 cap would ask the backend for nothing.
   Pervasives.max(
     1,
     ((toBlock->Option.getOr(chainTargetBlock) - fromBlock + 1)->Int.toFloat *. density)
@@ -159,6 +169,12 @@ module OptimizedPartitions = {
     // Tracks all contract names that have been dynamically added.
     // Never reset - used to determine when to split existing partitions.
     dynamicContracts: Utils.Set.t<string>,
+    // Contract names switched to client-side address filtering once their
+    // registered address count crossed the server-side threshold. Sticky for
+    // the run: their addresses live only in the index, their events are fetched
+    // by the single address-free partition, and new dynamic addresses get a
+    // bounded backfill up to its frontier instead of a standing partition.
+    clientFilteredContracts: Utils.Set.t<string>,
   }
 
   @inline
@@ -283,6 +299,7 @@ module OptimizedPartitions = {
     ~maxAddrInPartition,
     ~nextPartitionIndex: int,
     ~dynamicContracts: Utils.Set.t<string>,
+    ~clientFilteredContracts: Utils.Set.t<string>,
   ) => {
     let newPartitions = []
     let mergingPartitions = Dict.make()
@@ -416,6 +433,7 @@ module OptimizedPartitions = {
       maxAddrInPartition,
       nextPartitionIndex: nextPartitionIndexRef.contents,
       dynamicContracts,
+      clientFilteredContracts,
     }
   }
 
@@ -467,14 +485,37 @@ module OptimizedPartitions = {
     }
   }
 
-  let handleQueryResponse = (
+  let rec handleQueryResponse = (
     optimizedPartitions: t,
     ~query,
     ~knownHeight,
     ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
+  ) =>
+    switch optimizedPartitions.entities->Utils.Dict.dangerouslyGetNonOption(query.partitionId) {
+    // The partition was absorbed into the address-free client-filtered partition
+    // while this query was in flight. Its items are still merged into the buffer
+    // by the caller (and deduped); there's no partition bookkeeping left to do,
+    // and its reservation is released by ChainState regardless.
+    | None => optimizedPartitions
+    | Some(p) =>
+      optimizedPartitions->handleQueryResponseForPartition(
+        ~p,
+        ~query,
+        ~knownHeight,
+        ~itemsCount,
+        ~latestFetchedBlock,
+      )
+    }
+
+  and handleQueryResponseForPartition = (
+    optimizedPartitions: t,
+    ~p: partition,
+    ~query,
+    ~knownHeight,
+    ~itemsCount,
+    ~latestFetchedBlock: blockNumberAndTimestamp,
   ) => {
-    let p = optimizedPartitions->getOrThrow(~partitionId=query.partitionId)
     let mutEntities = optimizedPartitions.entities->Utils.Dict.shallowCopy
 
     // Mark query as fetched
@@ -508,8 +549,12 @@ module OptimizedPartitions = {
           if latestFetchedBlock.blockNumber < queryToBlock {
             // Partial response is direct capacity evidence — unless it was
             // truncated by our own itemsTarget cap: that reflects the
-            // reservation we asked for, not what the server could return.
-            itemsCount < query.itemsTarget
+            // reservation we asked for, not what the server could return. A
+            // capless bounded query can only have been truncated by the source.
+            switch query.itemsTarget {
+            | None => true
+            | Some(itemsTarget) => itemsCount < itemsTarget
+            }
           } else {
             // A full response updates only when the query's intended range
             // covers at least the partition's current chunk range — meaning it
@@ -549,6 +594,7 @@ module OptimizedPartitions = {
         ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
         ~dynamicContracts=optimizedPartitions.dynamicContracts,
+        ~clientFilteredContracts=optimizedPartitions.clientFilteredContracts,
       )
     } else {
       let updatedMainPartition = {
@@ -598,6 +644,7 @@ module OptimizedPartitions = {
           ~maxAddrInPartition=optimizedPartitions.maxAddrInPartition,
           ~nextPartitionIndex=optimizedPartitions.nextPartitionIndex,
           ~dynamicContracts=optimizedPartitions.dynamicContracts,
+          ~clientFilteredContracts=optimizedPartitions.clientFilteredContracts,
         )
       }
     }
@@ -638,6 +685,11 @@ type t = {
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
+  // Per-contract registered-address count past which a dynamic contract is
+  // switched to client-side filtering. None disables the switch
+  // (sources that can't filter client-side, e.g. SVM/Fuel), leaving every
+  // contract filtered server-side.
+  clientFilterAddressThreshold: option<int>,
 }
 
 @inline
@@ -907,6 +959,7 @@ let updateInternal = (
     | blockItems => base->mergeIntoBuffer(blockItems)
     },
     firstEventBlock: fetchState.firstEventBlock,
+    clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
   }
 
   updatedFetchState
@@ -946,6 +999,209 @@ let addressesByContractNameGetAll = (addressesByContractName: dict<array<Address
   all
 }
 
+// Move a contract to client-side address filtering, recording why.
+let addClientFilteredContract = (
+  clientFilteredContracts: Utils.Set.t<string>,
+  ~contractName,
+  ~chainId,
+  ~addressCount,
+  ~threshold,
+) => {
+  clientFilteredContracts->Utils.Set.add(contractName)->ignore
+  Logging.createChild(
+    ~params={
+      "chainId": chainId,
+      "contractName": contractName,
+      "addressCount": addressCount,
+      "threshold": threshold,
+    },
+  )->Logging.childTrace(
+    "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+  )
+}
+
+// Fold every client-filtered contract's server-side partitions into client-side
+// fetching without tearing down established state:
+// - The standing address-free partition (no mergeBlock) keeps its id, frontier,
+//   in-flight queries and learned density. Only when a newly-switched contract
+//   must be added does its selection change — under a fresh id, so in-flight
+//   responses built from the old selection are orphaned instead of advancing
+//   the frontier past ranges the new contract wasn't fetched for.
+// - Partitions absorbed below the standing frontier (single-contract dynamic
+//   partitions and config partitions all of whose contracts are
+//   client-filtered, plus any prior backfill) become one bounded backfill
+//   partition covering [their min frontier, standing frontier]: getNextQuery
+//   caps its queries at mergeBlock and handleQueryResponse deletes it on
+//   arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and the
+//   re-fetch doubles as history for freshly registered addresses: events
+//   dropped before the address was registered now pass the clientAddressFilter.
+// - A partition mixing client-filtered and server-side contracts stays,
+//   stripped of the client-filtered contracts' addresses — the address-free
+//   partition covers those logs, so fetching them server-side too would only
+//   produce duplicates. Its frontier bounds the backfill from below so the
+//   stripped contracts lose no range.
+//
+// Registrations come from the address-free partitions plus `normalSelection`
+// filtered to client-filtered contracts, so coverage never depends on which
+// partitions happened to be absorbed (a stripped contract may have no
+// absorbable partition at all).
+let collapseClientFilteredContracts = (
+  partitions: array<partition>,
+  ~clientFilteredContracts: Utils.Set.t<string>,
+  ~normalSelection: selection,
+  ~nextPartitionIndexRef: ref<int>,
+) => {
+  if clientFilteredContracts->Utils.Set.size === 0 {
+    partitions
+  } else {
+    let kept = []
+    let standingRef = ref(None)
+    let backfills = []
+    let absorbedPartitions = []
+    let strippedFrontiers = []
+
+    partitions->Array.forEach(p =>
+      switch p {
+      | {selection: {dependsOnAddresses: false}, mergeBlock: None}
+        if standingRef.contents->Option.isNone =>
+        standingRef := Some(p)
+      | {selection: {dependsOnAddresses: false}, mergeBlock: Some(_)} =>
+        backfills->Array.push(p)->ignore
+      | {selection: {dependsOnAddresses: false}} => absorbedPartitions->Array.push(p)->ignore
+      | _ =>
+        let contractNames = p.addressesByContractName->Dict.keysToArray
+        let clientFilteredNames =
+          contractNames->Array.filter(c => clientFilteredContracts->Utils.Set.has(c))
+        if clientFilteredNames->Utils.Array.isEmpty {
+          kept->Array.push(p)->ignore
+        } else if clientFilteredNames->Array.length === contractNames->Array.length {
+          absorbedPartitions->Array.push(p)->ignore
+        } else {
+          let stripped = p.addressesByContractName->Utils.Dict.shallowCopy
+          clientFilteredNames->Array.forEach(c => stripped->Utils.Dict.deleteInPlace(c))
+          strippedFrontiers->Array.push(p.latestFetchedBlock)->ignore
+          kept->Array.push({...p, addressesByContractName: stripped})->ignore
+        }
+      }
+    )
+
+    let selectionChanged = switch standingRef.contents {
+    | Some(standing) =>
+      standing.selection.clientFilteredContracts->Option.mapOr(0, Array.length) !==
+        clientFilteredContracts->Utils.Set.size
+    | None => true
+    }
+
+    if (
+      absorbedPartitions->Utils.Array.isEmpty &&
+      strippedFrontiers->Utils.Array.isEmpty &&
+      !selectionChanged
+    ) {
+      // Nothing to fold in and no newly-switched contract: leave the standing
+      // partition (and any in-progress backfill) untouched.
+      partitions
+    } else {
+      let minFrontierRef: ref<option<blockNumberAndTimestamp>> = ref(None)
+      let considerFrontier = (b: blockNumberAndTimestamp) =>
+        switch minFrontierRef.contents {
+        | Some(m) if m.blockNumber <= b.blockNumber => ()
+        | _ => minFrontierRef := Some(b)
+        }
+      absorbedPartitions->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
+      backfills->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
+      strippedFrontiers->Array.forEach(considerFrontier)
+
+      let regByIndex = Dict.make()
+      let addRegs = (regs: array<Internal.onEventRegistration>) =>
+        regs->Array.forEach(reg => regByIndex->Dict.set(reg.index->Int.toString, reg))
+      switch standingRef.contents {
+      | Some(standing) => addRegs(standing.selection.onEventRegistrations)
+      | None => ()
+      }
+      absorbedPartitions->Array.forEach(p =>
+        if !p.selection.dependsOnAddresses {
+          addRegs(p.selection.onEventRegistrations)
+        }
+      )
+      addRegs(
+        normalSelection.onEventRegistrations->Array.filter(reg =>
+          clientFilteredContracts->Utils.Set.has(reg.eventConfig.contractName)
+        ),
+      )
+      let newSelection = {
+        dependsOnAddresses: false,
+        onEventRegistrations: regByIndex->Dict.valuesToArray,
+        clientFilteredContracts: clientFilteredContracts->Utils.Set.toArray,
+      }
+
+      switch standingRef.contents {
+      | None =>
+        // First switch: no standing partition to preserve, so create it at the
+        // min frontier directly — the whole range above is unfetched for the
+        // client-filtered side anyway.
+        switch minFrontierRef.contents {
+        | None => kept
+        | Some(minFrontier) =>
+          let minRange = getMinQueryRange(absorbedPartitions)
+          let id = nextPartitionIndexRef.contents->Int.toString
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          kept
+          ->Array.push({
+            id,
+            latestFetchedBlock: minFrontier,
+            selection: newSelection,
+            addressesByContractName: Dict.make(),
+            mergeBlock: None,
+            dynamicContract: None,
+            mutPendingQueries: [],
+            sourceRangeCapacity: minRange,
+            prevSourceRangeCapacity: minRange,
+            eventDensity: None,
+            latestSourceRangeCapacityUpdateBlock: 0,
+          })
+          ->ignore
+          kept
+        }
+      | Some(standing) =>
+        let standingOut = if selectionChanged {
+          let id = nextPartitionIndexRef.contents->Int.toString
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          {...standing, id, selection: newSelection, mutPendingQueries: []}
+        } else {
+          standing
+        }
+        kept->Array.push(standingOut)->ignore
+        switch minFrontierRef.contents {
+        | Some(minFrontier) if minFrontier.blockNumber < standing.latestFetchedBlock.blockNumber =>
+          let id = nextPartitionIndexRef.contents->Int.toString
+          nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+          kept
+          ->Array.push({
+            id,
+            latestFetchedBlock: minFrontier,
+            selection: newSelection,
+            addressesByContractName: Dict.make(),
+            mergeBlock: Some(standing.latestFetchedBlock.blockNumber),
+            dynamicContract: None,
+            mutPendingQueries: [],
+            // Same query shape as the standing partition, so inherit its
+            // learned range and density instead of probing from scratch.
+            sourceRangeCapacity: standing.sourceRangeCapacity,
+            prevSourceRangeCapacity: standing.prevSourceRangeCapacity,
+            eventDensity: standing.eventDensity,
+            latestSourceRangeCapacityUpdateBlock: 0,
+          })
+          ->ignore
+        // An absorbed frontier at/above the standing frontier needs no
+        // backfill: the standing partition hasn't fetched past there yet.
+        | _ => ()
+        }
+        kept
+      }
+    }
+  }
+}
+
 /**
 Creates partitions from indexing addresses with two phases:
 Phase 1: Create per-contract-name partitions (smart grouping by startBlock)
@@ -956,6 +1212,7 @@ Returns OptimizedPartitions.t directly.
 let createPartitionsFromIndexingAddresses = (
   ~registeringContractsByContract: dict<dict<indexingAddress>>,
   ~dynamicContracts: Utils.Set.t<string>,
+  ~clientFilteredContracts: Utils.Set.t<string>,
   ~normalSelection: selection,
   ~maxAddrInPartition: int,
   ~nextPartitionIndex: int,
@@ -1127,12 +1384,22 @@ OptimizedPartitions.t => {
 
   let mergedPartitions = mergedNonDynamic->Array.concat(dynamicPartitions)
 
-  // Final step: concat existing partitions with phase 1+2 result and call OptimizedPartitions.make
+  // Final step: concat existing partitions with phase 1+2 result, collapse any
+  // client-filtered contracts into the single address-free partition, and optimize.
+  let allPartitions =
+    existingPartitions
+    ->Array.concat(mergedPartitions)
+    ->collapseClientFilteredContracts(
+      ~clientFilteredContracts,
+      ~normalSelection,
+      ~nextPartitionIndexRef,
+    )
   OptimizedPartitions.make(
-    ~partitions=existingPartitions->Array.concat(mergedPartitions),
+    ~partitions=allPartitions,
     ~maxAddrInPartition,
     ~nextPartitionIndex=nextPartitionIndexRef.contents,
     ~dynamicContracts,
+    ~clientFilteredContracts,
   )
 }
 
@@ -1392,9 +1659,39 @@ let registerDynamicContracts = (
       // Include no-events dcs so later batches detect conflicts against them.
       indexingAddresses->IndexingAddresses.register(noEventsAddresses)
 
+      // Switch any dynamic contract that has just crossed the server-side
+      // address threshold to client-side filtering. Sticky: the set only grows, and
+      // collapse in createPartitionsFromIndexingAddresses folds the contract's
+      // partitions into the single address-free partition.
+      // Clone the sticky set before mutating so this update owns its copy and
+      // older fetchState snapshots keep theirs (Utils.Set.add mutates in place).
+      let clientFilteredContracts = switch fetchState.clientFilterAddressThreshold {
+      | Some(threshold) =>
+        let clientFilteredContracts =
+          fetchState.optimizedPartitions.clientFilteredContracts
+          ->Utils.Set.toArray
+          ->Utils.Set.fromArray
+        dynamicContractsRef.contents
+        ->Utils.Set.toArray
+        ->Array.forEach(contractName => {
+          let addressCount = indexingAddresses->IndexingAddresses.contractCount(~contractName)
+          if !(clientFilteredContracts->Utils.Set.has(contractName)) && addressCount > threshold {
+            clientFilteredContracts->addClientFilteredContract(
+              ~contractName,
+              ~chainId=fetchState.chainId,
+              ~addressCount,
+              ~threshold,
+            )
+          }
+        })
+        clientFilteredContracts
+      | None => fetchState.optimizedPartitions.clientFilteredContracts
+      }
+
       let optimizedPartitions = createPartitionsFromIndexingAddresses(
         ~registeringContractsByContract,
         ~dynamicContracts=dynamicContractsRef.contents,
+        ~clientFilteredContracts,
         ~normalSelection=fetchState.normalSelection,
         ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
         ~nextPartitionIndex=fetchState.optimizedPartitions.nextPartitionIndex +
@@ -1419,9 +1716,16 @@ let filterByClientAddress = (
   items->Array.filter(item =>
     switch item {
     | Internal.Event({payload, blockNumber}) as item =>
-      switch (item->Internal.castUnsafeEventItem).onEventRegistration.clientAddressFilter {
+      let reg = (item->Internal.castUnsafeEventItem).onEventRegistration
+      switch reg.clientAddressFilter {
       | Some(filter) =>
-        filter(payload, blockNumber, indexingAddresses->IndexingAddresses.rawForFilter)
+        filter(
+          payload,
+          blockNumber,
+          indexingAddresses->IndexingAddresses.forContract(
+            ~contractName=reg.eventConfig.contractName,
+          ),
+        )
       | None => true
       }
     | _ => true
@@ -1505,26 +1809,19 @@ let maxInFlightChunksPerPartition = 12
 // Most parallel in-flight queries a single chain may have at once, across all
 // its partitions. Bounds source load on chains with many partitions, where the
 // per-partition cap alone would admit thousands of concurrent queries.
-let maxChainConcurrency = 100
+let maxChainConcurrency = Env.maxChainConcurrency
 
 // Chunk spans grow by this factor over the smallest recently observed source
 // range, so the pipeline keeps probing for more capacity instead of locking in
 // the first measurement.
 let chunkRangeGrowthFactor = 1.8
 
-// Push one density-priced query and return its itemsEst. itemsEst is the honest
-// density estimate the chain's budget is reserved in; itemsTarget is the
-// server-side cap with chunkItemsMultiplier headroom so a denser-than-expected
-// range doesn't truncate the response.
-//
-// A bounded query (toBlock set) additionally floors its cap at
-// itemsTargetFloor: its range is already the hard bound on the response, so a
-// low density estimate shrinking the cap only buys self-truncated responses —
-// each one a wasted roundtrip that opens a gap and pollutes nothing but our
-// own pipeline. The floor is the indexer target split across the chain's
-// concurrency slots, so even every in-flight bounded query hitting its floored
-// cap at once overshoots the pool by at most ~one buffer target. Open-ended
-// queries keep the pure density cap — there it's the only bound at all.
+// Push one density-priced query and return its itemsEst, the density estimate
+// that sizes the query and the chain's budget reservation. These queries are
+// chunks and gap-fills: their toBlock is a tight bound sized to the source's
+// range capacity, so they send no server cap (itemsTarget None) — a cap would
+// only self-truncate the bounded range, worse under client-side address
+// filtering. A rare unbounded call caps at the estimate as its only bound.
 let pushDensityPricedQuery = (
   queries: array<query>,
   ~partitionId,
@@ -1532,19 +1829,11 @@ let pushDensityPricedQuery = (
   ~toBlock,
   ~isChunk,
   ~density,
-  ~chunkItemsMultiplier,
   ~chainTargetBlock,
-  ~itemsTargetFloor,
   ~selection,
   ~addressesByContractName,
 ) => {
   let itemsEst = densityItemsTarget(~density, ~fromBlock, ~toBlock, ~chainTargetBlock)
-  let itemsTarget = densityItemsTarget(
-    ~density=density *. chunkItemsMultiplier,
-    ~fromBlock,
-    ~toBlock,
-    ~chainTargetBlock,
-  )
   queries
   ->Array.push({
     partitionId,
@@ -1553,8 +1842,8 @@ let pushDensityPricedQuery = (
     selection,
     isChunk,
     itemsTarget: switch toBlock {
-    | Some(_) => Pervasives.max(itemsTarget, itemsTargetFloor)
-    | None => itemsTarget
+    | Some(_) => None
+    | None => Some(itemsEst)
     },
     itemsEst,
     addressesByContractName,
@@ -1585,8 +1874,6 @@ let pushGapFillQueries = (
   ~maxChunks: int,
   ~partition: partition,
   ~partitionBudget: float,
-  ~chunkItemsMultiplier: float,
-  ~itemsTargetFloor: int,
   ~selection: selection,
   ~addressesByContractName: dict<array<Address.t>>,
 ) => {
@@ -1610,9 +1897,7 @@ let pushGapFillQueries = (
           ~toBlock=rangeEndBlock,
           ~isChunk,
           ~density,
-          ~chunkItemsMultiplier,
           ~chainTargetBlock,
-          ~itemsTargetFloor,
           ~selection,
           ~addressesByContractName,
         )
@@ -1634,9 +1919,7 @@ let pushGapFillQueries = (
               ~toBlock=Some(chunkToBlock),
               ~isChunk=true,
               ~density,
-              ~chunkItemsMultiplier,
               ~chainTargetBlock,
-              ~itemsTargetFloor,
               ~selection,
               ~addressesByContractName,
             )
@@ -1684,8 +1967,6 @@ let walkPartitionPending = (
   ~candidates: array<query>,
   ~headBlockNumber: int,
   ~chainTargetBlock: int,
-  ~chunkItemsMultiplier: float,
-  ~itemsTargetFloor: int,
   ~partitionBudget: float,
   ~queryEndBlock: option<int>,
 ): option<partitionFillState> => {
@@ -1712,8 +1993,6 @@ let walkPartitionPending = (
         ~maxChunks=maxInFlightChunksPerPartition - inFlightCount - chunksUsedThisCall.contents,
         ~partition=p,
         ~partitionBudget,
-        ~chunkItemsMultiplier,
-        ~itemsTargetFloor,
         ~selection=p.selection,
         ~addressesByContractName=p.addressesByContractName,
       )
@@ -1757,14 +2036,12 @@ let pushForwardCandidates = (
   // bound, see getNextQuery.
   ~inRangeStates: array<partitionFillState>,
   // The full in-range partition count, pre-truncation. Probe sizing divides by
-  // this so each probe's itemsEst/itemsTarget stays the honest per-partition
-  // share for budget control — sizing by the (fewer) admittable queries would
-  // let every accepted probe over-fetch its share.
+  // this so each probe's itemsEst stays the honest per-partition share for
+  // budget control — sizing by the (fewer) admittable queries would let every
+  // accepted probe over-fetch its share.
   ~inRangeCount: int,
   ~chainTargetBlock: int,
   ~freshBudget: float,
-  ~chunkItemsMultiplier: float,
-  ~itemsTargetFloor: int,
 ) => {
   // Even share of the fresh budget across the partitions actually fetching
   // this tick (not every partition — so budget isn't stranded on ones below
@@ -1818,9 +2095,7 @@ let pushForwardCandidates = (
             ~toBlock=Some(chunkToBlock),
             ~isChunk=true,
             ~density,
-            ~chunkItemsMultiplier,
             ~chainTargetBlock,
-            ~itemsTargetFloor,
             ~selection=p.selection,
             ~addressesByContractName=p.addressesByContractName,
           )
@@ -1834,7 +2109,7 @@ let pushForwardCandidates = (
       // across the partitions fetching this tick. With no range to the target
       // fall back to an even share of the fresh budget, so cold chains and
       // caught-up partitions still probe.
-      let itemsTarget = if rangeToTarget > 0 {
+      let itemsEst = if rangeToTarget > 0 {
         Pervasives.max(
           1,
           Math.round(
@@ -1853,8 +2128,10 @@ let pushForwardCandidates = (
         toBlock: fs.queryEndBlock,
         isChunk: false,
         selection: p.selection,
-        itemsTarget,
-        itemsEst: itemsTarget,
+        // An open-ended probe's range isn't bounded to source capacity, so it
+        // keeps a server cap at its estimate to protect the shared buffer.
+        itemsTarget: Some(itemsEst),
+        itemsEst,
         addressesByContractName: p.addressesByContractName,
       })
       ->ignore
@@ -1958,10 +2235,6 @@ let getNextQuery = (
   {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
-  ~chunkItemsMultiplier: float=1.,
-  // Floor for bounded queries' server cap (see pushDensityPricedQuery) —
-  // targetBufferSize / maxChainConcurrency from the cross-chain scheduler.
-  ~itemsTargetFloor: int=0,
 ) => {
   let headBlockNumber = knownHeight - blockLag
   if headBlockNumber <= 0 {
@@ -2079,8 +2352,6 @@ let getNextQuery = (
         ~candidates,
         ~headBlockNumber,
         ~chainTargetBlock,
-        ~chunkItemsMultiplier,
-        ~itemsTargetFloor,
         ~partitionBudget,
         ~queryEndBlock=computeQueryEndBlock(p),
       ) {
@@ -2124,8 +2395,6 @@ let getNextQuery = (
       ~inRangeCount,
       ~chainTargetBlock,
       ~freshBudget,
-      ~chunkItemsMultiplier,
-      ~itemsTargetFloor,
     )
 
     acceptCandidates(
@@ -2197,6 +2466,7 @@ let make = (
   ~onBlockRegistrations=[],
   ~blockLag=0,
   ~firstEventBlock=None,
+  ~clientFilterAddressThreshold=None,
 ): t => {
   let latestFetchedBlock = {
     blockTimestamp: 0,
@@ -2244,6 +2514,7 @@ let make = (
 
   let registeringContractsByContract: dict<dict<indexingAddress>> = Dict.make()
   let dynamicContracts = Utils.Set.make()
+  let clientFilteredContracts = Utils.Set.make()
 
   addresses->Array.forEach(contract => {
     let contractName = contract.contractName
@@ -2265,9 +2536,29 @@ let make = (
     }
   })
 
+  // Switch any contract already over the server-side address threshold to
+  // client-side filtering at creation — a config contract with a large static
+  // address list, or a dynamic contract restored from a large persisted set.
+  switch clientFilterAddressThreshold {
+  | Some(threshold) =>
+    registeringContractsByContract->Utils.Dict.forEachWithKey((addrs, contractName) => {
+      let addressCount = addrs->Utils.Dict.size
+      if addressCount > threshold {
+        clientFilteredContracts->addClientFilteredContract(
+          ~contractName,
+          ~chainId,
+          ~addressCount,
+          ~threshold,
+        )
+      }
+    })
+  | None => ()
+  }
+
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
     ~dynamicContracts,
+    ~clientFilteredContracts,
     ~normalSelection,
     ~maxAddrInPartition,
     ~nextPartitionIndex=partitions->Array.length,
@@ -2325,6 +2616,7 @@ let make = (
     knownHeight,
     buffer,
     firstEventBlock,
+    clientFilterAddressThreshold,
   }
 
   fetchState
@@ -2450,6 +2742,7 @@ let rollback = (fetchState: t, ~indexingAddresses: IndexingAddresses.t, ~targetB
   let optimizedPartitions = createPartitionsFromIndexingAddresses(
     ~registeringContractsByContract,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+    ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
     ~normalSelection=fetchState.normalSelection,
     ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
     ~nextPartitionIndex=nextKeptIdRef.contents,

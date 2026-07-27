@@ -119,11 +119,15 @@ impl EvmHyperSyncClient {
         &self,
         params: EventItemsQuery,
     ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
+        let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
+            params.client_filtered_contracts.unwrap_or_default(),
+        );
         let built = self
             .selection_builder
             .build(
                 &params.registration_indexes,
                 &params.addresses_by_contract_name,
+                &client_filtered,
             )
             .map_err(map_err)?;
         let selection_decoder = self
@@ -131,6 +135,7 @@ impl EvmHyperSyncClient {
             .selection(
                 &params.registration_indexes,
                 &params.addresses_by_contract_name,
+                &client_filtered,
             )
             .map_err(map_err)?;
 
@@ -172,7 +177,7 @@ impl EvmHyperSyncClient {
                     .map(log_selection_from_built)
                     .collect(),
             ),
-            max_num_logs: Some(params.max_num_logs),
+            max_num_logs: params.max_num_logs,
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
                 transaction: Some(transaction_fields),
@@ -259,9 +264,14 @@ pub struct EventItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    pub max_num_logs: i64,
+    /// `None` sends no server-side cap on the number of logs returned.
+    pub max_num_logs: Option<i64>,
     pub registration_indexes: Vec<i64>,
     pub addresses_by_contract_name: HashMap<String, Vec<String>>,
+    /// Contract names to fetch address-free even though their registrations
+    /// depend on addresses (client-side filtering). Absent or empty
+    /// means every address-dependent contract is filtered server-side.
+    pub client_filtered_contracts: Option<Vec<String>>,
 }
 
 fn log_selection_from_built(
@@ -686,7 +696,7 @@ mod tests {
     fn empty_decoder() -> SelectionDecoder {
         Decoder::from_registrations(&[], false)
             .unwrap()
-            .selection(&[], &HashMap::new())
+            .selection(&[], &HashMap::new(), &Default::default())
             .unwrap()
     }
 
@@ -722,7 +732,7 @@ mod tests {
             false,
         )
         .unwrap()
-        .selection(&[0], &HashMap::new())
+        .selection(&[0], &HashMap::new(), &Default::default())
         .unwrap()
     }
 
