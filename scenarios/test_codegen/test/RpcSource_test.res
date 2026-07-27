@@ -24,7 +24,7 @@ let mockLog = (
 describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
       chain: MockConfig.chain1337,
       onEventRegistrations: [],
@@ -39,7 +39,7 @@ describe("RpcSource - name", () => {
 describe("RpcSource - getHeightOrThrow", () => {
   Async.it("Returns the current height of the chain", async t => {
     let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
       chain: MockConfig.chain1337,
       onEventRegistrations: [],
@@ -733,7 +733,7 @@ let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
     let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
       url: "http://localhost:1",
       chain,
       onEventRegistrations: [],
@@ -753,7 +753,7 @@ describe("RpcSource - empty selection", () => {
         ~selection={dependsOnAddresses: true, onEventRegistrations: []},
         ~itemsTarget=Some(5000),
         ~retry=0,
-        ~logger=Env.logger,
+        ~logger=Logger.quiet(),
       )
       None
     } catch {
@@ -817,7 +817,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       })
 
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -844,7 +844,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=Some(5000),
             ~retry=0,
-            ~logger=Env.logger,
+            ~logger=Logger.quiet(),
           )
           None
         } catch {
@@ -947,7 +947,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       })
 
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -974,7 +974,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=Some(5000),
             ~retry=0,
-            ~logger=Env.logger,
+            ~logger=Logger.quiet(),
           )
           ()
         } catch {
@@ -1098,7 +1098,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       })
 
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1124,7 +1124,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
             },
             ~itemsTarget=Some(5000),
             ~retry=0,
-            ~logger=Env.logger,
+            ~logger=Logger.quiet(),
           )
           None
         } catch {
@@ -1193,7 +1193,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       )
 
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1220,7 +1220,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
               },
               ~itemsTarget=Some(5000),
               ~retry,
-              ~logger=Env.logger,
+              ~logger=Logger.quiet(),
             )
             None
           } catch {
@@ -1346,7 +1346,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       )
 
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1371,7 +1371,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
           },
           ~itemsTarget=Some(5000),
           ~retry=0,
-          ~logger=Env.logger,
+          ~logger=Logger.quiet(),
         )
         mock.close()
         page
@@ -1475,7 +1475,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         }
       )
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: allRegistrations,
@@ -1500,7 +1500,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
           },
           ~itemsTarget=Some(5000),
           ~retry=0,
-          ~logger=Env.logger,
+          ~logger=Logger.quiet(),
         )
         let filters =
           mock.requests
@@ -1566,7 +1566,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       )
 
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventConfig],
@@ -1589,7 +1589,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           },
           ~itemsTarget=Some(5000),
           ~retry=0,
-          ~logger=Env.logger,
+          ~logger=Logger.quiet(),
         )
         mock.close()
         page
@@ -1728,7 +1728,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
 
       let addressesByContractName = Dict.fromArray([("ContractA", [addrA]), ("ContractB", [addrB])])
       let source = RpcSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         url: mock.url,
         chain,
         onEventRegistrations: [eventA, eventB],
@@ -1751,7 +1751,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
           },
           ~itemsTarget=Some(5000),
           ~retry=0,
-          ~logger=Env.logger,
+          ~logger=Logger.quiet(),
         )
         mock.close()
         page

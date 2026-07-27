@@ -51,7 +51,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
       res->endWith(`{"height": 123}`)
     }, async endpointUrl => {
       let source = FuelHyperSyncSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         chain,
         endpointUrl,
         apiToken: Some(apiToken),
@@ -78,7 +78,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
       res->endWith("Unauthorized")
     }, async endpointUrl => {
       let source = FuelHyperSyncSource.make({
-    logger: Env.logger,
+    logger: Logger.quiet(),
         chain,
         endpointUrl,
         apiToken: Some(apiToken),

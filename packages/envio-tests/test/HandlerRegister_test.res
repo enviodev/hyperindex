@@ -160,7 +160,7 @@ let register = fn => {
   HandlerRegister.resetOnEventRegistrations()
   HandlerRegister.startRegistration(~config)
   fn()
-  HandlerRegister.finishRegistration(~config, ~logger=Env.logger)
+  HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
 }
 
 describe("HandlerRegister multiple registrations", () => {
@@ -273,8 +273,8 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.resetOnEventRegistrations()
     HandlerRegister.startRegistration(~config=configMultichain)
     setHandler(h1)
-    let registrations1 = HandlerRegister.finishRegistration(~config, ~logger=Env.logger)
-    let registrations137 = HandlerRegister.finishRegistration(~config=config137, ~logger=Env.logger)
+    let registrations1 = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
+    let registrations137 = HandlerRegister.finishRegistration(~config=config137, ~logger=Logger.quiet())
     t.expect((
       registrations1->describeRegistrations(~chainKey="1", ~labels=[(h1, "h1")], ~crLabels=[]),
       registrations137->describeRegistrations(~chainKey="137", ~labels=[(h1, "h1")], ~crLabels=[]),
@@ -291,7 +291,7 @@ describe("HandlerRegister multiple registrations", () => {
     setHandler(h1)
     setHandler(h2)
     HandlerRegister.startRegistration(~config)
-    let registrations = HandlerRegister.finishRegistration(~config, ~logger=Env.logger)
+    let registrations = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
     t.expect(
       registrations->describeRegistrations(~labels=[(h1, "h1"), (h2, "h2")], ~crLabels=[]),
     ).toEqual([(Some("h1"), None, 0), (Some("h2"), None, 1)])
@@ -310,8 +310,8 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.resetOnEventRegistrations()
     HandlerRegister.startRegistration(~config)
     setHandler(~eventOptions={where: whereFn->Obj.magic}, h1)
-    let _ = HandlerRegister.finishRegistration(~config, ~logger=Env.logger)
-    let _ = HandlerRegister.finishRegistration(~config, ~logger=Env.logger)
+    let _ = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
+    let _ = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
     t.expect(calls.contents).toBe(1)
   })
 
@@ -323,7 +323,7 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.resetOnEventRegistrations()
     HandlerRegister.startRegistration(~config=configWithRawEvents)
     setHandler(~eventName="Transfer", ~eventOptions={where: %raw(`() => false`)}, h1)
-    let registrations = HandlerRegister.finishRegistration(~config=configWithRawEvents, ~logger=Env.logger)
+    let registrations = HandlerRegister.finishRegistration(~config=configWithRawEvents, ~logger=Logger.quiet())
     t.expect((
       registrations->describeRegistrations(
         ~eventName="Transfer",

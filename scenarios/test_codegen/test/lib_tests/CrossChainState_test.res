@@ -30,7 +30,8 @@ let makeChainState = (
   let addresses = []
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
   let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-  let base = FetchState.make(~logger=Env.logger, 
+  let base = FetchState.make(
+    ~logger=Logger.quiet(),
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
     ~onEventRegistrations,
@@ -68,7 +69,7 @@ let makeChainState = (
     ~fetchState,
     ~onEventRegistrations,
     ~indexingAddresses,
-    ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource.source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(~logger=Logger.quiet(), ~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints=[],
       ~maxReorgDepth=200,
@@ -76,7 +77,7 @@ let makeChainState = (
     ),
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
-    ~logger=Env.logger,
+    ~logger=Logger.quiet(),
   )
 }
 
@@ -144,7 +145,7 @@ let makeFetchingChainState = (
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
     ~indexingAddresses,
-    ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource.source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(~logger=Logger.quiet(), ~sources=[mockSource.source], ~isRealtime=false),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints=[],
       ~maxReorgDepth=200,
@@ -153,7 +154,7 @@ let makeFetchingChainState = (
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
-    ~logger=Env.logger,
+    ~logger=Logger.quiet(),
   )
 }
 
@@ -174,7 +175,7 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
   chainStatesList->Array.forEach(cs =>
     chainStates->Utils.Dict.setByInt((cs->ChainState.chainConfig).id, cs)
   )
-  CrossChainState.make(~logger=Env.logger, ~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
+  CrossChainState.make(~logger=Logger.quiet(), ~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
 }
 
 let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
@@ -481,14 +482,14 @@ describe("CrossChainState fetch control", () => {
         ~chainConfig={...baseChainConfig, id: 1},
         ~fetchState=fetchState1,
         ~indexingAddresses=indexingAddresses1,
-        ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource1.source], ~isRealtime=false),
+        ~sourceManager=SourceManager.make(~logger=Logger.quiet(), ~sources=[mockSource1.source], ~isRealtime=false),
         ~reorgDetection=ReorgDetection.make(
           ~chainReorgCheckpoints=[],
           ~maxReorgDepth=200,
           ~shouldRollbackOnReorg=false,
         ),
         ~committedProgressBlockNumber=-1,
-        ~logger=Env.logger,
+        ~logger=Logger.quiet(),
       )
 
       // Chain 2 (less behind, visited second): its density-bearing partition

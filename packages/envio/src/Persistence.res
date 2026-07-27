@@ -179,13 +179,6 @@ let make = (
   }
 }
 
-// Shut the indexer's resources down: the storage, then the logger that was
-// reporting on it.
-let close = async (persistence: t) => {
-  await persistence.storage.close()
-  await persistence.logger->Logging.close
-}
-
 let init = {
   async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~runCommand, ~reset=false) => {
     try {

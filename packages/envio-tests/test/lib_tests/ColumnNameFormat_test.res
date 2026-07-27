@@ -246,7 +246,8 @@ ORDER BY (id, envio_checkpoint_id)`,
   Async.it("initializes, writes and reads back entities from a real Postgres", async t => {
     let pgSchema = "colnaming_test_schema"
     let sql = PgStorage.makeClient()
-    let storage = PgStorage.make(~logger=Env.logger, 
+    let storage = PgStorage.make(
+      ~logger=Logger.quiet(),
       ~sql,
       ~pgHost=Env.Db.host,
       ~pgSchema,

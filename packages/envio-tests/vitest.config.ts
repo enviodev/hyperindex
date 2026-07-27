@@ -9,7 +9,6 @@ export default defineConfig({
     pool: "forks",
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    setupFiles: ["test/setup.ts"],
     passWithNoTests: true,
     server: {
       deps: {

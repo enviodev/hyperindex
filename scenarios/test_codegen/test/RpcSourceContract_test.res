@@ -70,7 +70,7 @@ let syncConfig = EvmChain.getSyncConfig({
 
 let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
   let options: RpcSource.options = {
-    logger: Env.logger,
+    logger: Logger.quiet(),
     url,
     chain,
     onEventRegistrations: [registration],
@@ -98,7 +98,7 @@ let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, 
     },
     ~itemsTarget=Some(5_000),
     ~retry,
-    ~logger=Env.logger,
+    ~logger=Logger.quiet(),
   )
 }
 
@@ -419,7 +419,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         async mock => {
           let registration = makeRegistration()
           let options: RpcSource.options = {
-            logger: Env.logger,
+            logger: Logger.quiet(),
             url: mock.url,
             chain,
             onEventRegistrations: [registration],
@@ -448,7 +448,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                 },
                 ~itemsTarget=Some(5_000),
                 ~retry=0,
-                ~logger=Env.logger,
+                ~logger=Logger.quiet(),
               )
             )
           (await call(), await call())
@@ -589,7 +589,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Env.logger,
+              ~logger=Logger.quiet(),
             )
           ) {
           | Ok(page) => page
@@ -680,7 +680,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         ],
         async mock => {
           let options: RpcSource.options = {
-            logger: Env.logger,
+            logger: Logger.quiet(),
             url: mock.url,
             chain,
             onEventRegistrations: [eventA, eventB],
@@ -712,7 +712,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Env.logger,
+              ~logger=Logger.quiet(),
             )
           ) {
           | Ok(page) => page

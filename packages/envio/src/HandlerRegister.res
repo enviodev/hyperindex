@@ -660,7 +660,7 @@ let registerOnBlock = (
     if !matchedAny.contents {
       // Registration happens before an indexer instance exists, so this is
       // the process-level logger.
-      Env.logger->Logging.warn({
+      Logger.root->Logging.warn({
         "msg": `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
         "onBlock": name,
       })

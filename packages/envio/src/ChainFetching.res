@@ -266,7 +266,7 @@ let rec onQueryResponse = async (
           ~blockStore,
         ) {
         | exception exn =>
-      IndexerState.errorExit(state, exn->ErrorHandling.make(~logger=state->IndexerState.logger))
+          IndexerState.errorExit(state, exn->ErrorHandling.make(~logger=state->IndexerState.logger))
         | newItemsWithDcs => proceed(~newItemsWithDcs)
         }
       }
@@ -393,7 +393,11 @@ let fetchChain = async (
               ~scheduleRollback,
             )
           } catch {
-          | exn => IndexerState.errorExit(state, exn->ErrorHandling.make(~logger=state->IndexerState.logger))
+          | exn =>
+            IndexerState.errorExit(
+              state,
+              exn->ErrorHandling.make(~logger=state->IndexerState.logger),
+            )
           }
         },
         ~action,

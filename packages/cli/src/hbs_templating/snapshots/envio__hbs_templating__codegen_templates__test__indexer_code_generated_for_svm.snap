@@ -41,7 +41,7 @@ module SingleOrMultiple: {
         true
       } else if arr->Array.length == 0 {
         AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
-          ~logger=Env.logger,
+          ~logger=Logger.root,
           ~msg="The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
           please pass in a nested empty array if the intention is to provide an empty array as a value",
         )

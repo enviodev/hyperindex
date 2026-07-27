@@ -567,7 +567,7 @@ let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
 let migrate = async (~reset) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Env.logger)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Logger.root)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -575,14 +575,14 @@ let migrate = async (~reset) => {
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
   )
-  await persistence->Persistence.close
+  await persistence.storage.close()
 }
 
 let dropSchema = async () => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Env.logger)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Logger.root)
   await persistence.storage.reset()
-  await persistence->Persistence.close
+  await persistence.storage.close()
 }
 
 // Rejection carried by `onError`: the failure is already logged with full
@@ -611,7 +611,7 @@ let start = async (
   let config = Config.load()
   // One logger per indexer run. `envio start` runs a single indexer per
   // process, so this is the process logger; in-process runners build their own.
-  let logger = Env.logger
+  let logger = Logger.root
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`

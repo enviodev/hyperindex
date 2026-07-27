@@ -22,9 +22,7 @@ module EntityTables = {
     | None =>
       // Raised, not logged: every caller runs inside an instance-scoped error
       // boundary that logs through the indexer's own logger.
-      JsError.throwWithMessage(
-        `Unexpected, InMemoryTable for entity ${entityName} is undefined`,
-      )
+      JsError.throwWithMessage(`Unexpected, InMemoryTable for entity ${entityName} is undefined`)
     }
   }
 }

@@ -17,9 +17,11 @@ let defaultPersistence = () =>
   | Some(persistence) => persistence
   | None =>
     let config = Config.load()
-    let persistence = PgStorage.makePersistenceFromConfig(~logger=Env.logger, 
+    let persistence = PgStorage.makePersistenceFromConfig(
+      ~logger=Logger.quiet(),
       ~config,
-      ~storage=PgStorage.makeStorageFromEnv(~logger=Env.logger, 
+      ~storage=PgStorage.makeStorageFromEnv(
+        ~logger=Logger.quiet(),
         ~config,
         ~sql=PgStorage.makeClient(),
         ~pgSchema=Env.Db.publicSchema,
@@ -49,7 +51,8 @@ module InMemoryStore = {
     | Some(config) => config
     | None => Config.load()
     }
-    let indexerState = IndexerState.make(~logger=Env.logger, 
+    let indexerState = IndexerState.make(
+      ~logger=Logger.quiet(),
       ~config,
       ~persistence=defaultPersistence(),
       // A trivial chain state map for store-only tests that never run the loop.
@@ -229,7 +232,7 @@ module Storage = {
     | None => Config.load()
     }
     {
-      ...PgStorage.makePersistenceFromConfig(~logger=Env.logger, ~config, ~storage=storageMock.storage),
+      ...PgStorage.makePersistenceFromConfig(~logger=Logger.quiet(), ~config, ~storage=storageMock.storage),
       storageStatus: Ready({
         cleanRun: false,
         cache: Dict.make(),
@@ -375,19 +378,6 @@ let installMockSourceRegistrations = (
     }
   })
 
-// Shared by every mock indexer: nothing disposes one, so a logger per instance
-// would leak a handle per instance. Silent unless LOG_LEVEL is set, in which
-// case the process logger already has the requested level.
-let logger = switch Env.userLogLevel {
-| Some(_) => Env.logger
-| None =>
-  let logger = Env.makeLogger(~userLogLevel=#silent)
-  // The file-backed strategies build the logger at their own file level and
-  // ignore `userLogLevel`, so silence has to be set on the instance.
-  logger->Logging.setLogLevel(#silent)
-  logger
-}
-
 module Indexer = {
   type metric = {
     value: string,
@@ -444,6 +434,7 @@ module Indexer = {
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
   ) => {
+    let logger = Logger.quiet()
 
     // The full (un-narrowed) config. Handlers register against this so every
     // chain resolves once; `finishRegistration` then narrows to the per-test
@@ -533,7 +524,8 @@ module Indexer = {
       ~reset,
     )
 
-    let state = IndexerState.makeFromDbState(~logger, 
+    let state = IndexerState.makeFromDbState(
+      ~logger,
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,

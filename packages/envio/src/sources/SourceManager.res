@@ -810,8 +810,7 @@ let executeQuery = async (
           // failing at the same time. Log only once
           if notAlreadyDisabled {
             switch error {
-            | UnsupportedSelection({message}) =>
-              logger->Logging.error({"msg": message})
+            | UnsupportedSelection({message}) => logger->Logging.error({"msg": message})
             | FailedGettingFieldSelection({exn, message, blockNumber, logIndex}) =>
               logger->Logging.error({
                 "msg": message,
@@ -893,11 +892,7 @@ let executeQuery = async (
       }
 
     // TODO: Handle more error cases and hang/retry instead of throwing
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~logger,
-        ~msg="Failed to fetch block Range",
-      )
+    | exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to fetch block Range")
     }
   }
 

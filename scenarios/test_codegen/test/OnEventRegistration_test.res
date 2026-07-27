@@ -7,7 +7,7 @@ open Vitest
 // `Internal.dependsOnAddresses` formula. Filter-parsing behavior is
 // covered separately by `EventFilters_test.res`.
 let config = Config.load()
-let _ = await HandlerLoader.registerAllHandlers(~config, ~logger=Env.logger)
+let _ = await HandlerLoader.registerAllHandlers(~config, ~logger=Logger.quiet())
 
 let getEvmEventConfig = MockConfig.getEvmOnEventRegistration(~config, ...)
 

@@ -87,12 +87,12 @@ let rec rollback = async (
   } catch {
   | exn =>
     IndexerState.errorExit(
-        state,
-        exn->ErrorHandling.make(
-          ~logger=state->IndexerState.logger,
-          ~msg=IndexerState.unexpectedErrorMsg,
-        ),
-      )
+      state,
+      exn->ErrorHandling.make(
+        ~logger=state->IndexerState.logger,
+        ~msg=IndexerState.unexpectedErrorMsg,
+      ),
+    )
   }
 
 and executeRollback = async (

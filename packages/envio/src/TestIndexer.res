@@ -546,20 +546,6 @@ let cloneRegistrations = (
   clone
 }
 
-// Shared by every test indexer in the process: nothing disposes a test
-// indexer, so a logger per instance would leak a handle per instance. Silent
-// unless LOG_LEVEL is set, in which case the process logger already has the
-// requested level.
-let logger = switch Env.userLogLevel {
-| Some(_) => Env.logger
-| None =>
-  let logger = Env.makeLogger(~userLogLevel=#silent)
-  // The file-backed strategies build the logger at their own file level and
-  // ignore `userLogLevel`, so silence has to be set on the instance.
-  logger->Logging.setLogLevel(#silent)
-  logger
-}
-
 // User handlers register into the process-global HandlerRegister as an import
 // side effect. Capture the resolved registrations once per process (imports are
 // module-cached anyway) and reuse them across every createTestIndexer run, so
@@ -576,6 +562,9 @@ let getRegistrations = (~config, ~logger) =>
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
+  // Shared across every test indexer in the process rather than one per
+  // instance, since nothing ever disposes a test indexer.
+  let logger = Logger.quiet()
   let allEntities = config.allEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()

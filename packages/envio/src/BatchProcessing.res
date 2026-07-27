@@ -36,12 +36,12 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
       switch await processNextBatch(state, ~scheduleFetch) {
       | exception exn =>
         IndexerState.errorExit(
-        state,
-        exn->ErrorHandling.make(
-          ~logger=state->IndexerState.logger,
-          ~msg=IndexerState.unexpectedErrorMsg,
-        ),
-      )
+          state,
+          exn->ErrorHandling.make(
+            ~logger=state->IndexerState.logger,
+            ~msg=IndexerState.unexpectedErrorMsg,
+          ),
+        )
       | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
       }
     }

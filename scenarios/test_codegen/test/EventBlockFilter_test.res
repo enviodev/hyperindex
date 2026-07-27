@@ -369,7 +369,8 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       },
     ]
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-    FetchState.make(~logger=Env.logger, 
+    FetchState.make(
+      ~logger=Logger.quiet(),
       ~onEventRegistrations,
       ~contractConfigs,
       ~addresses,

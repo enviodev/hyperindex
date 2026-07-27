@@ -81,11 +81,6 @@ let makeLogger = (~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLeve
   }
 }
 
-// Release the logger's stream. Each indexer instance owns its logger, so an
-// instance that shuts down must not leave a file handle or transport worker
-// behind.
-let close = Pino.close
-
 let setLogLevel = (logger: t, level: Pino.logLevel) => {
   logger->setLevel(level)
 }

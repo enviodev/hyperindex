@@ -2015,10 +2015,5 @@ let makePersistenceFromConfig = (
   ~logger: Pino.t,
   ~storage=makeStorageFromEnv(~config, ~logger),
 ) => {
-  Persistence.make(
-    ~userEntities=config.userEntities,
-    ~allEnums=config.allEnums,
-    ~storage,
-    ~logger,
-  )
+  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage, ~logger)
 }

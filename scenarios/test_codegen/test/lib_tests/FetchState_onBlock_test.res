@@ -55,7 +55,8 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
     },
   ]
   let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-  FetchState.make(~logger=Env.logger, 
+  FetchState.make(
+    ~logger=Logger.quiet(),
     ~onEventRegistrations,
     ~contractConfigs,
     ~addresses,

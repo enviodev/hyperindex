@@ -44,7 +44,9 @@ let serverPort =
 
 let tuiEnvVar = envSafe->EnvSafe.get("ENVIO_TUI", S.option(S.bool))
 
-let logLevelSchema = S.enum([
+// Annotated because nothing in this module constrains it any more — the
+// loggers built from these values live in `Logger`.
+let logLevelSchema: S.t<Pino.logLevel> = S.enum([
   #trace,
   #debug,
   #info,
@@ -94,15 +96,6 @@ let logStrategy =
     ]),
     ~fallback=ConsolePretty,
   )
-
-// Builds a logger from the process env. Each indexer instance gets its own,
-// so a level change on one can't affect another.
-let makeLogger = (~userLogLevel=userLogLevel->Option.getOr(#info)) =>
-  Logging.makeLogger(~logStrategy, ~logFilePath, ~defaultFileLogLevel, ~userLogLevel)
-
-// Sink for process-level logging that happens outside any indexer instance:
-// bootstrap and pre-config errors, and `ErrorHandling`'s fallback logger.
-let logger = makeLogger()
 
 module Db = {
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")

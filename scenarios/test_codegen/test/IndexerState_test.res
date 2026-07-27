@@ -42,7 +42,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let addresses = []
     let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
-    let fetcherStateInit: FetchState.t = FetchState.make(~logger=Env.logger, 
+    let fetcherStateInit: FetchState.t = FetchState.make(
+      ~logger=Logger.quiet(),
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
@@ -129,7 +130,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~chainConfig,
       ~fetchState=fetchState.contents,
       ~indexingAddresses,
-      ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(~logger=Logger.quiet(), ~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
       ~reorgDetection=ReorgDetection.make(
         ~chainReorgCheckpoints=[],
@@ -137,13 +138,14 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         ~shouldRollbackOnReorg=false,
       ),
       ~committedProgressBlockNumber=-1,
-      ~logger=Env.logger,
+      ~logger=Logger.quiet(),
     )
 
     chainStates->Utils.Dict.setByInt(id, mockChainState)
   })
 
-  let state = IndexerState.make(~logger=Env.logger, 
+  let state = IndexerState.make(
+    ~logger=Logger.quiet(),
     ~config,
     ~persistence=MockIndexer.defaultPersistence(),
     ~chainStates,
@@ -262,7 +264,8 @@ describe("IndexerState", () => {
           let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
           let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
           let fetchState = ref(
-            FetchState.make(~logger=Env.logger, 
+            FetchState.make(
+              ~logger=Logger.quiet(),
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
               ~onEventRegistrations,
@@ -322,19 +325,20 @@ describe("IndexerState", () => {
                 ~chainConfig,
                 ~fetchState,
                 ~indexingAddresses,
-                ~sourceManager=SourceManager.make(~logger=Env.logger, ~sources=[mockSource.source], ~isRealtime=false),
+                ~sourceManager=SourceManager.make(~logger=Logger.quiet(), ~sources=[mockSource.source], ~isRealtime=false),
                 ~reorgDetection=ReorgDetection.make(
                   ~chainReorgCheckpoints=[],
                   ~maxReorgDepth=200,
                   ~shouldRollbackOnReorg=false,
                 ),
                 ~committedProgressBlockNumber=-1,
-                ~logger=Env.logger,
+                ~logger=Logger.quiet(),
               )
               chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
             },
           )
-          IndexerState.make(~logger=Env.logger, 
+          IndexerState.make(
+            ~logger=Logger.quiet(),
             ~config,
             ~persistence=MockIndexer.defaultPersistence(),
             ~chainStates,

@@ -7,7 +7,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
     let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState, #initialize])
 
-    let persistence = Persistence.make(~logger=Env.logger, ~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let persistence = Persistence.make(~logger=Logger.quiet(), ~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     t.expect(
       persistence.allEntities,
@@ -131,7 +131,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should skip initialization when storage is already initialized", async t => {
     let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
 
-    let persistence = Persistence.make(~logger=Env.logger, ~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let persistence = Persistence.make(~logger=Logger.quiet(), ~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     let envioInfo = JSON.Encode.object(Dict.make())
 
@@ -181,7 +181,7 @@ Although it should load effect caches metadata.`,
     ~runCommand=runCmd,
   ) => {
     let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
-    let persistence = Persistence.make(~logger=Env.logger, ~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let persistence = Persistence.make(~logger=Logger.quiet(), ~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
     let resumePromise =
       persistence->Persistence.init(
         ~chainConfigs=[],
