@@ -194,7 +194,15 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
-    ~clientFilterAddressThreshold=Some(config.clientFilterAddressThreshold),
+    // Fuel and SVM route through the address store like EVM does, so the
+    // client-side path works for them — but their address counts are nowhere
+    // near the threshold, so switching would only trade a server-side filter
+    // that costs nothing today for an over-fetch. Keep them server-side until a
+    // chain actually needs it.
+    ~clientFilterAddressThreshold=switch config.ecosystem.name {
+    | Evm => Some(config.clientFilterAddressThreshold)
+    | Fuel | Svm => None
+    },
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
