@@ -1,16 +1,10 @@
-// Type-checks handler source against a config's generated `indexer` surface.
+// Type-checks user source against a config's generated `indexer` surface.
 // Lives in TypeScript (`TypeChecker.ts`) since it drives the TS compiler API.
-@module("./TypeChecker.ts")
-external checkHandlerTypes: (string, string) => array<string> = "checkHandlerTypes"
-
 type sources = {handlers?: string, test?: string}
 @module("./TypeChecker.ts")
 external checkSources: (string, sources) => array<string> = "checkSources"
 
-type parsed = {
-  config: Config.t,
-  publicConfigJson: JSON.t,
-}
+type parsed = {config: Config.t}
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
@@ -31,8 +25,8 @@ external describeAsync: (string, unit => promise<unit>) => unit = "describe"
 // module and its bare `envio` import resolves to the instance already loaded.
 let importModule: string => promise<unit> = %raw(`(path) => import(path)`)
 
-// `file:line` of the `defineIndexerTest` call — the first stack frame outside
-// this helper — so a failing suite names the fixture that produced it.
+// `file:line` of the `fromUserApi` call — the first stack frame outside this
+// helper — so a failing suite names the fixture that produced it.
 let callSite: unit => string = %raw(`() => {
   const stack = new Error().stack ?? "";
   for (const frame of stack.split("\n").slice(1)) {
@@ -57,30 +51,21 @@ let writeModule = (~kind, ~site, ~source) => {
   file
 }
 
-
 // Config priming and the handler registry are process-global, so a fixture that
 // runs tests owns the process. Under `pool: "forks"` that means one such fixture
 // per test file; parse-only calls are unrestricted.
 let ranTestAt: ref<option<string>> = ref(None)
 
 // Parse the same YAML a user supplies, then cross the public JSON boundary used
-// at runtime.
-//
-// `handlers` and `test` are ordinary user modules — the same source a project
-// puts in `src/handlers/*.ts` and `src/indexer.test.ts` — type-checked against
-// the config's generated types.
-//
-// With `test`, the sources are also evaluated: the config is primed so the real
-// `createTestIndexer` from "envio" runs with no project on disk, handlers
-// register through the normal global registry, and the test module's `it()`
-// calls register into the calling file's suite, so they get real vitest names,
-// code frames and diffs. Nothing needs to be awaited — vitest resolves the suite
-// callback while collecting — and failures setting the fixture up are reported
-// as a named test rather than a collection crash.
+// at runtime. `handlers` and `test` are ordinary user modules — the same source
+// a project puts in `src/handlers/*.ts` and `src/indexer.test.ts` — type-checked
+// against the config's generated types, and with `test`, evaluated: priming the
+// config is what lets the real `createTestIndexer` from "envio" run with no
+// project on disk.
 //
 // Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
 // the source must be escaped.
-let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~name=?, ~configYaml): parsed => {
+let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~configYaml): parsed => {
   let withIndexerTypes = handlers->Option.isSome || test->Option.isSome
   let {config: configJson, indexerTypes} =
     Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes, configYaml)
@@ -110,10 +95,7 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~name=?, ~
     }
   | Some(test) =>
     let site = callSite()
-    let suiteName = switch name {
-    | Some(name) => name
-    | None => `indexerTest(${site})`
-    }
+    let suiteName = `indexerTest(${site})`
     let setup = try {
       switch typeErrors {
       | Some(message) => JsError.throwWithMessage(message)
@@ -169,5 +151,5 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~name=?, ~
     }
   }
 
-  {publicConfigJson, config}
+  {config: config}
 }

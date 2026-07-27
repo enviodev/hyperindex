@@ -140,10 +140,3 @@ export function checkSources(
 
   return diagnostics.map((d) => ts.formatDiagnostic(d, formatHost).trim());
 }
-
-/**
- * Type-check `handlers` alone. Retained for the ReScript `fromUserApi` callers.
- */
-export function checkHandlerTypes(typesDts: string, handlers: string): string[] {
-  return checkSources(typesDts, { handlers });
-}
