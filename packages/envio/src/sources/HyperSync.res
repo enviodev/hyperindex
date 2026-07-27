@@ -16,7 +16,7 @@ let reraisIfRateLimited = exn =>
 
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  // Block headers referenced by `items`, deduplicated by block number.
+  // Headers for every returned block, deduplicated by block number.
   blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
