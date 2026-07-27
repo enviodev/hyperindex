@@ -10,6 +10,7 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
+    globalSetup: ["test/helpers/globalSetup.ts"],
     passWithNoTests: true,
     server: {
       deps: {

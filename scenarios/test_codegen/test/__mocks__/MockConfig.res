@@ -31,16 +31,7 @@ let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) 
   | Some(id) => id
   | None => config.chainMap->ChainMap.values->Array.get(0)->Option.mapOr(0, c => c.id)
   }
-  let registration =
-    HandlerRegister.getActiveRegistration()->Option.getOrThrow(
-      ~message="MockConfig.getOnEventRegistration: handlers must be registered before probing registrations",
-    )
-  HandlerRegister.getSimulateOnEventRegistrations(
-    ~registration,
-    ~config,
-    ~chainId=probeChainId,
-    ~eventConfig,
-  )
+  HandlerRegister.getSimulateOnEventRegistrations(~config, ~chainId=probeChainId, ~eventConfig)
   ->Array.get(0)
   ->Option.getOrThrow
 }
