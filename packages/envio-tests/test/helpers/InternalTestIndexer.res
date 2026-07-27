@@ -144,6 +144,7 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~name=?, ~
 
     switch setup {
     | Ok((handlersFile, testFile)) =>
+      let collected = ref(false)
       describeAsync(suiteName, async () => {
         // Handlers must finish registering before the test module's bodies run.
         switch handlersFile {
@@ -151,7 +152,17 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~name=?, ~
         | None => ()
         }
         await importModule(testFile)
+        collected := true
       })
+      // Registering the tests depends on vitest awaiting the suite callback
+      // while collecting. If that ever stops holding, the imported `it()`s
+      // simply never register — the suite shrinks instead of failing, which no
+      // reporter flags. This sentinel is registered outside the callback, so it
+      // still runs and turns that silence into a failure.
+      Vitest.it(
+        `${suiteName} collected`,
+        t => t.expect(collected.contents, ~message="test module was not imported during collection").toBe(true),
+      )
     // Surface setup failures as a named test rather than a collection crash, so
     // the reporter attributes them to this fixture.
     | Error(exn) => Vitest.it(`${suiteName} setup`, _ => throw(exn))
