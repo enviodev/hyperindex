@@ -5203,10 +5203,12 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual((["Gravatar"], [(false, Some(["Gravatar"]), [])]))
   })
 
+  // The address-free partition shows up with no addresses of its own; a
+  // catch-up partition for freshly registered addresses shows its contract.
   let frontierShape = (fetchState: FetchState.t) =>
     fetchState.optimizedPartitions.idsInAscOrder->Array.map(id => {
       let p = fetchState.optimizedPartitions.entities->Dict.getUnsafe(id)
-      (p.latestFetchedBlock.blockNumber, p.mergeBlock, p.selection.clientFilteredContracts)
+      (p.latestFetchedBlock.blockNumber, p.mergeBlock, p.addresses->AddressSet.contractNames)
     })
 
   // Standing address-free partition with its frontier advanced to block 50,
@@ -5254,7 +5256,7 @@ describe("FetchState client-side address filtering", () => {
     (advanced, addressStore, query)
   }
 
-  it("extends the backfill over an open-ended query in flight past the standing frontier", t => {
+  it("leaves the catch-up unbounded while an open-ended query is in flight", t => {
     let (advanced, addressStore, inFlight) = makeCollapsedAt50WithQueryInFlight()
     let afterReg =
       advanced->FetchState.registerDynamicContracts(~addressStore, [
@@ -5262,51 +5264,116 @@ describe("FetchState client-side address filtering", () => {
       ])
     t.expect(
       (inFlight.toBlock, afterReg->frontierShape),
-      // An open-ended probe carries no toBlock of its own, so the known height
-      // bounds what it can claim.
-      ~message="backfill reaches the known height, not the frontier at 50",
-    ).toEqual((None, [(19, Some(100), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
+      // An open-ended probe carries no toBlock of its own, so there's no block
+      // the standing partition is known to have covered the new address from.
+      // The catch-up stays unbounded and keeps fetching until a later
+      // optimization can bound it.
+      ~message="no merge block guessed from the known height",
+    ).toEqual((None, [(19, None, ["Gravatar"]), (50, None, [])]))
   })
 
-  it("extends the backfill to the arriving response's own frontier", t => {
-    let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
-    // The unbounded query came back at 120 — past the height known when it went
-    // out — and its registrations land before it is applied, so a catch-up
-    // stopping at the old height of 100 would leave [101, 120] fetched for
-    // every address but this one.
+  it("bounds the catch-up once the open-ended query settles", t => {
+    let (advanced, addressStore, inFlight) = makeCollapsedAt50WithQueryInFlight()
     let afterReg =
-      advanced->FetchState.registerDynamicContracts(
-        ~addressStore,
-        ~claimCeiling=120,
-        [makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem],
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    // The query came back at 120 — past the height known when it went out. It
+    // carried nothing for the new address, so the catch-up must reach 120.
+    let settled =
+      afterReg->FetchState.handleQueryResult(
+        ~query=inFlight,
+        ~latestFetchedBlock=getBlockData(~blockNumber=120),
+        ~newItems=[],
       )
     t.expect(
-      afterReg->frontierShape,
-      ~message="catch-up reaches the response's frontier, not the stale known height",
-    ).toEqual([(19, Some(120), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))])
+      settled->frontierShape,
+      ~message="catch-up bounded by what the response actually covered",
+    ).toEqual([(19, Some(120), ["Gravatar"]), (120, None, [])])
   })
 
-  it("backfills an address registered above the stale known height", t => {
-    let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
-    // Registered at 110: above both the frontier and the height known when the
-    // query went out, yet inside the range that query came back with.
+  // Both partitions probing open-ended at the same time: the standing partition
+  // can't bound the catch-up while its own query is unbounded, so the catch-up
+  // goes out unbounded too and the two responses may land in either order.
+  let makeTwoOpenEndedQueriesInFlight = () => {
+    let (advanced, addressStore, standingQuery) = makeCollapsedAt50WithQueryInFlight()
     let afterReg =
-      advanced->FetchState.registerDynamicContracts(
-        ~addressStore,
-        ~claimCeiling=120,
-        [makeDynContractRegistration(~blockNumber=110, ~contractAddress=mockAddress3)->dcToItem],
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    let catchUpQuery = switch afterReg->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready([query]) => query
+    | _ => JsError.throwWithMessage("Expected a single catch-up query")
+    }
+    afterReg->FetchState.startFetchingQueries(~queries=[catchUpQuery])
+    (afterReg, standingQuery, catchUpQuery)
+  }
+
+  it("bounds and removes the catch-up when the standing response lands first", t => {
+    let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
+    // Dispatched after the catch-up's query (fromBlock 51 against 20) yet
+    // completing before it.
+    let afterStanding =
+      afterReg->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=120),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    // The catch-up had no bound when it went out, so it comes back past the
+    // merge block it has since been given — and is removed on arrival.
+    let afterCatchUp =
+      afterStanding->FetchState.handleQueryResult(
+        ~query=catchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=150),
+        ~newItems=[mockEvent(~blockNumber=60)],
       )
     t.expect(
-      afterReg->frontierShape,
-      ~message="catch-up covers [109, 120] instead of being skipped entirely",
-    ).toEqual([(50, None, Some(["Gravatar"])), (109, Some(120), Some(["Gravatar"]))])
+      (
+        (standingQuery.toBlock, catchUpQuery.toBlock),
+        afterStanding->frontierShape,
+        afterCatchUp->frontierShape,
+        afterCatchUp->FetchState.bufferSize,
+      ),
+      ~message="both queries open-ended; the settled response bounds the catch-up, which then over-fetches past it and disappears, its overlap deduped",
+    ).toEqual(((None, None), [(19, Some(120), ["Gravatar"]), (120, None, [])], [(120, None, [])], 1))
   })
 
-  it("backfills an address registered above the frontier but inside a query in flight", t => {
+  it("keeps the catch-up unbounded when its own response lands first", t => {
+    let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
+    let afterCatchUp =
+      afterReg->FetchState.handleQueryResult(
+        ~query=catchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=80),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    let afterStanding =
+      afterCatchUp->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=120),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    t.expect(
+      (
+        afterCatchUp->frontierShape,
+        afterStanding->frontierShape,
+        afterStanding->FetchState.bufferSize,
+      ),
+      ~message="catch-up runs past the standing frontier unbounded, then is bounded by what the standing response actually covered",
+    ).toEqual((
+      [(50, None, []), (80, None, ["Gravatar"])],
+      [(80, Some(120), ["Gravatar"]), (120, None, [])],
+      1,
+    ))
+  })
+
+  it("catches an address up over the in-flight range above the frontier", t => {
     let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
     // Registered at 60: above the standing frontier of 50, so nothing is behind
-    // to backfill — but the query covering [51, 100] was routed before the
-    // address existed, so [59, 100] still needs a catch-up.
+    // to catch up on — but the query covering [51, ...] was routed before the
+    // address existed, so [59, ...] still needs its own partition.
     let afterReg =
       advanced->FetchState.registerDynamicContracts(~addressStore, [
         makeDynContractRegistration(~blockNumber=60, ~contractAddress=mockAddress3)->dcToItem,
@@ -5314,7 +5381,7 @@ describe("FetchState client-side address filtering", () => {
     t.expect(
       afterReg->frontierShape,
       ~message="catch-up covers the in-flight range above the frontier",
-    ).toEqual([(50, None, Some(["Gravatar"])), (59, Some(100), Some(["Gravatar"]))])
+    ).toEqual([(50, None, []), (59, None, ["Gravatar"])])
   })
 
   it("adds no catch-up above the frontier when nothing is in flight", t => {
@@ -5327,23 +5394,40 @@ describe("FetchState client-side address filtering", () => {
       ])
     t.expect(
       afterReg->frontierShape,
-      ~message="no backfill; the standing partition still covers everything ahead",
-    ).toEqual([(50, None, Some(["Gravatar"]))])
+      ~message="no catch-up; the standing partition still covers everything ahead",
+    ).toEqual([(50, None, [])])
   })
 
-  it("adds a bounded backfill instead of rebuilding when a client-filtered contract registers a new address", t => {
+  it("adds an address-bound catch-up partition when a client-filtered contract registers a new address", t => {
     let (advanced, addressStore) = makeCollapsedAt50()
     let afterReg =
       advanced->FetchState.registerDynamicContracts(~addressStore, [
         makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
       ])
+    let catchUp =
+      afterReg.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.find(p => p.id !== afterReg->standingId)
+      ->Option.getOrThrow
     t.expect(
-      (advanced->standingId === afterReg->standingId, afterReg->frontierShape),
-      ~message="standing partition untouched at 50; backfill covers [19, 50]",
-    ).toEqual((true, [(19, Some(50), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
+      (
+        advanced->standingId === afterReg->standingId,
+        afterReg->frontierShape,
+        (
+          catchUp.selection.dependsOnAddresses,
+          catchUp.dynamicContract,
+          catchUp.addresses->AddressSet.addresses,
+        ),
+      ),
+      ~message="standing partition untouched at 50; catch-up fetches only the new address over [19, 50]",
+    ).toEqual((
+      true,
+      [(19, Some(50), ["Gravatar"]), (50, None, [])],
+      (true, Some("Gravatar"), [mockAddress3]),
+    ))
   })
 
-  it("folds successive registrations into a single backfill partition", t => {
+  it("gives each successive registration its own catch-up partition", t => {
     let (advanced, addressStore) = makeCollapsedAt50()
     let afterSecond =
       advanced
@@ -5355,11 +5439,11 @@ describe("FetchState client-side address filtering", () => {
       ])
     t.expect(
       (advanced->standingId === afterSecond->standingId, afterSecond->frontierShape),
-      ~message="one backfill from the earliest uncovered block; standing partition untouched",
-    ).toEqual((true, [(19, Some(50), Some(["Gravatar"])), (50, None, Some(["Gravatar"]))]))
+      ~message="each catch-up starts at its own address's block; standing partition untouched",
+    ).toEqual((true, [(19, Some(50), ["Gravatar"]), (29, Some(50), ["Gravatar"]), (50, None, [])]))
   })
 
-  it("removes the backfill partition once it reaches its mergeBlock", t => {
+  it("removes the catch-up partition once it reaches its mergeBlock", t => {
     let (advanced, addressStore) = makeCollapsedAt50()
     let afterReg =
       advanced->FetchState.registerDynamicContracts(~addressStore, [
@@ -5373,18 +5457,70 @@ describe("FetchState client-side address filtering", () => {
     | _ => []
     }
     afterReg->FetchState.startFetchingQueries(~queries)
-    let backfillQuery =
+    let catchUpQuery =
       queries->Array.find(q => q.partitionId !== afterReg->standingId)->Option.getOrThrow
     let caughtUp =
       afterReg->FetchState.handleQueryResult(
-        ~query=backfillQuery,
+        ~query=catchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=50),
         ~newItems=[],
       )
     t.expect(
-      (caughtUp->standingId === afterReg->standingId, caughtUp->frontierShape),
-      ~message="backfill deleted at its mergeBlock; standing partition untouched",
-    ).toEqual((true, [(50, None, Some(["Gravatar"]))]))
+      (
+        catchUpQuery.selection.dependsOnAddresses,
+        catchUpQuery.toBlock,
+        caughtUp->standingId === afterReg->standingId,
+        caughtUp->frontierShape,
+      ),
+      ~message="the catch-up queries server-side up to its mergeBlock, then is deleted; standing partition untouched",
+    ).toEqual((true, Some(50), true, [(50, None, [])]))
+  })
+
+  it("merges a surviving catch-up partition away on rollback", t => {
+    let (advanced, addressStore) = makeCollapsedAt50()
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    let queries = switch afterReg->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready(queries) => queries
+    | _ => []
+    }
+    let catchUpQuery =
+      queries->Array.find(q => q.partitionId !== afterReg->standingId)->Option.getOrThrow
+    afterReg->FetchState.startFetchingQueries(~queries=[catchUpQuery])
+    let advancedCatchUp =
+      afterReg->FetchState.handleQueryResult(
+        ~query=catchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=45),
+        ~newItems=[],
+      )
+    // Rolling back to 40 keeps the address (registered at 20) and puts every
+    // partition on the same frontier — nothing is left for a catch-up to cover,
+    // so the address-free partition stands alone again.
+    let rolledBack = advancedCatchUp->FetchState.rollback(~addressStore, ~targetBlockNumber=40)
+    t.expect(
+      (advancedCatchUp->frontierShape, rolledBack->frontierShape),
+      ~message="catch-up merges into the address-free partition instead of surviving the rollback",
+    ).toEqual(([(45, Some(50), ["Gravatar"]), (50, None, [])], [(40, None, [])]))
+  })
+
+  it("keeps a catch-up partition that rollback leaves behind the address-free partition", t => {
+    let (advanced, addressStore) = makeCollapsedAt50()
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    // The catch-up is still at 19 after the rollback to 30, so it keeps its
+    // range — now bounded by where the address-free partition was rolled back to.
+    let rolledBack = afterReg->FetchState.rollback(~addressStore, ~targetBlockNumber=30)
+    t.expect(
+      rolledBack->frontierShape,
+      ~message="catch-up survives with its merge block capped at the rollback target",
+    ).toEqual([(19, Some(30), ["Gravatar"]), (30, None, [])])
   })
 
   it("strips a client-filtered contract's addresses from a partition shared with a server-side contract", t => {

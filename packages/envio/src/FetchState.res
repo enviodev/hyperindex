@@ -270,6 +270,47 @@ module OptimizedPartitions = {
   let ascSortFn = (a, b) =>
     Int.compare(a.latestFetchedBlock.blockNumber, b.latestFetchedBlock.blockNumber)
 
+  // Contracts a standing address-free partition already fetches client-side.
+  // Addresses registered for them after that partition passed get a normal
+  // address-bound partition which dies once it catches up (see make), instead
+  // of being folded into the address-free one.
+  let anchoredContracts = (partitions: array<partition>) => {
+    let set = Utils.Set.make()
+    partitions->Array.forEach(p =>
+      switch (p.mergeBlock, p.selection.clientFilteredContracts) {
+      | (None, Some(contractNames)) =>
+        contractNames->Array.forEach(name => set->Utils.Set.add(name)->ignore)
+      | _ => ()
+      }
+    )
+    set
+  }
+
+  // The furthest block an address-free partition's already-dispatched queries
+  // can deliver without the addresses registered from now on. A settled query
+  // claims only what it actually fetched — the rest of its range is re-queried
+  // later, by then against the updated address store — while an in-flight
+  // bounded query claims its whole toBlock. An in-flight unbounded query has no
+  // ceiling at all, so nothing is safe to stop a catch-up partition at yet.
+  let getAnchorSafeBlock = (p: partition) => {
+    let safeRef = ref(Some(p.latestFetchedBlock.blockNumber))
+    p.mutPendingQueries->Array.forEach(pq =>
+      switch (safeRef.contents, pq) {
+      | (None, _) => ()
+      | (Some(safe), {fetchedBlock: Some({blockNumber})}) =>
+        if blockNumber > safe {
+          safeRef := Some(blockNumber)
+        }
+      | (Some(safe), {toBlock: Some(toBlock)}) =>
+        if toBlock > safe {
+          safeRef := Some(toBlock)
+        }
+      | (Some(_), _) => safeRef := None
+      }
+    )
+    safeRef.contents
+  }
+
   /**
    * Optimizes partitions by finding opportunities to merge partitions that
    * are behind other partitions with same/superset of contract names.
@@ -288,19 +329,49 @@ module OptimizedPartitions = {
     let mergingPartitions = Dict.make()
     let nextPartitionIndexRef = ref(nextPartitionIndex)
 
+    // Where a catch-up partition for a client-filtered contract may stop, keyed
+    // by contract name. A contract absent from the dict while present in
+    // anchoredContractsSet has an unbounded query in flight on its address-free
+    // partition — its catch-up can't be bounded yet, and a later call will bound it.
+    let anchorSafeBlocks = Dict.make()
+    let anchoredContractsSet = Utils.Set.make()
+    if clientFilteredContracts->Utils.Set.size > 0 {
+      partitions->Array.forEach(p =>
+        switch (p.mergeBlock, p.selection.clientFilteredContracts) {
+        | (None, Some(contractNames)) =>
+          let safeBlock = p->getAnchorSafeBlock
+          contractNames->Array.forEach(name => {
+            anchoredContractsSet->Utils.Set.add(name)->ignore
+            switch safeBlock {
+            | Some(safeBlock) => anchorSafeBlocks->Dict.set(name, safeBlock)
+            | None => ()
+            }
+          })
+        | _ => ()
+        }
+      )
+    }
+
     for idx in 0 to partitions->Array.length - 1 {
       let p = partitions->Array.getUnsafe(idx)
       switch p {
+      // For now don't merge partitions with mergeBlock,
+      // assuming they are already merged,
+      // TODO: Although there might be cases with too far away mergeBlock,
+      // which is worth merging.
+      // A partition already at or past its merge block is done — normally
+      // handleQueryResponse removes it when the response lands, but a rollback
+      // can cap the merge block at the rolled-back frontier, leaving no
+      // response to ever remove it on.
+      | {mergeBlock: Some(mergeBlock)} =>
+        if p.latestFetchedBlock.blockNumber < mergeBlock {
+          newPartitions->Array.push(p)->ignore
+        }
       // Since it's not a dynamic contract partition,
       // there's no need for merge logic
       | {dynamicContract: None}
       | // Wildcard doesn't need merging
-      {selection: {dependsOnAddresses: false}}
-      | // For now don't merge partitions with mergeBlock,
-      // assuming they are already merged,
-      // TODO: Although there might be cases with too far away mergeBlock,
-      // which is worth merging
-      {mergeBlock: Some(_)} =>
+      {selection: {dependsOnAddresses: false}} =>
         newPartitions->Array.push(p)->ignore
       | {dynamicContract: Some(contractName)} =>
         let pAddressesCount = p.addresses->AddressSet.countFor(contractName)
@@ -398,14 +469,40 @@ module OptimizedPartitions = {
       newPartitions->Array.push(currentPRef.contents)->ignore
     }
 
-    // Sort partitions by latestFetchedBlock ascending
-    let _ = newPartitions->Array.sort(ascSortFn)
+    // A dynamic partition for a contract the address-free partition already
+    // fetches is a catch-up for addresses registered after that partition
+    // passed them. It merges by disappearing once it reaches the last block
+    // that partition's dispatched queries could have missed them on — its
+    // addresses are in the chain's store, so there is nothing to hand over.
+    let finalPartitions = if anchoredContractsSet->Utils.Set.size === 0 {
+      newPartitions
+    } else {
+      let anchored = []
+      newPartitions->Array.forEach(p =>
+        switch p {
+        | {dynamicContract: Some(contractName), mergeBlock: None}
+          if anchoredContractsSet->Utils.Set.has(contractName) =>
+          switch anchorSafeBlocks->Utils.Dict.dangerouslyGetNonOption(contractName) {
+          | None => anchored->Array.push(p)->ignore
+          | Some(anchorSafeBlock) =>
+            if p.latestFetchedBlock.blockNumber < anchorSafeBlock {
+              anchored->Array.push({...p, mergeBlock: Some(anchorSafeBlock)})->ignore
+            }
+          }
+        | _ => anchored->Array.push(p)->ignore
+        }
+      )
+      anchored
+    }
 
-    let partitionsCount = newPartitions->Array.length
+    // Sort partitions by latestFetchedBlock ascending
+    let _ = finalPartitions->Array.sort(ascSortFn)
+
+    let partitionsCount = finalPartitions->Array.length
     let idsInAscOrder = Utils.Array.jsArrayCreate(partitionsCount)
     let entities = Dict.make()
     for idx in 0 to partitionsCount - 1 {
-      let p = newPartitions->Array.getUnsafe(idx)
+      let p = finalPartitions->Array.getUnsafe(idx)
       idsInAscOrder->Array.setUnsafe(idx, p.id)
       entities->Dict.set(p.id, p)
     }
@@ -1004,6 +1101,10 @@ let claimedFetchedBlock = (p: partition, ~knownHeight) =>
 //   it on arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and
 //   the re-fetch doubles as history for freshly registered addresses: events
 //   dropped before the address was registered now pass the address gate.
+// - A dynamic partition for a contract the standing partition already covers is
+//   left alone: it is a catch-up for addresses registered after that partition
+//   passed them, and OptimizedPartitions.make bounds it against the standing
+//   partition's own claims instead.
 // - A partition mixing client-filtered and server-side contracts stays,
 //   stripped of the client-filtered contracts' addresses — the address-free
 //   partition covers those logs, so fetching them server-side too would only
@@ -1034,6 +1135,7 @@ let collapseClientFilteredContracts = (
     let backfills = []
     let absorbedPartitions = []
     let strippedFrontiers = []
+    let anchoredContracts = partitions->OptimizedPartitions.anchoredContracts
 
     partitions->Array.forEach(p =>
       switch p {
@@ -1048,6 +1150,17 @@ let collapseClientFilteredContracts = (
         let serverSideNames =
           contractNames->Array.filter(c => !(clientFilteredContracts->Utils.Set.has(c)))
         if serverSideNames->Array.length === contractNames->Array.length {
+          kept->Array.push(p)->ignore
+        } else if (
+          switch p.dynamicContract {
+          | Some(contractName) => anchoredContracts->Utils.Set.has(contractName)
+          | None => false
+          }
+        ) {
+          // A catch-up partition for addresses registered after the address-free
+          // partition already covered their contract. It is the correctness
+          // barrier for those addresses until it catches up — absorbing it would
+          // hand that job back to a guessed ceiling.
           kept->Array.push(p)->ignore
         } else if serverSideNames->Utils.Array.isEmpty {
           absorbedPartitions->Array.push(p)->ignore
@@ -1213,25 +1326,34 @@ OptimizedPartitions.t => {
   let nonDynamicPartitions = []
   let clientFilteredFrontiers = []
 
+  // Contracts an address-free partition already fetches. Their new addresses
+  // need a partition of their own: the address-free partition passed the blocks
+  // they were registered at without them in the store.
+  let anchoredContracts = existingPartitions->OptimizedPartitions.anchoredContracts
+
   let contractNames = registeringSetsByContract->Dict.keysToArray
   for cIdx in 0 to contractNames->Array.length - 1 {
     let contractName = contractNames->Array.getUnsafe(cIdx)
     let contractSet = registeringSetsByContract->Dict.getUnsafe(contractName)
 
-    let isDynamic = dynamicContracts->Utils.Set.has(contractName)
+    let isAnchored = anchoredContracts->Utils.Set.has(contractName)
+    // A catch-up partition must go through the dynamic merge logic — that's
+    // what bounds it against its anchor and removes it once it catches up.
+    let isDynamic = dynamicContracts->Utils.Set.has(contractName) || isAnchored
     let partitions = isDynamic ? dynamicPartitions : nonDynamicPartitions
 
     // A set is ordered by effectiveStartBlock, so its start-block groups are
     // ascending and each group's addresses are a contiguous slice.
     let groups = contractSet->AddressSet.startBlockGroups
 
-    if clientFilteredContracts->Utils.Set.has(contractName) {
-      // The address-free partition already fetches this contract, so chunking
-      // its addresses by maxAddrInPartition would only build partitions for the
-      // collapse below to absorb - hundreds of them for a contract big enough to
-      // be client-filtered in the first place. All the collapse needs is the
-      // earliest block the addresses aren't covered from, which is the first
-      // group's since groups are ascending.
+    if clientFilteredContracts->Utils.Set.has(contractName) && !isAnchored {
+      // The contract is switching to client-side filtering in this very call, so
+      // the collapse below folds everything it has into the address-free
+      // partition anyway. Chunking these addresses by maxAddrInPartition would
+      // only build partitions for it to absorb - hundreds of them for a contract
+      // big enough to be client-filtered in the first place. All the collapse
+      // needs is the earliest block the addresses aren't covered from, which is
+      // the first group's since groups are ascending.
       switch groups->Array.get(0) {
       | Some({startBlock}) =>
         clientFilteredFrontiers->Array.push({
@@ -2620,6 +2742,14 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
         latestFetchedBlock: p.latestFetchedBlock.blockNumber > targetBlockNumber
           ? {blockNumber: targetBlockNumber, blockTimestamp: 0}
           : p.latestFetchedBlock,
+        // Everything above the target is refetched by whichever partition this
+        // one was catching up to, so there is nothing left to catch up on past
+        // it. createPartitions drops the partition outright when the capped
+        // block is already reached.
+        mergeBlock: switch p.mergeBlock {
+        | Some(mergeBlock) if mergeBlock > targetBlockNumber => Some(targetBlockNumber)
+        | other => other
+        },
         mutPendingQueries: rollbackPendingQueries(p.mutPendingQueries, ~targetBlockNumber),
       })
       ->ignore
