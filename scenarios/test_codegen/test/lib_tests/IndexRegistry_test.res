@@ -62,7 +62,7 @@ describe("IndexRegistry", () => {
     ).toBe(4)
   })
 
-  Async.it("Rediscovers existing indexes from catalog rows, ignoring invalid ones", async t => {
+  Async.it("Rediscovers existing indices from catalog rows, ignoring invalid ones", async t => {
     let registry = IndexRegistry.make()
     let invalid = registry->IndexRegistry.reload(
       ~rows=[

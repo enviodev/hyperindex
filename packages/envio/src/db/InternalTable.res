@@ -164,8 +164,8 @@ SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
-  // Written in the same transaction as the deferred schema indexes, so a chain
-  // is never reported ready without the indexes the schema promises.
+  // Written in the same transaction as the deferred schema indices, so a chain
+  // is never reported ready without the indices the schema promises.
   let makeSetReadyAtQuery = (~pgSchema) =>
     `UPDATE "${pgSchema}"."${table.tableName}"
 SET "${(#ready_at: field :> string)}" = $1

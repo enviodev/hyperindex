@@ -22,7 +22,7 @@ let readyAtByChainId = async () => {
   rows->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
 }
 
-describe("Deferred schema indexes", () => {
+describe("Deferred schema indices", () => {
   Async.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
     async t => {
@@ -39,7 +39,7 @@ describe("Deferred schema indexes", () => {
           await readyAtByChainId(),
           await indexerMock.metric("envio_progress_ready"),
         ),
-        ~message="Backfill runs without the schema's read indexes, and nothing is ready",
+        ~message="Backfill runs without the schema's read indices, and nothing is ready",
       ).toEqual((false, [(1337, false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
 
       sourceMock.resolveGetHeightOrThrow(100)
@@ -57,14 +57,14 @@ describe("Deferred schema indexes", () => {
         ~message="ready_at is only committed once every schema-defined index exists",
       ).toEqual((true, [(1337, true)], [{value: "1", labels: dict{"chainId": "1337"}}]))
 
-      let indexesBeforeRestart = await indexNames()
+      let indicesBeforeRestart = await indexNames()
       let _restarted = await indexerMock.restart()
       await Utils.delay(0)
 
       t.expect(
         (await indexNames(), await readyAtByChainId()),
-        ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
-      ).toEqual((indexesBeforeRestart, [(1337, true)]))
+        ~message="A resume rediscovers the indices from the catalog — none are dropped or recreated",
+      ).toEqual((indicesBeforeRestart, [(1337, true)]))
     },
   )
 })

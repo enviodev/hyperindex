@@ -93,7 +93,7 @@ let schemaIndexDescription = ({tableName, indexFields}: schemaIndex) =>
   ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
   ->Array.joinUnsafe("_")
 
-// The identifier Postgres actually stores. Automatic and schema-defined indexes
+// The identifier Postgres actually stores. Automatic and schema-defined indices
 // share it, so both are named the same way and both stay reachable through
 // `CREATE INDEX IF NOT EXISTS`.
 let schemaIndexName = schemaIndex =>
@@ -135,7 +135,7 @@ let makeSingleColumnSchemaIndex = (~tableName, ~column): schemaIndex => {
 // Every index the entity schema promises. Deferred past the initial DDL and
 // created in one transaction once backfill completes, so a resumed indexer that
 // reports itself ready always has all of them.
-let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<schemaIndex> => {
+let getSchemaIndices = (~entities: array<Internal.entityConfig>): array<schemaIndex> => {
   let derivedSchema = Schema.make(entities->Array.map(e => e.table))
   let all = []
 
@@ -290,10 +290,10 @@ let makeInitializeTransaction = (
   ~entities=[],
   ~enums=[],
   ~isEmptyPgSchema=false,
-  // Backfill writes are far cheaper without the schema's read indexes, so the
+  // Backfill writes are far cheaper without the schema's read indices, so the
   // initial DDL creates only tables, primary keys, views and chain rows; the
   // rest is created by `finalizeBackfill` before the indexer reports ready.
-  ~deferSchemaIndexes=false,
+  ~deferSchemaIndices=false,
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
@@ -308,8 +308,8 @@ let makeInitializeTransaction = (
     allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
   })
 
-  let schemaIndexes = getSchemaIndexes(~entities)
-  IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
+  let schemaIndices = getSchemaIndices(~entities)
+  IndexRegistry.validateIndexNamesOrThrow(schemaIndices->Array.map(schemaIndexDescription))
 
   let query = ref(
     (
@@ -344,8 +344,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   })
 
   // Then batch all indices (better performance when tables exist)
-  if !deferSchemaIndexes {
-    schemaIndexes->Array.forEach(schemaIndex => {
+  if !deferSchemaIndices {
+    schemaIndices->Array.forEach(schemaIndex => {
       query := query.contents ++ "\n" ++ makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema)
     })
   }
@@ -1607,7 +1607,7 @@ let make = (
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
-      ~deferSchemaIndexes=true,
+      ~deferSchemaIndices=true,
     )
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
@@ -1725,7 +1725,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     columns
   }
 
-  let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
+  let ensureQueryIndices = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
     let missing = filterColumns(~table, ~filters)->Array.filterMap(column => {
       let schemaIndex = makeSingleColumnSchemaIndex(~tableName=table.tableName, ~column)
       indexRegistry->IndexRegistry.has(schemaIndex->schemaIndexKey) ? None : Some(schemaIndex)
@@ -1773,13 +1773,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ~chainIds: array<int>,
     ~readyAt: Date.t,
   ) => {
-    let schemaIndexes = getSchemaIndexes(
+    let schemaIndices = getSchemaIndices(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
     )
-    IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
+    IndexRegistry.validateIndexNamesOrThrow(schemaIndices->Array.map(schemaIndexDescription))
 
     let missing =
-      schemaIndexes->Array.filter(schemaIndex =>
+      schemaIndices->Array.filter(schemaIndex =>
         !(indexRegistry->IndexRegistry.has(schemaIndex->schemaIndexKey))
       )
 
@@ -1787,7 +1787,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     | [] =>
       Logging.info({
         "storage": storageName,
-        "msg": `All ${schemaIndexes
+        "msg": `All ${schemaIndices
           ->Array.length
           ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
       })
@@ -1821,7 +1821,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ->Utils.Promise.ignoreValue
     })
 
-    // Only after the commit: a rollback takes both the indexes and ready_at
+    // Only after the commit: a rollback takes both the indices and ready_at
     // with it, and the registry must not claim what the schema doesn't have.
     missing->Array.forEach(schemaIndex =>
       indexRegistry->IndexRegistry.add(schemaIndex->schemaIndexKey)
@@ -2141,7 +2141,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     initialize,
     resumeInitialState,
     loadOrThrow,
-    ensureQueryIndexes,
+    ensureQueryIndices,
     finalizeBackfill,
     dumpEffectCache,
     reset,

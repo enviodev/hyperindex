@@ -444,7 +444,7 @@ FROM "public"."envio_chains";`
     )
   })
 
-  describe("Deferred schema indexes", () => {
+  describe("Deferred schema indices", () => {
     let entities = [MockIndexer.entityConfig(A), MockIndexer.entityConfig(B)]
 
     Async.it(
@@ -457,7 +457,7 @@ FROM "public"."envio_chains";`
             ~entities,
             ~enums=[],
             ~isHasuraEnabled=false,
-            ~deferSchemaIndexes=true,
+            ~deferSchemaIndices=true,
           )
           ->Array.get(0)
           ->Option.getOrThrow
@@ -469,7 +469,7 @@ FROM "public"."envio_chains";`
             mainQuery->String.includes(`PRIMARY KEY("id")`),
             mainQuery->String.includes(`CREATE VIEW "test_schema"."_meta"`),
           ),
-          ~message="Schema indexes are absent during backfill; tables, primary keys and views are not",
+          ~message="Schema indices are absent during backfill; tables, primary keys and views are not",
         ).toEqual((false, true, true, true))
       },
     )
@@ -478,7 +478,7 @@ FROM "public"."envio_chains";`
       "Describes every promised index once, with its descriptive name",
       async t => {
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
+          PgStorage.getSchemaIndices(~entities)->Array.map(schemaIndex => (
             schemaIndex->PgStorage.schemaIndexName,
             PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
           )),
@@ -512,7 +512,7 @@ FROM "public"."envio_chains";`
     )
 
     Async.it(
-      "Rejects two promised indexes whose names truncate to the same identifier",
+      "Rejects two promised indices whose names truncate to the same identifier",
       async t => {
         let longEntity = "Entity" ++ "x"->String.repeat(50)
         let table = Table.mkTable(

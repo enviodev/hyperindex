@@ -1065,7 +1065,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 }
 
 // Mark the chain caught up to head/endblock. Called by CrossChainState only once
-// every chain in the indexer is caught up and the deferred schema indexes are
+// every chain in the indexer is caught up and the deferred schema indices are
 // committed, so no chain flips to ready while another is still backfilling or
 // while an index the schema promises is still missing. `readyAt` is the
 // timestamp already committed to `envio_chains.ready_at` in that same

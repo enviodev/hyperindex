@@ -1,4 +1,4 @@
-// The FinalizingIndexes phase. Runs once, from the processing loop, when every
+// The FinalizingIndices phase. Runs once, from the processing loop, when every
 // chain has caught up: processing is already paused (the loop awaits this),
 // pending writes are flushed, then storage creates every missing schema-defined
 // index and stamps `ready_at` in one transaction. A failure rolls back both, so

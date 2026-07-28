@@ -54,15 +54,15 @@ let entityB = MockIndexer.entityConfig(B)
 let createABId = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
 let createAOptional = `CREATE INDEX IF NOT EXISTS "A_optionalStringToTestLinkedEntities" ON "test_schema"."A"("optionalStringToTestLinkedEntities");`
 
-describe("Automatic getWhere indexes", () => {
+describe("Automatic getWhere indices", () => {
   Async.it("Creates a descriptively named index for a non-indexed field, once", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.ensureQueryIndexes(
+    await storage.ensureQueryIndices(
       ~table=entityA.table,
       ~filters=[eq(~fieldName="optionalStringToTestLinkedEntities")],
     )
-    await storage.ensureQueryIndexes(
+    await storage.ensureQueryIndices(
       ~table=entityA.table,
       ~filters=[eq(~fieldName="optionalStringToTestLinkedEntities")],
     )
@@ -76,7 +76,7 @@ describe("Automatic getWhere indexes", () => {
   Async.it("Indexes every column a filter reads, deduped", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.ensureQueryIndexes(
+    await storage.ensureQueryIndices(
       ~table=entityA.table,
       ~filters=[
         And({
@@ -92,8 +92,8 @@ describe("Automatic getWhere indexes", () => {
   Async.it("Shares one build between concurrent identical requests", async t => {
     let (storage, queries) = makeStorage()
 
-    let first = storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    let second = storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    let first = storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    let second = storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
     await first
     await second
 
@@ -113,8 +113,8 @@ describe("Automatic getWhere indexes", () => {
     )
     let name = `${longEntity}_${column}`->String.slice(~start=0, ~end=63)
 
-    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
-    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndices(~table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndices(~table, ~filters=[eq(~fieldName=column)])
 
     t.expect(
       queries,
@@ -130,10 +130,10 @@ describe("Automatic getWhere indexes", () => {
       ~failOn=query => shouldFail.contents && query->String.includes("CREATE INDEX"),
     )
 
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
     shouldFail := false
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
 
     t.expect(
       queries,
@@ -197,10 +197,10 @@ WHERE "id" = ANY($2::int[]);`
     ])
   })
 
-  Async.it("Skips indexes an automatic getWhere build already created", async t => {
+  Async.it("Skips indices an automatic getWhere build already created", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
     await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1], ~readyAt)
 
     t.expect(queries).toEqual([createABId, "BEGIN", setReadyAt, "COMMIT"])

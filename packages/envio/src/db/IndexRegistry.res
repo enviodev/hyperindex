@@ -1,4 +1,4 @@
-// An in-memory mirror of the indexes PostgreSQL holds for the indexer schema.
+// An in-memory mirror of the indices PostgreSQL holds for the indexer schema.
 // Postgres stays authoritative: the registry is loaded from pg_catalog at
 // startup/resume and afterwards only grows — optimistically, right after a
 // CREATE INDEX we issued succeeds. Only one Indexer instance writes to the
@@ -83,7 +83,7 @@ type t = {
   keys: Utils.Set.t<string>,
   // Keyed by index key so identical concurrent requests await one build.
   inflight: dict<promise<unit>>,
-  // Tail of the build chain per table, so two different indexes on the same
+  // Tail of the build chain per table, so two different indices on the same
   // table are built one after the other rather than at once.
   tableQueue: dict<promise<unit>>,
 }
@@ -103,7 +103,7 @@ let size = registry => registry.keys->Utils.Set.size
 let toArray = registry => registry.keys->Utils.Set.toArray->Array.toSorted(String.compare)
 
 // Replaces the whole registry with what the catalog reports. Returns the names
-// of indexes Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died
+// of indices Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died
 // midway): they're reported to the user but never dropped or rebuilt, and they
 // stay out of the registry so the next request retries the build.
 let reload = (registry, ~rows: array<catalogRow>) => {
