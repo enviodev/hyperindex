@@ -147,6 +147,7 @@ let makeInternal = (
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
+  ~isResumed=false,
   ~reducedPollingInterval=?,
 ): t => {
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
@@ -203,6 +204,7 @@ let makeInternal = (
     | Evm => Some(config.clientFilterAddressThreshold)
     | Fuel | Svm => None
     },
+    ~isResumed,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
@@ -383,6 +385,7 @@ let makeFromDbState = (
     ~isInReorgThreshold,
     ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
+    ~isResumed=true,
     ~reducedPollingInterval?,
   )
 }

@@ -5154,6 +5154,38 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual(([(false, Some(["Gravatar"]), [])], ["Gravatar"]))
   })
 
+  it("creates no server-side partitions for a contract that is client-filtered from the start", t => {
+    // maxAddrInPartition=1 would chunk the 6 addresses into 6 partitions before
+    // the collapse absorbed them again. They must never be built: the only
+    // partition index consumed is the address-free partition's.
+    let (fetchState, _addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig],
+      ~addresses=[
+        makeConfigContract("Gravatar", mockAddress0),
+        makeConfigContract("Gravatar", mockAddress1),
+        makeConfigContract("Gravatar", mockAddress2),
+        makeConfigContract("Gravatar", mockAddress3),
+        makeConfigContract("Gravatar", mockAddress4),
+        makeConfigContract("Gravatar", mockAddress5),
+      ],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=1,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~clientFilterAddressThreshold=Some(2),
+    )
+    t.expect(
+      (
+        fetchState->partitionShape,
+        fetchState.optimizedPartitions.idsInAscOrder,
+        fetchState.optimizedPartitions.nextPartitionIndex,
+      ),
+      ~message="one address-free partition with the first index; no chunked partitions were ever created",
+    ).toEqual(([(false, Some(["Gravatar"]), [])], ["0"], 1))
+  })
+
   it("keeps a contract client-side filtered across rollback", t => {
     let (fetchState, addressStore) = makeGravatarFs(~clientFilterAddressThreshold=Some(1))
     let collapsed =
