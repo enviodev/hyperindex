@@ -670,11 +670,17 @@ describe("CrossChainState readiness", () => {
     t.expect({
       "atHeadReady": atHead->ChainState.isReady,
       "backfillingReady": backfilling->ChainState.isReady,
+      "isCaughtUp": cm->CrossChainState.isCaughtUp,
       "isRealtime": cm->CrossChainState.isRealtime,
-    }).toEqual({"atHeadReady": false, "backfillingReady": false, "isRealtime": false})
+    }).toEqual({
+      "atHeadReady": false,
+      "backfillingReady": false,
+      "isCaughtUp": false,
+      "isRealtime": false,
+    })
   })
 
-  it("marks every chain ready together once the whole indexer is caught up", t => {
+  it("holds every chain unready until the deferred indexes are finalized", t => {
     let a = makeChainState(
       ~chainId=1,
       ~knownHeight=1000,
@@ -693,11 +699,28 @@ describe("CrossChainState readiness", () => {
 
     cm->CrossChainState.applyBatchProgress(~batch=emptyBatch, ~blockTimestampName="timestamp")
 
+    t.expect(
+      {
+        "aReady": a->ChainState.isReady,
+        "bReady": b->ChainState.isReady,
+        "isCaughtUp": cm->CrossChainState.isCaughtUp,
+        "isRealtime": cm->CrossChainState.isRealtime,
+      },
+      ~message="Catching up starts the FinalizingIndexes phase, it doesn't end it",
+    ).toEqual({"aReady": false, "bReady": false, "isCaughtUp": true, "isRealtime": false})
+
+    let readyAt = Date.fromString("2024-01-01T00:00:00Z")
+    cm->CrossChainState.markReady(~readyAt)
+
     t.expect({
-      "aReady": a->ChainState.isReady,
-      "bReady": b->ChainState.isReady,
+      "aReadyAt": a->ChainState.timestampCaughtUpToHeadOrEndblock,
+      "bReadyAt": b->ChainState.timestampCaughtUpToHeadOrEndblock,
       "isRealtime": cm->CrossChainState.isRealtime,
-    }).toEqual({"aReady": true, "bReady": true, "isRealtime": true})
+    }).toEqual({
+      "aReadyAt": Some(readyAt),
+      "bReadyAt": Some(readyAt),
+      "isRealtime": true,
+    })
   })
 })
 

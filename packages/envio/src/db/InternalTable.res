@@ -164,6 +164,13 @@ SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
+  // Written in the same transaction as the deferred schema indexes, so a chain
+  // is never reported ready without the indexes the schema promises.
+  let makeSetReadyAtQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#ready_at: field :> string)}" = $1
+WHERE "${(#id: field :> string)}" = ANY($2::int[]);`
+
   type rawInitialState = {
     id: int,
     startBlock: int,

@@ -104,6 +104,13 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // When resuming from persisted state, all events may already be processed.
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       Logging.info("All chains are caught up to end blocks.")
+      // A run that has nothing left to process still owes the schema its
+      // deferred indexes — otherwise a resume of a backfill that died right
+      // before finalizing would report ready without them.
+      state->IndexerState.markCaughtUp
+      if state->IndexerState.isFinalizingIndexes {
+        await FinalizeBackfill.run(state)
+      }
       if !(state->IndexerState.keepProcessAlive) {
         await ExitOnCaughtUp.run(state)
       }
@@ -155,6 +162,13 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
+
+        // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
+        // processing loop for the whole finalize, which is what pauses
+        // processing while the indexes are built.
+        if state->IndexerState.isFinalizingIndexes {
+          await FinalizeBackfill.run(state)
+        }
 
         if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
           // Catching up just flipped the chain to realtime, which changes the

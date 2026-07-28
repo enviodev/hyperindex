@@ -141,7 +141,7 @@ let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
-let markReady: t => unit
+let markReady: (t, ~readyAt: Date.t) => unit
 let rollback: (
   t,
   ~newProgressBlockNumber: option<int>,

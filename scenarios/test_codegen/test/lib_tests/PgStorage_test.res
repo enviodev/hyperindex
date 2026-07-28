@@ -277,7 +277,6 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT NOT NULL, "optString" TEXT, "arrayOfStrings" TEXT[] NOT NULL, "int_" INTEGER NOT NULL, "optInt" INTEGER, "arrayOfInts" INTEGER[] NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "bool" BOOLEAN NOT NULL, "optBool" BOOLEAN, "bigInt" NUMERIC NOT NULL, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "arrayOfBigDecimals" TEXT[] NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "optEnumField" "test_schema".AccountType, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -441,6 +440,73 @@ FROM "public"."envio_chains";`
         t.expect(mainQuery, ~message="Single entity SQL should match expected output exactly").toBe(
           expectedMainQuery,
         )
+      },
+    )
+  })
+
+  describe("Deferred schema indexes", () => {
+    let entities = [MockIndexer.entityConfig(A), MockIndexer.entityConfig(B)]
+
+    Async.it(
+      "Creates no schema index during the initial DDL, but still the tables and views",
+      async t => {
+        let mainQuery =
+          PgStorage.makeInitializeTransaction(
+            ~pgSchema="test_schema",
+            ~pgUser="postgres",
+            ~entities,
+            ~enums=[],
+            ~isHasuraEnabled=false,
+            ~deferSchemaIndexes=true,
+          )
+          ->Array.get(0)
+          ->Option.getOrThrow
+
+        t.expect(
+          (
+            mainQuery->String.includes("CREATE INDEX"),
+            mainQuery->String.includes(`CREATE TABLE IF NOT EXISTS "test_schema"."A"`),
+            mainQuery->String.includes(`PRIMARY KEY("id")`),
+            mainQuery->String.includes(`CREATE VIEW "test_schema"."_meta"`),
+          ),
+          ~message="Schema indexes are absent during backfill; tables, primary keys and views are not",
+        ).toEqual((false, true, true, true))
+      },
+    )
+
+    Async.it(
+      "Describes every promised index once, with its descriptive name",
+      async t => {
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
+            schemaIndex->PgStorage.schemaIndexName,
+            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
+          )),
+          ~message="The @index on A.b and B's derived relationship describe the same index",
+        ).toEqual([
+          ("A_b_id", `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`),
+        ])
+      },
+    )
+
+    Async.it(
+      "Keeps composite index descriptions ordered with their directions",
+      async t => {
+        let schemaIndex: PgStorage.schemaIndex = {
+          tableName: "Transfer",
+          indexFields: [
+            {fieldName: "block_number", direction: Table.Desc},
+            {fieldName: "log_index", direction: Table.Asc},
+          ],
+        }
+
+        t.expect((
+          schemaIndex->PgStorage.schemaIndexName,
+          PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s", ~concurrently=true),
+        )).toEqual((
+          "Transfer_block_number_desc_log_index",
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS "Transfer_block_number_desc_log_index" ON "s"."Transfer"("block_number" DESC, "log_index");`,
+        ))
       },
     )
   })

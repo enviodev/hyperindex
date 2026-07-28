@@ -1,0 +1,181 @@
+// An in-memory mirror of the indexes PostgreSQL holds for the indexer schema.
+// Postgres stays authoritative: the registry is loaded from pg_catalog at
+// startup/resume and afterwards only grows — optimistically, right after a
+// CREATE INDEX we issued succeeds. Only one Indexer instance writes to the
+// schema, so no catalog refresh is needed between those two points.
+
+let btree = "btree"
+
+type column = {
+  name: string,
+  direction: Table.indexFieldDirection,
+}
+
+let fromIndexFields = (indexFields: array<Table.compositeIndexField>) =>
+  indexFields->Array.map(({fieldName, direction}) => {name: fieldName, direction})
+
+// Identity of an index is table + ordered columns + direction + method. Names
+// are deliberately not part of it: the catalog is matched on what the index
+// actually covers, not on how it was spelled.
+let makeKey = (~tableName, ~columns: array<column>, ~method) =>
+  `${tableName}|${method}|${columns
+    ->Array.map(({name, direction}) =>
+      switch direction {
+      | Table.Asc => name
+      | Desc => name ++ " DESC"
+      }
+    )
+    ->Array.joinUnsafe(",")}`
+
+type catalogRow = {
+  tableName: string,
+  indexName: string,
+  method: string,
+  // 1/0 rather than a bool: postgres.js hands booleans back inconsistently
+  // depending on the driver's type resolution, so the query casts it.
+  isValid: int,
+  columns: array<string>,
+  // "ASC"/"DESC" per column, in the same order as `columns`.
+  directions: array<string>,
+}
+
+let catalogRowsSchema = S.array(
+  S.object((s): catalogRow => {
+    tableName: s.field("tableName", S.string),
+    indexName: s.field("indexName", S.string),
+    method: s.field("method", S.string),
+    isValid: s.field("isValid", S.int),
+    columns: s.field("columns", S.array(S.string)),
+    directions: s.field("directions", S.array(S.string)),
+  }),
+)
+
+// One row per index, with its key columns aggregated in ordinal order.
+// INCLUDE columns are excluded (they don't affect what the index can serve),
+// and expression columns come back as their printed definition so an
+// expression index can never be mistaken for a plain-column one.
+let makeCatalogQuery = (~pgSchema) =>
+  `SELECT
+  t.relname AS "tableName",
+  i.relname AS "indexName",
+  am.amname AS "method",
+  CASE WHEN ix.indisvalid AND ix.indisready THEN 1 ELSE 0 END AS "isValid",
+  array_agg(
+    CASE WHEN k.attnum = 0
+      THEN pg_get_indexdef(ix.indexrelid, k.ord::int, true)
+      ELSE a.attname
+    END ORDER BY k.ord
+  ) AS "columns",
+  array_agg(
+    CASE WHEN (ix.indoption[k.ord - 1] & 1) = 1 THEN 'DESC' ELSE 'ASC' END ORDER BY k.ord
+  ) AS "directions"
+FROM pg_index ix
+JOIN pg_class i ON i.oid = ix.indexrelid
+JOIN pg_class t ON t.oid = ix.indrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+JOIN pg_am am ON am.oid = i.relam
+JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON k.ord <= ix.indnkeyatts
+LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+WHERE n.nspname = '${pgSchema}'
+GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready;`
+
+type t = {
+  keys: Utils.Set.t<string>,
+  // Keyed by index key so identical concurrent requests await one build.
+  inflight: dict<promise<unit>>,
+  // Tail of the build chain per table, so two different indexes on the same
+  // table are built one after the other rather than at once.
+  tableQueue: dict<promise<unit>>,
+}
+
+let make = () => {
+  keys: Utils.Set.make(),
+  inflight: Dict.make(),
+  tableQueue: Dict.make(),
+}
+
+let has = (registry, key) => registry.keys->Utils.Set.has(key)
+
+let add = (registry, key) => registry.keys->Utils.Set.add(key)->ignore
+
+let size = registry => registry.keys->Utils.Set.size
+
+let toArray = registry => registry.keys->Utils.Set.toArray->Array.toSorted(String.compare)
+
+// Replaces the whole registry with what the catalog reports. Returns the names
+// of indexes Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died
+// midway): they're reported to the user but never dropped or rebuilt, and they
+// stay out of the registry so the next request retries the build.
+let reload = (registry, ~rows: array<catalogRow>) => {
+  registry.keys->Utils.Set.clear
+  let invalidIndexNames = []
+  rows->Array.forEach(row => {
+    if row.isValid === 0 {
+      invalidIndexNames->Array.push(row.indexName)->ignore
+    } else {
+      registry->add(
+        makeKey(
+          ~tableName=row.tableName,
+          ~columns=row.columns->Array.mapWithIndex((name, idx) => {
+            name,
+            direction: switch row.directions->Array.get(idx) {
+            | Some("DESC") => Table.Desc
+            | _ => Asc
+            },
+          }),
+          ~method=row.method,
+        ),
+      )
+    }
+  })
+  invalidIndexNames
+}
+
+// Runs `build` unless the index is already registered. The key is added only
+// after `build` resolves, so a failed build leaves the registry untouched and
+// the next request retries.
+let ensure = (registry, ~key, ~tableName, ~build) =>
+  if registry->has(key) {
+    Promise.resolve()
+  } else {
+    switch registry.inflight->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(promise) => promise
+    | None =>
+      let tail = switch registry.tableQueue->Utils.Dict.dangerouslyGetNonOption(tableName) {
+      | Some(tail) => tail
+      | None => Promise.resolve()
+      }
+      let promise =
+        tail
+        // The queued build may have been satisfied while waiting behind another
+        // one on the same table (eg a finalize pass created it).
+        ->Promise.then(() => registry->has(key) ? Promise.resolve() : build())
+        ->Promise.thenResolve(() => registry->add(key))
+      registry.inflight->Dict.set(key, promise)
+      registry.tableQueue->Dict.set(tableName, promise->Utils.Promise.silentCatch)
+      promise->Promise.finally(() => registry.inflight->Utils.Dict.deleteInPlace(key))
+    }
+  }
+
+let pgMaxIdentifierLength = 63
+
+// Postgres silently truncates identifiers past 63 characters, so two distinct
+// index descriptions can collapse onto one name — and the second
+// `CREATE INDEX IF NOT EXISTS` would then be skipped without a trace, leaving
+// the registry claiming an index that doesn't exist.
+let validateIndexNamesOrThrow = (names: array<string>) => {
+  let byTruncated = Dict.make()
+  names->Array.forEach(name => {
+    let truncated =
+      name->String.length > pgMaxIdentifierLength
+        ? name->String.slice(~start=0, ~end=pgMaxIdentifierLength)
+        : name
+    switch byTruncated->Utils.Dict.dangerouslyGetNonOption(truncated) {
+    | Some(existing) if existing !== name =>
+      JsError.throwWithMessage(
+        `Index names "${existing}" and "${name}" both truncate to "${truncated}" at PostgreSQL's ${pgMaxIdentifierLength->Int.toString}-character identifier limit. Rename a field or an entity so the generated index names stay distinct.`,
+      )
+    | _ => byTruncated->Dict.set(truncated, name)
+    }
+  })
+}
