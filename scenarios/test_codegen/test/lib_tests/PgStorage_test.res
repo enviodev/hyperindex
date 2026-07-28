@@ -490,6 +490,58 @@ FROM "public"."envio_chains";`
     )
 
     Async.it(
+      "Truncates a long name to Postgres' identifier limit rather than letting Postgres do it",
+      async t => {
+        let schemaIndex: PgStorage.schemaIndex = {
+          tableName: "Entity" ++ "x"->String.repeat(50),
+          indexFields: [{fieldName: "some_long_column_name", direction: Table.Asc}],
+        }
+        let name = schemaIndex->PgStorage.schemaIndexName
+
+        t.expect(
+          (
+            name->String.length,
+            name,
+            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s")->String.includes(
+              `IF NOT EXISTS "${name}"`,
+            ),
+          ),
+          ~message="The emitted name matches what Postgres stores, so IF NOT EXISTS keeps matching it",
+        ).toEqual((63, (schemaIndex->PgStorage.schemaIndexDescription)->String.slice(~start=0, ~end=63), true))
+      },
+    )
+
+    Async.it(
+      "Rejects two promised indexes whose names truncate to the same identifier",
+      async t => {
+        let longEntity = "Entity" ++ "x"->String.repeat(50)
+        let table = Table.mkTable(
+          longEntity,
+          ~fields=[
+            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+            Table.mkField("some_long_column_one", String, ~isIndex=true, ~fieldSchema=S.string),
+            Table.mkField("some_long_column_two", String, ~isIndex=true, ~fieldSchema=S.string),
+          ],
+        )
+        let entityConfig: Internal.entityConfig = {
+          ...MockIndexer.entityConfig(A),
+          table,
+        }
+
+        t.expect(
+          () =>
+            PgStorage.makeInitializeTransaction(
+              ~pgSchema="test_schema",
+              ~pgUser="postgres",
+              ~entities=[entityConfig],
+              ~enums=[],
+              ~isHasuraEnabled=false,
+            ),
+        ).toThrow()
+      },
+    )
+
+    Async.it(
       "Keeps composite index descriptions ordered with their directions",
       async t => {
         let schemaIndex: PgStorage.schemaIndex = {

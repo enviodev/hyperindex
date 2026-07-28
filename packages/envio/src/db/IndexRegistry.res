@@ -159,23 +159,28 @@ let ensure = (registry, ~key, ~tableName, ~build) =>
 
 let pgMaxIdentifierLength = 63
 
-// Postgres silently truncates identifiers past 63 characters, so two distinct
-// index descriptions can collapse onto one name — and the second
-// `CREATE INDEX IF NOT EXISTS` would then be skipped without a trace, leaving
-// the registry claiming an index that doesn't exist.
-let validateIndexNamesOrThrow = (names: array<string>) => {
-  let byTruncated = Dict.make()
-  names->Array.forEach(name => {
-    let truncated =
-      name->String.length > pgMaxIdentifierLength
-        ? name->String.slice(~start=0, ~end=pgMaxIdentifierLength)
-        : name
-    switch byTruncated->Utils.Dict.dangerouslyGetNonOption(truncated) {
-    | Some(existing) if existing !== name =>
+// Postgres truncates identifiers past 63 characters on its own. Doing it here
+// instead keeps the name we emit, log and read back from the catalog identical
+// to the one it stores. Descriptions are ASCII (GraphQL names are), so
+// characters and Postgres' byte limit line up.
+let truncateIndexName = description =>
+  description->String.length > pgMaxIdentifierLength
+    ? description->String.slice(~start=0, ~end=pgMaxIdentifierLength)
+    : description
+
+// Two distinct descriptions can collapse onto one truncated name — and the
+// second `CREATE INDEX IF NOT EXISTS` would then be skipped without a trace,
+// leaving the registry claiming an index that doesn't exist.
+let validateIndexNamesOrThrow = (descriptions: array<string>) => {
+  let byName = Dict.make()
+  descriptions->Array.forEach(description => {
+    let name = description->truncateIndexName
+    switch byName->Utils.Dict.dangerouslyGetNonOption(name) {
+    | Some(existing) if existing !== description =>
       JsError.throwWithMessage(
-        `Index names "${existing}" and "${name}" both truncate to "${truncated}" at PostgreSQL's ${pgMaxIdentifierLength->Int.toString}-character identifier limit. Rename a field or an entity so the generated index names stay distinct.`,
+        `Index names "${existing}" and "${description}" both truncate to "${name}" at PostgreSQL's ${pgMaxIdentifierLength->Int.toString}-character identifier limit. Rename a field or an entity so the generated index names stay distinct.`,
       )
-    | _ => byTruncated->Dict.set(truncated, name)
+    | _ => byName->Dict.set(name, description)
     }
   })
 }

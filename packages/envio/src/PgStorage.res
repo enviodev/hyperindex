@@ -82,12 +82,22 @@ type schemaIndex = {
   indexFields: array<Table.compositeIndexField>,
 }
 
-let schemaIndexName = ({tableName, indexFields}: schemaIndex) =>
+// `<Entity>_<column>` for a single column, with each further column appended in
+// order (and `_desc` where it applies). The full description, before Postgres'
+// identifier limit is applied — `validateIndexNamesOrThrow` compares these, so
+// it can tell two descriptions apart after they truncate to the same name.
+let schemaIndexDescription = ({tableName, indexFields}: schemaIndex) =>
   tableName ++
   "_" ++
   indexFields
   ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
   ->Array.joinUnsafe("_")
+
+// The identifier Postgres actually stores. Automatic and schema-defined indexes
+// share it, so both are named the same way and both stay reachable through
+// `CREATE INDEX IF NOT EXISTS`.
+let schemaIndexName = schemaIndex =>
+  schemaIndex->schemaIndexDescription->IndexRegistry.truncateIndexName
 
 let schemaIndexKey = ({tableName, indexFields}: schemaIndex) =>
   IndexRegistry.makeKey(
@@ -292,7 +302,7 @@ let makeInitializeTransaction = (
   })
 
   let schemaIndexes = getSchemaIndexes(~entities)
-  IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexName))
+  IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
 
   let query = ref(
     (
@@ -1705,40 +1715,25 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     if missing->Utils.Array.notEmpty {
       let _ = await missing
-      ->Array.map(schemaIndex => {
-        let indexName = schemaIndex->schemaIndexName
-
-        // Postgres would truncate the name and could then collide with another
-        // index, which `IF NOT EXISTS` turns into a silent no-op. Leave the
-        // query unindexed rather than register an index that isn't there.
-        if indexName->String.length > IndexRegistry.pgMaxIdentifierLength {
+      ->Array.map(schemaIndex =>
+        indexRegistry
+        ->IndexRegistry.ensure(
+          ~key=schemaIndex->schemaIndexKey,
+          ~tableName=table.tableName,
+          ~build=() =>
+            sql
+            ->Postgres.unsafe(makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema, ~concurrently=true))
+            ->Utils.Promise.ignoreValue,
+        )
+        // A failed build leaves the registry untouched, so the next getWhere
+        // retries. Meanwhile the query still runs — just without the index.
+        ->Utils.Promise.catchResolve(exn => {
           Logging.warn({
-            "msg": `Skipping the automatic index for "${table.tableName}". Its name exceeds PostgreSQL's ${IndexRegistry.pgMaxIdentifierLength->Int.toString}-character identifier limit, so it could silently collide with another index. The query runs without it.`,
-            "index": indexName,
+            "msg": `Failed to create the index "${schemaIndex->schemaIndexName}" for a getWhere query. The query runs without it.`,
+            "err": exn->Utils.prettifyExn,
           })
-          Promise.resolve()
-        } else {
-          indexRegistry
-          ->IndexRegistry.ensure(
-            ~key=schemaIndex->schemaIndexKey,
-            ~tableName=table.tableName,
-            ~build=() =>
-              sql
-              ->Postgres.unsafe(
-                makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema, ~concurrently=true),
-              )
-              ->Utils.Promise.ignoreValue,
-          )
-          // A failed build leaves the registry untouched, so the next getWhere
-          // retries. Meanwhile the query still runs — just without the index.
-          ->Utils.Promise.catchResolve(exn => {
-            Logging.warn({
-              "msg": `Failed to create the index "${indexName}" for a getWhere query. The query runs without it.`,
-              "err": exn->Utils.prettifyExn,
-            })
-          })
-        }
-      })
+        })
+      )
       ->Promise.all
     }
   }
@@ -1751,7 +1746,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
     )
-    IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexName))
+    IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
 
     let missing =
       schemaIndexes->Array.filter(schemaIndex =>

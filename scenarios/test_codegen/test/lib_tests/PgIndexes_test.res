@@ -100,6 +100,30 @@ describe("Automatic getWhere indexes", () => {
     t.expect(queries).toEqual([createABId])
   })
 
+  Async.it("Names a long column the same way a schema-defined index would", async t => {
+    let (storage, queries) = makeStorage()
+    let longEntity = "Entity" ++ "x"->String.repeat(50)
+    let column = "some_long_column_name"
+    let table = Table.mkTable(
+      longEntity,
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField(column, String, ~fieldSchema=S.string),
+      ],
+    )
+    let name = `${longEntity}_${column}`->String.slice(~start=0, ~end=63)
+
+    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
+
+    t.expect(
+      queries,
+      ~message="Truncated to the identifier limit and built once, not skipped",
+    ).toEqual([
+      `CREATE INDEX CONCURRENTLY IF NOT EXISTS "${name}" ON "test_schema"."${longEntity}"("${column}");`,
+    ])
+  })
+
   Async.it("Leaves the registry untouched when the DDL fails, and retries next time", async t => {
     let shouldFail = ref(true)
     let (storage, queries) = makeStorage(
