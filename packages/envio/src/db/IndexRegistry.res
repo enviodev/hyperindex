@@ -34,6 +34,10 @@ type catalogRow = {
   // 1/0 rather than a bool: postgres.js hands booleans back inconsistently
   // depending on the driver's type resolution, so the query casts it.
   isValid: int,
+  // 1 only for an index the indexer could have created: plain btree over plain
+  // columns. A unique or partial index carries a definition our key doesn't
+  // capture, so it can never be one of ours to rebuild.
+  isPlain: int,
   columns: array<string>,
   // "ASC"/"DESC" per column, in the same order as `columns`.
   directions: array<string>,
@@ -45,6 +49,7 @@ let catalogRowsSchema = S.array(
     indexName: s.field("indexName", S.string),
     method: s.field("method", S.string),
     isValid: s.field("isValid", S.int),
+    isPlain: s.field("isPlain", S.int),
     columns: s.field("columns", S.array(S.string)),
     directions: s.field("directions", S.array(S.string)),
   }),
@@ -60,6 +65,10 @@ let makeCatalogQuery = (~pgSchema) =>
   i.relname AS "indexName",
   am.amname AS "method",
   CASE WHEN ix.indisvalid AND ix.indisready THEN 1 ELSE 0 END AS "isValid",
+  CASE
+    WHEN ix.indisunique OR ix.indpred IS NOT NULL OR ix.indexprs IS NOT NULL THEN 0
+    ELSE 1
+  END AS "isPlain",
   array_agg(
     CASE WHEN k.attnum = 0
       THEN pg_get_indexdef(ix.indexrelid, k.ord::int, true)
@@ -77,15 +86,23 @@ JOIN pg_am am ON am.oid = i.relam
 JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON k.ord <= ix.indnkeyatts
 LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 WHERE n.nspname = '${pgSchema}'
-GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready;`
+GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready,
+         ix.indisunique, ix.indpred, ix.indexprs;`
+
+// What we know about an index that came back invalid, enough to decide whether
+// rebuilding it would produce the index we actually wanted.
+type invalidIndex = {
+  key: string,
+  isRepairable: bool,
+}
 
 type t = {
   keys: Utils.Set.t<string>,
-  // Names Postgres reports as invalid. Kept because `CREATE INDEX IF NOT
-  // EXISTS` matches on name: with an invalid index already under the name we
-  // want, the DDL is a silent no-op and we'd register a key for something the
-  // planner refuses to use.
-  invalidNames: Utils.Set.t<string>,
+  // Every index Postgres reports as invalid, by name. Kept because
+  // `CREATE INDEX IF NOT EXISTS` matches on name: with an invalid index already
+  // under the name we want, the DDL is a silent no-op and we'd register a key
+  // for something the planner refuses to use.
+  invalidByName: dict<invalidIndex>,
   // Keyed by index key so identical concurrent requests await one build.
   inflight: dict<promise<unit>>,
   // Tail of the build chain per table, so two different indexes on the same
@@ -95,7 +112,7 @@ type t = {
 
 let make = () => {
   keys: Utils.Set.make(),
-  invalidNames: Utils.Set.make(),
+  invalidByName: Dict.make(),
   inflight: Dict.make(),
   tableQueue: Dict.make(),
 }
@@ -111,36 +128,37 @@ let toArray = registry => registry.keys->Utils.Set.toArray->Array.toSorted(Strin
 // A plain CREATE INDEX either commits or leaves nothing behind, so an index can
 // only be invalid because something before us left it that way — the startup
 // snapshot stays accurate until the next restart.
-let isInvalidName = (registry, name) => registry.invalidNames->Utils.Set.has(name)
+let getInvalid = (registry, name) => registry.invalidByName->Utils.Dict.dangerouslyGetNonOption(name)
 
-let clearInvalidName = (registry, name) => registry.invalidNames->Utils.Set.delete(name)->ignore
+let clearInvalidName = (registry, name) => registry.invalidByName->Utils.Dict.deleteInPlace(name)
 
 // Replaces the whole registry with what the catalog reports. Returns the names
 // of indexes Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died
-// midway): they're reported to the user but never dropped or rebuilt, and they
-// stay out of the registry so the next request retries the build.
+// midway). They stay out of the registry, so the next request that needs one
+// repairs it.
 let reload = (registry, ~rows: array<catalogRow>) => {
   registry.keys->Utils.Set.clear
-  registry.invalidNames->Utils.Set.clear
+  registry.invalidByName
+  ->Dict.keysToArray
+  ->Array.forEach(name => registry.invalidByName->Utils.Dict.deleteInPlace(name))
   let invalidIndexNames = []
   rows->Array.forEach(row => {
+    let key = makeKey(
+      ~tableName=row.tableName,
+      ~columns=row.columns->Array.mapWithIndex((name, idx) => {
+        name,
+        direction: switch row.directions->Array.get(idx) {
+        | Some("DESC") => Table.Desc
+        | _ => Asc
+        },
+      }),
+      ~method=row.method,
+    )
     if row.isValid === 0 {
       invalidIndexNames->Array.push(row.indexName)->ignore
-      registry.invalidNames->Utils.Set.add(row.indexName)->ignore
+      registry.invalidByName->Dict.set(row.indexName, {key, isRepairable: row.isPlain === 1})
     } else {
-      registry->add(
-        makeKey(
-          ~tableName=row.tableName,
-          ~columns=row.columns->Array.mapWithIndex((name, idx) => {
-            name,
-            direction: switch row.directions->Array.get(idx) {
-            | Some("DESC") => Table.Desc
-            | _ => Asc
-            },
-          }),
-          ~method=row.method,
-        ),
-      )
+      registry->add(key)
     }
   })
   invalidIndexNames

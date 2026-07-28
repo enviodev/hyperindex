@@ -150,21 +150,24 @@ describe("Automatic getWhere indexes", () => {
 })
 
 describe("Pre-existing invalid indexes", () => {
-  // An index left INVALID by an older build. `CREATE INDEX IF NOT EXISTS`
-  // matches on name, so it would quietly skip and we'd register a key for an
-  // index the planner refuses to use.
-  let invalidABId: IndexRegistry.catalogRow = {
+  // An index left INVALID by a build that died midway. `CREATE INDEX IF NOT
+  // EXISTS` matches on name, so it would quietly skip and we'd register a key
+  // for an index the planner refuses to use.
+  let invalidRow = (~indexName, ~columns, ~isPlain=1): IndexRegistry.catalogRow => {
     tableName: "A",
-    indexName: "A_b_id",
+    indexName,
     method: "btree",
     isValid: 0,
-    columns: ["b_id"],
-    directions: ["ASC"],
+    isPlain,
+    columns,
+    directions: columns->Array.map(_ => "ASC"),
   }
-  let dropABId = `DROP INDEX IF EXISTS "test_schema"."A_b_id";`
+  let reindexABId = `REINDEX INDEX "test_schema"."A_b_id";`
 
-  Async.it("Are dropped and rebuilt by a getWhere build", async t => {
-    let (storage, queries) = makeStorage(~catalogRows=[invalidABId])
+  Async.it("Are repaired, not recreated, when they cover what we asked for", async t => {
+    let (storage, queries) = makeStorage(
+      ~catalogRows=[invalidRow(~indexName="A_b_id", ~columns=["b_id"])],
+    )
     // Loads the registry from the catalog, exactly as a restart does.
     let _ = await storage.resumeInitialState()
 
@@ -173,12 +176,14 @@ describe("Pre-existing invalid indexes", () => {
 
     t.expect(
       queries->Array.filter(query => query->String.includes("INDEX")),
-      ~message="The dead index is cleared once, then the real one is built",
-    ).toEqual([dropABId, createABId])
+      ~message="Rebuilt in place once, and registered as healthy afterwards",
+    ).toEqual([reindexABId])
   })
 
-  Async.it("Are dropped inside the finalize transaction, before ready_at", async t => {
-    let (storage, queries) = makeStorage(~catalogRows=[invalidABId])
+  Async.it("Are repaired inside the finalize transaction, before ready_at", async t => {
+    let (storage, queries) = makeStorage(
+      ~catalogRows=[invalidRow(~indexName="A_b_id", ~columns=["b_id"])],
+    )
     let _ = await storage.resumeInitialState()
     let queriesBefore = queries->Array.length
 
@@ -193,13 +198,45 @@ describe("Pre-existing invalid indexes", () => {
       ~message="ready_at is only committed alongside an index that actually works",
     ).toEqual([
       "BEGIN",
-      dropABId,
-      createABId,
+      reindexABId,
       `UPDATE "test_schema"."envio_chains"
 SET "ready_at" = $1
 WHERE "id" = ANY($2::int[]);`,
       "COMMIT",
     ])
+  })
+
+  // Repairing rebuilds from the index's own definition, so an unrelated index
+  // holding the name would come back valid but wrong — and dropping it could
+  // take out a constraint the indexer never created.
+  Async.it("Are left alone when the name belongs to an index we didn't create", async t => {
+    let (storage, queries) = makeStorage(
+      // Same columns, but unique — rebuilding it would come back valid and
+      // still not be the plain index the query needs.
+      ~catalogRows=[invalidRow(~indexName="A_b_id", ~columns=["b_id"], ~isPlain=0)],
+    )
+    let _ = await storage.resumeInitialState()
+    let queriesBefore = queries->Array.length
+
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+
+    let message = await storage.finalizeBackfill(
+      ~entities=[entityA, entityB],
+      ~chainIds=[1],
+      ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
+    )
+    ->Promise.thenResolve(() => "")
+    ->Utils.Promise.catchResolve(exn =>
+      exn->(Utils.magic: exn => {"message": string})->(m => m["message"])
+    )
+
+    t.expect(
+      (
+        queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
+        message->String.includes(`Cannot create the index "A_b_id"`),
+      ),
+      ~message="No DDL at all, no transaction, and ready_at is never committed",
+    ).toEqual(([], true))
   })
 })
 

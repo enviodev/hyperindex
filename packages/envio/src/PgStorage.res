@@ -128,11 +128,20 @@ let formatSeconds = (timeRef: Performance.timeRef) =>
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
 // An index Postgres reports as INVALID still owns its name, so
-// `CREATE INDEX IF NOT EXISTS` would quietly skip and leave the query
-// unserved. It carries no data the planner will ever use, so dropping it is
-// safe — and the indexer usually has database access the user doesn't.
-let makeDropIndexQuery = (~pgSchema, ~indexName) =>
-  `DROP INDEX IF EXISTS "${pgSchema}"."${indexName}";`
+// `CREATE INDEX IF NOT EXISTS` would quietly skip it and leave the query
+// unserved. REINDEX rebuilds it from its own stored definition — a repair, not
+// a replacement — which is right only when that definition is the one we
+// wanted. Runs inside a transaction, unlike REINDEX CONCURRENTLY.
+let makeReindexQuery = (~pgSchema, ~indexName) => `REINDEX INDEX "${pgSchema}"."${indexName}";`
+
+// A name taken by an invalid index the indexer didn't create isn't ours to
+// touch: rebuilding it reuses its own definition, so it would come back valid
+// but still not serve the query, and dropping it could take out a unique
+// constraint someone else relies on.
+let nameCollisionError = (~indexName, ~pgSchema) =>
+  Utils.Error.make(
+    `Cannot create the index "${indexName}" in schema "${pgSchema}". An index of that name already exists and PostgreSQL reports it as invalid, but it isn't one the indexer created — it covers different columns, or it is a unique or partial index — so it is left untouched. Drop or repair it by hand, then restart the indexer.`,
+  )
 
 let makeSingleColumnSchemaIndex = (~tableName, ~column): schemaIndex => {
   tableName,
@@ -1736,6 +1745,21 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     columns
   }
 
+  // The DDL that leaves `schemaIndex` in place. Normally a create; a repair
+  // when an invalid index already holds the name with the definition we want.
+  let makeEnsureIndexQuery = schemaIndex => {
+    let indexName = schemaIndex->schemaIndexName
+    switch indexRegistry->IndexRegistry.getInvalid(indexName) {
+    | None => makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema)
+    | Some({key, isRepairable: true}) if key === schemaIndex->schemaIndexKey =>
+      makeReindexQuery(~pgSchema, ~indexName)
+    | Some(_) => throw(nameCollisionError(~indexName, ~pgSchema))
+    }
+  }
+
+  let isRepair = schemaIndex =>
+    indexRegistry->IndexRegistry.getInvalid(schemaIndex->schemaIndexName)->Option.isSome
+
   let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
     let missing = filterColumns(~table, ~filters)->Array.filterMap(column => {
       let schemaIndex = makeSingleColumnSchemaIndex(~tableName=table.tableName, ~column)
@@ -1751,25 +1775,22 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           ~key=schemaIndex->schemaIndexKey,
           ~tableName=table.tableName,
           ~build=async () => {
-            if indexRegistry->IndexRegistry.isInvalidName(indexName) {
-              Logging.warn({
-                "storage": storageName,
-                "msg": `The index "${indexName}" exists but PostgreSQL reports it as invalid, so it can't serve queries. Dropping it and rebuilding.`,
-              })
-              let _ = await sql->Postgres.unsafe(makeDropIndexQuery(~pgSchema, ~indexName))
-              indexRegistry->IndexRegistry.clearInvalidName(indexName)
-            }
+            // Resolved before logging so a repair is reported as one, and an
+            // unrelated index holding the name fails before any DDL runs.
+            let query = makeEnsureIndexQuery(schemaIndex)
+            let verb = schemaIndex->isRepair ? "Repairing invalid index" : "Creating index"
             // Logged from inside the build so it reports the one request that
             // actually creates the index, not the ones waiting on it.
             Logging.info({
               "storage": storageName,
-              "msg": `Creating index "${indexName}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+              "msg": `${verb} "${indexName}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
             })
             let timeRef = Performance.now()
-            let _ = await sql->Postgres.unsafe(makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema))
+            let _ = await sql->Postgres.unsafe(query)
+            indexRegistry->IndexRegistry.clearInvalidName(indexName)
             Logging.info({
               "storage": storageName,
-              "msg": `Created index "${indexName}" in ${timeRef->formatSeconds}s. Resuming indexing.`,
+              "msg": `Index "${indexName}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
             })
           },
         )
@@ -1804,18 +1825,15 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     // `IF NOT EXISTS` would quietly skip an index whose name is taken by an
     // invalid one, and the indexer would then report ready with an index the
-    // planner can't use. Drop those first, in the same transaction.
-    let invalidNames =
-      missing
-      ->Array.map(schemaIndexName)
-      ->Array.filter(indexName => indexRegistry->IndexRegistry.isInvalidName(indexName))
-    if invalidNames->Utils.Array.notEmpty {
+    // planner can't use. Those are repaired in the same transaction instead.
+    let repaired = missing->Array.filter(isRepair)
+    if repaired->Utils.Array.notEmpty {
       Logging.warn({
         "storage": storageName,
-        "msg": `PostgreSQL reports ${invalidNames
+        "msg": `PostgreSQL reports ${repaired
           ->Array.length
-          ->Int.toString} existing indexes as invalid, so they can't serve queries. Dropping them and rebuilding.`,
-        "indexes": invalidNames,
+          ->Int.toString} existing indexes as invalid, so they can't serve queries. Rebuilding them.`,
+        "indexes": repaired->Array.map(schemaIndexName),
       })
     }
 
@@ -1836,20 +1854,16 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         "indexes": missing->Array.map(schemaIndexName),
       })
     }
+    // Resolved up front so a name held by an unrelated invalid index fails
+    // before the transaction opens, rather than rolling one back.
+    let indexQueries = missing->Array.map(makeEnsureIndexQuery)
     let timeRef = Performance.now()
 
     await sql->Postgres.beginSql(async sql => {
       // Sequential rather than Promise.all: they share one connection inside
       // the transaction, and several of them target the same table.
-      for idx in 0 to invalidNames->Array.length - 1 {
-        let _ = await sql->Postgres.unsafe(
-          makeDropIndexQuery(~pgSchema, ~indexName=invalidNames->Array.getUnsafe(idx)),
-        )
-      }
-      for idx in 0 to missing->Array.length - 1 {
-        let _ = await sql->Postgres.unsafe(
-          makeCreateSchemaIndexQuery(missing->Array.getUnsafe(idx), ~pgSchema),
-        )
+      for idx in 0 to indexQueries->Array.length - 1 {
+        let _ = await sql->Postgres.unsafe(indexQueries->Array.getUnsafe(idx))
       }
       await sql
       ->Postgres.preparedUnsafe(
@@ -1867,8 +1881,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     missing->Array.forEach(schemaIndex =>
       indexRegistry->IndexRegistry.add(schemaIndex->schemaIndexKey)
     )
-    invalidNames->Array.forEach(indexName =>
-      indexRegistry->IndexRegistry.clearInvalidName(indexName)
+    repaired->Array.forEach(schemaIndex =>
+      indexRegistry->IndexRegistry.clearInvalidName(schemaIndex->schemaIndexName)
     )
 
     Logging.info({
