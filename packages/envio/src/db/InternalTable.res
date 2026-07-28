@@ -69,7 +69,7 @@ module Chains = {
   let table = mkTable(
     "envio_chains",
     ~fields=[
-      mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#id: field :> string), ChainId, ~fieldSchema=ChainId.intSchema, ~isPrimaryKey),
       // Values populated from config
       mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
@@ -224,7 +224,9 @@ FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
 
     let indexingAddressesByChainId = Dict.make()
     rawIndexingAddresses->Array.forEach(row => {
-      let key = row.chainId->Int.toString
+      // BIGINT chain ids come back as strings; normalizing here keeps the
+      // grouping key identical to the one derived from the chains rows below.
+      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
       let addresses = switch indexingAddressesByChainId->Dict.get(key) {
       | Some(addresses) => addresses
       | None =>
@@ -242,10 +244,14 @@ FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
     })
 
     rawInitialStates->Array.map(rawInitialState => {
-      ...rawInitialState,
-      indexingAddresses: indexingAddressesByChainId
-      ->Dict.get(rawInitialState.id->Int.toString)
-      ->Option.getOr([]),
+      let id = rawInitialState.id->ChainId.normalizeOrThrow
+      {
+        ...rawInitialState,
+        id: id->ChainId.toInt,
+        indexingAddresses: indexingAddressesByChainId
+        ->Dict.get(id->ChainId.toString)
+        ->Option.getOr([]),
+      }
     })
   }
 
@@ -398,7 +404,7 @@ module Checkpoints = {
   // Schema for parsing DB results where BIGINT columns come back as strings
   let dbSchema = S.object(s => {
     id: s.field("id", Utils.BigInt.schema),
-    chainId: s.field("chain_id", S.int),
+    chainId: s.field("chain_id", ChainId.intSchema),
     blockNumber: s.field("block_number", S.int),
     blockHash: s.field(
       "block_hash",
@@ -416,7 +422,7 @@ module Checkpoints = {
     "envio_checkpoints",
     ~fields=[
       mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
-      mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.intSchema),
       mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
       mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
@@ -453,9 +459,17 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
     `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  let makeInsertCheckpointQuery = (~pgSchema) => {
+  let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = Table.getPgFieldType(
+      ~fieldType=ChainId,
+      ~pgSchema,
+      ~isArray=true,
+      ~isNumericArrayAsText=false,
+      ~isNullable=false,
+      ~chainIdMode,
+    )
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -466,8 +480,9 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     ~checkpointBlockNumbers,
     ~checkpointBlockHashes,
     ~checkpointEventsProcessed,
+    ~chainIdMode: ChainId.mode=Int32,
   ) => {
-    let query = makeInsertCheckpointQuery(~pgSchema)
+    let query = makeInsertCheckpointQuery(~pgSchema, ~chainIdMode)
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->Utils.BigInt.arrayToStringArray
@@ -540,7 +555,7 @@ LIMIT 1;`
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
     `SELECT 
-  "${(#chain_id: field :> string)}",
+  "${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM("${(#events_processed: field :> string)}") as events_processed_diff,
   MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
 FROM "${pgSchema}"."${table.tableName}"
@@ -574,7 +589,7 @@ module RawEvents = {
   type t = Internal.rawEvent
 
   let schema = S.schema((s): t => {
-    chain_id: s.matches(S.int),
+    chain_id: s.matches(ChainId.intSchema),
     event_id: s.matches(S.bigint),
     event_name: s.matches(S.string),
     contract_name: s.matches(S.string),
@@ -591,7 +606,7 @@ module RawEvents = {
   let table = mkTable(
     "raw_events",
     ~fields=[
-      mkField("chain_id", Int32, ~fieldSchema=S.int),
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.intSchema),
       mkField("event_id", UInt64, ~fieldSchema=S.bigint),
       mkField("event_name", String, ~fieldSchema=S.string),
       mkField("contract_name", String, ~fieldSchema=S.string),

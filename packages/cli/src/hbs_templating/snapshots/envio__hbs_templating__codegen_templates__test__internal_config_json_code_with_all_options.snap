@@ -11,6 +11,7 @@ expression: json
   "rollbackOnReorg": false,
   "saveFullHistory": true,
   "rawEvents": true,
+  "chainIdMode": "int32",
   "storage": {
     "postgres": true,
     "clickhouse": true

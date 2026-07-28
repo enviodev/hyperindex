@@ -918,7 +918,7 @@ LIMIT 1;`
         )
 
         let expectedQuery = `SELECT 
-  "chain_id",
+  "chain_id"::float8 as "chain_id",
   SUM("events_processed") as events_processed_diff,
   MIN("block_number") - 1 as new_progress_block_number
 FROM "test_schema"."envio_checkpoints"

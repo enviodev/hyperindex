@@ -73,6 +73,10 @@ type t = {
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
   storage: storage,
+  // Widest scalar the internal chain-id columns need, resolved by the CLI from
+  // the maximum active chain id. Older configs predate the field, and every id
+  // they can express fits an INTEGER.
+  chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
@@ -123,7 +127,7 @@ module EnvioAddresses = {
 
   let schema = S.schema(s => {
     id: s.matches(S.string),
-    chainId: s.matches(S.int),
+    chainId: s.matches(ChainId.intSchema),
     registrationBlock: s.matches(S.int),
     registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
@@ -133,7 +137,7 @@ module EnvioAddresses = {
     name,
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
+      Table.mkField("chain_id", ChainId, ~fieldSchema=ChainId.intSchema),
       Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
       // -1 sentinel when registered from a block handler (no log index)
       Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
@@ -185,7 +189,7 @@ let chainContractSchema = S.schema(s =>
 
 let publicConfigChainSchema = S.schema(s =>
   {
-    "id": s.matches(S.int),
+    "id": s.matches(ChainId.intSchema),
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
@@ -548,6 +552,7 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
+    "chainIdMode": s.matches(S.option(ChainId.modeSchema)),
     "storage": s.matches(publicConfigStorageSchema),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -1027,6 +1032,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
     storage: globalStorage,
+    chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
@@ -1267,7 +1273,17 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 
   switch (stored, current) {
   | (Object(sObj), Object(cObj)) =>
-    let tiers = [["version"], ["name"], ["storage"], ["evm", "fuel", "svm"], ["entities"]]
+    // chainIdMode sits right after version: it decides the physical type of
+    // every chain-id column, so a change to it is reported on its own rather
+    // than buried under the chain diffs that always accompany it.
+    let tiers = [
+      ["version"],
+      ["chainIdMode"],
+      ["name"],
+      ["storage"],
+      ["evm", "fuel", "svm"],
+      ["entities"],
+    ]
     let firstHit = tiers->Array.reduce(None, (acc, tier) =>
       switch acc {
       | Some(_) => acc

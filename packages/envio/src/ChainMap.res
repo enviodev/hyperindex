@@ -1,16 +1,16 @@
 module Chain = {
-  type t = int
+  type t = ChainId.t
 
   external toChainId: t => int = "%identity"
 
-  let toString = chainId => chainId->Int.toString
+  let toString = chainId => chainId->ChainId.toString
 
-  let makeUnsafe = (~chainId) => chainId
+  let makeUnsafe = (~chainId) => chainId->ChainId.fromInt
 }
 
 module ChainIdCmp = Belt.Id.MakeComparable({
   type t = Chain.t
-  let cmp = (a, b) => Int.compare(a->Chain.toChainId, b->Chain.toChainId)->Int.fromFloat
+  let cmp = (a, b) => ChainId.compare(a, b)->Int.fromFloat
 })
 
 type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
