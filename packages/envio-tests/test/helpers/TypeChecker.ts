@@ -22,7 +22,7 @@ if (ts.version !== EXPECTED_TS_VERSION) {
 const TSCONFIG_COMPILER_OPTIONS = {
   esModuleInterop: true,
   skipLibCheck: true,
-  target: "es2022",
+  target: "es2023",
   allowJs: true,
   resolveJsonModule: true,
   moduleDetection: "force",
@@ -34,7 +34,7 @@ const TSCONFIG_COMPILER_OPTIONS = {
   module: "ESNext",
   moduleResolution: "bundler",
   noEmit: true,
-  lib: ["es2022"],
+  lib: ["es2023"],
   types: ["node"],
 };
 
