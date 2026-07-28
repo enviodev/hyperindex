@@ -971,6 +971,24 @@ let addClientFilteredContract = (
   }
 }
 
+// The block a partition will have fetched to once everything on its pending
+// queue lands — not the block it has fetched to now. A backfill has to reach it
+// rather than the frontier: a query that was routed before this batch's
+// addresses reached the address store carries no events for them, yet it still
+// advances the frontier over its range on arrival, and nothing else would ever
+// refetch it. An in-flight open-ended query has no toBlock of its own; it can't
+// return past the chain's known height, so that bounds it.
+let claimedFetchedBlock = (p: partition, ~knownHeight) =>
+  p.mutPendingQueries->Array.reduce(p.latestFetchedBlock.blockNumber, (max, q) =>
+    Pervasives.max(
+      max,
+      switch q.fetchedBlock {
+      | Some({blockNumber}) => blockNumber
+      | None => q.toBlock->Option.getOr(knownHeight)
+      },
+    )
+  )
+
 // Fold every client-filtered contract's server-side partitions into client-side
 // fetching without tearing down established state:
 // - The standing address-free partition (no mergeBlock) keeps its id, frontier,
@@ -978,13 +996,13 @@ let addClientFilteredContract = (
 //   must be added does its selection change — under a fresh id, so in-flight
 //   responses built from the old selection are orphaned instead of advancing
 //   the frontier past ranges the new contract wasn't fetched for.
-// - Partitions absorbed below the standing frontier (single-contract dynamic
-//   partitions and config partitions all of whose contracts are
-//   client-filtered, plus any prior backfill) become one bounded backfill
-//   partition covering [their min frontier, standing frontier]: getNextQuery
-//   caps its queries at mergeBlock and handleQueryResponse deletes it on
-//   arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and the
-//   re-fetch doubles as history for freshly registered addresses: events
+// - Partitions absorbed below the standing partition's claimed block
+//   (single-contract dynamic partitions and config partitions all of whose
+//   contracts are client-filtered, plus any prior backfill) become one bounded
+//   backfill partition covering [their min frontier, that claimed block]:
+//   getNextQuery caps its queries at mergeBlock and handleQueryResponse deletes
+//   it on arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and
+//   the re-fetch doubles as history for freshly registered addresses: events
 //   dropped before the address was registered now pass the address gate.
 // - A partition mixing client-filtered and server-side contracts stays,
 //   stripped of the client-filtered contracts' addresses — the address-free
@@ -1006,6 +1024,7 @@ let collapseClientFilteredContracts = (
   // because their contract is already client-filtered. They stand in for the
   // partitions that would otherwise have been created only to be absorbed here.
   ~clientFilteredFrontiers: array<blockNumberAndTimestamp>=[],
+  ~knownHeight: int,
 ) => {
   if clientFilteredContracts->Utils.Set.size === 0 {
     partitions
@@ -1129,8 +1148,12 @@ let collapseClientFilteredContracts = (
           standing
         }
         kept->Array.push(standingOut)->ignore
+        // Read off standingOut, not standing: a selection change orphans the
+        // in-flight queries (fresh id, empty queue), so there the frontier is
+        // all the partition will ever claim.
+        let catchUpToBlock = standingOut->claimedFetchedBlock(~knownHeight)
         switch minFrontierRef.contents {
-        | Some(minFrontier) if minFrontier.blockNumber < standing.latestFetchedBlock.blockNumber =>
+        | Some(minFrontier) if minFrontier.blockNumber < catchUpToBlock =>
           let id = nextPartitionIndexRef.contents->Int.toString
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
           kept
@@ -1139,7 +1162,7 @@ let collapseClientFilteredContracts = (
             latestFetchedBlock: minFrontier,
             selection: newSelection,
             addresses: addressStore->AddressStore.emptySet,
-            mergeBlock: Some(standing.latestFetchedBlock.blockNumber),
+            mergeBlock: Some(catchUpToBlock),
             dynamicContract: None,
             mutPendingQueries: [],
             // Same query shape as the standing partition, so inherit its
@@ -1150,8 +1173,9 @@ let collapseClientFilteredContracts = (
             latestSourceRangeCapacityUpdateBlock: 0,
           })
           ->ignore
-        // An absorbed frontier at/above the standing frontier needs no
-        // backfill: the standing partition hasn't fetched past there yet.
+        // An absorbed frontier at/above the claimed block needs no backfill:
+        // nothing has fetched past there yet, so the standing partition still
+        // covers it going forward.
         | _ => ()
         }
         kept
@@ -1179,6 +1203,7 @@ let createPartitions = (
   ~nextPartitionIndex: int,
   ~existingPartitions: array<partition>,
   ~progressBlockNumber: int,
+  ~knownHeight: int,
 ): // Floor for latestFetchedBlock (use progressBlockNumber from make, or 0 for registerDynamicContracts)
 OptimizedPartitions.t => {
   let nextPartitionIndexRef = ref(nextPartitionIndex)
@@ -1331,6 +1356,7 @@ OptimizedPartitions.t => {
       ~nextPartitionIndexRef,
       ~addressStore,
       ~clientFilteredFrontiers,
+      ~knownHeight,
     )
   OptimizedPartitions.make(
     ~partitions=allPartitions,
@@ -1344,6 +1370,13 @@ OptimizedPartitions.t => {
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
+  // How far an in-flight open-ended query may end up claiming. These
+  // registrations usually come out of a response that is applied right after
+  // this call, and an unbounded query can reach past the height known when it
+  // was dispatched — so the caller folds that response's own frontier and
+  // height in here. Defaults to what the fetch state knows, which is all
+  // there is to go on when no response is being applied.
+  ~claimCeiling=fetchState.knownHeight,
   // These are raw items which might have dynamic contracts received from contractRegister call.
   // Might contain duplicates which we should filter out
   items: array<Internal.item>,
@@ -1599,6 +1632,7 @@ let registerDynamicContracts = (
         newPartitions->Array.length,
         ~existingPartitions=mutExistingPartitions->Array.concat(newPartitions),
         ~progressBlockNumber=0,
+        ~knownHeight=Pervasives.max(claimCeiling, fetchState.knownHeight),
       )
 
       fetchState->updateInternal(~optimizedPartitions)
@@ -2454,6 +2488,7 @@ let make = (
     ~nextPartitionIndex=partitions->Array.length,
     ~existingPartitions=partitions, // wildcard partition(s) if any
     ~progressBlockNumber,
+    ~knownHeight,
   )
 
   if (
@@ -2632,6 +2667,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
     ~nextPartitionIndex=nextKeptIdRef.contents,
     ~existingPartitions=keptPartitions,
     ~progressBlockNumber=targetBlockNumber,
+    ~knownHeight=fetchState.knownHeight,
   )
 
   // Step 4: Update state

@@ -224,8 +224,10 @@ module EventItems = {
 
   type response = {
     nextSlot: int,
-    // One lean header per slot referenced by `items`; the full blocks live in
-    // the block store returned alongside.
+    // One lean header per returned slot, including slots no item references —
+    // reorg detection and the batch's latest timestamp read them all. The full
+    // blocks live in the block store returned alongside, which keeps only the
+    // slots items reference.
     blocks: array<ResponseTypes.block>,
     items: array<item>,
   }

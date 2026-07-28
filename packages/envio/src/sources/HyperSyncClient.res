@@ -344,7 +344,9 @@ module EventItems = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One header per block number referenced by `items`.
+    // One header per returned block number, including blocks no item
+    // references — reorg detection reads them all. The block store keeps only
+    // the ones items reference.
     blocks: array<blockHeader>,
     items: array<item>,
     rollbackGuard: option<ResponseTypes.rollbackGuard>,
@@ -372,12 +374,7 @@ external classNew: (
 ) => t = "new"
 
 let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
-  Core.getAddon().evmHyperSyncClient->classNew(
-    cfg,
-    userAgent,
-    eventRegistrations,
-    addressStore,
-  )
+  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
