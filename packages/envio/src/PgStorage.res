@@ -1385,6 +1385,10 @@ let make = (
     "cache",
   ])
 
+  // The metric label, the `storage` field on this backend's logs, and the
+  // storage record's own name are all the same string.
+  let storageName = "postgres"
+
   let indexRegistry = IndexRegistry.make()
 
   // The only point where the catalog is consulted. Afterwards this process is
@@ -1399,11 +1403,13 @@ let make = (
     | [] => ()
     | invalidIndexNames =>
       Logging.warn({
+        "storage": storageName,
         "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They are left untouched — drop and recreate them manually if you need them.`,
         "indexes": invalidIndexNames,
       })
     }
     Logging.info({
+      "storage": storageName,
       "msg": `Found ${indexRegistry
         ->IndexRegistry.size
         ->Int.toString} existing indexes in the indexer schema.`,
@@ -1737,11 +1743,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             // Logged from inside the build so it reports the one request that
             // actually creates the index, not the ones waiting on it.
             Logging.info({
+              "storage": storageName,
               "msg": `Creating index "${indexName}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
             })
             let timeRef = Performance.now()
             let _ = await sql->Postgres.unsafe(makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema))
             Logging.info({
+              "storage": storageName,
               "msg": `Created index "${indexName}" in ${timeRef->formatSeconds}s. Resuming indexing.`,
             })
           },
@@ -1750,6 +1758,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         // retries. Meanwhile the query still runs — just without the index.
         ->Utils.Promise.catchResolve(exn => {
           Logging.warn({
+            "storage": storageName,
             "msg": `Failed to create the index "${indexName}" for a getWhere query. The query runs without it.`,
             "err": exn->Utils.prettifyExn,
           })
@@ -1777,12 +1786,14 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     switch missing {
     | [] =>
       Logging.info({
+        "storage": storageName,
         "msg": `All ${schemaIndexes
           ->Array.length
           ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
       })
     | _ =>
       Logging.info({
+        "storage": storageName,
         "msg": `Creating the ${missing
           ->Array.length
           ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
@@ -1817,6 +1828,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     )
 
     Logging.info({
+      "storage": storageName,
       "msg": `Committed ${missing
         ->Array.length
         ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
@@ -2118,13 +2130,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~sinkPromise,
       ~chainMetaData,
     )
-    onWrite(~storage="postgres", ~timeSeconds=primaryTimerRef->Performance.secondsSince)
+    onWrite(~storage=storageName, ~timeSeconds=primaryTimerRef->Performance.secondsSince)
   }
 
   let close = () => sql->Postgres.endSql
 
   {
-    name: "postgres",
+    name: storageName,
     isInitialized,
     initialize,
     resumeInitialState,

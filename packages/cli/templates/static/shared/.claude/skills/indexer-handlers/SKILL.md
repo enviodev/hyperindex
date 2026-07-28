@@ -67,7 +67,7 @@ context.Entity.set(entity);          // create or update (sync — no await)
 context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 ```
 
-`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Multiple fields and operators combine with AND semantics. Any non-derived field is queryable — the indexer creates the matching index the first time it's queried. Adding `@index` in `schema.graphql` creates it up front instead. See `indexer-schema` for @index syntax.
+`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Multiple fields and operators combine with AND semantics. Any non-derived field is queryable — the indexer creates the matching index the first time it's queried, which pauses indexing while the index builds. Marking a field `@index` in `schema.graphql` avoids that pause: those indexes are created once, when the backfill finishes. See `indexer-schema` for @index syntax.
 
 ### Context Properties
 
