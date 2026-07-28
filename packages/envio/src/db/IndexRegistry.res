@@ -108,15 +108,12 @@ let size = registry => registry.keys->Utils.Set.size
 
 let toArray = registry => registry.keys->Utils.Set.toArray->Array.toSorted(String.compare)
 
-let isInvalidName = (registry, name) => registry.invalidNames->Utils.Set.has(name)
-
 // A plain CREATE INDEX either commits or leaves nothing behind, so an index can
 // only be invalid because something before us left it that way — the startup
 // snapshot stays accurate until the next restart.
-let invalidNameError = (~indexName, ~pgSchema) =>
-  Utils.Error.make(
-    `The index "${indexName}" already exists in schema "${pgSchema}" but PostgreSQL reports it as INVALID, so queries can't use it and CREATE INDEX IF NOT EXISTS won't replace it. Drop it with 'DROP INDEX "${pgSchema}"."${indexName}";' or rebuild it with 'REINDEX INDEX "${pgSchema}"."${indexName}";', then restart the indexer.`,
-  )
+let isInvalidName = (registry, name) => registry.invalidNames->Utils.Set.has(name)
+
+let clearInvalidName = (registry, name) => registry.invalidNames->Utils.Set.delete(name)->ignore
 
 // Replaces the whole registry with what the catalog reports. Returns the names
 // of indexes Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died

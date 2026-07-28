@@ -161,8 +161,9 @@ describe("Pre-existing invalid indexes", () => {
     columns: ["b_id"],
     directions: ["ASC"],
   }
+  let dropABId = `DROP INDEX IF EXISTS "test_schema"."A_b_id";`
 
-  Async.it("Are never registered as healthy by a getWhere build", async t => {
+  Async.it("Are dropped and rebuilt by a getWhere build", async t => {
     let (storage, queries) = makeStorage(~catalogRows=[invalidABId])
     // Loads the registry from the catalog, exactly as a restart does.
     let _ = await storage.resumeInitialState()
@@ -171,34 +172,34 @@ describe("Pre-existing invalid indexes", () => {
     await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
 
     t.expect(
-      queries->Array.filter(query => query->String.includes("CREATE INDEX")),
-      ~message="No DDL is issued, so nothing can be mistaken for a working index",
-    ).toEqual([])
+      queries->Array.filter(query => query->String.includes("INDEX")),
+      ~message="The dead index is cleared once, then the real one is built",
+    ).toEqual([dropABId, createABId])
   })
 
-  Async.it("Fail the backfill finalization with an actionable message", async t => {
+  Async.it("Are dropped inside the finalize transaction, before ready_at", async t => {
     let (storage, queries) = makeStorage(~catalogRows=[invalidABId])
-    // Loads the registry from the catalog, exactly as a restart does.
     let _ = await storage.resumeInitialState()
+    let queriesBefore = queries->Array.length
 
-    let message = await storage.finalizeBackfill(
+    await storage.finalizeBackfill(
       ~entities=[entityA, entityB],
       ~chainIds=[1],
       ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
     )
-    ->Promise.thenResolve(() => "")
-    ->Utils.Promise.catchResolve(exn =>
-      exn->(Utils.magic: exn => {"message": string})->(m => m["message"])
-    )
 
     t.expect(
-      (
-        message->String.includes(`DROP INDEX "test_schema"."A_b_id";`),
-        message->String.includes(`REINDEX INDEX "test_schema"."A_b_id";`),
-        queries->Array.filter(query => query->String.includes("CREATE INDEX")),
-      ),
-      ~message="ready_at is never committed, and the message says how to fix it",
-    ).toEqual((true, true, []))
+      queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
+      ~message="ready_at is only committed alongside an index that actually works",
+    ).toEqual([
+      "BEGIN",
+      dropABId,
+      createABId,
+      `UPDATE "test_schema"."envio_chains"
+SET "ready_at" = $1
+WHERE "id" = ANY($2::int[]);`,
+      "COMMIT",
+    ])
   })
 })
 

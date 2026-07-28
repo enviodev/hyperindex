@@ -127,26 +127,27 @@ let formatSeconds = (timeRef: Performance.timeRef) =>
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
+// An index Postgres reports as INVALID still owns its name, so
+// `CREATE INDEX IF NOT EXISTS` would quietly skip and leave the query
+// unserved. It carries no data the planner will ever use, so dropping it is
+// safe — and the indexer usually has database access the user doesn't.
+let makeDropIndexQuery = (~pgSchema, ~indexName) =>
+  `DROP INDEX IF EXISTS "${pgSchema}"."${indexName}";`
+
 let makeSingleColumnSchemaIndex = (~tableName, ~column): schemaIndex => {
   tableName,
   indexFields: [{fieldName: column, direction: Table.Asc}],
 }
 
-// Every index the entity schema promises for the Postgres-backed tables in
-// `entities`. Deferred past the initial DDL and created in one transaction once
-// backfill completes, so a resumed indexer that reports itself ready always has
-// all of them.
+// Every index the entity schema promises. Deferred past the initial DDL and
+// created in one transaction once backfill completes, so a resumed indexer that
+// reports itself ready always has all of them.
 //
-// `allEntities` is the complete schema, which is not the same set: a Postgres
-// entity may declare `@derivedFrom` against one that only lives in ClickHouse.
-// Resolving the relationship needs the full schema; the index itself is emitted
-// only when the table it would sit on is Postgres-backed.
-let getSchemaIndexes = (
-  ~entities: array<Internal.entityConfig>,
-  ~allEntities: array<Internal.entityConfig>=entities,
-): array<schemaIndex> => {
-  let derivedSchema = Schema.make(allEntities->Array.map(e => e.table))
-  let pgTableNames = entities->Array.map(e => e.table.tableName)->Set.fromArray
+// `entities` is the Postgres-backed set, and every `@derivedFrom` target within
+// it resolves: config parsing rejects a Postgres entity deriving from one that
+// isn't in Postgres (`validate_relationship_storage`).
+let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<schemaIndex> => {
+  let derivedSchema = Schema.make(entities->Array.map(e => e.table))
   let all = []
 
   entities->Array.forEach(({table}) => {
@@ -166,15 +167,13 @@ let getSchemaIndexes = (
     table
     ->Table.getDerivedFromFields
     ->Array.forEach(derivedFromField => {
-      if pgTableNames->Set.has(derivedFromField.derivedFromEntity) {
-        let column =
-          derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
-        all
-        ->Array.push(
-          makeSingleColumnSchemaIndex(~tableName=derivedFromField.derivedFromEntity, ~column),
-        )
-        ->ignore
-      }
+      let column =
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
+      all
+      ->Array.push(
+        makeSingleColumnSchemaIndex(~tableName=derivedFromField.derivedFromEntity, ~column),
+      )
+      ->ignore
     })
   )
 
@@ -302,9 +301,6 @@ let makeInitializeTransaction = (
   ~entities=[],
   ~enums=[],
   ~isEmptyPgSchema=false,
-  // The complete schema, which `entities` is the Postgres-backed subset of.
-  // Only needed to resolve `@derivedFrom` across storage backends.
-  ~allEntities=entities,
   // Backfill writes are far cheaper without the schema's read indexes, so the
   // initial DDL creates only tables, primary keys, views and chain rows; the
   // rest is created by `finalizeBackfill` before the indexer reports ready.
@@ -323,7 +319,7 @@ let makeInitializeTransaction = (
     allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
   })
 
-  let schemaIndexes = getSchemaIndexes(~entities, ~allEntities)
+  let schemaIndexes = getSchemaIndexes(~entities)
   IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
 
   let query = ref(
@@ -1622,7 +1618,6 @@ let make = (
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
-      ~allEntities=entities,
       ~deferSchemaIndexes=true,
     )
     // Execute all queries within a single transaction for integrity.
@@ -1757,7 +1752,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           ~tableName=table.tableName,
           ~build=async () => {
             if indexRegistry->IndexRegistry.isInvalidName(indexName) {
-              throw(IndexRegistry.invalidNameError(~indexName, ~pgSchema))
+              Logging.warn({
+                "storage": storageName,
+                "msg": `The index "${indexName}" exists but PostgreSQL reports it as invalid, so it can't serve queries. Dropping it and rebuilding.`,
+              })
+              let _ = await sql->Postgres.unsafe(makeDropIndexQuery(~pgSchema, ~indexName))
+              indexRegistry->IndexRegistry.clearInvalidName(indexName)
             }
             // Logged from inside the build so it reports the one request that
             // actually creates the index, not the ones waiting on it.
@@ -1794,7 +1794,6 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   ) => {
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
-      ~allEntities=entities,
     )
     IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
 
@@ -1805,13 +1804,19 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     // `IF NOT EXISTS` would quietly skip an index whose name is taken by an
     // invalid one, and the indexer would then report ready with an index the
-    // planner can't use. Stop instead, with the commands to fix it.
-    switch missing->Array.find(schemaIndex =>
-      indexRegistry->IndexRegistry.isInvalidName(schemaIndex->schemaIndexName)
-    ) {
-    | Some(schemaIndex) =>
-      throw(IndexRegistry.invalidNameError(~indexName=schemaIndex->schemaIndexName, ~pgSchema))
-    | None => ()
+    // planner can't use. Drop those first, in the same transaction.
+    let invalidNames =
+      missing
+      ->Array.map(schemaIndexName)
+      ->Array.filter(indexName => indexRegistry->IndexRegistry.isInvalidName(indexName))
+    if invalidNames->Utils.Array.notEmpty {
+      Logging.warn({
+        "storage": storageName,
+        "msg": `PostgreSQL reports ${invalidNames
+          ->Array.length
+          ->Int.toString} existing indexes as invalid, so they can't serve queries. Dropping them and rebuilding.`,
+        "indexes": invalidNames,
+      })
     }
 
     switch missing {
@@ -1836,6 +1841,11 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     await sql->Postgres.beginSql(async sql => {
       // Sequential rather than Promise.all: they share one connection inside
       // the transaction, and several of them target the same table.
+      for idx in 0 to invalidNames->Array.length - 1 {
+        let _ = await sql->Postgres.unsafe(
+          makeDropIndexQuery(~pgSchema, ~indexName=invalidNames->Array.getUnsafe(idx)),
+        )
+      }
       for idx in 0 to missing->Array.length - 1 {
         let _ = await sql->Postgres.unsafe(
           makeCreateSchemaIndexQuery(missing->Array.getUnsafe(idx), ~pgSchema),
@@ -1856,6 +1866,9 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     // with it, and the registry must not claim what the schema doesn't have.
     missing->Array.forEach(schemaIndex =>
       indexRegistry->IndexRegistry.add(schemaIndex->schemaIndexKey)
+    )
+    invalidNames->Array.forEach(indexName =>
+      indexRegistry->IndexRegistry.clearInvalidName(indexName)
     )
 
     Logging.info({
