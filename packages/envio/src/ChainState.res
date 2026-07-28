@@ -194,7 +194,15 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
-    ~clientFilterAddressThreshold=Some(config.clientFilterAddressThreshold),
+    // Fuel and SVM route through the address store like EVM does, so the
+    // client-side path works for them — but their address counts are nowhere
+    // near the threshold, so switching would only trade a server-side filter
+    // that costs nothing today for an over-fetch. Keep them server-side until a
+    // chain actually needs it.
+    ~clientFilterAddressThreshold=switch config.ecosystem.name {
+    | Evm => Some(config.clientFilterAddressThreshold)
+    | Fuel | Svm => None
+    },
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
@@ -814,7 +822,7 @@ let handleQueryResult = (
   ~query: FetchState.query,
   ~newItems,
   ~newItemsWithDcs,
-  ~latestFetchedBlock,
+  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
   ~blockStore as blockPage: option<BlockStore.t>,
@@ -835,6 +843,11 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~addressStore=cs.addressStore,
+      // This response is applied below, after the addresses land. It was routed
+      // before they existed, so whatever it claims has to be inside the
+      // catch-up range — and an unbounded query can reach past the height that
+      // was known when it went out.
+      ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock.blockNumber),
       newItemsWithDcs,
     )
   }
