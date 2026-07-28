@@ -6,7 +6,9 @@
 // the schema promised still missing.
 
 let run = async (state: IndexerState.t) => {
-  Logging.info("All chains are caught up. Creating the remaining schema indexes...")
+  Logging.info(
+    "All chains are caught up. Finalizing the indexer before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
+  )
 
   await Writing.flush(state)
 
@@ -27,6 +29,6 @@ let run = async (state: IndexerState.t) => {
     )
 
     state->IndexerState.markReady(~readyAt)
-    Logging.info("Schema indexes are ready. Switching to realtime indexing.")
+    Logging.info("The indexer is ready. Switching to realtime indexing.")
   }
 }

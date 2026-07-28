@@ -51,8 +51,8 @@ let eq = (~fieldName): EntityFilter.t =>
 let entityA = MockIndexer.entityConfig(A)
 let entityB = MockIndexer.entityConfig(B)
 
-let createABId = `CREATE INDEX CONCURRENTLY IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-let createAOptional = `CREATE INDEX CONCURRENTLY IF NOT EXISTS "A_optionalStringToTestLinkedEntities" ON "test_schema"."A"("optionalStringToTestLinkedEntities");`
+let createABId = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
+let createAOptional = `CREATE INDEX IF NOT EXISTS "A_optionalStringToTestLinkedEntities" ON "test_schema"."A"("optionalStringToTestLinkedEntities");`
 
 describe("Automatic getWhere indexes", () => {
   Async.it("Creates a descriptively named index for a non-indexed field, once", async t => {
@@ -120,7 +120,7 @@ describe("Automatic getWhere indexes", () => {
       queries,
       ~message="Truncated to the identifier limit and built once, not skipped",
     ).toEqual([
-      `CREATE INDEX CONCURRENTLY IF NOT EXISTS "${name}" ON "test_schema"."${longEntity}"("${column}");`,
+      `CREATE INDEX IF NOT EXISTS "${name}" ON "test_schema"."${longEntity}"("${column}");`,
     ])
   })
 
@@ -155,7 +155,7 @@ WHERE "id" = ANY($2::int[]);`
 
     t.expect(queries).toEqual([
       "BEGIN",
-      `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`,
+      createABId,
       setReadyAt,
       "COMMIT",
     ])
@@ -180,7 +180,7 @@ WHERE "id" = ANY($2::int[]);`
       ~message="ready_at must not be reached, and the transaction rolls back",
     ).toEqual((
       true,
-      ["BEGIN", `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`, "ROLLBACK"],
+      ["BEGIN", createABId, "ROLLBACK"],
     ))
 
     shouldFail := false
@@ -191,7 +191,7 @@ WHERE "id" = ANY($2::int[]);`
       ~message="The rolled-back index is still missing, so the retry creates it again",
     ).toEqual([
       "BEGIN",
-      `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`,
+      createABId,
       setReadyAt,
       "COMMIT",
     ])

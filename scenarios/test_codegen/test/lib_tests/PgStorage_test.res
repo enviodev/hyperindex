@@ -554,10 +554,10 @@ FROM "public"."envio_chains";`
 
         t.expect((
           schemaIndex->PgStorage.schemaIndexName,
-          PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s", ~concurrently=true),
+          PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s"),
         )).toEqual((
           "Transfer_block_number_desc_log_index",
-          `CREATE INDEX CONCURRENTLY IF NOT EXISTS "Transfer_block_number_desc_log_index" ON "s"."Transfer"("block_number" DESC, "log_index");`,
+          `CREATE INDEX IF NOT EXISTS "Transfer_block_number_desc_log_index" ON "s"."Transfer"("block_number" DESC, "log_index");`,
         ))
       },
     )

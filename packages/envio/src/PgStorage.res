@@ -106,19 +106,26 @@ let schemaIndexKey = ({tableName, indexFields}: schemaIndex) =>
     ~method=IndexRegistry.btree,
   )
 
-// `concurrently` builds without taking a write lock on the table, which is what
-// the on-demand `getWhere` indexes need while the indexer keeps writing. It
-// can't run inside a transaction, so the end-of-backfill pass uses plain DDL.
-let makeCreateSchemaIndexQuery = (schemaIndex, ~pgSchema, ~concurrently=false) => {
+// Plain DDL, not CONCURRENTLY: it builds from a single table scan instead of
+// two, and the SHARE lock it takes blocks writes but not reads, so queries keep
+// being served while it runs. The indexer is the only writer, and both callers
+// are happy to wait on it.
+let makeCreateSchemaIndexQuery = (schemaIndex, ~pgSchema) => {
   let {tableName, indexFields} = schemaIndex
   let columns =
     indexFields
     ->Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
     ->Array.joinUnsafe(", ")
-  `CREATE INDEX ${concurrently
-      ? "CONCURRENTLY "
-      : ""}IF NOT EXISTS "${schemaIndex->schemaIndexName}" ON "${pgSchema}"."${tableName}"(${columns});`
+  `CREATE INDEX IF NOT EXISTS "${schemaIndex->schemaIndexName}" ON "${pgSchema}"."${tableName}"(${columns});`
 }
+
+let formatSeconds = (timeRef: Performance.timeRef) =>
+  (Math.round(timeRef->Performance.secondsSince *. 100.) /. 100.)->Float.toString
+
+// Every index build blocks writes to its table for as long as it runs, and on a
+// large database that is not quick. Both build paths say so up front, so a
+// stalled-looking indexer is explainable from the logs alone.
+let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
 let makeSingleColumnSchemaIndex = (~tableName, ~column): schemaIndex => {
   tableName,
@@ -1396,6 +1403,11 @@ let make = (
         "indexes": invalidIndexNames,
       })
     }
+    Logging.info({
+      "msg": `Found ${indexRegistry
+        ->IndexRegistry.size
+        ->Int.toString} existing indexes in the indexer schema.`,
+    })
   }
 
   let isInitialized = async () => {
@@ -1715,25 +1727,34 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     if missing->Utils.Array.notEmpty {
       let _ = await missing
-      ->Array.map(schemaIndex =>
+      ->Array.map(schemaIndex => {
+        let indexName = schemaIndex->schemaIndexName
         indexRegistry
         ->IndexRegistry.ensure(
           ~key=schemaIndex->schemaIndexKey,
           ~tableName=table.tableName,
-          ~build=() =>
-            sql
-            ->Postgres.unsafe(makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema, ~concurrently=true))
-            ->Utils.Promise.ignoreValue,
+          ~build=async () => {
+            // Logged from inside the build so it reports the one request that
+            // actually creates the index, not the ones waiting on it.
+            Logging.info({
+              "msg": `Creating index "${indexName}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+            })
+            let timeRef = Performance.now()
+            let _ = await sql->Postgres.unsafe(makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema))
+            Logging.info({
+              "msg": `Created index "${indexName}" in ${timeRef->formatSeconds}s. Resuming indexing.`,
+            })
+          },
         )
         // A failed build leaves the registry untouched, so the next getWhere
         // retries. Meanwhile the query still runs — just without the index.
         ->Utils.Promise.catchResolve(exn => {
           Logging.warn({
-            "msg": `Failed to create the index "${schemaIndex->schemaIndexName}" for a getWhere query. The query runs without it.`,
+            "msg": `Failed to create the index "${indexName}" for a getWhere query. The query runs without it.`,
             "err": exn->Utils.prettifyExn,
           })
         })
-      )
+      })
       ->Promise.all
     }
   }
@@ -1752,6 +1773,23 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       schemaIndexes->Array.filter(schemaIndex =>
         !(indexRegistry->IndexRegistry.has(schemaIndex->schemaIndexKey))
       )
+
+    switch missing {
+    | [] =>
+      Logging.info({
+        "msg": `All ${schemaIndexes
+          ->Array.length
+          ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
+      })
+    | _ =>
+      Logging.info({
+        "msg": `Creating the ${missing
+          ->Array.length
+          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
+        "indexes": missing->Array.map(schemaIndexName),
+      })
+    }
+    let timeRef = Performance.now()
 
     await sql->Postgres.beginSql(async sql => {
       // Sequential rather than Promise.all: they share one connection inside
@@ -1777,6 +1815,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     missing->Array.forEach(schemaIndex =>
       indexRegistry->IndexRegistry.add(schemaIndex->schemaIndexKey)
     )
+
+    Logging.info({
+      "msg": `Committed ${missing
+        ->Array.length
+        ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
+    })
   }
 
   let setOrThrow = (
