@@ -637,7 +637,7 @@ let make = (
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }

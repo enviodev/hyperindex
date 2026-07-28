@@ -35,13 +35,13 @@ describe("Dynamic contracts startup size", () => {
       let sql = PgStorage.makeClient()
       let pgSchema = Env.Db.publicSchema
 
-      let chainId = 1337
+      let chainId = 1337->ChainId.fromInt
       let rowCount = 120
       let contractNameLength = 5_000_000
 
       let _ = await sql->Postgres.unsafe(
         `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.name}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT '${chainId->Int.toString}-0x' || lpad(to_hex(g), 40, '0'), ${chainId->Int.toString}, 0, -1, repeat('x', ${contractNameLength->Int.toString})
+SELECT '${chainId->ChainId.toString}-0x' || lpad(to_hex(g), 40, '0'), ${chainId->ChainId.toString}, 0, -1, repeat('x', ${contractNameLength->Int.toString})
 FROM generate_series(1, ${rowCount->Int.toString}) AS g;`,
       )
 

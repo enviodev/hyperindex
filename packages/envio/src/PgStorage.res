@@ -912,7 +912,7 @@ let rec writeBatch = async (
         | Internal.Event(_) =>
           let coordinate = `${item
             ->Internal.getItemChainId
-            ->Int.toString}-${item
+            ->ChainId.toString}-${item
             ->Internal.getItemBlockNumber
             ->Int.toString}-${item->Internal.getItemLogIndex->Int.toString}`
           if seenLogCoordinates->Utils.Set.has(coordinate) {
@@ -1780,7 +1780,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
       checkpointId: raw["id"]->BigInt.fromStringOrThrow,
-      chainId: raw["chain_id"]->ChainId.normalizeOrThrow->ChainId.toInt,
+      chainId: raw["chain_id"]->ChainId.normalizeOrThrow,
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
     })

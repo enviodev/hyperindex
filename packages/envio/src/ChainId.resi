@@ -6,6 +6,9 @@ let modeSchema: S.t<mode>
 
 let maxSafe: float
 
+// Escapes for the boundaries that stay `int`: the handler-facing
+// `context.chain.id` / `Envio.effectChain.id`, and int literals in configs and
+// tests. Both are the identity at runtime — an `int` is already a JS number.
 external fromInt: int => t = "%identity"
 external toInt: t => int = "%identity"
 external toFloat: t => float = "%identity"
@@ -16,10 +19,12 @@ let equal: (t, t) => bool
 
 let schema: S.t<t>
 
-// The same runtime schema, typed for the modules that still annotate chain ids
-// as `int`. Safe because ReScript's `int` is a JS number at runtime — chain ids
-// are only ever compared and stringified, never used in int32 arithmetic.
-let intSchema: S.t<int>
+// Dicts keyed by chain id. JS coerces the number key to its decimal string,
+// which is exactly what `toString` produces, so the two key forms interoperate.
+module Dict: {
+  @get_index external dangerouslyGetNonOption: (dict<'a>, t) => option<'a> = ""
+  @set_index external set: (dict<'a>, t, 'a) => unit = ""
+}
 
 // Postgres returns BIGINT columns as strings, so raw (schema-less) reads of a
 // chain-id column go through this instead of trusting the driver's type.

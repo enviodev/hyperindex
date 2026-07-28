@@ -35,7 +35,7 @@ type sourceConfig =
 
 type chain = {
   name: string,
-  id: int,
+  id: ChainId.t,
   startBlock: int,
   endBlock?: int,
   maxReorgDepth: int,
@@ -102,13 +102,13 @@ module EnvioAddresses = {
   let name = "envio_addresses"
   let index = -1
 
-  let makeId = (~chainId, ~address) => {
-    chainId->Int.toString ++ "-" ++ address->Address.toString
+  let makeId = (~chainId: ChainId.t, ~address) => {
+    chainId->ChainId.toString ++ "-" ++ address->Address.toString
   }
 
   type t = {
     id: string,
-    @as("chain_id") chainId: int,
+    @as("chain_id") chainId: ChainId.t,
     @as("registration_block") registrationBlock: int,
     // -1 when the address was registered from a block handler (no log index)
     @as("registration_log_index") registrationLogIndex: int,
@@ -127,7 +127,7 @@ module EnvioAddresses = {
 
   let schema = S.schema(s => {
     id: s.matches(S.string),
-    chainId: s.matches(ChainId.intSchema),
+    chainId: s.matches(ChainId.schema),
     registrationBlock: s.matches(S.int),
     registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
@@ -137,7 +137,7 @@ module EnvioAddresses = {
     name,
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", ChainId, ~fieldSchema=ChainId.intSchema),
+      Table.mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema),
       Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
       // -1 sentinel when registered from a block handler (no log index)
       Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
@@ -189,7 +189,7 @@ let chainContractSchema = S.schema(s =>
 
 let publicConfigChainSchema = S.schema(s =>
   {
-    "id": s.matches(ChainId.intSchema),
+    "id": s.matches(ChainId.schema),
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
@@ -695,7 +695,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ~contractName,
     ~events: option<array<_>>,
     ~abi,
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~addresses: array<string>,
     ~svmDefinedTypes: JSON.t=JSON.Null,
   ) => {
@@ -729,11 +729,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           | [pid] => pid->SvmTypes.Pubkey.fromStringUnsafe
           | [] =>
             JsError.throwWithMessage(
-              `SVM program ${contractName} on chain ${chainId->Int.toString} is missing a program_id`,
+              `SVM program ${contractName} on chain ${chainId->ChainId.toString} is missing a program_id`,
             )
           | _ =>
             JsError.throwWithMessage(
-              `SVM program ${contractName} on chain ${chainId->Int.toString} has multiple addresses; a program is uniquely identified by a single program_id`,
+              `SVM program ${contractName} on chain ${chainId->ChainId.toString} has multiple addresses; a program is uniquely identified by a single program_id`,
             )
           }
           let widenedEventItem =
@@ -883,8 +883,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             | Some(existingContractName) =>
               JsError.throwWithMessage(
                 existingContractName === contract.name
-                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->Int.toString}. Please remove the duplicate from your config.`
-                  : `Address ${addressString} on chain ${chainId->Int.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
+                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->ChainId.toString}. Please remove the duplicate from your config.`
+                  : `Address ${addressString} on chain ${chainId->ChainId.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
               )
             | None => contractNameByAddress->Dict.set(addressString, contract.name)
             }
@@ -1098,7 +1098,7 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
 // returns that chain's per-chain event config (matters for where-callback
 // probe detection, which runs with the chain's real id). Without `chainId`,
 // falls back to the first chain that declares this event.
-let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int>=?) => {
+let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<ChainId.t>=?) => {
   let chains = switch chainId {
   | Some(chainId) =>
     let chain = ChainMap.Chain.makeUnsafe(~chainId)
@@ -1106,7 +1106,7 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int
     | chainConfig => [chainConfig]
     | exception _ =>
       JsError.throwWithMessage(
-        `Chain ${chainId->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
+        `Chain ${chainId->ChainId.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
       )
     }
   | None => config.chainMap->ChainMap.values

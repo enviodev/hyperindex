@@ -1,6 +1,6 @@
 open Vitest
 
-let chainId = 0
+let chainId = 0->ChainId.fromInt
 let targetBufferSize = 5000
 let knownHeight = 0
 
@@ -74,7 +74,7 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
   }
 }
 
-let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1, ~registrationIndex=0): Internal.item =>
+let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1->ChainId.fromInt, ~registrationIndex=0): Internal.item =>
   Internal.Event({
     chain: ChainMap.Chain.makeUnsafe(~chainId),
     blockNumber,
@@ -254,7 +254,7 @@ describe("FetchState.make", () => {
       maxOnBlockBufferSize: 5000,
       buffer: [],
       normalSelection: fetchState.normalSelection,
-      chainId: 0,
+      chainId: 0->ChainId.fromInt,
       contractConfigs: fetchState.contractConfigs,
       blockLag: 0,
       onBlockRegistrations: [],

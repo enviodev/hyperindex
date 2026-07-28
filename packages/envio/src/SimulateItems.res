@@ -334,7 +334,7 @@ let parse = (
       switch seenCoordinates->Dict.get(coordinate) {
       | Some(firstIndex) =>
         JsError.throwWithMessage(
-          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->Int.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
         )
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
@@ -363,7 +363,7 @@ let parse = (
             ->ChainMap.values
             ->Array.length {
             | 1 => ""
-            | _ => ` on chain ${chainId->Int.toString}`
+            | _ => ` on chain ${chainId->ChainId.toString}`
             }}. Register a handler with indexer.onEvent (and check any \`where\` filter isn't excluding this chain) before simulating it.`,
         )
       }
@@ -421,7 +421,7 @@ let patchConfig = (
   switch processChains {
   | Some(chainsDict) =>
     let newChainMap = config.chainMap->ChainMap.mapWithKey((chain, chainConfig) => {
-      let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
+      let chainIdStr = chain->ChainMap.Chain.toString
       switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
         let raw = processChainJson->(Utils.magic: JSON.t => {..})

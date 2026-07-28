@@ -463,7 +463,7 @@ describe("SourceManager fetchNext", () => {
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       maxOnBlockBufferSize: targetBufferSize,
-      chainId: 0,
+      chainId: 0->ChainId.fromInt,
       contractConfigs: Dict.make(),
       blockLag: 0,
       onBlockRegistrations: [],

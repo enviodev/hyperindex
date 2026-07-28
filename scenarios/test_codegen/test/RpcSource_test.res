@@ -727,7 +727,7 @@ describe("RpcSource - fieldRegistry completeness", () => {
   })
 })
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chain = ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt)
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
     let source = RpcSource.make({

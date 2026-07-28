@@ -32,7 +32,7 @@ let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.r
 // inline into the /metrics response.
 type requestStatSample = {
   sourceName: string,
-  chainId: int,
+  chainId: ChainId.t,
   method: string,
   count: int,
   seconds: float,
@@ -101,7 +101,7 @@ let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
 // observed height yet are skipped.
 type sourceHeightSample = {
   sourceName: string,
-  chainId: int,
+  chainId: ChainId.t,
   height: int,
 }
 

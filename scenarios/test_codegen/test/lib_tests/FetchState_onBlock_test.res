@@ -1,6 +1,6 @@
 open Vitest
 
-let chainId = 0
+let chainId = 0->ChainId.fromInt
 
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.

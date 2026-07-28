@@ -4,7 +4,7 @@ type payload = {
   contractName: string,
   eventName: string,
   params: Internal.eventParams,
-  chainId: int,
+  chainId: ChainId.t,
   srcAddress: Address.t,
   logIndex: int,
   transaction: Internal.eventTransaction,

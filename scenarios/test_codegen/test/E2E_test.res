@@ -28,14 +28,14 @@ describe("E2E tests", () => {
       ]
 
       t.expect(
-        await getChainAddresses(indexerMock, ~chainId=1337),
+        await getChainAddresses(indexerMock, ~chainId=1337->ChainId.fromInt),
         ~message="Config addresses should be inserted with registrationBlock=-1 on init",
       ).toEqual(expected)
 
       let restarted = await indexerMock.restart()
 
       t.expect(
-        await getChainAddresses(restarted, ~chainId=1337),
+        await getChainAddresses(restarted, ~chainId=1337->ChainId.fromInt),
         ~message="Config addresses should survive restart from DB",
       ).toEqual(expected)
     },
@@ -653,7 +653,7 @@ describe("E2E tests", () => {
       // The chain-scoped output landed in the per-chain cache table, not the
       // flat cross-chain one.
       t.expect((
-        await indexerMock.queryEffectCache(chainScopedEffect, ~scope=Chain(1337)),
+        await indexerMock.queryEffectCache(chainScopedEffect, ~scope=Chain(1337->ChainId.fromInt)),
         await indexerMock.metric("envio_effect_cache"),
       )).toEqual((
         [{"id": `"a"`, "output": %raw(`1337`)}],

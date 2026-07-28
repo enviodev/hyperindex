@@ -54,7 +54,7 @@ module Make = () => {
   }
 
   type composedEventConstructor = (
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,

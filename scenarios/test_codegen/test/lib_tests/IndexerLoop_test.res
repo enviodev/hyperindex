@@ -45,7 +45,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
-    chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
+    chainStates->ChainId.Dict.set(chainConfig.id, chainState)
   })
 
   IndexerState.make(

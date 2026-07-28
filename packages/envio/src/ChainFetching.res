@@ -199,7 +199,7 @@ let rec onQueryResponse = async (
         cs->ChainState.prepareReorg(
           ~eventsProcessedDiff=switch eventsProcessedDiffByChain {
           | Some(byChain) =>
-            byChain->Utils.Dict.dangerouslyGetByIntNonOption((cs->ChainState.chainConfig).id)
+            byChain->ChainId.Dict.dangerouslyGetNonOption((cs->ChainState.chainConfig).id)
           | None => None
           },
         )

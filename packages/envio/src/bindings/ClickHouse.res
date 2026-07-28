@@ -129,7 +129,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 dateSchema
               }
             }
-          | ChainId => ChainId.intSchema->S.toUnknown
+          | ChainId => ChainId.schema->S.toUnknown
           // ClickHouse returns UInt64 values as strings, need to parse to float
           | UInt52 => {
               let uint52Schema =

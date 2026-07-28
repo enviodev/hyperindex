@@ -1,11 +1,11 @@
 module Chain = {
   type t = ChainId.t
 
-  external toChainId: t => int = "%identity"
+  external toChainId: t => ChainId.t = "%identity"
 
   let toString = chainId => chainId->ChainId.toString
 
-  let makeUnsafe = (~chainId) => chainId->ChainId.fromInt
+  external makeUnsafe: (~chainId: ChainId.t) => t = "%identity"
 }
 
 module ChainIdCmp = Belt.Id.MakeComparable({

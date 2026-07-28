@@ -5,7 +5,7 @@ open Vitest
 // omitted, the payload is store-backed for that dimension.
 // `transactionMask`/`blockMask` mirror the per-event `onEventRegistration.eventConfig`
 // masks that `ChainState.groupBatchItems` reads for each dimension.
-let materializeChainId = 987
+let materializeChainId = 987->ChainId.fromInt
 let makeItem = (
   ~blockNumber,
   ~transactionIndex=0,

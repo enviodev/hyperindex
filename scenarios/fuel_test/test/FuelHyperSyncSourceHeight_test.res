@@ -38,7 +38,7 @@ let withServer = async (handler, body) => {
 }
 
 describe("FuelHyperSyncSource - getHeightOrThrow", () => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
+  let chain = ChainMap.Chain.makeUnsafe(~chainId=0->ChainId.fromInt)
 
   // The native client validates that the token is a UUID before sending requests.
   let apiToken = "11111111-1111-1111-1111-111111111111"

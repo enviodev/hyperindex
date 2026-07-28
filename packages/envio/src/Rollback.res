@@ -140,7 +140,7 @@ and executeRollback = async (
     ).storage.getRollbackProgressDiff(~rollbackTargetCheckpointId)
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
       let diff = rollbackProgressDiff->Array.getUnsafe(idx)
-      eventsProcessedDiffByChain->Utils.Dict.setByInt(
+      eventsProcessedDiffByChain->ChainId.Dict.set(
         diff["chain_id"],
         {
           let eventsProcessedDiff =
@@ -149,7 +149,7 @@ and executeRollback = async (
           eventsProcessedDiff
         },
       )
-      newProgressBlockNumberPerChain->Utils.Dict.setByInt(
+      newProgressBlockNumberPerChain->ChainId.Dict.set(
         diff["chain_id"],
         if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
           Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
@@ -167,10 +167,10 @@ and executeRollback = async (
     let chainId = (cs->ChainState.chainConfig).id
     let fromBlock = cs->ChainState.committedProgressBlockNumber
     cs->ChainState.rollback(
-      ~newProgressBlockNumber=newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
+      ~newProgressBlockNumber=newProgressBlockNumberPerChain->ChainId.Dict.dangerouslyGetNonOption(
         chainId,
       ),
-      ~eventsProcessedDiff=eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
+      ~eventsProcessedDiff=eventsProcessedDiffByChain->ChainId.Dict.dangerouslyGetNonOption(
         chainId,
       ),
       ~rollbackTargetBlockNumber,
@@ -184,7 +184,7 @@ and executeRollback = async (
         "fromBlock": fromBlock,
         "toBlock": toBlock,
         "rollbackedEvents": eventsProcessedDiffByChain
-        ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+        ->ChainId.Dict.dangerouslyGetNonOption(chainId)
         ->Option.getOr(0.),
       })
       ->ignore

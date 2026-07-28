@@ -4,7 +4,7 @@
 
 type pinnedEvent = {
   registrationId: string,
-  chainId: int,
+  chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
   transactionIndex: int,

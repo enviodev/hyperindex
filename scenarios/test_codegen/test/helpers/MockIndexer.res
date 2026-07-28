@@ -348,7 +348,7 @@ let installMockSourceRegistrations = (
     | _ => []
     }
     if !(sourceStates->Utils.Array.isEmpty) {
-      let key = chainConfig.id->Int.toString
+      let key = chainConfig.id->ChainId.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
       | None =>
@@ -450,7 +450,7 @@ module Indexer = {
       let chainMap =
         chains
         ->Array.map(chainConfig => {
-          let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
+          let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int)->ChainId.fromInt)
           let originalChainConfig = baseConfig.chainMap->ChainMap.get(chain)
           (
             chain,
@@ -833,7 +833,7 @@ module Source = {
       }
     }
 
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=(chain :> int))
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=(chain :> int)->ChainId.fromInt)
     let getHeightOrThrowCalls = []
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
@@ -1129,7 +1129,7 @@ module Helper = {
 }
 
 let mockRawEventRow: InternalTable.RawEvents.t = {
-  chain_id: 1,
+  chain_id: 1->ChainId.fromInt,
   event_id: 1234567890n,
   contract_name: "NftFactory",
   event_name: "SimpleNftCreated",

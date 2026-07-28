@@ -13,9 +13,9 @@ let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
   values->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     chains->Dict.set(
-      chainId->Int.toString,
+      chainId->ChainId.toString,
       {
-        Internal.id: chainId,
+        Internal.id: chainId->ChainId.toInt,
         isRealtime,
       },
     )
@@ -280,7 +280,7 @@ let registerProcessEventBatchMetrics = (
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
     logger->Logging.childTrace({
       "msg": "Finished processing",
-      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "chainId": chainId,
       "batchSize": chainAfterBatch.batchSize,
       "progress": chainAfterBatch.progressBlockNumber,
     })
@@ -312,7 +312,7 @@ let materializeBatchEvents = async (
   | _ =>
     let itemsByChain: dict<array<Internal.item>> = Dict.make()
     batch.items->Array.forEach(item => {
-      let chainId = item->Internal.getItemChainId->Int.toString
+      let chainId = item->Internal.getItemChainId->ChainId.toString
       switch itemsByChain->Utils.Dict.dangerouslyGetNonOption(chainId) {
       | Some(items) => items->Array.push(item)
       | None => itemsByChain->Dict.set(chainId, [item])
@@ -345,7 +345,7 @@ let processEventBatch = async (
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
     logger->Logging.childTrace({
       "msg": "Started processing",
-      "chainId": chainId->Int.fromString->Option.getUnsafe,
+      "chainId": chainId,
       "batchSize": chainAfterBatch.batchSize,
     })
   })

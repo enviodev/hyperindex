@@ -348,7 +348,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
         },
       ],
       ~checkpointIds=[1n],
-      ~checkpointChainIds=[1337],
+      ~checkpointChainIds=[1337->ChainId.fromInt],
       ~checkpointBlockNumbers=[5],
       ~checkpointEventsProcessed=[1],
     )

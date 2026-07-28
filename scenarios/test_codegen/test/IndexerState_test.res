@@ -50,7 +50,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~addresses,
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~knownHeight=0,
     )
 
@@ -82,7 +82,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           onEventRegistration: {"index": 0}->(
             Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
-          payload: `mock event (chainId)${id->Int.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
+          payload: `mock event (chainId)${id->ChainId.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
             Utils.magic: string => Internal.eventPayload
           ),
         })
@@ -140,7 +140,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~logger=Logging.getLogger(),
     )
 
-    chainStates->Utils.Dict.setByInt(id, mockChainState)
+    chainStates->ChainId.Dict.set(id, mockChainState)
   })
 
   let state = IndexerState.make(
@@ -331,7 +331,7 @@ describe("IndexerState", () => {
                 ~committedProgressBlockNumber=-1,
                 ~logger=Logging.getLogger(),
               )
-              chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
+              chainStates->ChainId.Dict.set(chainConfig.id, chainState)
             },
           )
           IndexerState.make(
@@ -396,7 +396,7 @@ describe("IndexerState", () => {
         let resultCs = state->IndexerState.getChainState(~chain)
         let progressed =
           batch.progressedChainsById
-          ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+          ->ChainId.Dict.dangerouslyGetNonOption(chainId)
           ->Option.getUnsafe
 
         t.expect(

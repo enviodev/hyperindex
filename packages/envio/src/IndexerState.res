@@ -276,7 +276,7 @@ let makeFromDbState = (
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
     let chain = Config.getChain(config, ~chainId=resumedChainState.id)
     let chainConfig = config.chainMap->ChainMap.get(chain)
-    chainStates->Utils.Dict.setByInt(
+    chainStates->ChainId.Dict.set(
       resumedChainState.id,
       chainConfig->ChainState.makeFromDbState(
         ~resumedChainState,
@@ -361,7 +361,7 @@ let stop = (state: t) => {
 let getChainState = (state: t, ~chain: chain): ChainState.t =>
   switch state.crossChainState
   ->CrossChainState.chainStates
-  ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId) {
+  ->ChainId.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toChainId) {
   | Some(cs) => cs
   | None =>
     // Should be unreachable, since we validate on Chain.t creation
