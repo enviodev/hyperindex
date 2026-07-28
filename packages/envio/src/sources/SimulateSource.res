@@ -36,27 +36,39 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       | Some(toBlock) => toBlock
       | None => reportedHeight
       }
-      let selectionEventIds = Utils.Set.make()
+      // By registration index, not `eventConfig.id`: two registrations of the
+      // same event are independent and may sit in different partitions, so
+      // matching on the shared event id would let a sibling's items leak into
+      // this query.
+      let selectionRegistrationIndexes = Utils.Set.make()
       selection.onEventRegistrations->Array.forEach(reg =>
-        selectionEventIds->Utils.Set.add(reg.eventConfig.id)->ignore
+        selectionRegistrationIndexes->Utils.Set.add(reg.index)->ignore
       )
+
+      // A client-filtered contract is queried address-free, so this partition
+      // holds none of its addresses and only the chain-wide store can answer
+      // for it — exactly the fallback every real source's router makes.
+      let isAddressAllowed = (address, ~contractName, ~blockNumber) =>
+        switch selection.clientFilteredContracts {
+        | Some(contractNames) if contractNames->Array.includes(contractName) =>
+          addressSet->AddressSet.isIndexedAt(address, contractName, blockNumber)
+        | _ => addressSet->AddressSet.containsAt(address, contractName, blockNumber)
+        }
 
       let parsedQueueItems = items->Array.filter(item => {
         let eventItem = item->Internal.castUnsafeEventItem
         let {blockNumber, onEventRegistration} = eventItem
         if blockNumber < fromBlock || blockNumber > toBlockQueried {
           false
-        } else if !(selectionEventIds->Utils.Set.has(onEventRegistration.eventConfig.id)) {
+        } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
           false
         } else {
           let contractName = onEventRegistration.eventConfig.contractName
           let emitterAllowed =
             onEventRegistration.isWildcard ||
-              addressSet->AddressSet.has(
-                eventItem.payload->Internal.getPayloadSrcAddress,
-                contractName,
-                blockNumber,
-              )
+            eventItem.payload
+            ->Internal.getPayloadSrcAddress
+            ->isAddressAllowed(~contractName, ~blockNumber)
           emitterAllowed &&
           switch onEventRegistration.addressFilterParamGroups {
           | None
@@ -64,8 +76,8 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
           | Some(groups) =>
             let params = eventItem.payload->Internal.getPayloadAddressParams
             groups->Array.some(group =>
-              group->Array.every(name =>
-                addressSet->AddressSet.has(params->Dict.getUnsafe(name), contractName, blockNumber)
+              group->Array.every(
+                name => params->Dict.getUnsafe(name)->isAddressAllowed(~contractName, ~blockNumber),
               )
             )
           }

@@ -385,10 +385,12 @@ impl AddressStore {
     }
 
     /// Whether an address is registered for a contract and already started at
-    /// `block_number` — the same gate routing applies, exposed for the simulate
-    /// source, which has no real query boundary to gate at.
+    /// `block_number` — the chain-wide gate, exposed for the simulate source,
+    /// which has no real query boundary to gate at. Chain-wide, not partition
+    /// membership: a caller that means "this partition holds it" wants
+    /// `AddressSet::contains_at`.
     #[napi]
-    pub fn has(&self, address: String, contract_name: String, block_number: i64) -> bool {
+    pub fn is_indexed_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
         let store = self.read();
         let (Some(key), Some(contract_idx)) = (
             address_key(store.ecosystem, &address),
@@ -738,11 +740,12 @@ impl AddressSet {
         self.ids.len() as i64
     }
 
-    /// The chain-wide gate, reachable through any set of the store. Not set
-    /// membership: the simulate source has no native query boundary, so it
-    /// applies the same store gate every real source applies while routing.
+    /// The chain-wide gate, reachable through any set of the store. Deliberately
+    /// not set membership: a client-filtered contract holds none of its
+    /// addresses in the querying set, so this is the only gate that can answer
+    /// for it — which is exactly what every real source's router falls back to.
     #[napi]
-    pub fn has(&self, address: String, contract_name: String, block_number: i64) -> bool {
+    pub fn is_indexed_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
         let store = self.store.read().unwrap();
         let (Some(key), Some(contract_idx)) = (
             address_key(store.ecosystem, &address),
@@ -751,6 +754,25 @@ impl AddressSet {
             return false;
         };
         store.is_indexed_at(&key, contract_idx, block_number)
+    }
+
+    /// Whether this set holds the address under `contract_name` and it has
+    /// already started at `block_number` — the gate a real source's router
+    /// applies to a server-side address-filtered query: ownership answered by
+    /// the partition's own set, the temporal half by the store (a merged
+    /// partition's addresses don't all start at the same block).
+    #[napi]
+    pub fn contains_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
+        let store = self.store.read().unwrap();
+        let (Some(key), Some(contract_idx)) = (
+            address_key(store.ecosystem, &address),
+            store.contract_idx(&contract_name),
+        ) else {
+            return false;
+        };
+        let indexed = store.is_indexed_at(&key, contract_idx, block_number);
+        drop(store);
+        indexed && self.cache().owner_of(&key) == Some(contract_name.as_str())
     }
 
     /// How many of one contract's addresses this set holds.
@@ -1334,12 +1356,30 @@ mod tests {
         store.register_batch(vec![reg(A, "C", 300)]);
         assert_eq!(
             (
-                store.has(A.to_string(), "C".to_string(), 300),
-                store.has(A.to_string(), "C".to_string(), 299),
-                store.has(A.to_string(), "D".to_string(), 300),
-                store.has(B.to_string(), "C".to_string(), 300),
+                store.is_indexed_at(A.to_string(), "C".to_string(), 300),
+                store.is_indexed_at(A.to_string(), "C".to_string(), 299),
+                store.is_indexed_at(A.to_string(), "D".to_string(), 300),
+                store.is_indexed_at(B.to_string(), "C".to_string(), 300),
             ),
             (true, false, false, false)
+        );
+    }
+
+    #[test]
+    fn contains_at_scopes_the_gate_to_the_set() {
+        let store = store();
+        store.register_batch(vec![reg(A, "C", 300), reg(B, "C", 300)]);
+        let set = store.make_set_of(vec![A.to_string()]);
+        assert_eq!(
+            (
+                set.contains_at(A.to_string(), "C".to_string(), 300),
+                set.contains_at(A.to_string(), "C".to_string(), 299),
+                set.contains_at(A.to_string(), "D".to_string(), 300),
+                // Registered for the same contract, but held by another set.
+                set.contains_at(B.to_string(), "C".to_string(), 300),
+                set.is_indexed_at(B.to_string(), "C".to_string(), 300),
+            ),
+            (true, false, false, false, true)
         );
     }
 
@@ -1386,7 +1426,7 @@ mod tests {
             (
                 kinds(&verdicts),
                 store.contract_addresses("P".to_string()),
-                store.has(program.to_string(), "P".to_string(), 5),
+                store.is_indexed_at(program.to_string(), "P".to_string(), 5),
             ),
             (vec!["added"], vec![program.to_string()], true)
         );

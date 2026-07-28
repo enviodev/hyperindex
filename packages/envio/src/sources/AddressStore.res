@@ -67,28 +67,39 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array
 }
 
 // The contracts of a chain that have events, with the earliest block any of
-// their events may fire at.
+// their events may fire at. `None` means unrestricted, so it wins over any
+// `Some`: one registration without a start block makes the whole contract's
+// address gate open from the chain's start, and the per-registration start
+// block still holds back the registrations that declared one.
 let contractsOf = (~onEventRegistrations: array<Internal.onEventRegistration>): array<contract> => {
-  let startBlocks = Dict.make()
+  // Only ever holds a declared start block, so a missing key is unambiguous —
+  // storing `None` in a dict would be indistinguishable from "not seen yet".
+  let startBlocks: dict<int> = Dict.make()
+  let unrestricted = Utils.Set.make()
   let names = []
   onEventRegistrations->Array.forEach(reg => {
     let name = reg.eventConfig.contractName
-    switch startBlocks->Utils.Dict.dangerouslyGetNonOption(name) {
-    | None =>
+    if !(names->Array.includes(name)) {
       names->Array.push(name)->ignore
-      startBlocks->Dict.set(name, reg.startBlock)
-    | Some(existing) =>
+    }
+    switch reg.startBlock {
+    | None => unrestricted->Utils.Set.add(name)->ignore
+    | Some(startBlock) =>
       startBlocks->Dict.set(
         name,
-        switch (existing, reg.startBlock) {
-        | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
-        | (Some(_) as s, None) | (None, Some(_) as s) => s
-        | (None, None) => None
+        switch startBlocks->Utils.Dict.dangerouslyGetNonOption(name) {
+        | Some(existing) => Pervasives.min(existing, startBlock)
+        | None => startBlock
         },
       )
     }
   })
-  names->Array.map(name => {name, startBlock: startBlocks->Dict.getUnsafe(name)})
+  names->Array.map(name => {
+    name,
+    startBlock: unrestricted->Utils.Set.has(name)
+      ? None
+      : startBlocks->Utils.Dict.dangerouslyGetNonOption(name),
+  })
 }
 
 @send external nextId: t => int = "nextId"
@@ -108,9 +119,9 @@ external startBlockGroups: (t, string) => array<AddressSet.startBlockGroup> = "s
 @send external contractCount: (t, string) => int = "contractCount"
 @send external size: t => int = "size"
 
-// The gate routing applies, exposed for the simulate source — it has no real
-// query boundary to gate at.
-@send external has: (t, Address.t, string, int) => bool = "has"
+// The chain-wide gate routing applies, exposed for the simulate source — it has
+// no real query boundary to gate at.
+@send external isIndexedAt: (t, Address.t, string, int) => bool = "isIndexedAt"
 
 // Drops every address registered after the target block, returning how many
 // were dropped. Ids are tombstoned rather than reused, so sets built before the

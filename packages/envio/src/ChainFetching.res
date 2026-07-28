@@ -212,14 +212,25 @@ let rec onQueryResponse = async (
       // Over-fetched events (a merged partition returning an address before its
       // effectiveStartBlock, or a wildcard param referencing an address
       // registered after the log's block) are already dropped by the source's
-      // native address gate, so everything here is indexable.
-      let newItems = parsedQueueItems
+      // native address gate. What that gate can't express is a registration
+      // whose own `where.block.number._gte` starts later than the contract's:
+      // the gate is contract-wide, so a sibling registration without a start
+      // block keeps it open from the chain start and the later-starting
+      // registration would otherwise see those earlier blocks too.
+      let newItems = []
       let itemsWithContractRegister = []
-      for idx in 0 to newItems->Array.length - 1 {
-        let item = newItems->Array.getUnsafe(idx)
+      for idx in 0 to parsedQueueItems->Array.length - 1 {
+        let item = parsedQueueItems->Array.getUnsafe(idx)
         let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.onEventRegistration.contractRegister !== None {
-          itemsWithContractRegister->Array.push(item)
+        let hasStarted = switch eventItem.onEventRegistration.startBlock {
+        | Some(startBlock) => eventItem.blockNumber >= startBlock
+        | None => true
+        }
+        if hasStarted {
+          newItems->Array.push(item)
+          if eventItem.onEventRegistration.contractRegister !== None {
+            itemsWithContractRegister->Array.push(item)
+          }
         }
       }
 

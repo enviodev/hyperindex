@@ -15,10 +15,18 @@ type startBlockGroup = {startBlock: int, count: int}
 // fetch state can size and split partitions without ever walking the addresses.
 @send external countFor: (t, string) => int = "countFor"
 
-// The chain-wide address gate, reachable through any set of the store. Not set
-// membership: the simulate source has no native query boundary, so it applies
-// the same gate every real source applies while routing.
-@send external has: (t, Address.t, string, int) => bool = "has"
+// The chain-wide address gate, reachable through any set of the store.
+// Deliberately not set membership: a client-filtered contract holds none of its
+// addresses in the querying set, so this is the only gate that can answer for
+// it — which is what every real source's router falls back to. For a normal
+// partition use `containsAt`.
+@send external isIndexedAt: (t, Address.t, string, int) => bool = "isIndexedAt"
+
+// This set holds the address under the contract and it has already started at
+// the block — the gate a real source's router applies to a server-side
+// address-filtered query. The temporal half still comes from the store: a
+// merged partition's addresses don't all start at the same block.
+@send external containsAt: (t, Address.t, string, int) => bool = "containsAt"
 
 @send external contractNames: t => array<string> = "contractNames"
 
