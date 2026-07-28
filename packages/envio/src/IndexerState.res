@@ -468,6 +468,18 @@ let crossChainState = (state: t) => state.crossChainState
 let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
 let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
+
+// The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
+// in the middle phase: every chain has caught up, but the deferred schema
+// indexes and `ready_at` haven't been committed yet.
+let isFinalizingIndexes = (state: t) =>
+  state.crossChainState->CrossChainState.isCaughtUp &&
+    !(state.crossChainState->CrossChainState.isRealtime)
+
+let markCaughtUp = (state: t) => state.crossChainState->CrossChainState.markCaughtUp
+
+let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.markReady(~readyAt)
+
 let rollbackState = (state: t) => state.rollbackState
 let indexerStartTime = (state: t) => state.indexerStartTime
 let loadManager = (state: t) => state.loadManager

@@ -90,6 +90,12 @@ module Storage = {
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
     loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
+    ensureQueryIndexesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
+    finalizeBackfillCalls: array<{
+      "entityNames": array<string>,
+      "chainIds": array<int>,
+      "readyAt": Date.t,
+    }>,
     dumpEffectCacheCalls: ref<int>,
     storage: Persistence.storage,
   }
@@ -116,6 +122,8 @@ module Storage = {
     let isInitializedResolveFns = []
     let initializeResolveFns = []
     let loadOrThrowCalls = []
+    let ensureQueryIndexesCalls = []
+    let finalizeBackfillCalls = []
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
     let resumeInitialStateResolveFns = []
@@ -124,6 +132,8 @@ module Storage = {
       isInitializedCalls,
       initializeCalls,
       loadOrThrowCalls,
+      ensureQueryIndexesCalls,
+      finalizeBackfillCalls,
       dumpEffectCacheCalls,
       resumeInitialStateCalls,
       resolveLoadInitialState: (initialState: Persistence.initialState) => {
@@ -192,6 +202,25 @@ module Storage = {
             }
             Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
           })
+        },
+        ensureQueryIndexes: (~table: Table.table, ~filters) => {
+          ensureQueryIndexesCalls
+          ->Array.push({
+            "tableName": table.tableName,
+            "filters": filters,
+          })
+          ->ignore
+          Promise.resolve()
+        },
+        finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+          finalizeBackfillCalls
+          ->Array.push({
+            "entityNames": entities->Array.map((e: Internal.entityConfig) => e.name),
+            "chainIds": chainIds,
+            "readyAt": readyAt,
+          })
+          ->ignore
+          Promise.resolve()
         },
         reset: () => JsError.throwWithMessage("Not implemented"),
         setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
@@ -557,7 +586,13 @@ module Indexer = {
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
               state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-            if before < state->IndexerState.processedBatchesCount {
+            // Catching up hands off to the FinalizingIndexes phase, which is
+            // where readiness is decided — so a batch isn't settled until that
+            // phase is over. The idle fallback below still bounds the wait.
+            if (
+              before < state->IndexerState.processedBatchesCount &&
+                !(state->IndexerState.isFinalizingIndexes)
+            ) {
               ()
             } else if isIdle && idleChecks.contents >= 5 {
               ()

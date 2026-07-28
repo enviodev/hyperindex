@@ -89,6 +89,17 @@ type storage = {
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
   loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
+  // Creates whatever indexes the filters need and aren't there yet, resolving
+  // once they're queryable. Best-effort: it resolves even when a build fails,
+  // leaving the query to run unindexed rather than failing the handler.
+  ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
+  // Creates every schema-defined index still missing and stamps `ready_at` on
+  // the given chains, atomically. Called once, when backfill completes.
+  finalizeBackfill: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<int>,
+    ~readyAt: Date.t,
+  ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,

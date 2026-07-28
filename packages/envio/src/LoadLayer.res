@@ -338,6 +338,7 @@ let loadByFilter = (
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
+
     let timerRef =
       indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
 
@@ -345,8 +346,15 @@ let loadByFilter = (
 
     filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
 
+    // Any non-derived field can be filtered on, so the columns this query reads
+    // are indexed on demand before it runs rather than promised by the schema.
+    // Inside the load timing: waiting on the build is time the handler spends
+    // waiting for this operation, and it's the only thing that explains an
+    // occasional very slow getWhere.
+    await storage.ensureQueryIndexes(~table=entityConfig.table, ~filters)
+
     // Loading a superset of rows via a merged query is safe: every loaded
-    // entity is matched against all registered indices, not only the
+    // entity is matched against all registered indexes, not only the
     // query's own filter.
     let queries = filters->EntityFilter.merge
 

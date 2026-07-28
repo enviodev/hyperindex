@@ -217,7 +217,7 @@ pub struct EntityRecordTypeTemplate {
     pub type_code: String,
     pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
-    pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
+    pub composite_indexes: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
 }
@@ -273,8 +273,8 @@ impl EntityRecordTypeTemplate {
             .filter_map(|gql_field| gql_field.get_derived_from_field())
             .collect();
 
-        let composite_indices = entity
-            .get_composite_indices()
+        let composite_indexes = entity
+            .get_composite_indexes()
             .into_iter()
             .map(|fields| {
                 fields
@@ -312,7 +312,7 @@ impl EntityRecordTypeTemplate {
             type_code,
             get_where_filter_code,
             derived_fields,
-            composite_indices,
+            composite_indexes,
             params,
         })
     }

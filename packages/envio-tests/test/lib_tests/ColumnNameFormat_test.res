@@ -80,8 +80,8 @@ describe("Storage column naming (snake_case)", () => {
     ).toBe(`CREATE TABLE IF NOT EXISTS "test_schema"."Snapshot"("id" TEXT NOT NULL, "transaction_index" INTEGER NOT NULL, "token_owner_id" TEXT NOT NULL, PRIMARY KEY("id"));`)
   })
 
-  it("creates indices with db column names", t => {
-    let query = PgStorage.makeCreateTableIndicesQuery(snapshotEntity.table, ~pgSchema="test_schema")
+  it("creates indexes with db column names", t => {
+    let query = PgStorage.makeCreateTableIndexesQuery(snapshotEntity.table, ~pgSchema="test_schema")
     t.expect(
       query,
     ).toBe(`CREATE INDEX IF NOT EXISTS "Snapshot_transaction_index" ON "test_schema"."Snapshot"("transaction_index");`)

@@ -131,30 +131,30 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableIndicesQuery", () => {
+  describe("makeCreateTableIndexesQuery", () => {
     Async.it(
-      "Should create indices for A entity table",
+      "Should create indexes for A entity table",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(
+        let query = PgStorage.makeCreateTableIndexesQuery(
           MockIndexer.entityConfig(A).table,
           ~pgSchema="test_schema",
         )
 
-        let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        t.expect(query, ~message="Indices SQL should match exactly").toBe(expectedIndices)
+        let expectedIndexes = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
+        t.expect(query, ~message="Indexes SQL should match exactly").toBe(expectedIndexes)
       },
     )
 
     Async.it(
-      "Should handle table with no indices",
+      "Should handle table with no indexes",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(
+        let query = PgStorage.makeCreateTableIndexesQuery(
           MockIndexer.entityConfig(B).table,
           ~pgSchema="test_schema",
         )
 
         // B entity has no indexed fields, so should return empty string
-        t.expect(query, ~message="Should return empty string for table with no indices").toBe("")
+        t.expect(query, ~message="Should return empty string for table with no indexes").toBe("")
       },
     )
   })
@@ -277,7 +277,6 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT NOT NULL, "optString" TEXT, "arrayOfStrings" TEXT[] NOT NULL, "int_" INTEGER NOT NULL, "optInt" INTEGER, "arrayOfInts" INTEGER[] NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "bool" BOOLEAN NOT NULL, "optBool" BOOLEAN, "bigInt" NUMERIC NOT NULL, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "arrayOfBigDecimals" TEXT[] NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "optEnumField" "test_schema".AccountType, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -378,7 +377,7 @@ FROM "test_schema"."envio_chains";`
     )
 
     Async.it(
-      "Should create SQL for single entity with indices",
+      "Should create SQL for single entity with indexes",
       async t => {
         // Test with just entity A which has an indexed field
         let entities = [MockIndexer.entityConfig(A)]
@@ -441,6 +440,200 @@ FROM "public"."envio_chains";`
         t.expect(mainQuery, ~message="Single entity SQL should match expected output exactly").toBe(
           expectedMainQuery,
         )
+      },
+    )
+  })
+
+  describe("Deferred schema indexes", () => {
+    let entities = [MockIndexer.entityConfig(A), MockIndexer.entityConfig(B)]
+
+    Async.it(
+      "Creates no schema index during the initial DDL, but still the tables and views",
+      async t => {
+        let mainQuery =
+          PgStorage.makeInitializeTransaction(
+            ~pgSchema="test_schema",
+            ~pgUser="postgres",
+            ~entities,
+            ~enums=[],
+            ~isHasuraEnabled=false,
+            ~deferSchemaIndexes=true,
+          )
+          ->Array.get(0)
+          ->Option.getOrThrow
+
+        t.expect(
+          (
+            mainQuery->String.includes("CREATE INDEX"),
+            mainQuery->String.includes(`CREATE TABLE IF NOT EXISTS "test_schema"."A"`),
+            mainQuery->String.includes(`PRIMARY KEY("id")`),
+            mainQuery->String.includes(`CREATE VIEW "test_schema"."_meta"`),
+          ),
+          ~message="Schema indexes are absent during backfill; tables, primary keys and views are not",
+        ).toEqual((false, true, true, true))
+      },
+    )
+
+    Async.it(
+      "Describes every promised index once, with its descriptive name",
+      async t => {
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
+            schemaIndex->PgStorage.schemaIndexName,
+            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
+          )),
+          ~message="The @index on A.b and B's derived relationship describe the same index",
+        ).toEqual([
+          ("A_b_id", `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`),
+        ])
+      },
+    )
+
+    // A `@derivedFrom` may point at an entity that isn't stored in Postgres at
+    // all, so resolving the relationship needs the whole schema while the index
+    // is only emitted for a Postgres-backed table.
+    let makeStorageEntity = (name, ~postgres, ~fields): Internal.entityConfig => {
+      ...MockIndexer.entityConfig(A),
+      name,
+      table: Table.mkTable(name, ~fields),
+      storage: {postgres, clickhouse: !postgres},
+    }
+    let orderEntity = postgres =>
+      makeStorageEntity(
+        "Order",
+        ~postgres,
+        ~fields=[
+          Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+          Table.mkField("trader", String, ~linkedEntity="Trader", ~fieldSchema=S.string),
+        ],
+      )
+    let traderEntity = makeStorageEntity(
+      "Trader",
+      ~postgres=true,
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkDerivedFromField("orders", ~derivedFromEntity="Order", ~derivedFromField="trader"),
+      ],
+    )
+
+    Async.it(
+      "Skips a derived index whose source entity isn't stored in Postgres",
+      async t => {
+        let allEntities = [traderEntity, orderEntity(false)]
+        let pgEntities = allEntities->Array.filter(e => e.storage.postgres)
+
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities=pgEntities, ~allEntities)->Array.map(
+            PgStorage.schemaIndexName,
+          ),
+          ~message="Order lives only in ClickHouse, so there's no Postgres table to index",
+        ).toEqual([])
+
+        t.expect(
+          () =>
+            PgStorage.makeInitializeTransaction(
+              ~pgSchema="test_schema",
+              ~pgUser="postgres",
+              ~entities=pgEntities,
+              ~allEntities,
+              ~enums=[],
+              ~isHasuraEnabled=false,
+              ~deferSchemaIndexes=true,
+            ),
+          ~message="Resolving the relationship must not throw on the partial entity set",
+        ).not.toThrow()
+      },
+    )
+
+    Async.it(
+      "Emits the derived index when the source entity is Postgres-backed",
+      async t => {
+        let allEntities = [traderEntity, orderEntity(true)]
+
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities=allEntities, ~allEntities)->Array.map(schemaIndex => (
+            schemaIndex->PgStorage.schemaIndexName,
+            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
+          )),
+        ).toEqual([
+          (
+            "Order_trader_id",
+            `CREATE INDEX IF NOT EXISTS "Order_trader_id" ON "test_schema"."Order"("trader_id");`,
+          ),
+        ])
+      },
+    )
+
+    Async.it(
+      "Truncates a long name to Postgres' identifier limit rather than letting Postgres do it",
+      async t => {
+        let schemaIndex: PgStorage.schemaIndex = {
+          tableName: "Entity" ++ "x"->String.repeat(50),
+          indexFields: [{fieldName: "some_long_column_name", direction: Table.Asc}],
+        }
+        let name = schemaIndex->PgStorage.schemaIndexName
+
+        t.expect(
+          (
+            name->String.length,
+            name,
+            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s")->String.includes(
+              `IF NOT EXISTS "${name}"`,
+            ),
+          ),
+          ~message="The emitted name matches what Postgres stores, so IF NOT EXISTS keeps matching it",
+        ).toEqual((63, (schemaIndex->PgStorage.schemaIndexDescription)->String.slice(~start=0, ~end=63), true))
+      },
+    )
+
+    Async.it(
+      "Rejects two promised indexes whose names truncate to the same identifier",
+      async t => {
+        let longEntity = "Entity" ++ "x"->String.repeat(50)
+        let table = Table.mkTable(
+          longEntity,
+          ~fields=[
+            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+            Table.mkField("some_long_column_one", String, ~isIndex=true, ~fieldSchema=S.string),
+            Table.mkField("some_long_column_two", String, ~isIndex=true, ~fieldSchema=S.string),
+          ],
+        )
+        let entityConfig: Internal.entityConfig = {
+          ...MockIndexer.entityConfig(A),
+          table,
+        }
+
+        t.expect(
+          () =>
+            PgStorage.makeInitializeTransaction(
+              ~pgSchema="test_schema",
+              ~pgUser="postgres",
+              ~entities=[entityConfig],
+              ~enums=[],
+              ~isHasuraEnabled=false,
+            ),
+        ).toThrow()
+      },
+    )
+
+    Async.it(
+      "Keeps composite index descriptions ordered with their directions",
+      async t => {
+        let schemaIndex: PgStorage.schemaIndex = {
+          tableName: "Transfer",
+          indexFields: [
+            {fieldName: "block_number", direction: Table.Desc},
+            {fieldName: "log_index", direction: Table.Asc},
+          ],
+        }
+
+        t.expect((
+          schemaIndex->PgStorage.schemaIndexName,
+          PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s"),
+        )).toEqual((
+          "Transfer_block_number_desc_log_index",
+          `CREATE INDEX IF NOT EXISTS "Transfer_block_number_desc_log_index" ON "s"."Transfer"("block_number" DESC, "log_index");`,
+        ))
       },
     )
   })
