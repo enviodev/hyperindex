@@ -5292,6 +5292,83 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual([(19, Some(120), ["Gravatar"]), (120, None, [])])
   })
 
+  // Both partitions probing open-ended at the same time: the standing partition
+  // can't bound the catch-up while its own query is unbounded, so the catch-up
+  // goes out unbounded too and the two responses may land in either order.
+  let makeTwoOpenEndedQueriesInFlight = () => {
+    let (advanced, addressStore, standingQuery) = makeCollapsedAt50WithQueryInFlight()
+    let afterReg =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=20, ~contractAddress=mockAddress3)->dcToItem,
+      ])
+    let catchUpQuery = switch afterReg->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=10_000.,
+    ) {
+    | Ready([query]) => query
+    | _ => JsError.throwWithMessage("Expected a single catch-up query")
+    }
+    afterReg->FetchState.startFetchingQueries(~queries=[catchUpQuery])
+    (afterReg, standingQuery, catchUpQuery)
+  }
+
+  it("bounds and removes the catch-up when the standing response lands first", t => {
+    let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
+    // Dispatched after the catch-up's query (fromBlock 51 against 20) yet
+    // completing before it.
+    let afterStanding =
+      afterReg->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=120),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    // The catch-up had no bound when it went out, so it comes back past the
+    // merge block it has since been given — and is removed on arrival.
+    let afterCatchUp =
+      afterStanding->FetchState.handleQueryResult(
+        ~query=catchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=150),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    t.expect(
+      (
+        (standingQuery.toBlock, catchUpQuery.toBlock),
+        afterStanding->frontierShape,
+        afterCatchUp->frontierShape,
+        afterCatchUp->FetchState.bufferSize,
+      ),
+      ~message="both queries open-ended; the settled response bounds the catch-up, which then over-fetches past it and disappears, its overlap deduped",
+    ).toEqual(((None, None), [(19, Some(120), ["Gravatar"]), (120, None, [])], [(120, None, [])], 1))
+  })
+
+  it("keeps the catch-up unbounded when its own response lands first", t => {
+    let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
+    let afterCatchUp =
+      afterReg->FetchState.handleQueryResult(
+        ~query=catchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=80),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    let afterStanding =
+      afterCatchUp->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=120),
+        ~newItems=[mockEvent(~blockNumber=60)],
+      )
+    t.expect(
+      (
+        afterCatchUp->frontierShape,
+        afterStanding->frontierShape,
+        afterStanding->FetchState.bufferSize,
+      ),
+      ~message="catch-up runs past the standing frontier unbounded, then is bounded by what the standing response actually covered",
+    ).toEqual((
+      [(50, None, []), (80, None, ["Gravatar"])],
+      [(80, Some(120), ["Gravatar"]), (120, None, [])],
+      1,
+    ))
+  })
+
   it("catches an address up over the in-flight range above the frontier", t => {
     let (advanced, addressStore, _inFlight) = makeCollapsedAt50WithQueryInFlight()
     // Registered at 60: above the standing frontier of 50, so nothing is behind
