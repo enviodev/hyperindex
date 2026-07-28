@@ -7,11 +7,13 @@ let makeRow = (
   ~directions=?,
   ~method="btree",
   ~isValid=1,
+  ~isPlain=1,
 ): IndexRegistry.catalogRow => {
   tableName,
   indexName,
   method,
   isValid,
+  isPlain,
   columns,
   directions: switch directions {
   | Some(directions) => directions

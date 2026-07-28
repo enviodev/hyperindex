@@ -489,69 +489,40 @@ FROM "public"."envio_chains";`
       },
     )
 
-    // A `@derivedFrom` may point at an entity that isn't stored in Postgres at
-    // all, so resolving the relationship needs the whole schema while the index
-    // is only emitted for a Postgres-backed table.
-    let makeStorageEntity = (name, ~postgres, ~fields): Internal.entityConfig => {
-      ...MockIndexer.entityConfig(A),
-      name,
-      table: Table.mkTable(name, ~fields),
-      storage: {postgres, clickhouse: !postgres},
-    }
-    let orderEntity = postgres =>
-      makeStorageEntity(
-        "Order",
-        ~postgres,
-        ~fields=[
-          Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-          Table.mkField("trader", String, ~linkedEntity="Trader", ~fieldSchema=S.string),
-        ],
-      )
-    let traderEntity = makeStorageEntity(
-      "Trader",
-      ~postgres=true,
-      ~fields=[
-        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-        Table.mkDerivedFromField("orders", ~derivedFromEntity="Order", ~derivedFromField="trader"),
-      ],
-    )
-
+    // Config parsing rejects a Postgres entity deriving from one that isn't in
+    // Postgres, so every `@derivedFrom` target here is guaranteed to resolve.
     Async.it(
-      "Skips a derived index whose source entity isn't stored in Postgres",
+      "Emits the index backing a derived relationship on the referenced table",
       async t => {
-        let allEntities = [traderEntity, orderEntity(false)]
-        let pgEntities = allEntities->Array.filter(e => e.storage.postgres)
-
-        t.expect(
-          PgStorage.getSchemaIndexes(~entities=pgEntities, ~allEntities)->Array.map(
-            PgStorage.schemaIndexName,
+        let makeEntity = (name, ~fields): Internal.entityConfig => {
+          ...MockIndexer.entityConfig(A),
+          name,
+          table: Table.mkTable(name, ~fields),
+          storage: {postgres: true, clickhouse: false},
+        }
+        let entities = [
+          makeEntity(
+            "Trader",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkDerivedFromField(
+                "orders",
+                ~derivedFromEntity="Order",
+                ~derivedFromField="trader",
+              ),
+            ],
           ),
-          ~message="Order lives only in ClickHouse, so there's no Postgres table to index",
-        ).toEqual([])
+          makeEntity(
+            "Order",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkField("trader", String, ~linkedEntity="Trader", ~fieldSchema=S.string),
+            ],
+          ),
+        ]
 
         t.expect(
-          () =>
-            PgStorage.makeInitializeTransaction(
-              ~pgSchema="test_schema",
-              ~pgUser="postgres",
-              ~entities=pgEntities,
-              ~allEntities,
-              ~enums=[],
-              ~isHasuraEnabled=false,
-              ~deferSchemaIndexes=true,
-            ),
-          ~message="Resolving the relationship must not throw on the partial entity set",
-        ).not.toThrow()
-      },
-    )
-
-    Async.it(
-      "Emits the derived index when the source entity is Postgres-backed",
-      async t => {
-        let allEntities = [traderEntity, orderEntity(true)]
-
-        t.expect(
-          PgStorage.getSchemaIndexes(~entities=allEntities, ~allEntities)->Array.map(schemaIndex => (
+          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
             schemaIndex->PgStorage.schemaIndexName,
             PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
           )),

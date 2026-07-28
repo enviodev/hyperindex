@@ -531,6 +531,65 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     ))
 }
 
+/// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
+/// emitted: a `@storage` directive is taken literally, otherwise the entity
+/// follows the backends marked `default` in config.yaml.
+fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
+    if entity.has_storage_directive() {
+        entity.postgres == Some(true)
+    } else {
+        storage.postgres.is_some_and(|b| b.entity_default)
+    }
+}
+
+/// A `@derivedFrom` relationship is served by joining the two entities in
+/// Postgres, and it is backed by an index on the referenced entity's table. If
+/// that entity isn't in Postgres there is no table to join or index, so catch
+/// it here rather than letting table creation (or the end-of-backfill index
+/// pass) fail on an entity it can't resolve.
+pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = Vec::new();
+    for entity in entities {
+        if !is_stored_in_postgres(entity, storage) {
+            continue;
+        }
+        for field in &entity.fields {
+            let Some(derived) = field.get_derived_from_field() else {
+                continue;
+            };
+            let target = &derived.derived_from_entity;
+            let is_target_in_postgres = schema
+                .entities
+                .get(target)
+                .is_some_and(|e| is_stored_in_postgres(e, storage));
+            if !is_target_in_postgres {
+                invalid.push(format!(
+                    "  - `{}`.`{}` derives from `{}`, which is not stored in postgres.",
+                    entity.name, field.name, target
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    let listed = invalid.join("\n");
+    Err(anyhow!(
+        "Schema validation failed:\n\
+         \n\
+         @derivedFrom relationships between entities that don't share the postgres storage:\n\
+         {listed}\n\
+         \n\
+         Fixes:\n  \
+         - Add postgres to the @storage directive of the referenced entities, or\n  \
+         - Remove the @derivedFrom fields listed above."
+    ))
+}
+
 // Postgres truncates longer identifiers silently, which can collide two
 // distinct columns and breaks the Hasura custom_name mapping (it is keyed
 // by the untruncated name).
@@ -854,6 +913,7 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
+        validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
@@ -3217,9 +3277,9 @@ mod test {
     // --- validate_entity_storage: per-entity storage routing checks ---
 
     mod entity_storage_validation {
-        use super::super::{validate_entity_storage, Storage};
+        use super::super::{validate_entity_storage, validate_relationship_storage, Storage};
         use crate::config_parsing::entity_parsing::{
-            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Schema,
+            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Field, FieldType, Schema,
         };
         use crate::config_parsing::human_config::ColumnNameFormat;
 
@@ -3309,6 +3369,62 @@ mod test {
             }]);
             assert!(validate_entity_storage(&postgres_only(), &schema).is_err());
             assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        // A @derivedFrom is served by joining the two entities in Postgres and
+        // backed by an index on the referenced table, so both sides have to be
+        // there.
+        fn derived_from(name: &str, target: &str, field: &str) -> Field {
+            Field {
+                name: name.to_string(),
+                field_type: FieldType::DerivedFromField {
+                    entity_name: target.to_string(),
+                    derived_from_field: field.to_string(),
+                },
+                description: None,
+            }
+        }
+
+        #[test]
+        fn derived_from_within_postgres_ok() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", Some(true), None),
+            ]);
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn derived_from_clickhouse_only_entity_rejected() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            let err = validate_relationship_storage(&multi(false, false), &schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`orders` derives from `Order`, which is not stored in postgres."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn derived_from_ignored_when_owner_is_not_in_postgres() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", None, Some(true))
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
         }
     }
 
