@@ -2,7 +2,7 @@ module Entity = {
   type relatedEntityId = string
   type filterWithRelatedIds = (EntityFilter.t, Utils.Set.t<relatedEntityId>)
   // Keyed by EntityFilter.toString
-  type filterIndices = dict<filterWithRelatedIds>
+  type filterIndexes = dict<filterWithRelatedIds>
 
   type entityFilters = Utils.Set.t<EntityFilter.t>
   type t = {
@@ -14,7 +14,7 @@ module Entity = {
     // previous changes persist in the background.
     mutable prevEntityChanges: array<Change.t<Internal.entity>>,
     mutable filtersByEntityId: dict<entityFilters>,
-    mutable filterIndices: filterIndices,
+    mutable filterIndexes: filterIndexes,
   }
 
   // Helper to extract an entity's id as a dict key. The raw id may be a
@@ -44,7 +44,7 @@ module Entity = {
     changesCount: 0.,
     prevEntityChanges: [],
     filtersByEntityId: Dict.make(),
-    filterIndices: Dict.make(),
+    filterIndexes: Dict.make(),
   }
 
   // Changes to persist for checkpoints in (committedCheckpointId, upToCheckpointId].
@@ -81,7 +81,7 @@ module Entity = {
   }
 
   // Frees committed changes: drops latest entries at or below committedCheckpointId
-  // (re-readable from the db) and clears the per-batch indices (rebuilt on the next
+  // (re-readable from the db) and clears the per-batch indexes (rebuilt on the next
   // getWhere). Uncommitted changes are kept. With keepLoadedFromDb, entries seeded
   // from a db read are spared so the cheaper-to-re-derive writes are dropped first.
   let dropCommittedChanges = (self: t, ~committedCheckpointId, ~keepLoadedFromDb) => {
@@ -98,10 +98,10 @@ module Entity = {
     keysToDelete->Array.forEach(key => self.latestEntityChangeById->Utils.Dict.deleteInPlace(key))
     self.changesCount = self.changesCount -. keysToDelete->Array.length->Int.toFloat
     self.filtersByEntityId = Dict.make()
-    self.filterIndices = Dict.make()
+    self.filterIndexes = Dict.make()
   }
 
-  let updateIndices = (self: t, ~entity: Internal.entity) => {
+  let updateIndexes = (self: t, ~entity: Internal.entity) => {
     let entityId = entity->getEntityIdUnsafe
     let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
 
@@ -116,7 +116,7 @@ module Entity = {
       })
     }
 
-    self.filterIndices->Utils.Dict.forEach(((filter, relatedEntityIds)) => {
+    self.filterIndexes->Utils.Dict.forEach(((filter, relatedEntityIds)) => {
       if filter->EntityFilter.matches(~entity=entityAsDict) {
         //Add entity id to the filter index and the filter to entity filters
         relatedEntityIds->Utils.Set.add(entityId)->ignore
@@ -127,12 +127,12 @@ module Entity = {
     })
   }
 
-  let deleteEntityFromIndices = (self: t, ~entityId: string) =>
+  let deleteEntityFromIndexes = (self: t, ~entityId: string) =>
     switch self.filtersByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
     | None => ()
     | Some(entityFilters) =>
       entityFilters->Utils.Set.forEach(filter => {
-        switch self.filterIndices->Utils.Dict.dangerouslyGetNonOption(
+        switch self.filterIndexes->Utils.Dict.dangerouslyGetNonOption(
           filter->EntityFilter.toString,
         ) {
         | Some((_filter, relatedEntityIds)) =>
@@ -159,8 +159,8 @@ module Entity = {
     }
 
     switch change {
-    | Set({entity}) => inMemTable->updateIndices(~entity)
-    | Delete({entityId}) => inMemTable->deleteEntityFromIndices(~entityId=entityId->EntityId.toKey)
+    | Set({entity}) => inMemTable->updateIndexes(~entity)
+    | Delete({entityId}) => inMemTable->deleteEntityFromIndexes(~entityId=entityId->EntityId.toKey)
     }
     inMemTable.latestEntityChangeById->Dict.set(entityKey, change)
   }
@@ -200,12 +200,12 @@ module Entity = {
 
   let hasIndex = (inMemTable: t) =>
     (filterKey: string) =>
-      inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) !== None
+      inMemTable.filterIndexes->Utils.Dict.dangerouslyGetNonOption(filterKey) !== None
 
   let getUnsafeOnIndex = (inMemTable: t) => {
     let getEntity = inMemTable->getUnsafe
     (filterKey: string) => {
-      switch inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) {
+      switch inMemTable.filterIndexes->Utils.Dict.dangerouslyGetNonOption(filterKey) {
       | None =>
         JsError.throwWithMessage(`Unexpected error. Must have an index for the filter ${filterKey}`)
       | Some((_filter, relatedEntityIds)) =>
@@ -223,7 +223,7 @@ module Entity = {
 
   let addEmptyIndex = (inMemTable: t, ~filter: EntityFilter.t) => {
     let filterKey = filter->EntityFilter.toString
-    switch inMemTable.filterIndices->Utils.Dict.dangerouslyGetNonOption(filterKey) {
+    switch inMemTable.filterIndexes->Utils.Dict.dangerouslyGetNonOption(filterKey) {
     | Some(_) => () //Should not happen, this means the index already exists
     | None =>
       let relatedEntityIds = Utils.Set.make()
@@ -240,7 +240,7 @@ module Entity = {
         | None => ()
         }
       })
-      inMemTable.filterIndices->Dict.set(filterKey, (filter, relatedEntityIds))
+      inMemTable.filterIndexes->Dict.set(filterKey, (filter, relatedEntityIds))
     }
   }
 }

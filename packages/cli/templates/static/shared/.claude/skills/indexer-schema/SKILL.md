@@ -96,7 +96,7 @@ type Trade @index(fields: ["poolId", ["date", "DESC"]]) {
 
 - Fields default to ASC; use `["field", "DESC"]` for descending
 - IDs and `@derivedFrom` fields are automatically indexed
-- Any non-derived field is queryable via `context.Entity.getWhere()`. Without `@index` the index is built the first time the field is queried, pausing indexing while it builds; `@index` fields are built together when the backfill finishes, before the indexer reports ready
+- Any non-derived field is queryable via `context.Entity.getWhere()`. Indexes are never created up front: `@index` fields are built together when the backfill finishes, before the indexer reports ready, and any field — marked or not — is indexed on the spot if a `getWhere` needs it earlier, pausing indexing while it builds
 
 ## @config
 

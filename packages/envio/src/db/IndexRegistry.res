@@ -1,4 +1,4 @@
-// An in-memory mirror of the indices PostgreSQL holds for the indexer schema.
+// An in-memory mirror of the indexes PostgreSQL holds for the indexer schema.
 // Postgres stays authoritative: the registry is loaded from pg_catalog at
 // startup/resume and afterwards only grows — optimistically, right after a
 // CREATE INDEX we issued succeeds. Only one Indexer instance writes to the
@@ -81,15 +81,21 @@ GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready;`
 
 type t = {
   keys: Utils.Set.t<string>,
+  // Names Postgres reports as invalid. Kept because `CREATE INDEX IF NOT
+  // EXISTS` matches on name: with an invalid index already under the name we
+  // want, the DDL is a silent no-op and we'd register a key for something the
+  // planner refuses to use.
+  invalidNames: Utils.Set.t<string>,
   // Keyed by index key so identical concurrent requests await one build.
   inflight: dict<promise<unit>>,
-  // Tail of the build chain per table, so two different indices on the same
+  // Tail of the build chain per table, so two different indexes on the same
   // table are built one after the other rather than at once.
   tableQueue: dict<promise<unit>>,
 }
 
 let make = () => {
   keys: Utils.Set.make(),
+  invalidNames: Utils.Set.make(),
   inflight: Dict.make(),
   tableQueue: Dict.make(),
 }
@@ -102,16 +108,28 @@ let size = registry => registry.keys->Utils.Set.size
 
 let toArray = registry => registry.keys->Utils.Set.toArray->Array.toSorted(String.compare)
 
+let isInvalidName = (registry, name) => registry.invalidNames->Utils.Set.has(name)
+
+// A plain CREATE INDEX either commits or leaves nothing behind, so an index can
+// only be invalid because something before us left it that way — the startup
+// snapshot stays accurate until the next restart.
+let invalidNameError = (~indexName, ~pgSchema) =>
+  Utils.Error.make(
+    `The index "${indexName}" already exists in schema "${pgSchema}" but PostgreSQL reports it as INVALID, so queries can't use it and CREATE INDEX IF NOT EXISTS won't replace it. Drop it with 'DROP INDEX "${pgSchema}"."${indexName}";' or rebuild it with 'REINDEX INDEX "${pgSchema}"."${indexName}";', then restart the indexer.`,
+  )
+
 // Replaces the whole registry with what the catalog reports. Returns the names
-// of indices Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died
+// of indexes Postgres flagged invalid (eg a CREATE INDEX CONCURRENTLY that died
 // midway): they're reported to the user but never dropped or rebuilt, and they
 // stay out of the registry so the next request retries the build.
 let reload = (registry, ~rows: array<catalogRow>) => {
   registry.keys->Utils.Set.clear
+  registry.invalidNames->Utils.Set.clear
   let invalidIndexNames = []
   rows->Array.forEach(row => {
     if row.isValid === 0 {
       invalidIndexNames->Array.push(row.indexName)->ignore
+      registry.invalidNames->Utils.Set.add(row.indexName)->ignore
     } else {
       registry->add(
         makeKey(

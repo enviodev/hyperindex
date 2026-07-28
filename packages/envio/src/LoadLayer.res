@@ -351,10 +351,10 @@ let loadByFilter = (
     // Inside the load timing: waiting on the build is time the handler spends
     // waiting for this operation, and it's the only thing that explains an
     // occasional very slow getWhere.
-    await storage.ensureQueryIndices(~table=entityConfig.table, ~filters)
+    await storage.ensureQueryIndexes(~table=entityConfig.table, ~filters)
 
     // Loading a superset of rows via a merged query is safe: every loaded
-    // entity is matched against all registered indices, not only the
+    // entity is matched against all registered indexes, not only the
     // query's own filter.
     let queries = filters->EntityFilter.merge
 

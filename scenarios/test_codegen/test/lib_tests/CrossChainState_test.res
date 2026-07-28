@@ -680,7 +680,7 @@ describe("CrossChainState readiness", () => {
     })
   })
 
-  it("holds every chain unready until the deferred indices are finalized", t => {
+  it("holds every chain unready until the deferred indexes are finalized", t => {
     let a = makeChainState(
       ~chainId=1,
       ~knownHeight=1000,
@@ -706,7 +706,7 @@ describe("CrossChainState readiness", () => {
         "isCaughtUp": cm->CrossChainState.isCaughtUp,
         "isRealtime": cm->CrossChainState.isRealtime,
       },
-      ~message="Catching up starts the FinalizingIndices phase, it doesn't end it",
+      ~message="Catching up starts the FinalizingIndexes phase, it doesn't end it",
     ).toEqual({"aReady": false, "bReady": false, "isCaughtUp": true, "isRealtime": false})
 
     let readyAt = Date.fromString("2024-01-01T00:00:00Z")

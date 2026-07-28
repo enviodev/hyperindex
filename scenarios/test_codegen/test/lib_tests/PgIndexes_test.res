@@ -22,12 +22,19 @@ let makeFakeSql: (string => promise<unknown>) => Postgres.sql = %raw(`(run) => {
 
 let pgSchema = "test_schema"
 
-let makeStorage = (~failOn=_ => false) => {
+// Catalog rows the storage reads on resume, so a test can start from a schema
+// that already holds indexes — including ones Postgres reports as invalid.
+let makeStorage = (~failOn=_ => false, ~catalogRows: array<IndexRegistry.catalogRow>=[]) => {
   let queries = []
   let sql = makeFakeSql(query => {
     queries->Array.push(query)->ignore
     if failOn(query) {
       Promise.reject(Utils.Error.make("permission denied for schema"))
+    } else if query->String.includes("FROM pg_index") {
+      Promise.resolve(catalogRows->(Utils.magic: array<IndexRegistry.catalogRow> => unknown))
+    } else if query->String.includes("AS id FROM") {
+      // The committed-checkpoint read, which resumeInitialState indexes into.
+      Promise.resolve(%raw(`[{id: "0"}]`))
     } else {
       Promise.resolve(%raw(`[]`))
     }
@@ -54,15 +61,15 @@ let entityB = MockIndexer.entityConfig(B)
 let createABId = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
 let createAOptional = `CREATE INDEX IF NOT EXISTS "A_optionalStringToTestLinkedEntities" ON "test_schema"."A"("optionalStringToTestLinkedEntities");`
 
-describe("Automatic getWhere indices", () => {
+describe("Automatic getWhere indexes", () => {
   Async.it("Creates a descriptively named index for a non-indexed field, once", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.ensureQueryIndices(
+    await storage.ensureQueryIndexes(
       ~table=entityA.table,
       ~filters=[eq(~fieldName="optionalStringToTestLinkedEntities")],
     )
-    await storage.ensureQueryIndices(
+    await storage.ensureQueryIndexes(
       ~table=entityA.table,
       ~filters=[eq(~fieldName="optionalStringToTestLinkedEntities")],
     )
@@ -76,7 +83,7 @@ describe("Automatic getWhere indices", () => {
   Async.it("Indexes every column a filter reads, deduped", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.ensureQueryIndices(
+    await storage.ensureQueryIndexes(
       ~table=entityA.table,
       ~filters=[
         And({
@@ -92,8 +99,8 @@ describe("Automatic getWhere indices", () => {
   Async.it("Shares one build between concurrent identical requests", async t => {
     let (storage, queries) = makeStorage()
 
-    let first = storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    let second = storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    let first = storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    let second = storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
     await first
     await second
 
@@ -113,8 +120,8 @@ describe("Automatic getWhere indices", () => {
     )
     let name = `${longEntity}_${column}`->String.slice(~start=0, ~end=63)
 
-    await storage.ensureQueryIndices(~table, ~filters=[eq(~fieldName=column)])
-    await storage.ensureQueryIndices(~table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
 
     t.expect(
       queries,
@@ -130,15 +137,68 @@ describe("Automatic getWhere indices", () => {
       ~failOn=query => shouldFail.contents && query->String.includes("CREATE INDEX"),
     )
 
-    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
     shouldFail := false
-    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
 
     t.expect(
       queries,
       ~message="A failed build is retried; only the successful one is registered",
     ).toEqual([createABId, createABId])
+  })
+})
+
+describe("Pre-existing invalid indexes", () => {
+  // An index left INVALID by an older build. `CREATE INDEX IF NOT EXISTS`
+  // matches on name, so it would quietly skip and we'd register a key for an
+  // index the planner refuses to use.
+  let invalidABId: IndexRegistry.catalogRow = {
+    tableName: "A",
+    indexName: "A_b_id",
+    method: "btree",
+    isValid: 0,
+    columns: ["b_id"],
+    directions: ["ASC"],
+  }
+
+  Async.it("Are never registered as healthy by a getWhere build", async t => {
+    let (storage, queries) = makeStorage(~catalogRows=[invalidABId])
+    // Loads the registry from the catalog, exactly as a restart does.
+    let _ = await storage.resumeInitialState()
+
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+
+    t.expect(
+      queries->Array.filter(query => query->String.includes("CREATE INDEX")),
+      ~message="No DDL is issued, so nothing can be mistaken for a working index",
+    ).toEqual([])
+  })
+
+  Async.it("Fail the backfill finalization with an actionable message", async t => {
+    let (storage, queries) = makeStorage(~catalogRows=[invalidABId])
+    // Loads the registry from the catalog, exactly as a restart does.
+    let _ = await storage.resumeInitialState()
+
+    let message = await storage.finalizeBackfill(
+      ~entities=[entityA, entityB],
+      ~chainIds=[1],
+      ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
+    )
+    ->Promise.thenResolve(() => "")
+    ->Utils.Promise.catchResolve(exn =>
+      exn->(Utils.magic: exn => {"message": string})->(m => m["message"])
+    )
+
+    t.expect(
+      (
+        message->String.includes(`DROP INDEX "test_schema"."A_b_id";`),
+        message->String.includes(`REINDEX INDEX "test_schema"."A_b_id";`),
+        queries->Array.filter(query => query->String.includes("CREATE INDEX")),
+      ),
+      ~message="ready_at is never committed, and the message says how to fix it",
+    ).toEqual((true, true, []))
   })
 })
 
@@ -197,10 +257,10 @@ WHERE "id" = ANY($2::int[]);`
     ])
   })
 
-  Async.it("Skips indices an automatic getWhere build already created", async t => {
+  Async.it("Skips indexes an automatic getWhere build already created", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.ensureQueryIndices(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
     await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1], ~readyAt)
 
     t.expect(queries).toEqual([createABId, "BEGIN", setReadyAt, "COMMIT"])

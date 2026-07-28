@@ -82,8 +82,11 @@ struct EntityJson {
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    composite_indices: Vec<Vec<CompositeIndexJson>>,
+    // The JSON key is frozen: this config is persisted to `envio_info` and
+    // diffed against the running config on resume, so renaming it would make
+    // every deployed indexer with a composite index demand a reset.
+    #[serde(rename = "compositeIndices", skip_serializing_if = "Vec::is_empty")]
+    composite_indexes: Vec<Vec<CompositeIndexJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
 }
@@ -776,8 +779,8 @@ impl SystemConfig {
                     })
                     .collect();
 
-                let composite_indices = entity
-                    .get_composite_indices()
+                let composite_indexes = entity
+                    .get_composite_indexes()
                     .into_iter()
                     .map(|fields| {
                         fields
@@ -826,7 +829,7 @@ impl SystemConfig {
                     storage,
                     properties,
                     derived_fields,
-                    composite_indices,
+                    composite_indexes,
                     description: entity.description.clone(),
                 })
             })

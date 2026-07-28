@@ -131,30 +131,30 @@ describe("Test PgStorage SQL generation functions", () => {
     )
   })
 
-  describe("makeCreateTableIndicesQuery", () => {
+  describe("makeCreateTableIndexesQuery", () => {
     Async.it(
-      "Should create indices for A entity table",
+      "Should create indexes for A entity table",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(
+        let query = PgStorage.makeCreateTableIndexesQuery(
           MockIndexer.entityConfig(A).table,
           ~pgSchema="test_schema",
         )
 
-        let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        t.expect(query, ~message="Indices SQL should match exactly").toBe(expectedIndices)
+        let expectedIndexes = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
+        t.expect(query, ~message="Indexes SQL should match exactly").toBe(expectedIndexes)
       },
     )
 
     Async.it(
-      "Should handle table with no indices",
+      "Should handle table with no indexes",
       async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(
+        let query = PgStorage.makeCreateTableIndexesQuery(
           MockIndexer.entityConfig(B).table,
           ~pgSchema="test_schema",
         )
 
         // B entity has no indexed fields, so should return empty string
-        t.expect(query, ~message="Should return empty string for table with no indices").toBe("")
+        t.expect(query, ~message="Should return empty string for table with no indexes").toBe("")
       },
     )
   })
@@ -377,7 +377,7 @@ FROM "test_schema"."envio_chains";`
     )
 
     Async.it(
-      "Should create SQL for single entity with indices",
+      "Should create SQL for single entity with indexes",
       async t => {
         // Test with just entity A which has an indexed field
         let entities = [MockIndexer.entityConfig(A)]
@@ -444,7 +444,7 @@ FROM "public"."envio_chains";`
     )
   })
 
-  describe("Deferred schema indices", () => {
+  describe("Deferred schema indexes", () => {
     let entities = [MockIndexer.entityConfig(A), MockIndexer.entityConfig(B)]
 
     Async.it(
@@ -457,7 +457,7 @@ FROM "public"."envio_chains";`
             ~entities,
             ~enums=[],
             ~isHasuraEnabled=false,
-            ~deferSchemaIndices=true,
+            ~deferSchemaIndexes=true,
           )
           ->Array.get(0)
           ->Option.getOrThrow
@@ -469,7 +469,7 @@ FROM "public"."envio_chains";`
             mainQuery->String.includes(`PRIMARY KEY("id")`),
             mainQuery->String.includes(`CREATE VIEW "test_schema"."_meta"`),
           ),
-          ~message="Schema indices are absent during backfill; tables, primary keys and views are not",
+          ~message="Schema indexes are absent during backfill; tables, primary keys and views are not",
         ).toEqual((false, true, true, true))
       },
     )
@@ -478,13 +478,88 @@ FROM "public"."envio_chains";`
       "Describes every promised index once, with its descriptive name",
       async t => {
         t.expect(
-          PgStorage.getSchemaIndices(~entities)->Array.map(schemaIndex => (
+          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
             schemaIndex->PgStorage.schemaIndexName,
             PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
           )),
           ~message="The @index on A.b and B's derived relationship describe the same index",
         ).toEqual([
           ("A_b_id", `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`),
+        ])
+      },
+    )
+
+    // A `@derivedFrom` may point at an entity that isn't stored in Postgres at
+    // all, so resolving the relationship needs the whole schema while the index
+    // is only emitted for a Postgres-backed table.
+    let makeStorageEntity = (name, ~postgres, ~fields): Internal.entityConfig => {
+      ...MockIndexer.entityConfig(A),
+      name,
+      table: Table.mkTable(name, ~fields),
+      storage: {postgres, clickhouse: !postgres},
+    }
+    let orderEntity = postgres =>
+      makeStorageEntity(
+        "Order",
+        ~postgres,
+        ~fields=[
+          Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+          Table.mkField("trader", String, ~linkedEntity="Trader", ~fieldSchema=S.string),
+        ],
+      )
+    let traderEntity = makeStorageEntity(
+      "Trader",
+      ~postgres=true,
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkDerivedFromField("orders", ~derivedFromEntity="Order", ~derivedFromField="trader"),
+      ],
+    )
+
+    Async.it(
+      "Skips a derived index whose source entity isn't stored in Postgres",
+      async t => {
+        let allEntities = [traderEntity, orderEntity(false)]
+        let pgEntities = allEntities->Array.filter(e => e.storage.postgres)
+
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities=pgEntities, ~allEntities)->Array.map(
+            PgStorage.schemaIndexName,
+          ),
+          ~message="Order lives only in ClickHouse, so there's no Postgres table to index",
+        ).toEqual([])
+
+        t.expect(
+          () =>
+            PgStorage.makeInitializeTransaction(
+              ~pgSchema="test_schema",
+              ~pgUser="postgres",
+              ~entities=pgEntities,
+              ~allEntities,
+              ~enums=[],
+              ~isHasuraEnabled=false,
+              ~deferSchemaIndexes=true,
+            ),
+          ~message="Resolving the relationship must not throw on the partial entity set",
+        ).not.toThrow()
+      },
+    )
+
+    Async.it(
+      "Emits the derived index when the source entity is Postgres-backed",
+      async t => {
+        let allEntities = [traderEntity, orderEntity(true)]
+
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities=allEntities, ~allEntities)->Array.map(schemaIndex => (
+            schemaIndex->PgStorage.schemaIndexName,
+            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
+          )),
+        ).toEqual([
+          (
+            "Order_trader_id",
+            `CREATE INDEX IF NOT EXISTS "Order_trader_id" ON "test_schema"."Order"("trader_id");`,
+          ),
         ])
       },
     )
@@ -512,7 +587,7 @@ FROM "public"."envio_chains";`
     )
 
     Async.it(
-      "Rejects two promised indices whose names truncate to the same identifier",
+      "Rejects two promised indexes whose names truncate to the same identifier",
       async t => {
         let longEntity = "Entity" ++ "x"->String.repeat(50)
         let table = Table.mkTable(

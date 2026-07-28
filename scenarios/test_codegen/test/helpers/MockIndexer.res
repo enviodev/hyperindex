@@ -90,7 +90,7 @@ module Storage = {
     resumeInitialStateCalls: array<bool>,
     resolveLoadInitialState: Persistence.initialState => unit,
     loadOrThrowCalls: array<{"filter": EntityFilter.t, "tableName": string}>,
-    ensureQueryIndicesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
+    ensureQueryIndexesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
     finalizeBackfillCalls: array<{
       "entityNames": array<string>,
       "chainIds": array<int>,
@@ -122,7 +122,7 @@ module Storage = {
     let isInitializedResolveFns = []
     let initializeResolveFns = []
     let loadOrThrowCalls = []
-    let ensureQueryIndicesCalls = []
+    let ensureQueryIndexesCalls = []
     let finalizeBackfillCalls = []
     let dumpEffectCacheCalls = ref(0)
     let resumeInitialStateCalls = []
@@ -132,7 +132,7 @@ module Storage = {
       isInitializedCalls,
       initializeCalls,
       loadOrThrowCalls,
-      ensureQueryIndicesCalls,
+      ensureQueryIndexesCalls,
       finalizeBackfillCalls,
       dumpEffectCacheCalls,
       resumeInitialStateCalls,
@@ -203,8 +203,8 @@ module Storage = {
             Promise.resolve(rows->(Utils.magic: array<'entity> => array<unknown>))
           })
         },
-        ensureQueryIndices: (~table: Table.table, ~filters) => {
-          ensureQueryIndicesCalls
+        ensureQueryIndexes: (~table: Table.table, ~filters) => {
+          ensureQueryIndexesCalls
           ->Array.push({
             "tableName": table.tableName,
             "filters": filters,
@@ -581,12 +581,12 @@ module Indexer = {
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
               state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-            // Catching up hands off to the FinalizingIndices phase, which is
+            // Catching up hands off to the FinalizingIndexes phase, which is
             // where readiness is decided — so a batch isn't settled until that
             // phase is over. The idle fallback below still bounds the wait.
             if (
               before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndices)
+                !(state->IndexerState.isFinalizingIndexes)
             ) {
               ()
             } else if isIdle && idleChecks.contents >= 5 {

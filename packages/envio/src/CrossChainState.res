@@ -11,8 +11,8 @@ type t = {
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
   // True once every chain has caught up and there's nothing left to process,
-  // but before the deferred schema indices and `ready_at` are committed. The
-  // gap between this and `isRealtime` is the FinalizingIndices phase.
+  // but before the deferred schema indexes and `ready_at` are committed. The
+  // gap between this and `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
   mutable isInReorgThreshold: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
@@ -138,7 +138,7 @@ let enterReorgThreshold = (crossChainState: t) => {
 // Commit each progressed chain's batch progress, then record whether the whole
 // indexer has caught up (every chain reached endblock or processed to head,
 // with no processable events left). Catching up doesn't make the indexer ready:
-// the deferred schema indices still have to be created, which `markReady`
+// the deferred schema indexes still have to be created, which `markReady`
 // below concludes once they're committed.
 let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainIds = crossChainState.chainIds
@@ -156,7 +156,7 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
     crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
 
   // A run resumed with every chain already stamped ready needs no finalize —
-  // the indices were committed together with those stamps.
+  // the indexes were committed together with those stamps.
   let allChainsReady = ref(true)
   for i in 0 to chainIds->Array.length - 1 {
     if !(crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.isReady) {
@@ -167,13 +167,13 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
 }
 
-// Enter the FinalizingIndices phase without a batch. Used when the loop finds
+// Enter the FinalizingIndexes phase without a batch. Used when the loop finds
 // every chain already processed to its endblock — a resume that has nothing
-// left to do still owes the schema its deferred indices before it reports ready.
+// left to do still owes the schema its deferred indexes before it reports ready.
 let markCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp = true
 
-// Concludes the FinalizingIndices phase: stamps every chain with the `ready_at`
-// already committed alongside the deferred schema indices and switches the
+// Concludes the FinalizingIndexes phase: stamps every chain with the `ready_at`
+// already committed alongside the deferred schema indexes and switches the
 // indexer to realtime.
 let markReady = (crossChainState: t, ~readyAt) => {
   for i in 0 to crossChainState.chainIds->Array.length - 1 {

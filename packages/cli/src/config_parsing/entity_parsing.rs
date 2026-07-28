@@ -758,9 +758,9 @@ impl Entity {
         Ok(())
     }
 
-    ///Returns defined multi field indices where definitions
+    ///Returns defined multi field indexes where definitions
     ///have > 1 fields.
-    pub fn get_composite_indices(&self) -> Vec<Vec<IndexField>> {
+    pub fn get_composite_indexes(&self) -> Vec<Vec<IndexField>> {
         self.multi_field_indexes
             .iter()
             .cloned()
@@ -2953,7 +2953,7 @@ type TestEntity
     }
 
     #[test]
-    fn test_get_composite_indices_with_direction() {
+    fn test_get_composite_indexes_with_direction() {
         let schema_str = r#"
 type TestEntity
   @index(fields: [["tokenId", "DESC"], "collection"]) {
@@ -2965,13 +2965,13 @@ type TestEntity
         let first_entity_schema = get_first_entity_from_string(schema_str);
         let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
 
-        let composite_indices = parsed_entity.get_composite_indices();
-        assert_eq!(composite_indices.len(), 1);
-        assert_eq!(composite_indices[0].len(), 2);
-        assert_eq!(composite_indices[0][0].name, "tokenId");
-        assert_eq!(composite_indices[0][0].direction, IndexFieldDirection::Desc);
-        assert_eq!(composite_indices[0][1].name, "collection");
-        assert_eq!(composite_indices[0][1].direction, IndexFieldDirection::Asc);
+        let composite_indexes = parsed_entity.get_composite_indexes();
+        assert_eq!(composite_indexes.len(), 1);
+        assert_eq!(composite_indexes[0].len(), 2);
+        assert_eq!(composite_indexes[0][0].name, "tokenId");
+        assert_eq!(composite_indexes[0][0].direction, IndexFieldDirection::Desc);
+        assert_eq!(composite_indexes[0][1].name, "collection");
+        assert_eq!(composite_indexes[0][1].direction, IndexFieldDirection::Asc);
     }
 
     #[test]
@@ -3012,8 +3012,8 @@ type TestEntity
         assert_eq!(fields[0].name, "tokenId");
         assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
 
-        // Single-field index should not appear in composite indices
-        let composite = parsed_entity.get_composite_indices();
+        // Single-field index should not appear in composite indexes
+        let composite = parsed_entity.get_composite_indexes();
         assert_eq!(composite.len(), 0);
     }
 
