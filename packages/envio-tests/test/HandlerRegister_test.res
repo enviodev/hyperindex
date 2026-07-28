@@ -158,7 +158,7 @@ let describeRegistrations = (
 
 let register = fn => {
   HandlerRegister.resetOnEventRegistrations()
-  HandlerRegister.startRegistration(~config)
+  HandlerRegister.startRegistration(~config, ~logger=Logger.quiet())
   fn()
   HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
 }
@@ -271,7 +271,7 @@ describe("HandlerRegister multiple registrations", () => {
     // handler (the MockIndexer register-once, narrow-per-run case).
     let h1 = makeHandler()
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config=configMultichain)
+    HandlerRegister.startRegistration(~config=configMultichain, ~logger=Logger.quiet())
     setHandler(h1)
     let registrations1 = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
     let registrations137 = HandlerRegister.finishRegistration(~config=config137, ~logger=Logger.quiet())
@@ -290,7 +290,7 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.resetOnEventRegistrations()
     setHandler(h1)
     setHandler(h2)
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~config, ~logger=Logger.quiet())
     let registrations = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
     t.expect(
       registrations->describeRegistrations(~labels=[(h1, "h1"), (h2, "h2")], ~crLabels=[]),
@@ -308,7 +308,7 @@ describe("HandlerRegister multiple registrations", () => {
       true
     }
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~config, ~logger=Logger.quiet())
     setHandler(~eventOptions={where: whereFn->Obj.magic}, h1)
     let _ = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
     let _ = HandlerRegister.finishRegistration(~config, ~logger=Logger.quiet())
@@ -321,7 +321,7 @@ describe("HandlerRegister multiple registrations", () => {
     // events enabled it gets a bare (handler-less) registration.
     let h1 = makeHandler()
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config=configWithRawEvents)
+    HandlerRegister.startRegistration(~config=configWithRawEvents, ~logger=Logger.quiet())
     setHandler(~eventName="Transfer", ~eventOptions={where: %raw(`() => false`)}, h1)
     let registrations = HandlerRegister.finishRegistration(~config=configWithRawEvents, ~logger=Logger.quiet())
     t.expect((

@@ -565,9 +565,9 @@ type mainArgs = Yargs.parsedArgs<args>
 // `envio_info` (on initialize) and validates against (on resume).
 let getEnvioInfo = () => Config.getPublicConfigJson()->Config.stripSensitiveData
 
-let migrate = async (~reset) => {
+let migrate = async (~reset, ~logger) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Logger.root)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -578,9 +578,9 @@ let migrate = async (~reset) => {
   await persistence.storage.close()
 }
 
-let dropSchema = async () => {
+let dropSchema = async (~logger) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger=Logger.root)
+  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
   await persistence.storage.reset()
   await persistence.storage.close()
 }
@@ -590,6 +590,9 @@ let dropSchema = async () => {
 exception FatalError(exn)
 
 let start = async (
+  // The indexer's logger, supplied by the entry point. `envio start` runs a
+  // single indexer per process, so this is that process's logger.
+  ~logger: Pino.t,
   ~persistence: option<Persistence.t>=?,
   ~reset=false,
   ~isTest=false,
@@ -609,9 +612,6 @@ let start = async (
   // Initialize persistence first so the exported indexer value contains state from the database
   // when handler files are loaded (they may access the indexer at module top level).
   let config = Config.load()
-  // One logger per indexer run. `envio start` runs a single indexer per
-  // process, so this is the process logger; in-process runners build their own.
-  let logger = Logger.root
   // isDevelopmentMode controls whether the indexer stays alive after all
   // chains finish (keepProcessAlive) and whether the console API is exposed.
   // Set by `envio dev` via the public config's `isDev` field; `envio start`

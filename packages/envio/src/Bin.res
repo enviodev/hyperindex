@@ -1,10 +1,15 @@
 @val external processChdir: string => unit = "process.chdir"
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 
+// The one logger for this process, built at the entry point and passed to
+// whichever command runs below. `Logger` exports no ambient instance, so this
+// is the only console-level logger anything can reach without asking for one.
+let logger = Logger.make()
+
 // Crash on unhandled promise rejections with a readable error.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
 NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
-  Logger.root->Logging.errorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
+  logger->Logging.errorWithExn(reason->Utils.prettifyExn, "Unhandled promise rejection")
   NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
@@ -61,13 +66,13 @@ let run = async args => {
         Config.prime(config)
         processChdir(cwd)
         applyEnv(env)
-        await Main.start(~reset)
+        await Main.start(~reset, ~logger)
       | Migrate({reset, config}) =>
         Config.prime(config)
-        await Main.migrate(~reset)
+        await Main.migrate(~reset, ~logger)
       | DropSchema({config}) =>
         Config.prime(config)
-        await Main.dropSchema()
+        await Main.dropSchema(~logger)
       }
     }
   } catch {
@@ -82,7 +87,7 @@ let run = async args => {
     | JsExn(e) => e->JsExn.message->Option.getOr("Failed at initialization")
     | _ => "Failed at initialization"
     }
-    Logger.root->Logging.error(message)
+    logger->Logging.error(message)
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

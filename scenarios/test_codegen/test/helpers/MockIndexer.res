@@ -488,7 +488,7 @@ module Indexer = {
     | Some(_) =>
       // A supplied config has no handler files on disk; register inline
       // handlers (if any) through the same public registry lifecycle.
-      HandlerRegister.startRegistration(~config=baseConfig)
+      HandlerRegister.startRegistration(~config=baseConfig, ~logger)
     }
     let registrationsByChainId = HandlerRegister.finishRegistration(~config, ~logger)
     installMockSourceRegistrations(~config, ~registrationsByChainId)

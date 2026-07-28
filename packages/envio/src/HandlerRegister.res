@@ -18,6 +18,9 @@ type registrationsByChainId = dict<chainRegistrations>
 // builds a fresh per-config output, never mutating the store.
 type activeRegistration = {
   config: Config.t,
+  // Registration runs before any indexer state exists, so the logger comes
+  // from whoever starts the cycle rather than from an indexer instance.
+  logger: Pino.t,
   registrationsByChainId: dict<chainRegistrations>,
   mutable finished: bool,
 }
@@ -63,12 +66,13 @@ let withRegistration = (fn: activeRegistration => unit) => {
 // the registration and every later call reuses it. `config` must be the full
 // chain set — registrations resolve for all its chains here, and
 // `finishRegistration` later narrows to whatever config it's given.
-let startRegistration = (~config: Config.t) => {
+let startRegistration = (~config: Config.t, ~logger: Pino.t) => {
   switch getActiveRegistration() {
   | Some(_) => ()
   | None =>
     let r = {
       config,
+      logger,
       registrationsByChainId: Dict.make(),
       finished: false,
     }
@@ -658,9 +662,7 @@ let registerOnBlock = (
     // Includes the ecosystem-specific method name so SVM users see "onSlot"
     // and don't get confused looking for a "Block handler" they never wrote.
     if !matchedAny.contents {
-      // Registration happens before an indexer instance exists, so this is
-      // the process-level logger.
-      Logger.root->Logging.warn({
+      registration.logger->Logging.warn({
         "msg": `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
         "onBlock": name,
       })

@@ -81,7 +81,7 @@ let registerAllHandlers = async (
   ~config: Config.t,
   ~logger: Pino.t,
 ): HandlerRegister.registrationsByChainId => {
-  HandlerRegister.startRegistration(~config)
+  HandlerRegister.startRegistration(~config, ~logger)
 
   // Auto-load all .js files from src/handlers directory
   await autoLoadFromSrcHandlers(~handlers=config.handlers, ~logger)

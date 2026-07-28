@@ -1748,8 +1748,6 @@ module SingleOrMultiple: {{
   external castMultiple: t<'a> => array<'a> = "%identity"
   external castSingle: t<'a> => 'a = "%identity"
 
-  exception AmbiguousEmptyNestedArray
-
   let rec isMultiple = (t: t<'a>, ~nestedArrayDepth): bool =>
     if !Array.isArray(t) {{
       false
@@ -1758,9 +1756,10 @@ module SingleOrMultiple: {{
       if nestedArrayDepth == 0 {{
         true
       }} else if arr->Array.length == 0 {{
-        AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
-          ~logger=Logger.root,
-          ~msg="The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
+        // Raised, not logged: config parsing runs inside the entry point's
+        // error boundary, which reports it with the process logger.
+        JsError.throwWithMessage(
+          "The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
           please pass in a nested empty array if the intention is to provide an empty array as a value",
         )
       }} else {{

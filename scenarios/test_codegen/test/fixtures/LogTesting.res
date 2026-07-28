@@ -10,9 +10,9 @@ switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 open Pino
 open Logging
 
-// This fixture asserts on real log output, so it uses the process logger
-// rather than the quiet one the rest of the tests share.
-let logger = Logger.root
+// This fixture asserts on real log output, so it builds a console-level logger
+// explicitly rather than using the quiet one the rest of the tests share.
+let logger = Logger.make()
 
 let ecosystem = Evm.make()
 

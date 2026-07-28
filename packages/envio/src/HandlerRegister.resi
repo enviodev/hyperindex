@@ -4,7 +4,7 @@ type chainRegistrations = {
 }
 type registrationsByChainId = dict<chainRegistrations>
 
-let startRegistration: (~config: Config.t) => unit
+let startRegistration: (~config: Config.t, ~logger: Pino.t) => unit
 let resetOnEventRegistrations: unit => unit
 let isPendingRegistration: unit => bool
 let finishRegistration: (~config: Config.t, ~logger: Pino.t) => registrationsByChainId

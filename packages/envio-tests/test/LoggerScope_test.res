@@ -95,14 +95,27 @@ describe("Per-indexer logger scope", () => {
     ])
   })
 
-  it("builds a silent instance logger without touching the process logger", t => {
-    let processLevel = Logger.root->Pino.getLevel
+  it("builds independent instances, so silencing one leaves the other alone", t => {
+    let info = Logger.make(~userLogLevel=#info)
     let silent = Logger.make(~userLogLevel=#silent)
 
-    t.expect((silent->Pino.getLevel, Logger.root->Pino.getLevel)).toEqual((#silent, processLevel))
+    t.expect((silent->Pino.getLevel, info->Pino.getLevel)).toEqual((#silent, #info))
   })
 
   it("reuses one quiet logger instance across calls", t => {
     t.expect(Logger.quiet() === Logger.quiet()).toBe(true)
+  })
+
+  // The quiet logger is what test code and in-process indexers get, and nothing
+  // exports a ready-made console-level logger for them to pick up by accident.
+  // LOG_LEVEL is the documented way to opt back in, so silence only holds
+  // without it.
+  it("keeps the quiet logger silent and separate from a console logger", t => {
+    let expectedLevel = Env.userLogLevel->Option.getOr(#silent)
+
+    t.expect((Logger.quiet()->Pino.getLevel, Logger.quiet() === Logger.make())).toEqual((
+      expectedLevel,
+      false,
+    ))
   })
 })
