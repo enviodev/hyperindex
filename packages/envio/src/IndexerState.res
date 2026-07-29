@@ -89,6 +89,10 @@ type t = {
   mutable processedBatchesCount: int,
   // The single in-flight write loop, None when idle.
   mutable writeFiber: option<promise<unit>>,
+  // The single in-flight finalization, None when none is running. Every path
+  // that reaches the FinalizingIndexes phase awaits this one instead of
+  // starting a second pass over the same indexes.
+  mutable finalizeFiber: option<promise<unit>>,
   // Set once a write throws, to stop the loop. The error itself goes to onError.
   mutable hasFailedWrite: bool,
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
@@ -190,6 +194,7 @@ let make = (
     processedBatches: [],
     processedBatchesCount: 0,
     writeFiber: None,
+    finalizeFiber: None,
     hasFailedWrite: false,
     commitWaiters: [],
     chainMeta: Dict.make(),
@@ -264,12 +269,11 @@ let makeFromDbState = (
     )
   }
 
-  // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
-  // backfill mode for all chains.
+  // `ready_at` is durable: a chain that once caught up resumes realtime, and the
+  // deferred indexes committed alongside that stamp are not owed again.
   let isRealtime =
-    !Env.updateSyncTimeOnRestart &&
     initialState.chains->Array.length > 0 &&
-    initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+      initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
@@ -303,6 +307,7 @@ let makeFromDbState = (
     ~onError,
     ~onExit?,
   )
+  state.crossChainState->CrossChainState.markCaughtUpOnResume
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
     state.effectState->EffectState.setUnregisteredCacheCount(~effectName, ~scope, ~count)
   })
@@ -413,7 +418,15 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 
 // Invalidate in-flight fetches/waiters without starting a rollback, eg on the
 // realtime transition where the parked waiter is bound to the pre-realtime source.
-let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
+// Drops the pending queries with it, the way the reorg path does: a response
+// carrying the old epoch is discarded before handleQueryResult can retire its
+// query, and a partition that still holds one never asks for another range.
+let invalidateInflight = (state: t) => {
+  state.epoch = state.epoch + 1
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Utils.Dict.forEach(ChainState.resetPendingQueries)
+}
 
 let applyBatchProgress = (state: t, ~batch: Batch.t) =>
   state.crossChainState->CrossChainState.applyBatchProgress(
@@ -460,6 +473,7 @@ let processedCheckpointId = (state: t) => state.processedCheckpointId
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber
+let finalizeFiber = (state: t) => state.finalizeFiber
 let hasFailedWrite = (state: t) => state.hasFailedWrite
 let chainMetaDirty = (state: t) => state.chainMetaDirty
 let chainMetaThrottler = (state: t) => state.chainMetaThrottler
@@ -467,6 +481,19 @@ let crossChainState = (state: t) => state.crossChainState
 let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
 let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
+
+// The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
+// in the middle phase: every chain has caught up, but the deferred schema
+// indexes and `ready_at` haven't been committed yet.
+let isFinalizingIndexes = (state: t) =>
+  state.crossChainState->CrossChainState.isCaughtUp &&
+    !(state.crossChainState->CrossChainState.isRealtime)
+
+let markCaughtUpIfSettled = (state: t) =>
+  state.crossChainState->CrossChainState.markCaughtUpIfSettled
+
+let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.markReady(~readyAt)
+
 let rollbackState = (state: t) => state.rollbackState
 let indexerStartTime = (state: t) => state.indexerStartTime
 let loadManager = (state: t) => state.loadManager
@@ -792,6 +819,9 @@ let recordWriteFailure = (state: t, exn) => {
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)
 let endWriteFiber = (state: t) => state.writeFiber = None
+
+let beginFinalizeFiber = (state: t, fiber) => state.finalizeFiber = Some(fiber)
+let endFinalizeFiber = (state: t) => state.finalizeFiber = None
 
 // Resolve and clear everyone waiting on a commit so they can re-evaluate.
 let wakeCommitWaiters = (state: t) => {

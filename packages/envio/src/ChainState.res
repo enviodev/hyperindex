@@ -378,9 +378,7 @@ let makeFromDbState = (
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
-    ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
-      ? None
-      : resumedChainState.timestampCaughtUpToHeadOrEndblock,
+    ~timestampCaughtUpToHeadOrEndblock=resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
     ~isInReorgThreshold,
@@ -613,6 +611,24 @@ let hasProcessedToEndblock = (cs: t) => {
   switch fetchState.endBlock {
   | Some(endBlock) => committedProgressBlockNumber >= endBlock
   | None => false
+  }
+}
+
+// Caught up as judged by persisted values alone: progress reached the endBlock,
+// or the head the previous run had already observed (less the lag that holds the
+// tip back). Unlike `isFetchingAtHead` this doesn't move when a fresh height
+// lands, so a run resumed at the head still knows it was caught up even once the
+// head has run away from it while the indexer was down.
+let isDurablyCaughtUp = (cs: t) => {
+  let {committedProgressBlockNumber, fetchState} = cs
+  switch fetchState.endBlock {
+  | Some(endBlock) => committedProgressBlockNumber >= endBlock
+  | None =>
+    // The configured lag, not the fetch state's: pre-threshold that one also
+    // carries maxReorgDepth, which would read a chain a whole reorg depth behind
+    // the head as caught up.
+    fetchState.knownHeight > 0 &&
+      committedProgressBlockNumber >= fetchState.knownHeight - cs.chainConfig.blockLag
   }
 }
 
@@ -1084,11 +1100,14 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 }
 
 // Mark the chain caught up to head/endblock. Called by CrossChainState only once
-// every chain in the indexer is caught up, so no chain flips to ready while
-// another is still backfilling. Sticky: a chain stays ready once set.
-let markReady = (cs: t) =>
+// every chain in the indexer is caught up and the deferred schema indexes are
+// committed, so no chain flips to ready while another is still backfilling or
+// while an index the schema promises is still missing. `readyAt` is the
+// timestamp already committed to `envio_chains.ready_at` in that same
+// transaction. Sticky: a chain stays ready once set.
+let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
-    cs.timestampCaughtUpToHeadOrEndblock = Date.make()->Some
+    cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
   }
 
 // Roll a chain back to a reorg target. With a progress diff, restore fetch/

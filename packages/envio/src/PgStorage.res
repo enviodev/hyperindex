@@ -20,57 +20,65 @@ let makeClient = () => {
   )
 }
 
-let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
-  let indexName = tableName ++ "_" ++ indexFields->Array.joinUnsafe("_")
+let formatSeconds = (timeRef: Performance.timeRef) =>
+  (Math.round(timeRef->Performance.secondsSince *. 100.) /. 100.)->Float.toString
 
-  // Case for indexer before envio@2.28
-  let index = indexFields->Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
-}
+// Every index build blocks writes to its table for as long as it runs, and on a
+// large database that is not quick. Both build paths say so up front, so a
+// stalled-looking indexer is explainable from the logs alone.
+let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-let directionToSql = (direction: Table.indexFieldDirection) =>
-  switch direction {
-  | Asc => ""
-  | Desc => " DESC"
-  }
+// Every index the entity schema promises: an `@index` field, a composite index,
+// or the index backing a derived relationship. Deferred past the initial DDL and
+// created in one transaction once backfill completes, so a resumed indexer that
+// reports itself ready always has all of them.
+//
+// `entities` is the Postgres-backed set, and every `@derivedFrom` target within
+// it resolves: config parsing rejects a Postgres entity deriving from one that
+// isn't in Postgres (`validate_relationship_storage`).
+let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<IndexDefinition.t> => {
+  let derivedSchema = Schema.make(entities->Array.map(e => e.table))
+  let all = []
 
-let directionToIndexName = (direction: Table.indexFieldDirection) =>
-  switch direction {
-  | Asc => ""
-  | Desc => "_desc"
-  }
+  entities->Array.forEach(({table}) => {
+    table
+    ->Table.getSingleIndexes
+    ->Array.forEach(column =>
+      all->Array.push(IndexDefinition.single(~tableName=table.tableName, ~column))->ignore
+    )
+    table
+    ->Table.getCompositeIndexes
+    ->Array.forEach(indexFields =>
+      all
+      ->Array.push(IndexDefinition.fromIndexFields(~tableName=table.tableName, ~indexFields))
+      ->ignore
+    )
+  })
 
-let makeCreateCompositeIndexQuery = (
-  ~tableName,
-  ~indexFields: array<Table.compositeIndexField>,
-  ~pgSchema,
-) => {
-  let indexName =
-    tableName ++
-    "_" ++
-    indexFields
-    ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
-    ->Array.joinUnsafe("_")
-  let index =
-    indexFields
-    ->Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
-    ->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
-}
+  entities->Array.forEach(({table}) =>
+    table
+    ->Table.getDerivedFromFields
+    ->Array.forEach(derivedFromField => {
+      let column =
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
+      all
+      ->Array.push(IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column))
+      ->ignore
+    })
+  )
 
-let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
-  let tableName = table.tableName
-  let createIndex = indexField =>
-    makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
-  let createCompositeIndex = indexFields => {
-    makeCreateCompositeIndexQuery(~tableName, ~indexFields, ~pgSchema)
-  }
-
-  let singleIndices = table->Table.getSingleIndices
-  let compositeIndices = table->Table.getCompositeIndices
-
-  singleIndices->Array.map(createIndex)->Array.joinUnsafe("\n") ++
-    compositeIndices->Array.map(createCompositeIndex)->Array.joinUnsafe("\n")
+  // An `@index` field and a derived relationship pointing at it describe the
+  // same index, so the list is deduped on identity rather than on name.
+  let seen = Utils.Set.make()
+  all->Array.filter(definition => {
+    let key = definition->IndexDefinition.key
+    if seen->Utils.Set.has(key) {
+      false
+    } else {
+      seen->Utils.Set.add(key)->ignore
+      true
+    }
+  })
 }
 
 let makeCreateTableQuery = (
@@ -158,7 +166,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
         ~entityName=entityTableName,
         ~entityIndex=entityConfig.index,
       )
-      //ignore composite indices
+      //ignore composite indexes
       let table = Table.mkTable(
         historyTableName,
         ~fields=dataFields->Array.concat([checkpointIdField, actionField]),
@@ -189,6 +197,10 @@ let makeInitializeTransaction = (
   ~entities=[],
   ~enums=[],
   ~isEmptyPgSchema=false,
+  // Backfill writes are far cheaper without the schema's read indexes, so the
+  // initial DDL creates only tables, primary keys, views and chain rows; the
+  // rest is created by `finalizeBackfill` before the indexer reports ready.
+  ~deferSchemaIndexes=false,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let generalTables = [
@@ -199,13 +211,12 @@ let makeInitializeTransaction = (
   ]
 
   let allTables = generalTables->Array.copy
-  let allEntityTables = []
   entities->Array.forEach((entityConfig: Internal.entityConfig) => {
-    allEntityTables->Array.push(entityConfig.table)->ignore
     allTables->Array.push(entityConfig.table)->ignore
     allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
   })
-  let derivedSchema = Schema.make(allEntityTables)
+
+  let schemaIndexes = getSchemaIndexes(~entities)
 
   let query = ref(
     (
@@ -239,31 +250,12 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
   })
 
-  // Then batch all indices (better performance when tables exist)
-  allTables->Array.forEach((table: Table.table) => {
-    let indices = makeCreateTableIndicesQuery(table, ~pgSchema)
-    if indices !== "" {
-      query := query.contents ++ "\n" ++ indices
-    }
-  })
-
-  // Add derived indices
-  entities->Array.forEach((entity: Internal.entityConfig) => {
-    entity.table
-    ->Table.getDerivedFromFields
-    ->Array.forEach(derivedFromField => {
-      let indexField =
-        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
-      query :=
-        query.contents ++
-        "\n" ++
-        makeCreateIndexQuery(
-          ~tableName=derivedFromField.derivedFromEntity,
-          ~indexFields=[indexField],
-          ~pgSchema,
-        )
+  // Then batch all indexes (better performance when tables exist)
+  if !deferSchemaIndexes {
+    schemaIndexes->Array.forEach(definition => {
+      query := query.contents ++ "\n" ++ definition->IndexDefinition.makeCreateQuery(~pgSchema)
     })
-  })
+  }
 
   // Create views for Hasura integration
   query := query.contents ++ "\n" ++ InternalTable.Views.makeMetaViewQuery(~pgSchema)
@@ -1111,14 +1103,19 @@ let rec writeBatch = async (
     | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
       Some(
         sql => {
-          let promises = allEntities->Array.map(entityConfig => {
-            sql->EntityHistory.rollback(
-              ~pgSchema,
-              ~entityName=entityConfig.name,
-              ~entityIndex=entityConfig.index,
-              ~rollbackTargetCheckpointId,
-            )
-          })
+          // Postgres owns history tables only for Postgres-backed entities;
+          // ClickHouse-only entities have none to roll back.
+          let promises =
+            allEntities
+            ->Array.filter(entityConfig => entityConfig.storage.postgres)
+            ->Array.map(entityConfig => {
+              sql->EntityHistory.rollback(
+                ~pgSchema,
+                ~entityName=entityConfig.name,
+                ~entityIndex=entityConfig.index,
+                ~rollbackTargetCheckpointId,
+              )
+            })
           promises
           ->Array.push(
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
@@ -1339,6 +1336,44 @@ let make = (
     "cache",
   ])
 
+  // The metric label, the `storage` field on this backend's logs, and the
+  // storage record's own name are all the same string.
+  let storageName = "postgres"
+
+  let indexManager = IndexManager.make()
+
+  let loadCatalogRows = (sql, ~indexName=?) =>
+    sql
+    ->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema, ~indexName?))
+    ->Promise.thenResolve(rows => rows->S.parseOrThrow(IndexCatalog.rowsSchema))
+
+  // The whole-schema snapshot, taken on a clean initialize and on every resume.
+  // Individual indexes are re-read from the catalog as they are built, so this
+  // is the only point where the full listing is needed.
+  let refreshIndexCatalog = async () => {
+    let rows = await sql->loadCatalogRows
+    indexManager->IndexManager.reload(~rows)
+  }
+
+  let reloadIndexCatalog = async () => {
+    let catalog = await refreshIndexCatalog()
+    switch catalog->IndexCatalog.invalidNames {
+    | [] => ()
+    | invalidIndexNames =>
+      Logging.warn({
+        "storage": storageName,
+        "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
+        "indexes": invalidIndexNames,
+      })
+    }
+    Logging.info({
+      "storage": storageName,
+      "msg": `Found ${catalog
+        ->IndexCatalog.size
+        ->Int.toString} existing indexes in the indexer schema.`,
+    })
+  }
+
   let isInitialized = async () => {
     let envioTables = await sql->Postgres.unsafe(
       `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
@@ -1530,6 +1565,7 @@ let make = (
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
+      ~deferSchemaIndexes=true,
       ~chainIdMode,
     )
     // Execute all queries within a single transaction for integrity.
@@ -1574,6 +1610,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     }
 
     let cache = await restoreEffectCache(~withUpload=true)
+
+    await reloadIndexCatalog()
 
     // Integration with other tools like Hasura
     switch onInitialize {
@@ -1629,6 +1667,253 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
         )
       }
     }
+  }
+
+  // The physical columns a filter reads, deduped and in first-seen order.
+  // Unknown field names are left to `loadOrThrow`, which reports them properly.
+  let filterColumns = (~table: Table.table, ~filters: array<EntityFilter.t>) => {
+    let queryFields = table->Table.queryFields
+    let columns = []
+    let seen = Utils.Set.make()
+    let rec collect = (filter: EntityFilter.t) =>
+      switch filter {
+      | Eq({fieldName}) | Gt({fieldName}) | Lt({fieldName}) | In({fieldName}) =>
+        switch queryFields->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+        | Some({pgDbFieldName}) =>
+          if !(seen->Utils.Set.has(pgDbFieldName)) {
+            seen->Utils.Set.add(pgDbFieldName)->ignore
+            columns->Array.push(pgDbFieldName)->ignore
+          }
+        | None => ()
+        }
+      | And({filters}) => filters->Array.forEach(collect)
+      }
+    filters->Array.forEach(collect)
+    columns
+  }
+
+  // Runs a prepared build's DDL and reads the index back from pg_catalog before
+  // it counts as existing. `sql` is the transaction's handle when there is one,
+  // so a failed verification rolls the DDL back with it.
+  let runAndVerify = async (sql, prepared: IndexManager.prepared) => {
+    // Sequential rather than Promise.all: inside a transaction they share one
+    // connection, and a rebuild's DROP has to land before its CREATE.
+    for idx in 0 to prepared.queries->Array.length - 1 {
+      let _ = await sql->Postgres.unsafe(prepared.queries->Array.getUnsafe(idx))
+    }
+    let rows = await sql->loadCatalogRows(~indexName=prepared.name)
+    prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
+  }
+
+  // A build outside a transaction can commit its DDL and still fail — the
+  // read-back is a second round trip. Re-reading the index puts the catalog
+  // back in step, so the next attempt plans against what the database holds
+  // instead of retrying a create that can only raise "already exists".
+  //
+  // If this read fails too, the next attempt does waste a create before landing
+  // here again — bounded, and it recovers as soon as the database answers.
+  let resyncIndex = async name =>
+    switch await sql->loadCatalogRows(~indexName=name) {
+    | rows => indexManager->IndexManager.resync(~name, ~rows)
+    | exception exn =>
+      Logging.debug({
+        "storage": storageName,
+        "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+        "err": exn->Utils.prettifyExn,
+      })
+    }
+
+  let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
+    let columns = filterColumns(~table, ~filters)
+    let _ = await columns
+    ->Array.map(column => {
+      let definition = IndexDefinition.single(~tableName=table.tableName, ~column)
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=async () => {
+        // Resolved before logging so a rebuild is reported as one, and an
+        // unrelated index holding the name fails before any DDL runs.
+        switch indexManager->IndexManager.prepare(
+          ~definition,
+          ~coverage=LeadingColumns,
+          ~pgSchema,
+        ) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
+          // Logged from inside the build so it reports the one request that
+          // actually creates the index, not the ones waiting on it.
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
+          })
+        }
+      })
+      // A failed build records nothing, so the next getWhere retries. Meanwhile
+      // the query still runs — just without the index.
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to create an index on "${table.tableName}"("${column}") for a getWhere query. The query runs without it.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    })
+    ->Promise.all
+  }
+
+  // Goes through `IndexManager.ensure`, unlike `finalizeBackfill` below: that
+  // one runs with processing paused, while this runs on a resumed indexer that
+  // is already ready, so handlers may be issuing getWhere queries alongside it
+  // and the per-table queues are what keep the two from colliding. Nothing here
+  // writes `ready_at` — the chains already carry theirs.
+  let ensureSchemaIndexes = async (~entities: array<Internal.entityConfig>) => {
+    let schemaIndexes = getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+    )
+
+    let _ = await schemaIndexes
+    ->Array.map(definition =>
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=Exact, ~build=async () => {
+        switch indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating missing index"
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s.`,
+          })
+        }
+      })
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    )
+    ->Promise.all
+  }
+
+  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
+  // It's safe because the caller guarantees exclusivity — `FinalizeBackfill.run`
+  // is reached from the processing loop with processing already paused, so no
+  // handler can be running a getWhere.
+  //
+  // Each index is built on its own rather than in one transaction with
+  // `ready_at`: a build that dies half way through a large schema would
+  // otherwise roll back every index before it and make the retry start over.
+  let finalizeBackfill = async (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+    ~readyAt: Date.t,
+  ) => {
+    let schemaIndexes = getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+    )
+
+    // Resolved up front so a name held by an unrelated index fails before any
+    // DDL runs, rather than part way through the set.
+    //
+    // `Exact`, so the set built here is decided by the schema alone: matching a
+    // declared index against a composite that happens to lead with the same
+    // column would make a fresh database and an upgraded one end up holding
+    // different tables.
+    let missing =
+      schemaIndexes->Array.filterMap(definition =>
+        indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema)
+      )
+
+    switch missing->Array.filter((prepared: IndexManager.prepared) => prepared.isRebuild) {
+    | [] => ()
+    | rebuilt =>
+      Logging.warn({
+        "storage": storageName,
+        "msg": `PostgreSQL reports ${rebuilt
+          ->Array.length
+          ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
+        "indexes": rebuilt->Array.map((prepared: IndexManager.prepared) => prepared.name),
+      })
+    }
+
+    switch missing {
+    | [] =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `All ${schemaIndexes
+          ->Array.length
+          ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
+      })
+    | _ =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `Creating the ${missing
+          ->Array.length
+          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
+        "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
+      })
+    }
+    let timeRef = Performance.now()
+
+    // Sequential, one committed index at a time: whatever is built before a
+    // failure stays built and recorded, so the retry owes only the rest.
+    for idx in 0 to missing->Array.length - 1 {
+      let prepared = missing->Array.getUnsafe(idx)
+      switch await sql->runAndVerify(prepared) {
+      | entry => indexManager->IndexManager.record(entry)
+      | exception exn =>
+        // The DDL is outside a transaction, so a create that commits and then
+        // fails its read-back leaves the index in place and unrecorded.
+        // Re-reading it means the retry plans against the database rather than
+        // replaying a create that can only raise "already exists".
+        await resyncIndex(prepared.name)
+        throw(exn)
+      }
+    }
+
+    // Reached only once every definition is verified against pg_catalog, so a
+    // crash either leaves `ready_at` null and the retry finds the indexes
+    // already built, or commits readiness the schema backs.
+    //
+    // One transaction for the whole set: readiness is an indexer-wide fact, and
+    // a crash part way through would otherwise leave some chains stamped and
+    // some not, reporting the indexer as half ready.
+    let setReadyAtQuery = InternalTable.Chains.makeSetReadyAtQuery(~pgSchema)
+    let _ = await sql->Postgres.beginSql(async sql => {
+      for idx in 0 to chainIds->Array.length - 1 {
+        let _ = await sql->Postgres.preparedUnsafe(
+          setReadyAtQuery,
+          [
+            readyAt->(Utils.magic: Date.t => unknown),
+            chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
+          ]->(Utils.magic: array<unknown> => unknown),
+        )
+      }
+    })
+
+    Logging.info({
+      "storage": storageName,
+      "msg": `Committed ${missing
+        ->Array.length
+        ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
+    })
   }
 
   let setOrThrow = (
@@ -1774,6 +2059,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ),
       InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
+
+    await reloadIndexCatalog()
 
     let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
@@ -1924,17 +2211,20 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ~sinkPromise,
       ~chainMetaData,
     )
-    onWrite(~storage="postgres", ~timeSeconds=primaryTimerRef->Performance.secondsSince)
+    onWrite(~storage=storageName, ~timeSeconds=primaryTimerRef->Performance.secondsSince)
   }
 
   let close = () => sql->Postgres.endSql
 
   {
-    name: "postgres",
+    name: storageName,
     isInitialized,
     initialize,
     resumeInitialState,
     loadOrThrow,
+    ensureQueryIndexes,
+    ensureSchemaIndexes,
+    finalizeBackfill,
     dumpEffectCache,
     reset,
     setChainMeta,

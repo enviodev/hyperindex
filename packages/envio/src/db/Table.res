@@ -199,14 +199,14 @@ type compositeIndexField = {
 type table = {
   tableName: string,
   fields: array<fieldOrDerived>,
-  compositeIndices: array<array<compositeIndexField>>,
+  compositeIndexes: array<array<compositeIndexField>>,
   description: option<string>,
 }
 
-let mkTable = (tableName, ~compositeIndices=[], ~fields, ~description=?) => {
+let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   tableName,
   fields,
-  compositeIndices,
+  compositeIndexes,
   description,
 }
 
@@ -364,11 +364,11 @@ let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
 exception NonExistingTableField(string)
 
 /*
-Gets all composite indicies (whether they are single indices or not)
+Gets all composite indexes (whether they are single indexes or not)
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexField>> => {
-  table.compositeIndices->Array.map(compositeIndex =>
+let getUnfilteredCompositeIndexesUnsafe = (table): array<array<compositeIndexField>> => {
+  table.compositeIndexes->Array.map(compositeIndex =>
     compositeIndex->Array.map(indexField => {
       let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
       | Some(field) => field->getPgFieldName
@@ -479,10 +479,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
 }
 
 /*
-Gets all single indicies
+Gets all single indexes
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getSingleIndices = (table): array<string> => {
+let getSingleIndexes = (table): array<string> => {
   let indexFields = table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.isIndex => Some(field->getPgDbFieldName)
@@ -491,8 +491,8 @@ let getSingleIndices = (table): array<string> => {
   )
 
   table
-  ->getUnfilteredCompositeIndicesUnsafe
-  //get all composite indices with only 1 field defined
+  ->getUnfilteredCompositeIndexesUnsafe
+  //get all composite indexes with only 1 field defined
   //this is still a single index
   ->Array.filterMap(cidx =>
     switch cidx {
@@ -508,11 +508,11 @@ let getSingleIndices = (table): array<string> => {
 }
 
 /*
-Gets all composite indicies
+Gets all composite indexes
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getCompositeIndices = (table): array<array<compositeIndexField>> => {
+let getCompositeIndexes = (table): array<array<compositeIndexField>> => {
   table
-  ->getUnfilteredCompositeIndicesUnsafe
+  ->getUnfilteredCompositeIndexesUnsafe
   ->Array.filter(ind => ind->Array.length > 1)
 }
