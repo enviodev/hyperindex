@@ -5349,6 +5349,110 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual((true, true, false))
   })
 
+  it("retires a fetching backfill when a later batch collapses again", t => {
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[
+        baseEventConfig,
+        baseEventConfig2,
+        (MockIndexer.evmOnEventRegistration(
+          ~id="0",
+          ~contractName="SimpleNft",
+        ) :> Internal.onEventRegistration),
+      ],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=1000,
+      ~clientFilterAddressThreshold=Some(1),
+    )
+    // Gravatar collapses, then its standing partition advances to 50.
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+    let standingQuery: FetchState.query = {
+      ...defaultQuery,
+      partitionId: collapsed->standingId,
+      fromBlock: 0,
+      toBlock: Some(50),
+      isChunk: true,
+    }
+    collapsed->FetchState.startFetchingQueries(~queries=[standingQuery])
+    let advanced =
+      collapsed->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=50),
+        ~newItems=[],
+      )
+
+    // NftFactory crosses the threshold too. Its partitions sit far below the
+    // standing frontier, so folding them in leaves a bounded backfill.
+    let withBackfill =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=5,
+          ~contractAddress=mockAddress3,
+          ~contractName="NftFactory",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=6,
+          ~contractAddress=mockAddress4,
+          ~contractName="NftFactory",
+        )->dcToItem,
+      ])
+    let backfillId =
+      (
+        withBackfill.optimizedPartitions.entities
+        ->Dict.valuesToArray
+        ->Array.find(p => !(p.selection.dependsOnAddresses) && p.mergeBlock->Option.isSome)
+        ->Option.getOrThrow
+      ).id
+    let backfillQuery: FetchState.query = {
+      ...defaultQuery,
+      partitionId: backfillId,
+      fromBlock: 5,
+      toBlock: Some(30),
+      isChunk: true,
+    }
+    withBackfill->FetchState.startFetchingQueries(~queries=[backfillQuery])
+
+    // A third contract crosses the threshold while that backfill is mid-query,
+    // so the collapse runs again. Its response must still find the partition it
+    // was sent for.
+    let recollapsed =
+      withBackfill->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=40,
+          ~contractAddress=mockAddress5,
+          ~contractName="SimpleNft",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=41,
+          ~contractAddress=mockAddress6,
+          ~contractName="SimpleNft",
+        )->dcToItem,
+      ])
+    let afterBackfill =
+      recollapsed->FetchState.handleQueryResult(
+        ~query=backfillQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=30),
+        ~newItems=[mockEvent(~blockNumber=12)],
+      )
+
+    t.expect(
+      (
+        recollapsed.optimizedPartitions.idsInAscOrder->Array.includes(backfillId),
+        afterBackfill.optimizedPartitions.idsInAscOrder->Array.includes(backfillId),
+        afterBackfill->FetchState.bufferSize,
+      ),
+      ~message="a backfill mid-query survives the recollapse and goes once its response lands",
+    ).toEqual((true, false, 1))
+  })
+
   it("retires every fetching partition the collapse would otherwise absorb", t => {
     // Threshold 2: config address + one dynamic stays server-side, so real
     // address-bound partitions exist and can be mid-query when the second

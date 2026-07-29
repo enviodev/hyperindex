@@ -1244,6 +1244,13 @@ let collapseClientFilteredContracts = (
         standingRef := Some(p)
       | {selection: {dependsOnAddresses: false}, mergeBlock: Some(_)} =>
         backfills->Array.push(p)->ignore
+
+        // The backfill this call builds covers its remaining range from the
+        // same min frontier, so it is superseded — but not before the response
+        // it is waiting on lands.
+        if p->isFetching {
+          kept->Array.push(p->retire)->ignore
+        }
       | {selection: {dependsOnAddresses: false}} => p->absorb
       | _ =>
         let contractNames = p.addresses->AddressSet.contractNames
