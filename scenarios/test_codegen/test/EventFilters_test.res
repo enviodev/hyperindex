@@ -91,7 +91,7 @@ let complexTopicCases: array<topicCase> = [
 let allTopicCases = Array.concat(scalarTopicCases, complexTopicCases)
 
 let getTopicSelection = eventName => {
-  let eventConfig = getEvmEventConfig(~contractName="TestEvents", ~eventName, ~chainId=1337)
+  let eventConfig = getEvmEventConfig(~contractName="TestEvents", ~eventName, ~chainId=1337->ChainId.fromInt)
   let clientRegistration =
     HyperSyncClient.Registration.fromOnEventRegistrations([eventConfig])->Array.getUnsafe(0)
   clientRegistration.topicSelections->Array.getUnsafe(0)
@@ -324,7 +324,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="Transfer",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
 
     // The whitelisted addresses are checksummed (mixed-case) in the handler
@@ -378,7 +378,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
 
     t.expect(eventConfig.resolvedWhere.topicSelections).toEqual([
@@ -453,7 +453,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="EmptyFiltersArray",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
 
     t.expect(eventConfig.resolvedWhere.topicSelections).toEqual([
@@ -477,7 +477,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="EmptyFiltersArray",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     t.expect(eventConfig.handler->Option.isSome).toBe(true)
   })
@@ -500,7 +500,7 @@ describe("Test eventFilters", () => {
       ~config,
       ~contractName="EventFiltersTest",
       ~eventName="WithExcessField",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     t->toThrowErrorEqual(() =>
       EventConfigBuilder.buildEvmOnEventRegistration(
@@ -511,7 +511,7 @@ describe("Test eventFilters", () => {
         ~where=Some(
           %raw(`{params: {from: "0x0000000000000000000000000000000000000000", to: "0x0000000000000000000000000000000000000000"}}`),
         ),
-        ~chainId=137,
+        ~chainId=137->ChainId.fromInt,
         ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       )
     , `Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
@@ -521,12 +521,12 @@ describe("Test eventFilters", () => {
     let wildcardWithAddress = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     let transfer = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="Transfer",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     t.expect((
       wildcardWithAddress.clientAddressFilter->Option.isSome,

@@ -78,9 +78,10 @@ let _wildcardWithFilterConfig: Indexer.onEventOptions<
 // 4. handlerContext (onEvent context) has expected fields
 let _checkHandlerContext = (ctx: Indexer.handlerContext) => {
   let _: bool = ctx.isPreload
-  let chainInfo: Internal.chainInfo = ctx.chain
-  let _: int = chainInfo.id
-  let _: bool = chainInfo.isRealtime
+  let chain: Indexer.handlerChain = ctx.chain
+  // The generated chainId, not `int` — an id above 2^31-1 isn't a ReScript int.
+  let _: Indexer.chainId = chain.id
+  let _: bool = chain.isRealtime
   let _: Envio.logger = ctx.log
 }
 

@@ -6,7 +6,7 @@ open Vitest
 
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1) =>
+let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1->ChainId.fromInt) =>
   LogSelection.parseWhereOrThrow(
     ~where=eventFilters,
     ~sighash=transferSighash,
@@ -88,7 +88,7 @@ describe("clientAddressFilter — precompiled predicate", () => {
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(eventFilters),
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ).clientAddressFilter
 
@@ -181,7 +181,7 @@ describe("filterByClientAddress applies clientAddressFilter", () => {
     ~handler=None,
     ~contractRegister=None,
     ~where=Some(%raw(`({chain}) => ({params: {to: chain.ERC20.addresses}})`)),
-    ~chainId=1,
+    ~chainId=1->ChainId.fromInt,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
@@ -189,7 +189,7 @@ describe("filterByClientAddress applies clientAddressFilter", () => {
   let onEventRegistration = (onEventRegistration :> Internal.onEventRegistration)
   let makeItem = (~to, ~blockNumber): Internal.item =>
     Internal.Event({
-      chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      chainId: 1->ChainId.fromInt,
       blockNumber,
       onEventRegistration,
       logIndex: 0,
@@ -234,7 +234,7 @@ describe("filterByClientAddress drops over-fetched non-wildcard srcAddress event
     ~handler=None,
     ~contractRegister=None,
     ~where=None,
-    ~chainId=1,
+    ~chainId=1->ChainId.fromInt,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     ~startBlock=5,
   )
@@ -242,7 +242,7 @@ describe("filterByClientAddress drops over-fetched non-wildcard srcAddress event
   let onEventRegistration = (onEventRegistration :> Internal.onEventRegistration)
   let makeItem = (~srcAddress, ~blockNumber): Internal.item =>
     Internal.Event({
-      chain: ChainMap.Chain.makeUnsafe(~chainId=1),
+      chainId: 1->ChainId.fromInt,
       blockNumber,
       onEventRegistration,
       logIndex: 0,

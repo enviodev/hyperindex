@@ -70,10 +70,10 @@ let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int) =
 let updateOnNewBatch = (
   safeCheckpointTracking: t,
   ~sourceBlockNumber: int,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~batchCheckpointIds: array<bigint>,
   ~batchCheckpointBlockNumbers: array<int>,
-  ~batchCheckpointChainIds: array<int>,
+  ~batchCheckpointChainIds: array<ChainId.t>,
 ) => {
   let safeCheckpointId = getSafeCheckpointId(safeCheckpointTracking, ~sourceBlockNumber)
 

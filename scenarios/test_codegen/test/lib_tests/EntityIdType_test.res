@@ -196,7 +196,7 @@ chains:
 `,
     )
 
-    let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#1337)
+    let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#1337)
     let indexerMock = await MockIndexer.Indexer.make(
       ~config,
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
@@ -348,7 +348,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
         },
       ],
       ~checkpointIds=[1n],
-      ~checkpointChainIds=[1337],
+      ~checkpointChainIds=[1337->ChainId.fromInt],
       ~checkpointBlockNumbers=[5],
       ~checkpointEventsProcessed=[1],
     )

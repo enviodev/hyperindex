@@ -299,12 +299,49 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     Ok(format!("file:{}", pkg.to_string_lossy()))
 }
 
+/// Widest scalar the internal chain-id columns need. Derived once from the
+/// maximum active chain id and carried through the public config, so a resume
+/// against a schema built for the other mode is rejected rather than silently
+/// truncating ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChainIdMode {
+    Int32,
+    Int64,
+}
+
+/// Chain ids cross the Rust → JSON → JS boundary as plain numbers, so an id
+/// above `Number.MAX_SAFE_INTEGER` can't round-trip losslessly.
+pub const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
+
+impl ChainIdMode {
+    /// Skipped chains count: codegen emits a `chainId` case for every chain in
+    /// config.yaml regardless of `skip`, so a skipped wide id still has to be
+    /// representable. Including them also keeps the mode — and therefore the
+    /// physical column types — stable when a chain is skipped and unskipped.
+    fn resolve(chains: &ChainMap) -> Result<Self> {
+        let max_id = chains.values().map(|chain| chain.id).max().unwrap_or(0);
+        if max_id > MAX_SAFE_CHAIN_ID {
+            return Err(anyhow!(
+                "Chain id {max_id} is above the maximum supported chain id \
+                 {MAX_SAFE_CHAIN_ID} (Number.MAX_SAFE_INTEGER)."
+            ));
+        }
+        Ok(if max_id <= i32::MAX as u64 {
+            Self::Int32
+        } else {
+            Self::Int64
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: ChainMap,
+    pub chain_id_mode: ChainIdMode,
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
@@ -1003,6 +1040,8 @@ impl SystemConfig {
                     has_rpc_sync_src,
                 )?;
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1011,6 +1050,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
@@ -1149,6 +1189,8 @@ impl SystemConfig {
                         .context("Failed inserting chain at chains map")?;
                 }
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1157,6 +1199,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
@@ -1290,6 +1333,8 @@ impl SystemConfig {
                 // keep it off for now.
                 let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1299,6 +1344,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,

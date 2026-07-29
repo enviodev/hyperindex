@@ -14,7 +14,7 @@ describe("E2E rollback tests", () => {
     ~sourceMock: MockIndexer.Source.t,
     ~indexerMock: MockIndexer.Indexer.t,
     ~firstHistoryCheckpointId=2n,
-    ~chainId=1337,
+    ~chainId=1337->ChainId.fromInt,
   ) => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -307,11 +307,11 @@ describe("E2E rollback tests", () => {
   Async.it("Should stay in reorg threshold on restart when progress is past threshold", async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let chains = [
       {
@@ -426,7 +426,7 @@ describe("E2E rollback tests", () => {
   Async.it("Rollback of a single chain indexer", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -445,7 +445,7 @@ describe("E2E rollback tests", () => {
   Async.it("Rolls back SET -> DELETE -> SET to the deleted state", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let resolveIndexerError = ref(None)
     let indexerErrorPromise = Promise.make((resolve, _reject) => {
@@ -600,7 +600,7 @@ describe("E2E rollback tests", () => {
   Async.it("Parks a reorg detected while a batch is still processing", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -669,7 +669,7 @@ describe("E2E rollback tests", () => {
   Async.it("Fires onRollbackCommit per affected chain after the rollback write", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let rollbackCommitCalls = []
     let unregister = RollbackCommit.register(async (args: RollbackCommit.args) => {
@@ -692,7 +692,7 @@ describe("E2E rollback tests", () => {
     t.expect(
       rollbackCommitCalls,
       ~message="Should fire once for the reorged chain with the last valid block",
-    ).toEqual([{RollbackCommit.chainId: 1337, rollbackToBlock: 100}])
+    ).toEqual([{RollbackCommit.chainId: 1337->ChainId.fromInt, rollbackToBlock: 100}])
   })
 
   Async.it(
@@ -700,7 +700,7 @@ describe("E2E rollback tests", () => {
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -725,7 +725,7 @@ describe("E2E rollback tests", () => {
         {
           id: 2n,
           eventsProcessed: 0,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 102,
           blockHash: Js.Null.Value("0x102"),
         },
@@ -736,7 +736,7 @@ describe("E2E rollback tests", () => {
   Async.it("Shouldn't detect reorg for rollbacked block", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -801,7 +801,7 @@ describe("E2E rollback tests", () => {
       {
         id: 4n,
         eventsProcessed: 0,
-        chainId: 1337,
+        chainId: 1337->ChainId.fromInt,
         blockNumber: 102,
         blockHash: Js.Null.Value("0x102-reorged"),
       },
@@ -813,11 +813,11 @@ describe("E2E rollback tests", () => {
     async t => {
       let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock2 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -846,7 +846,7 @@ describe("E2E rollback tests", () => {
         ~sourceMock=sourceMock2,
         ~indexerMock,
         ~firstHistoryCheckpointId=3n,
-        ~chainId=100,
+        ~chainId=100->ChainId.fromInt,
       )
     },
   )
@@ -854,7 +854,7 @@ describe("E2E rollback tests", () => {
   Async.it("Rollback Dynamic Contract", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -994,7 +994,7 @@ describe("E2E rollback tests", () => {
         id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
           ->Array.getUnsafe(0)
           ->Address.toString}`,
-        chainId: 1337,
+        chainId: 1337->ChainId.fromInt,
         registrationBlock: 102,
         registrationLogIndex: 2,
         contractName: "SimpleNft",
@@ -1088,7 +1088,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
           ->Array.getUnsafe(0)
           ->Address.toString}`,
-        chainId: 1337,
+        chainId: 1337->ChainId.fromInt,
         registrationBlock: 102,
         registrationLogIndex: 2,
         contractName: "SimpleNft",
@@ -1105,11 +1105,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it("Rollback of multichain indexer (single entity id change)", async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1232,35 +1232,35 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 3n,
           eventsProcessed: 1,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x103"),
         },
         {
           id: 4n,
           eventsProcessed: 2,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x103"),
         },
         {
           id: 5n,
           eventsProcessed: 1,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 106,
           blockHash: Js.Null.Value("0x106"),
         },
         {
           id: 6n,
           eventsProcessed: 1,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 106,
           blockHash: Js.Null.Value("0x106"),
         },
         {
           id: 7n,
           eventsProcessed: 1,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 107,
           blockHash: Js.Null.Null,
         },
@@ -1269,7 +1269,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 8n,
           eventsProcessed: 0,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 109,
           blockHash: Js.Null.Value("0x109"),
         },
@@ -1493,14 +1493,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 3n,
           eventsProcessed: 1,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x103"),
         },
         {
           id: 4n,
           eventsProcessed: 2,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x103"),
         },
@@ -1510,14 +1510,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 10n,
           eventsProcessed: 2,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 106,
           blockHash: Js.Null.Value("0x106"),
         },
         {
           id: 11n,
           eventsProcessed: 0,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 111,
           blockHash: Js.Null.Value("0x111"),
         },
@@ -1563,11 +1563,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     async t => {
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -1700,35 +1700,35 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 3n,
             eventsProcessed: 1,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x103"),
           },
           {
             id: 4n,
             eventsProcessed: 2,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x103"),
           },
           {
             id: 5n,
             eventsProcessed: 1,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value("0x106"),
           },
           {
             id: 6n,
             eventsProcessed: 2,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value("0x106"),
           },
           {
             id: 7n,
             eventsProcessed: 1,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 107,
             blockHash: Js.Null.Null,
           },
@@ -1737,7 +1737,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 8n,
             eventsProcessed: 0,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 109,
             blockHash: Js.Null.Value("0x109"),
           },
@@ -1908,14 +1908,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 3n,
             eventsProcessed: 1,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x103"),
           },
           {
             id: 4n,
             eventsProcessed: 2,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x103"),
           },
@@ -1925,14 +1925,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 10n,
             eventsProcessed: 2,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value("0x106"),
           },
           {
             id: 11n,
             eventsProcessed: 0,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 111,
             blockHash: Js.Null.Value("0x111"),
           },
@@ -2000,7 +2000,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it("Double reorg should NOT cause negative event counter (regression test)", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -2109,7 +2109,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(
@@ -2149,11 +2149,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // but the non-reorg chain's counter stays at 0 while DB still has the old checkpoints.
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -2333,15 +2333,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // causing non-reorg chains to go negative on the second rollback.
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let sourceMock137 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#137,
+      ~chainId=#137,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -2539,7 +2539,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // 1. Setup mock source and indexer
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -2644,7 +2644,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // Setup mock source and indexer
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -2772,11 +2772,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     async t => {
       let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock2 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       // batchSize=1 ensures that chain 100's single event fills the batch,
       // causing chain 1337 to be SKIPPED during batch preparation.
@@ -2932,11 +2932,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[

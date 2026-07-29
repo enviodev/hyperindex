@@ -1,6 +1,6 @@
 open Vitest
 
-let chainId = 0
+let chainId = 0->ChainId.fromInt
 
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
@@ -70,7 +70,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
 }
 
 let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
-  chain: ChainMap.Chain.makeUnsafe(~chainId),
+  chainId: chainId,
   blockNumber,
   // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
   // resolves; the rest of the registration is unused by these tests.
