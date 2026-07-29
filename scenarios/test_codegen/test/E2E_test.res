@@ -245,7 +245,7 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    t.expect(await indexerMock.query(SimpleEntity)).toEqual([
+    t.expect(await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>)).toEqual([
       {Indexer.Entities.SimpleEntity.id: "1", value: "value-2"},
     ])
     t.expect(errors, ~message="should have an error thrown during set").toEqual([
@@ -1388,7 +1388,7 @@ describe("E2E tests", () => {
     // Item at 2000 should NOT be in DB yet — earlier chunks haven't completed,
     // so bufferBlockNumber=800 and 2000 > 800 means it's not ready.
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Item at block 2000 should not be ready while earlier chunks are pending",
     ).toEqual([])
 
@@ -1415,7 +1415,7 @@ describe("E2E tests", () => {
     // Only item-850 should be in DB — chunk2 hasn't completed,
     // so chunk3's item at 2000 is still beyond the buffer.
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Only item-850 should be in DB while chunk2 is pending",
     ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
 
@@ -1434,7 +1434,7 @@ describe("E2E tests", () => {
 
     // Both items should now be in DB
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Both items should be in DB after chunk1 fully completes",
     ).toEqual([
       {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},

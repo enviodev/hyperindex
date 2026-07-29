@@ -136,7 +136,7 @@ describe("Concurrent batch write and processing", () => {
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        (writeBatchErrors, await indexerMock.queryHistory(SimpleEntity)),
+        (writeBatchErrors, await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>)),
         ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
       ).toEqual((
         [],

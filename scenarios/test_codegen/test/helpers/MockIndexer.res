@@ -6,8 +6,7 @@ let config = Config.load()
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let entityConfig = (name: Indexer.Entities.name<_, _>): Internal.entityConfig =>
-  config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<_, _> => string))
+let entityConfig = (name: string): Internal.entityConfig => config->entityConfigByName(name)
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
@@ -384,8 +383,8 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
-    query: 'entity 'id. Indexer.Entities.name<'entity, 'id> => promise<array<'entity>>,
-    queryHistory: 'entity 'id. Indexer.Entities.name<'entity, 'id> => promise<array<Change.t<'entity>>>,
+    query: 'entity. string => promise<array<'entity>>,
+    queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: 'input 'output. (
@@ -590,9 +589,8 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity id, name: Indexer.Entities.name<entity, id>) => {
-        let ec =
-          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity, id> => string))
+      query: (type entity, name) => {
+        let ec = config->entityConfigByName(name)
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
@@ -600,9 +598,8 @@ module Indexer = {
         })
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
-      queryHistory: (type entity id, name: Indexer.Entities.name<entity, id>) => {
-        let ec =
-          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity, id> => string))
+      queryHistory: (type entity, name) => {
+        let ec = config->entityConfigByName(name)
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
@@ -618,7 +615,7 @@ module Indexer = {
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
-                S.object((s): Change.t<'entity> => {
+                S.object((s): Change.t<Internal.entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
                     entityId: s.field("id", ec.table->Table.getIdSchema),
