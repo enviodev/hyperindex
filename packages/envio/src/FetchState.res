@@ -196,6 +196,14 @@ let getMinHistoryRange = (p: partition) => {
 // source-capacity history, including when an itemsTarget cap truncates a response.
 let getTrustedDensity = (p: partition) => p.eventDensity
 
+// A response is still owed for this partition, so it owns range nothing else
+// accounts for: removing it would let the frontier advance over blocks the
+// response can still deliver items from, and orphan the response itself.
+// Narrower than a non-empty queue on purpose — a settled query parked behind a
+// gap is data already in hand, and waiting on it would wedge a partition that
+// no longer queries.
+let isFetching = (p: partition) => p.mutPendingQueries->Array.some(pq => pq.fetchedBlock === None)
+
 let getMinQueryRange = (partitions: array<partition>) => {
   let min = ref(0)
   for i in 0 to partitions->Array.length - 1 {
@@ -431,9 +439,10 @@ module OptimizedPartitions = {
       // A partition already at or past its merge block is done — normally
       // handleQueryResponse removes it when the response lands, but a rollback
       // can cap the merge block at the rolled-back frontier, leaving no
-      // response to ever remove it on.
+      // response to ever remove it on. A retired partition still awaiting a
+      // response stays until it lands.
       | {mergeBlock: Some(mergeBlock)} =>
-        if p.latestFetchedBlock.blockNumber < mergeBlock {
+        if p.latestFetchedBlock.blockNumber < mergeBlock || p->isFetching {
           newPartitions->Array.push(p)->ignore
         }
       // Since it's not a dynamic contract partition,
@@ -556,6 +565,12 @@ module OptimizedPartitions = {
           | Some(anchorSafeBlock) =>
             if p.latestFetchedBlock.blockNumber < anchorSafeBlock {
               anchored->Array.push({...p, mergeBlock: Some(anchorSafeBlock)})->ignore
+            } else if p->isFetching {
+              // Caught up, but a response is still owed: keep it until that
+              // lands rather than dropping the range it owns.
+              anchored
+              ->Array.push({...p, mergeBlock: Some(p.latestFetchedBlock.blockNumber)})
+              ->ignore
             }
           }
         | _ => anchored->Array.push(p)->ignore
@@ -634,6 +649,10 @@ module OptimizedPartitions = {
     }
   }
 
+  // Every path that stops a partition from fetching keeps it until its last
+  // response lands, so a response always has a partition to advance. A rollback
+  // does delete partitions mid-run, but it bumps the indexer epoch and
+  // ChainFetching drops older responses before they reach here.
   let rec handleQueryResponse = (
     optimizedPartitions: t,
     ~query,
@@ -641,21 +660,13 @@ module OptimizedPartitions = {
     ~itemsCount,
     ~latestFetchedBlock: blockNumberAndTimestamp,
   ) =>
-    switch optimizedPartitions.entities->Utils.Dict.dangerouslyGetNonOption(query.partitionId) {
-    // The partition was absorbed into the address-free client-filtered partition
-    // while this query was in flight. Its items are still merged into the buffer
-    // by the caller (and deduped); there's no partition bookkeeping left to do,
-    // and its reservation is released by ChainState regardless.
-    | None => optimizedPartitions
-    | Some(p) =>
-      optimizedPartitions->handleQueryResponseForPartition(
-        ~p,
-        ~query,
-        ~knownHeight,
-        ~itemsCount,
-        ~latestFetchedBlock,
-      )
-    }
+    optimizedPartitions->handleQueryResponseForPartition(
+      ~p=optimizedPartitions->getOrThrow(~partitionId=query.partitionId),
+      ~query,
+      ~knownHeight,
+      ~itemsCount,
+      ~latestFetchedBlock,
+    )
 
   and handleQueryResponseForPartition = (
     optimizedPartitions: t,
@@ -728,11 +739,15 @@ module OptimizedPartitions = {
       ~initialLatestFetchedBlock=p.latestFetchedBlock,
     )
 
-    // Check if partition reached its mergeBlock and should be removed
-    let partitionReachedMergeBlock = switch p.mergeBlock {
-    | Some(mergeBlock) => updatedLatestFetchedBlock.blockNumber >= mergeBlock
-    | None => false
-    }
+    // Check if partition reached its mergeBlock and should be removed. A
+    // retired partition can hold several queries at once, so it goes only when
+    // the last of them has landed.
+    let partitionReachedMergeBlock =
+      switch p.mergeBlock {
+      | Some(mergeBlock) => updatedLatestFetchedBlock.blockNumber >= mergeBlock
+      | None => false
+      } &&
+      !(p->isFetching)
 
     if partitionReachedMergeBlock {
       mutEntities->Utils.Dict.deleteInPlace(p.id)
@@ -1159,9 +1174,10 @@ let claimedFetchedBlock = (p: partition, ~knownHeight) =>
 // fetching without tearing down established state:
 // - The standing address-free partition (no mergeBlock) keeps its id, frontier,
 //   in-flight queries and learned density. Only when a newly-switched contract
-//   must be added does its selection change — under a fresh id, so in-flight
-//   responses built from the old selection are orphaned instead of advancing
-//   the frontier past ranges the new contract wasn't fetched for.
+//   must be added does its selection change — under a fresh id, so responses
+//   built from the old selection can't advance the frontier past ranges the new
+//   contract wasn't fetched for. The old generation is retired beside it,
+//   keeping the queue those responses belong to.
 // - Partitions absorbed below the standing partition's claimed block
 //   (single-contract dynamic partitions and config partitions all of whose
 //   contracts are client-filtered, plus any prior backfill) become one bounded
@@ -1206,6 +1222,21 @@ let collapseClientFilteredContracts = (
     let strippedFrontiers = []
     let anchoredContracts = partitions->OptimizedPartitions.anchoredContracts
 
+    // Retire a partition in place of removing it: same id and selection, same
+    // pending queue, capped at its own frontier so it issues nothing more. It
+    // holds the frontier down and owns its in-flight response until that lands,
+    // then handleQueryResponse drops it.
+    let retire = (p: partition) => {
+      ...p,
+      mergeBlock: Some(p.latestFetchedBlock.blockNumber),
+    }
+    let absorb = p => {
+      absorbedPartitions->Array.push(p)->ignore
+      if p->isFetching {
+        kept->Array.push(p->retire)->ignore
+      }
+    }
+
     partitions->Array.forEach(p =>
       switch p {
       | {selection: {dependsOnAddresses: false}, mergeBlock: None}
@@ -1213,7 +1244,14 @@ let collapseClientFilteredContracts = (
         standingRef := Some(p)
       | {selection: {dependsOnAddresses: false}, mergeBlock: Some(_)} =>
         backfills->Array.push(p)->ignore
-      | {selection: {dependsOnAddresses: false}} => absorbedPartitions->Array.push(p)->ignore
+
+        // The backfill this call builds covers its remaining range from the
+        // same min frontier, so it is superseded — but not before the response
+        // it is waiting on lands.
+        if p->isFetching {
+          kept->Array.push(p->retire)->ignore
+        }
+      | {selection: {dependsOnAddresses: false}} => p->absorb
       | _ =>
         let contractNames = p.addresses->AddressSet.contractNames
         let serverSideNames =
@@ -1232,7 +1270,7 @@ let collapseClientFilteredContracts = (
           // hand that job back to a guessed ceiling.
           kept->Array.push(p)->ignore
         } else if serverSideNames->Utils.Array.isEmpty {
-          absorbedPartitions->Array.push(p)->ignore
+          p->absorb
         } else {
           strippedFrontiers->Array.push(p.latestFetchedBlock)->ignore
           kept
@@ -1325,6 +1363,15 @@ let collapseClientFilteredContracts = (
         let standingOut = if selectionChanged {
           let id = nextPartitionIndexRef.contents->Int.toString
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
+
+          // A response built from the old selection must not advance the new
+          // one's frontier over ranges the newly-switched contract wasn't
+          // fetched for, so the continuing partition takes a fresh id and an
+          // empty queue. The old generation is retired beside it rather than
+          // dropped: it keeps the queue those responses belong to.
+          if standing->isFetching {
+            kept->Array.push(standing->retire)->ignore
+          }
           {...standing, id, selection: newSelection, mutPendingQueries: []}
         } else {
           standing
@@ -1833,7 +1880,7 @@ let registerDynamicContracts = (
 
 /*
 Updates fetchState with a response for a given query.
-Returns Error if the partition with given query cannot be found (unexpected)
+Throws if the partition with given query cannot be found (unexpected)
 
 newItems are ordered earliest to latest (as they are returned from the worker)
 */

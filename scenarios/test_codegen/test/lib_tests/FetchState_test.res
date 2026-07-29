@@ -5150,7 +5150,7 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual([(false, Some(["Gravatar"]))])
   })
 
-  it("tolerates a response for a partition absorbed while its query was in flight", t => {
+  it("rejects a response for a partition that no longer exists", t => {
     let (fetchState, addressStore) = makeGravatarFs(~clientFilterAddressThreshold=Some(1))
     let collapsed =
       fetchState->FetchState.registerDynamicContracts(~addressStore, [
@@ -5158,22 +5158,119 @@ describe("FetchState client-side address filtering", () => {
         makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
       ])
 
-    // A response tagged with a partition id that no longer exists (absorbed).
+    // Every path that stops a partition fetching now retires it until its last
+    // response lands, so an unknown partition id means the response outlived a
+    // rollback — which bumps the indexer epoch, so ChainFetching drops it long
+    // before here. Reaching this point at all is a broken invariant, and
+    // buffering the items would admit them below the frontier.
     let orphanQuery: FetchState.query = {
       ...defaultQuery,
       partitionId: "999",
       fromBlock: 0,
     }
-    let afterOrphan =
-      collapsed->FetchState.handleQueryResult(
-        ~query=orphanQuery,
-        ~latestFetchedBlock=getBlockData(~blockNumber=5),
-        ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
-      )
     t.expect(
-      (afterOrphan->FetchState.bufferSize, afterOrphan->partitionShape),
-      ~message="orphan response merges its items and leaves partitions untouched",
-    ).toEqual((2, [(false, Some(["Gravatar"]), [])]))
+      () =>
+        collapsed
+        ->FetchState.handleQueryResult(
+          ~query=orphanQuery,
+          ~latestFetchedBlock=getBlockData(~blockNumber=5),
+          ~newItems=[mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)],
+        )
+        ->ignore,
+      ~message="a response with no partition to advance is rejected, not buffered",
+    ).toThrow()
+  })
+
+  it("holds the frontier below a query orphaned by a client-filter switch", t => {
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=1000,
+      ~clientFilterAddressThreshold=Some(1),
+    )
+
+    // Gravatar crosses the threshold → one standing address-free partition.
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    let takeQuery = fs =>
+      switch fs->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=10_000.) {
+      | Ready([query]) => query
+      | _ => JsError.throwWithMessage("expected a single ready query")
+      }
+
+    // The standing partition dispatches a query over the whole known range.
+    let inFlight = collapsed->takeQuery
+    collapsed->FetchState.startFetchingQueries(~queries=[inFlight])
+
+    // NftFactory crosses the threshold while that query is still running, so the
+    // client-filtered set grows and the standing partition's selection changes.
+    let afterSwitch =
+      collapsed->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=5,
+          ~contractAddress=mockAddress3,
+          ~contractName="NftFactory",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=6,
+          ~contractAddress=mockAddress4,
+          ~contractName="NftFactory",
+        )->dcToItem,
+      ])
+
+    // The old generation is retired beside the new one rather than dropped, so
+    // it still holds the frontier and its query's budget reservation. Nothing
+    // fetches over that range again until the response lands.
+    let frontierAfterSwitch = afterSwitch->FetchState.bufferBlockNumber
+    let queryableAfterSwitch =
+      afterSwitch->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=10_000.) !==
+        NothingToQuery
+
+    // The response lands against the partition that dispatched it.
+    let afterSettled =
+      afterSwitch->FetchState.handleQueryResult(
+        ~query=inFlight,
+        ~latestFetchedBlock=getBlockData(~blockNumber=500),
+        ~newItems=[mockEvent(~blockNumber=200)],
+      )
+
+    // Retired and drained, so it's gone — but the frontier stays put: the new
+    // generation has not covered that range under the wider selection yet, so
+    // the item it delivered is buffered and not yet processable.
+    let frontierAfterSettled = afterSettled->FetchState.bufferBlockNumber
+    let readyAfterSettled = afterSettled->FetchState.bufferReadyCount
+
+    // Only now does the new generation fetch, re-delivering the same event.
+    let newQuery = afterSettled->takeQuery
+    afterSettled->FetchState.startFetchingQueries(~queries=[newQuery])
+    let afterNewGeneration =
+      afterSettled->FetchState.handleQueryResult(
+        ~query=newQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=500),
+        ~newItems=[mockEvent(~blockNumber=200)],
+      )
+
+    t.expect(
+      (
+        (frontierAfterSwitch, queryableAfterSwitch),
+        (frontierAfterSettled, readyAfterSettled),
+        (
+          afterNewGeneration->FetchState.bufferBlockNumber,
+          afterNewGeneration.buffer->Array.map(Internal.getItemBlockNumber),
+          afterNewGeneration->FetchState.bufferReadyCount,
+        ),
+      ),
+      ~message="the retired generation holds the frontier until its response lands; no item is ever admitted below an already-processable frontier",
+    ).toEqual(((-1, false), (-1, 0), (500, [200], 1)))
   })
 
   // The standing address-free partition: client-filtered contracts' events are
@@ -5185,6 +5282,224 @@ describe("FetchState client-side address filtering", () => {
       ->Array.find(p => !p.selection.dependsOnAddresses && p.mergeBlock->Option.isNone)
       ->Option.getOrThrow
     ).id
+
+  it("keeps a retired generation until the last of its queries lands", t => {
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=1000,
+      ~clientFilterAddressThreshold=Some(1),
+    )
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    // Two chunks in flight at once, so the first response drains only part of
+    // the queue: the merge block is reached but a response is still owed.
+    let standing = collapsed->standingId
+    let chunk = (fromBlock, toBlock): FetchState.query => {
+      ...defaultQuery,
+      partitionId: standing,
+      fromBlock,
+      toBlock: Some(toBlock),
+      isChunk: true,
+    }
+    let q1 = chunk(0, 100)
+    let q2 = chunk(101, 200)
+    collapsed->FetchState.startFetchingQueries(~queries=[q1, q2])
+
+    let afterSwitch =
+      collapsed->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=5,
+          ~contractAddress=mockAddress3,
+          ~contractName="NftFactory",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=6,
+          ~contractAddress=mockAddress4,
+          ~contractName="NftFactory",
+        )->dcToItem,
+      ])
+    let holdsId = (fs: FetchState.t) => fs.optimizedPartitions.idsInAscOrder->Array.includes(standing)
+
+    let afterFirst =
+      afterSwitch->FetchState.handleQueryResult(
+        ~query=q1,
+        ~latestFetchedBlock=getBlockData(~blockNumber=100),
+        ~newItems=[],
+      )
+    let afterSecond =
+      afterFirst->FetchState.handleQueryResult(
+        ~query=q2,
+        ~latestFetchedBlock=getBlockData(~blockNumber=200),
+        ~newItems=[],
+      )
+
+    t.expect(
+      (afterSwitch->holdsId, afterFirst->holdsId, afterSecond->holdsId),
+      ~message="retired at a merge block it has already passed, it goes only once the second response lands",
+    ).toEqual((true, true, false))
+  })
+
+  it("retires a fetching backfill when a later batch collapses again", t => {
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[
+        baseEventConfig,
+        baseEventConfig2,
+        (MockIndexer.evmOnEventRegistration(
+          ~id="0",
+          ~contractName="SimpleNft",
+        ) :> Internal.onEventRegistration),
+      ],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=1000,
+      ~clientFilterAddressThreshold=Some(1),
+    )
+    // Gravatar collapses, then its standing partition advances to 50.
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+    let standingQuery: FetchState.query = {
+      ...defaultQuery,
+      partitionId: collapsed->standingId,
+      fromBlock: 0,
+      toBlock: Some(50),
+      isChunk: true,
+    }
+    collapsed->FetchState.startFetchingQueries(~queries=[standingQuery])
+    let advanced =
+      collapsed->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=50),
+        ~newItems=[],
+      )
+
+    // NftFactory crosses the threshold too. Its partitions sit far below the
+    // standing frontier, so folding them in leaves a bounded backfill.
+    let withBackfill =
+      advanced->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=5,
+          ~contractAddress=mockAddress3,
+          ~contractName="NftFactory",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=6,
+          ~contractAddress=mockAddress4,
+          ~contractName="NftFactory",
+        )->dcToItem,
+      ])
+    let backfillId =
+      (
+        withBackfill.optimizedPartitions.entities
+        ->Dict.valuesToArray
+        ->Array.find(p => !(p.selection.dependsOnAddresses) && p.mergeBlock->Option.isSome)
+        ->Option.getOrThrow
+      ).id
+    let backfillQuery: FetchState.query = {
+      ...defaultQuery,
+      partitionId: backfillId,
+      fromBlock: 5,
+      toBlock: Some(30),
+      isChunk: true,
+    }
+    withBackfill->FetchState.startFetchingQueries(~queries=[backfillQuery])
+
+    // A third contract crosses the threshold while that backfill is mid-query,
+    // so the collapse runs again. Its response must still find the partition it
+    // was sent for.
+    let recollapsed =
+      withBackfill->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=40,
+          ~contractAddress=mockAddress5,
+          ~contractName="SimpleNft",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=41,
+          ~contractAddress=mockAddress6,
+          ~contractName="SimpleNft",
+        )->dcToItem,
+      ])
+    let afterBackfill =
+      recollapsed->FetchState.handleQueryResult(
+        ~query=backfillQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=30),
+        ~newItems=[mockEvent(~blockNumber=12)],
+      )
+
+    t.expect(
+      (
+        recollapsed.optimizedPartitions.idsInAscOrder->Array.includes(backfillId),
+        afterBackfill.optimizedPartitions.idsInAscOrder->Array.includes(backfillId),
+        afterBackfill->FetchState.bufferSize,
+      ),
+      ~message="a backfill mid-query survives the recollapse and goes once its response lands",
+    ).toEqual((true, false, 1))
+  })
+
+  it("retires every fetching partition the collapse would otherwise absorb", t => {
+    // Threshold 2: config address + one dynamic stays server-side, so real
+    // address-bound partitions exist and can be mid-query when the second
+    // registration pushes the count over and collapses them.
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=1,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=1000,
+      ~clientFilterAddressThreshold=Some(2),
+    )
+    let serverSide =
+      fetchState->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+      ])
+
+    let fetchingIds = serverSide.optimizedPartitions.idsInAscOrder
+    serverSide->FetchState.startFetchingQueries(
+      ~queries=fetchingIds->Array.map((id): FetchState.query => {
+        ...defaultQuery,
+        partitionId: id,
+        fromBlock: 0,
+        toBlock: Some(100),
+        isChunk: true,
+      }),
+    )
+
+    let collapsed =
+      serverSide->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    t.expect(
+      (
+        fetchingIds->Utils.Array.isEmpty,
+        fetchingIds->Array.filter(id =>
+          !(collapsed.optimizedPartitions.idsInAscOrder->Array.includes(id))
+        ),
+        collapsed.optimizedPartitions.clientFilteredContracts->Utils.Set.toArray,
+      ),
+      ~message="absorbed partitions with a response owed survive the collapse, so their items keep an owner",
+    ).toEqual((false, [], ["Gravatar"]))
+  })
 
   it("keeps the collapsed address-free partition across an unrelated registration batch", t => {
     let (fetchState, addressStore) = makeFs(
@@ -5442,6 +5757,51 @@ describe("FetchState client-side address filtering", () => {
       ),
       ~message="both queries open-ended; the settled response bounds the catch-up, which then over-fetches past it and disappears, its overlap deduped",
     ).toEqual(((None, None), [(19, Some(120), ["Gravatar"]), (120, None, [])], [(120, None, [])], 1))
+  })
+
+  it("retires an anchored catch-up that overshot its anchor while still fetching", t => {
+    let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
+    // The catch-up runs ahead of the standing partition, then dispatches again.
+    let afterCatchUp =
+      afterReg->FetchState.handleQueryResult(
+        ~query=catchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=80),
+        ~newItems=[],
+      )
+    // Budget above the standing query's outstanding reservation, so the
+    // catch-up's second query isn't held back by it.
+    let secondCatchUpQuery = switch afterCatchUp->FetchState.getNextQuery(
+      ~chainTargetBlock=100,
+      ~chainTargetItems=100_000.,
+    ) {
+    | Ready([query]) => query
+    | _ => JsError.throwWithMessage("Expected a single catch-up query")
+    }
+    afterCatchUp->FetchState.startFetchingQueries(~queries=[secondCatchUpQuery])
+
+    // The standing query settles below the catch-up's frontier, so the block
+    // the catch-up was to stop at is one it has already passed — but its second
+    // query is still out, and dropping it would strand that response.
+    let afterStanding =
+      afterCatchUp->FetchState.handleQueryResult(
+        ~query=standingQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=70),
+        ~newItems=[],
+      )
+    let afterSecond =
+      afterStanding->FetchState.handleQueryResult(
+        ~query=secondCatchUpQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=90),
+        ~newItems=[mockEvent(~blockNumber=85)],
+      )
+    t.expect(
+      (afterStanding->frontierShape, afterSecond->frontierShape, afterSecond->FetchState.bufferSize),
+      ~message="the overshooting catch-up is retired rather than dropped, so its last response still has a partition to land on",
+    ).toEqual((
+      [(70, None, []), (80, Some(80), ["Gravatar"])],
+      [(70, None, [])],
+      1,
+    ))
   })
 
   it("keeps the catch-up unbounded when its own response lands first", t => {
