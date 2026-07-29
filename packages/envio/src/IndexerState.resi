@@ -86,6 +86,7 @@ let processedCheckpointId: t => Internal.checkpointId
 let processedBatches: t => array<Batch.t>
 let processedBatchesCount: t => int
 let writeFiber: t => option<promise<unit>>
+let finalizeFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
@@ -144,6 +145,8 @@ let beginRollbackDiff: (
 let recordWriteFailure: (t, exn) => unit
 let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit
+let beginFinalizeFiber: (t, promise<unit>) => unit
+let endFinalizeFiber: t => unit
 let wakeCommitWaiters: t => unit
 let addCommitWaiter: (t, unit => unit) => unit
 let stageChainMeta: (t, dict<InternalTable.Chains.metaFields>) => unit

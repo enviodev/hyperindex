@@ -1,164 +1,6 @@
 open Vitest
 
 describe("Test PgStorage SQL generation functions", () => {
-  describe("makeCreateIndexQuery", () => {
-    Async.it(
-      "Should create simple index SQL",
-      async t => {
-        let query = PgStorage.makeCreateIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=["field1"],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct single field index SQL",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1" ON "test_schema"."test_table"("field1");`)
-      },
-    )
-
-    Async.it(
-      "Should create composite index SQL",
-      async t => {
-        let query = PgStorage.makeCreateIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=["field1", "field2", "field3"],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1", "field2", "field3");`)
-      },
-    )
-  })
-
-  describe("makeCreateCompositeIndexQuery", () => {
-    Async.it(
-      "Should create composite index SQL with ASC direction (default, omitted in SQL)",
-      async t => {
-        let query = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=[
-            {fieldName: "field1", direction: Table.Asc},
-            {fieldName: "field2", direction: Table.Asc},
-          ],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL with ASC (default) direction",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`)
-      },
-    )
-
-    Async.it(
-      "Should create composite index SQL with DESC direction",
-      async t => {
-        let query = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=[
-            {fieldName: "field1", direction: Table.Desc},
-            {fieldName: "field2", direction: Table.Asc},
-          ],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL with DESC direction",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`)
-      },
-    )
-
-    Async.it(
-      "Should create composite index SQL with all DESC",
-      async t => {
-        let query = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=[
-            {fieldName: "field1", direction: Table.Desc},
-            {fieldName: "field2", direction: Table.Desc},
-            {fieldName: "field3", direction: Table.Desc},
-          ],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL with all DESC direction",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2_desc_field3_desc" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`)
-      },
-    )
-
-    Async.it(
-      "Should encode direction in index name to avoid collisions",
-      async t => {
-        let queryAsc = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="t",
-          ~indexFields=[
-            {fieldName: "a", direction: Table.Asc},
-            {fieldName: "b", direction: Table.Asc},
-          ],
-          ~pgSchema="s",
-        )
-        let queryDesc = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="t",
-          ~indexFields=[
-            {fieldName: "a", direction: Table.Desc},
-            {fieldName: "b", direction: Table.Desc},
-          ],
-          ~pgSchema="s",
-        )
-
-        // Index names must differ so CREATE INDEX IF NOT EXISTS doesn't skip the second
-        t.expect(
-          queryAsc,
-          ~message="Same fields with different directions must produce different index names",
-        ).not.toBe(queryDesc)
-        t.expect(
-          queryAsc->String.includes("\"t_a_b\""),
-          ~message="ASC index name has no suffix",
-        ).toBeTruthy()
-        t.expect(
-          queryDesc->String.includes("\"t_a_desc_b_desc\""),
-          ~message="DESC index name encodes direction",
-        ).toBeTruthy()
-      },
-    )
-  })
-
-  describe("makeCreateTableIndexesQuery", () => {
-    Async.it(
-      "Should create indexes for A entity table",
-      async t => {
-        let query = PgStorage.makeCreateTableIndexesQuery(
-          MockIndexer.entityConfig("A").table,
-          ~pgSchema="test_schema",
-        )
-
-        let expectedIndexes = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        t.expect(query, ~message="Indexes SQL should match exactly").toBe(expectedIndexes)
-      },
-    )
-
-    Async.it(
-      "Should handle table with no indexes",
-      async t => {
-        let query = PgStorage.makeCreateTableIndexesQuery(
-          MockIndexer.entityConfig("B").table,
-          ~pgSchema="test_schema",
-        )
-
-        // B entity has no indexed fields, so should return empty string
-        t.expect(query, ~message="Should return empty string for table with no indexes").toBe("")
-      },
-    )
-  })
-
   describe("makeCreateTableQuery", () => {
     Async.it(
       "Should create SQL for A entity table",
@@ -276,7 +118,7 @@ CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName________________
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________7"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT NOT NULL, "optString" TEXT, "arrayOfStrings" TEXT[] NOT NULL, "int_" INTEGER NOT NULL, "optInt" INTEGER, "arrayOfInts" INTEGER[] NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "bool" BOOLEAN NOT NULL, "optBool" BOOLEAN, "bigInt" NUMERIC NOT NULL, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "arrayOfBigDecimals" TEXT[] NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "optEnumField" "test_schema".AccountType, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
+CREATE INDEX "${IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name}" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -407,7 +249,7 @@ CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "c
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
+CREATE INDEX "${IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name}" ON "public"."A"("b_id");
 CREATE VIEW "public"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -475,16 +317,21 @@ FROM "public"."envio_chains";`
     )
 
     Async.it(
-      "Describes every promised index once, with its descriptive name",
+      "Describes every promised index once, with its generated name",
       async t => {
+        let definition = IndexDefinition.single(~tableName="A", ~column="b_id")
+
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
-            schemaIndex->PgStorage.schemaIndexName,
-            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
+          PgStorage.getSchemaIndexes(~entities)->Array.map(definition => (
+            definition->IndexDefinition.name,
+            definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
           )),
           ~message="The @index on A.b and B's derived relationship describe the same index",
         ).toEqual([
-          ("A_b_id", `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`),
+          (
+            definition->IndexDefinition.name,
+            `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."A"("b_id");`,
+          ),
         ])
       },
     )
@@ -522,89 +369,46 @@ FROM "public"."envio_chains";`
         ]
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(schemaIndex => (
-            schemaIndex->PgStorage.schemaIndexName,
-            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="test_schema"),
+          PgStorage.getSchemaIndexes(~entities)->Array.map(definition => (
+            definition.IndexDefinition.tableName,
+            definition.columns->Array.map(column => column.IndexDefinition.name),
           )),
-        ).toEqual([
-          (
-            "Order_trader_id",
-            `CREATE INDEX IF NOT EXISTS "Order_trader_id" ON "test_schema"."Order"("trader_id");`,
-          ),
-        ])
+        ).toEqual([("Order", ["trader_id"])])
       },
     )
 
+    // Two long field names on one entity used to truncate to the same
+    // 63-character identifier, and the second index silently never got built.
     Async.it(
-      "Truncates a long name to Postgres' identifier limit rather than letting Postgres do it",
+      "Keeps two long names distinct within Postgres' identifier limit",
       async t => {
-        let schemaIndex: PgStorage.schemaIndex = {
-          tableName: "Entity" ++ "x"->String.repeat(50),
-          indexFields: [{fieldName: "some_long_column_name", direction: Table.Asc}],
-        }
-        let name = schemaIndex->PgStorage.schemaIndexName
-
-        t.expect(
-          (
-            name->String.length,
-            name,
-            PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s")->String.includes(
-              `IF NOT EXISTS "${name}"`,
-            ),
-          ),
-          ~message="The emitted name matches what Postgres stores, so IF NOT EXISTS keeps matching it",
-        ).toEqual((63, (schemaIndex->PgStorage.schemaIndexDescription)->String.slice(~start=0, ~end=63), true))
-      },
-    )
-
-    Async.it(
-      "Rejects two promised indexes whose names truncate to the same identifier",
-      async t => {
-        let longEntity = "Entity" ++ "x"->String.repeat(50)
-        let table = Table.mkTable(
-          longEntity,
-          ~fields=[
-            Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-            Table.mkField("some_long_column_one", String, ~isIndex=true, ~fieldSchema=S.string),
-            Table.mkField("some_long_column_two", String, ~isIndex=true, ~fieldSchema=S.string),
-          ],
-        )
-        let entityConfig: Internal.entityConfig = {
-          ...MockIndexer.entityConfig("A"),
-          table,
-        }
-
-        t.expect(
-          () =>
-            PgStorage.makeInitializeTransaction(
-              ~pgSchema="test_schema",
-              ~pgUser="postgres",
-              ~entities=[entityConfig],
-              ~enums=[],
-              ~isHasuraEnabled=false,
-            ),
-        ).toThrow()
-      },
-    )
-
-    Async.it(
-      "Keeps composite index descriptions ordered with their directions",
-      async t => {
-        let schemaIndex: PgStorage.schemaIndex = {
-          tableName: "Transfer",
-          indexFields: [
-            {fieldName: "block_number", direction: Table.Desc},
-            {fieldName: "log_index", direction: Table.Asc},
-          ],
-        }
+        let tableName = "Entity" ++ "x"->String.repeat(50)
+        let names =
+          ["some_long_column_one", "some_long_column_two"]->Array.map(column =>
+            IndexDefinition.single(~tableName, ~column)->IndexDefinition.name
+          )
 
         t.expect((
-          schemaIndex->PgStorage.schemaIndexName,
-          PgStorage.makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema="s"),
-        )).toEqual((
-          "Transfer_block_number_desc_log_index",
-          `CREATE INDEX IF NOT EXISTS "Transfer_block_number_desc_log_index" ON "s"."Transfer"("block_number" DESC, "log_index");`,
-        ))
+          names->Array.map(String.length),
+          names->Array.getUnsafe(0) === names->Array.getUnsafe(1),
+        )).toEqual(([63, 63], false))
+      },
+    )
+
+    Async.it(
+      "Keeps composite index columns ordered with their directions",
+      async t => {
+        let definition = IndexDefinition.make(
+          ~tableName="Transfer",
+          ~columns=[
+            {name: "block_number", direction: Table.Desc},
+            {name: "log_index", direction: Table.Asc},
+          ],
+        )
+
+        t.expect(definition->IndexDefinition.makeCreateQuery(~pgSchema="s")).toBe(
+          `CREATE INDEX "${definition->IndexDefinition.name}" ON "s"."Transfer"("block_number" DESC, "log_index");`,
+        )
       },
     )
   })

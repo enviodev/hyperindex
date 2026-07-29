@@ -164,9 +164,9 @@ SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
-  // Written in the same transaction as the deferred schema indexes, so a chain
-  // is never reported ready without the indexes the schema promises. One row at
-  // a time, like `setMeta`: the id column is INTEGER or BIGINT depending on the
+  // Written only once every schema-defined index is verified, so a chain is
+  // never reported ready without the indexes the schema promises. One row at a
+  // time, like `setMeta`: the id column is INTEGER or BIGINT depending on the
   // configured `ChainId.mode`, and a bare `= $2` needs no cast either way.
   let makeSetReadyAtQuery = (~pgSchema) =>
     `UPDATE "${pgSchema}"."${table.tableName}"

@@ -29,6 +29,40 @@ let defaultPersistence = () =>
     persistence
   }
 
+// A promise the code under test awaits, held closed until the test opens it.
+// Wrap a storage method in `gate.wait()` to stall it and observe the indexer
+// while it is blocked, instead of guessing with `Utils.delay`.
+module Gate = {
+  type t = {
+    // How many times the gate was entered, whether or not it was open.
+    entered: ref<int>,
+    wait: unit => promise<unit>,
+    release: unit => unit,
+  }
+
+  let make = () => {
+    let waiting = []
+    let isOpen = ref(false)
+    let entered = ref(0)
+    {
+      entered,
+      wait: () => {
+        entered := entered.contents + 1
+        if isOpen.contents {
+          Promise.resolve()
+        } else {
+          Promise.make((resolve, _reject) => waiting->Array.push(() => resolve())->ignore)
+        }
+      },
+      release: () => {
+        isOpen := true
+        waiting->Array.forEach(resolve => resolve())
+        waiting->Utils.Array.clearInPlace
+      },
+    }
+  }
+}
+
 module InMemoryStore = {
   let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
     let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
@@ -412,6 +446,8 @@ module Indexer = {
   type rec t = {
     getBatchWritePromise: unit => promise<unit>,
     getRollbackReadyPromise: unit => promise<unit>,
+    waitUntilIdle: unit => promise<unit>,
+    waitUntilReady: unit => promise<unit>,
     query: 'entity. string => promise<array<'entity>>,
     queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
@@ -421,6 +457,9 @@ module Indexer = {
       ~scope: Internal.chainScope,
     ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
+    // Quiesce the run: its loops keep driving the shared database otherwise, and
+    // a later test resetting the schema would take their writes into it.
+    stop: unit => promise<unit>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
@@ -566,6 +605,17 @@ module Indexer = {
     )
     state->IndexerLoop.start
 
+    // Persist before stopping, else a resumed indexer loses uncommitted state,
+    // then let any in-flight batch or write settle so nothing from this run
+    // lands on the shared database afterwards.
+    let stop = async () => {
+      await state->Writing.flush
+      state->IndexerState.stop
+      while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
+        await Utils.delay(1)
+      }
+    }
+
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
@@ -610,6 +660,48 @@ module Indexer = {
           await Utils.delay(0)
           resolve()
         })
+      },
+      waitUntilIdle: async () => {
+        await state->Writing.flush
+        // Settling takes several ticks: the loop dispatches follow-up actions
+        // (the next query, the finalize pass) from inside the tick that looks
+        // idle, so one observation isn't enough.
+        let settled = ref(0)
+        let attempts = ref(0)
+        while settled.contents < 5 && attempts.contents < 5000 {
+          attempts := attempts.contents + 1
+          settled :=
+            if (
+              !(state->IndexerState.isProcessing) &&
+              state->IndexerState.writeFiber->Option.isNone &&
+              !(state->IndexerState.isFinalizingIndexes) &&
+              state->IndexerState.committedCheckpointId ==
+                state->IndexerState.processedCheckpointId
+            ) {
+              settled.contents + 1
+            } else {
+              0
+            }
+          await Utils.delay(0)
+        }
+        if settled.contents < 5 {
+          JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
+        }
+      },
+      waitUntilReady: async () => {
+        let isReady = () =>
+          state
+          ->IndexerState.chainStates
+          ->Dict.valuesToArray
+          ->Array.every(chainState => chainState->ChainState.isReady)
+        let attempts = ref(0)
+        while !isReady() && attempts.contents < 5000 {
+          attempts := attempts.contents + 1
+          await Utils.delay(0)
+        }
+        if !isReady() {
+          JsError.throwWithMessage("Timed out waiting for the indexer to report ready")
+        }
       },
       getRollbackReadyPromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
@@ -755,18 +847,11 @@ module Indexer = {
           }
         )
       },
+      stop,
       restart: async () => {
-        // Persist before restarting, else the resumed indexer loses uncommitted state.
-        await state->Writing.flush
-        // Stop the previous run's loops so they don't keep driving the shared db
-        // once the resumed indexer takes over.
-        state->IndexerState.stop
-        // Let any in-flight batch or write from the stopped run settle before the
-        // resumed indexer takes over the shared persistence, else the two runs
-        // race against the same db.
-        while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
-          await Utils.delay(1)
-        }
+        // The previous run has to be quiet before the resumed one takes over the
+        // shared persistence, else the two race against the same db.
+        await stop()
         await make(
           ~chains,
           ~config=?customConfig,

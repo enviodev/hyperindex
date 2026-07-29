@@ -81,10 +81,13 @@ describe("Storage column naming (snake_case)", () => {
   })
 
   it("creates indexes with db column names", t => {
-    let query = PgStorage.makeCreateTableIndexesQuery(snapshotEntity.table, ~pgSchema="test_schema")
+    let definition =
+      PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
     t.expect(
-      query,
-    ).toBe(`CREATE INDEX IF NOT EXISTS "Snapshot_transaction_index" ON "test_schema"."Snapshot"("transaction_index");`)
+      definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
+    ).toBe(
+      `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."Snapshot"("transaction_index");`,
+    )
   })
 
   it("references db column names in the insert query", t => {
