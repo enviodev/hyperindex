@@ -195,6 +195,50 @@ describe("AddressStore", () => {
     ).toEqual([AddressStore.Conflict({existingContractName: "A"})])
   })
 
+  it("drops config addresses the store rejects, without failing startup", t => {
+    // Config addresses go through the same verdicts as dynamic ones, so a
+    // config listing one address under two contracts (or a malformed one) has
+    // to leave the chain indexing what it can rather than throwing.
+    let addresses = [
+      contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1),
+      // Already held by A.
+      contract(~address=addr(0), ~contractName="B", ~registrationBlock=-1),
+      contract(~address="not-an-address"->Utils.magic, ~contractName="B", ~registrationBlock=-1),
+      contract(~address=addr(1), ~contractName="B", ~registrationBlock=-1),
+    ]
+    let store = AddressStore.make(
+      ~ecosystem=Evm,
+      ~shouldChecksum=true,
+      ~contracts=AddressStore.contractsOf(~onEventRegistrations),
+    )
+    let fetchState = FetchState.make(
+      ~onEventRegistrations,
+      ~addressStore=store,
+      ~addresses,
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~maxOnBlockBufferSize=10,
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=100,
+    )
+    t.expect({
+      "addressesOfA": store->AddressStore.contractAddresses("A"),
+      // Only the address B actually won; the conflicting and the malformed
+      // ones are gone.
+      "addressesOfB": store->AddressStore.contractAddresses("B"),
+      "size": store->AddressStore.size,
+      // Both survivors are config addresses starting at block 0, so they share
+      // one partition — the point is that startup got that far at all.
+      "partitions": fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count,
+    }).toEqual({
+      "addressesOfA": [addr(0)],
+      "addressesOfB": [addr(1)],
+      "size": 2,
+      "partitions": 1,
+    })
+  })
+
   it("builds the same sets whatever order the addresses arrive in", t => {
     // A restored indexer registers everything in one batch and in a different
     // order than a live run did; the partitions it rebuilds must be identical.
