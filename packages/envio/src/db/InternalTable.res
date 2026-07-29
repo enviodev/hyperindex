@@ -164,6 +164,22 @@ SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
+  // Written only once every schema-defined index is verified, so a chain is
+  // never reported ready without the indexes the schema promises. One row at a
+  // time, like `setMeta`: the id column is INTEGER or BIGINT depending on the
+  // configured `ChainId.mode`, and a bare `= $2` needs no cast either way.
+  //
+  // `IS NULL` so a chain keeps the timestamp it first caught up at, matching the
+  // sticky in-memory `ChainState.markReady`. Without it a partial recovery (eg a
+  // chain added to an already-synced indexer) would restamp the ready chains in
+  // the database while their in-memory copies kept the old value — and the next
+  // chain-metadata write would push the stale value back over the committed one.
+  let makeSetReadyAtQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#ready_at: field :> string)}" = $1
+WHERE "${(#id: field :> string)}" = $2
+  AND "${(#ready_at: field :> string)}" IS NULL;`
+
   type rawInitialState = {
     id: ChainId.t,
     startBlock: int,

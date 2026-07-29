@@ -459,7 +459,7 @@ let parseEntitiesFromJson = (
         )
       )
 
-    let compositeIndices =
+    let compositeIndexes =
       entityJson["compositeIndices"]
       ->Option.getOr([])
       ->Array.map(ci =>
@@ -474,7 +474,7 @@ let parseEntitiesFromJson = (
     let table = Table.mkTable(
       entityName,
       ~fields=Array.concat(fields, derivedFields),
-      ~compositeIndices,
+      ~compositeIndexes,
       ~description=?entityJson["description"],
     )
 

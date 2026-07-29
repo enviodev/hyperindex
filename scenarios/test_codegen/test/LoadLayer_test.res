@@ -455,7 +455,7 @@ describe("LoadLayer", () => {
   })
 
   Async.it(
-    "Distributes db rows of the merged query to the matching filter indices",
+    "Distributes db rows of the merged query to the matching filter indexes",
     async t => {
       let user = (id, address): Indexer.Entities.User.t => {
         id,
