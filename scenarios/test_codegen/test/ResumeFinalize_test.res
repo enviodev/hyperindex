@@ -30,6 +30,14 @@ let persistedChains = async () => {
   })
 }
 
+let persistedReadyAt = async () => {
+  let rows: array<{"ready_at": Null.t<Date.t>}> =
+    await sql->Postgres.unsafe(
+      `SELECT "ready_at" FROM "${Env.Db.publicSchema}"."envio_chains" ORDER BY "id";`,
+    )
+  rows->Array.map(row => row["ready_at"]->Null.toOption->Option.map(Date.toISOString))
+}
+
 let clearReadyAt = async () => {
   let _ = await sql->Postgres.unsafe(
     `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "ready_at" = NULL;`,
@@ -106,6 +114,56 @@ describe("Resuming a backfill that never finalized", () => {
       true,
       [{value: "1", labels: dict{"chainId": "1337"}}],
     ))
+
+    // Catching up here flips the chain to realtime, which changes the source
+    // waitForNewBlock parks on. Fetching started before processing did, so the
+    // waiter in flight is bound to the pre-realtime source and has to be
+    // replaced rather than left to time out. Counts unresolved calls across both
+    // runs: 3 are parked without the handoff, the 4th is the re-parked waiter.
+    t.expect(
+      sourceMock.getHeightOrThrowCalls->Array.length,
+      ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
+    ).toEqual(4)
+  })
+
+  // Every restart used to clear the in-memory readiness timestamps, so an
+  // indexer that had already finalized looked unready and built its indexes and
+  // stamped `ready_at` again on every boot.
+  Async.it("Leaves a restart that is already ready alone", async t => {
+    let (finalizeCalls, mapStorage) = makeFlakyFinalize(~failCount=0)
+
+    let sourceMock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+      ~chain=#1337,
+    )
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+      ~shouldRollbackOnReorg=false,
+      ~mapStorage,
+      ~onError=_ => (),
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+    await indexerMock.getBatchWritePromise()
+    await indexerMock.waitUntilReady()
+
+    let readyAtBefore = await persistedReadyAt()
+    t.expect(
+      (finalizeCalls.contents, await persistedChains()),
+      ~message="The first run finalized normally",
+    ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: true}]))
+
+    let restarted = await indexerMock.restart()
+    await Utils.delay(50)
+
+    t.expect(
+      (finalizeCalls.contents, await persistedReadyAt(), await restarted.metric("envio_progress_ready")),
+      ~message="A restart inherits the readiness it already earned",
+    ).toEqual((1, readyAtBefore, [{value: "1", labels: dict{"chainId": "1337"}}]))
   })
 
   // Same crash, but "caught up" is the configured endBlock rather than a live

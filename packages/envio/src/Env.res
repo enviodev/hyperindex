@@ -3,9 +3,6 @@
 
 %%private(let envSafe = EnvSafe.make())
 
-// resets the timestampCaughtUpToHeadOrEndblock after a restart when true
-let updateSyncTimeOnRestart =
-  envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 

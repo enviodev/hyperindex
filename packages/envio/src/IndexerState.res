@@ -265,12 +265,11 @@ let makeFromDbState = (
     )
   }
 
-  // updateSyncTimeOnRestart wipes the saved timestamp so a restart re-enters
-  // backfill mode for all chains.
+  // `ready_at` is durable: a chain that once caught up resumes realtime, and the
+  // deferred indexes committed alongside that stamp are not owed again.
   let isRealtime =
-    !Env.updateSyncTimeOnRestart &&
     initialState.chains->Array.length > 0 &&
-    initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
+      initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {

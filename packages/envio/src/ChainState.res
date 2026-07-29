@@ -363,9 +363,7 @@ let makeFromDbState = (
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,
     ~progressBlockNumber,
-    ~timestampCaughtUpToHeadOrEndblock=Env.updateSyncTimeOnRestart
-      ? None
-      : resumedChainState.timestampCaughtUpToHeadOrEndblock,
+    ~timestampCaughtUpToHeadOrEndblock=resumedChainState.timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=resumedChainState.numEventsProcessed,
     ~logger,
     ~isInReorgThreshold,
