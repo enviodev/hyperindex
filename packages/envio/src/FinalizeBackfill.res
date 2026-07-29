@@ -1,13 +1,12 @@
-// The FinalizingIndexes phase. Runs once, from the processing loop, when every
+// The FinalizingIndexes phase. Reached from the processing loop when every
 // chain has caught up: processing is already paused (the loop awaits this),
-// pending writes are flushed, then storage creates every missing schema-defined
-// index and stamps `ready_at` in one transaction. A failure rolls back both and
-// reaches the processing loop's error boundary, which stops the indexer — the
-// rollback leaves nothing half-done, so a restart picks the work up cleanly.
-// Either way the indexer never reports ready with an index the schema promised
-// still missing.
+// pending writes are flushed, then storage builds every missing schema-defined
+// index and, once they all verify, commits `ready_at`. A failure part-way
+// leaves the indexes built so far in place and reaches the processing loop's
+// error boundary; the retry only owes what's left. Either way the indexer never
+// reports ready with an index the schema promised still missing.
 
-let run = async (state: IndexerState.t) => {
+let runOnce = async (state: IndexerState.t) => {
   Logging.info(
     "All chains are caught up. Finalizing the indexer before switching to realtime: flushing pending writes, then creating the indexes the schema promises.",
   )
@@ -30,10 +29,25 @@ let run = async (state: IndexerState.t) => {
       ~readyAt,
     )
 
+    // Only after the commit: in-memory readiness must never run ahead of the
+    // `ready_at` a restart would read back.
     state->IndexerState.markReady(~readyAt)
     Logging.info("The indexer is ready. Switching to realtime indexing.")
   }
 }
+
+// Several paths reach the phase — a processed batch, a tick that progressed
+// nothing — and a height update can bring another one round while the first is
+// still building. They all join the in-flight run rather than starting a second
+// pass over the same indexes.
+let run = (state: IndexerState.t) =>
+  switch state->IndexerState.finalizeFiber {
+  | Some(fiber) => fiber
+  | None =>
+    let fiber = runOnce(state)->Promise.finally(() => state->IndexerState.endFinalizeFiber)
+    state->IndexerState.beginFinalizeFiber(fiber)
+    fiber
+  }
 
 // An indexer resumed already ready never reaches `run`, so nothing above would
 // notice an index the schema promises being dropped or invalidated while it was

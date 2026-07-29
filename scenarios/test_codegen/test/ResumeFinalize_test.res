@@ -130,6 +130,8 @@ describe("Resuming a backfill that never finalized", () => {
       sourceMock.getHeightOrThrowCalls->Array.length,
       ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
     ).toEqual(4)
+
+    await restarted.stop()
   })
 
   // Every restart used to clear the in-memory readiness timestamps, so an
@@ -170,6 +172,8 @@ describe("Resuming a backfill that never finalized", () => {
       (finalizeCalls.contents, await persistedReadyAt(), await restarted.metric("envio_progress_ready")),
       ~message="A restart inherits the readiness it already earned",
     ).toEqual((1, readyAtBefore, [{value: "1", labels: dict{"chainId": "1337"}}]))
+
+    await restarted.stop()
   })
 
   // Same crash, but "caught up" is the configured endBlock rather than a live
@@ -221,6 +225,8 @@ describe("Resuming a backfill that never finalized", () => {
       true,
       [{value: "1", labels: dict{"chainId": "1337"}}],
     ))
+
+    await restarted.stop()
   })
 
   // Two chains at different heads: neither is allowed to hold finalization back
@@ -281,6 +287,8 @@ describe("Resuming a backfill that never finalized", () => {
       true,
       [{value: "1", labels: dict{"chainId": "1"}}, {value: "1", labels: dict{"chainId": "1337"}}],
     ))
+
+    await restarted.stop()
   })
 
   // The head doesn't stand still while an indexer is down. The resumed run's
@@ -332,6 +340,8 @@ describe("Resuming a backfill that never finalized", () => {
       (finalizeCalls.contents, await persistedChains(), await hasIndex(aBIdIndex)),
       ~message="Readiness is owed to the progress that was committed, not to the current head",
     ).toEqual((2, [{id: 1337, progressBlock: 100, isReady: true}], true))
+
+    await restarted.stop()
   })
 
   // The indexes committed, then readiness was lost before it could be observed.
@@ -383,6 +393,8 @@ describe("Resuming a backfill that never finalized", () => {
       true,
       [{value: "1", labels: dict{"chainId": "1337"}}],
     ))
+
+    await restarted.stop()
   })
 
   // Durable readiness means an already-ready indexer never runs the finalize
@@ -431,6 +443,8 @@ describe("Resuming a backfill that never finalized", () => {
       (finalizeCalls.contents, await hasIndex(aBIdIndex), await persistedReadyAt()),
       ~message="The index is restored without re-running finalization or moving readiness",
     ).toEqual((1, true, readyAtBefore))
+
+    await restarted.stop()
   })
 
   // The realtime handoff bumps the epoch, which makes every in-flight response
@@ -523,6 +537,8 @@ describe("Resuming a backfill that never finalized", () => {
       sourceMock.getItemsOrThrowCalls->Utils.Array.notEmpty,
       ~message="A discarded response must not leave the partition holding a pending query",
     ).toEqual(true)
+
+    await restarted.stop()
   })
 
   // A chain added to an already-synced indexer resumes with `ready_at` on every
@@ -591,5 +607,7 @@ describe("Resuming a backfill that never finalized", () => {
       Some(true),
       [{value: "1", labels: dict{"chainId": "1"}}, {value: "1", labels: dict{"chainId": "1337"}}],
     ))
+
+    await restarted.stop()
   })
 })

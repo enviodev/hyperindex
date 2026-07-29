@@ -44,13 +44,23 @@ let method = (entry: IndexCatalog.entry) => entry.method
 let aBIdIndex = IndexDefinition.single(~tableName="A", ~column="b_id")
 let aBIdIndexName = aBIdIndex->IndexDefinition.name
 
-let readyAtByChainId = async () => {
+let readyAtRows = async () => {
   let rows: array<{"id": int, "ready_at": Null.t<Date.t>}> =
     await sql->Postgres.unsafe(
       `SELECT "id", "ready_at" FROM "${Env.Db.publicSchema}"."envio_chains" ORDER BY "id";`,
     )
-  rows->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
+  rows
 }
+
+let readyAtByChainId = async () =>
+  (await readyAtRows())->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
+
+// Timestamps rather than flags, for the chains that have to share one.
+let readyAtTimesByChainId = async () =>
+  (await readyAtRows())->Array.map(row => (
+    row["id"],
+    row["ready_at"]->Null.toOption->Option.map(Date.toISOString),
+  ))
 
 describe("Deferred schema indexes", () => {
   Async.it(
@@ -104,6 +114,8 @@ describe("Deferred schema indexes", () => {
         (await indexNames(), await readyAtByChainId()),
         ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
       ).toEqual((indexesBeforeRestart, [(1337, true)]))
+
+      await restarted.stop()
     },
   )
 
@@ -149,6 +161,135 @@ describe("Deferred schema indexes", () => {
         await readyAtByChainId(),
       ),
     ).toEqual(([aBIdIndexName], [(1337, true)]))
+
+    await indexerMock.stop()
+  })
+
+  // Every scheduling path that reaches the FinalizingIndexes phase joins the
+  // in-flight run. Without that, a fetch response landing while the indexes are
+  // being built starts a second pass over the same schema.
+  Async.it("Finalize once however many ticks reach the phase", async t => {
+    let gate = MockIndexer.Gate.make()
+    let finalizeCalls = ref(0)
+    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
+      ~shouldRollbackOnReorg=false,
+      ~mapStorage=storage => {
+        ...storage,
+        finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+          finalizeCalls := finalizeCalls.contents + 1
+          gate.wait()->Promise.then(() =>
+            storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+          )
+        },
+      },
+    )
+    await Utils.delay(0)
+
+    sourceMock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+    while gate.entered.contents === 0 {
+      await Utils.delay(0)
+    }
+
+    t.expect(
+      (finalizeCalls.contents, await indexerMock.metric("envio_progress_ready")),
+      ~message="Finalization is under way and nothing is ready while it is held",
+    ).toEqual((1, [{value: "0", labels: dict{"chainId": "1337"}}]))
+
+    // A height update while the build is held: the chain fetches the new range
+    // and its response schedules processing again.
+    sourceMock.resolveGetHeightOrThrow(200)
+    await MockIndexer.Helper.waitItemsQuery(sourceMock)
+    sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
+    let ticks = ref(0)
+    while ticks.contents < 20 {
+      ticks := ticks.contents + 1
+      await Utils.delay(0)
+    }
+
+    t.expect(
+      (finalizeCalls.contents, await indexerMock.metric("envio_progress_ready")),
+      ~message="The new tick joins the in-flight finalization instead of starting another",
+    ).toEqual((1, [{value: "0", labels: dict{"chainId": "1337"}}]))
+
+    gate.release()
+    await indexerMock.waitUntilReady()
+
+    t.expect(
+      (finalizeCalls.contents, await indexerMock.metric("envio_progress_ready")),
+      ~message="Releasing the build is what makes the indexer ready",
+    ).toEqual((1, [{value: "1", labels: dict{"chainId": "1337"}}]))
+
+    await indexerMock.stop()
+  })
+
+  // Readiness is a whole-indexer transition: one chain reaching its head means
+  // nothing while another is still backfilling.
+  Async.it("Wait for every chain before finalizing, and stamp them together", async t => {
+    let finalizeCalls = ref(0)
+    let chainA = MockIndexer.Source.make(~chain=#100, [#getHeightOrThrow, #getItemsOrThrow])
+    let chainB = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~chains=[
+        {chain: #100, sourceConfig: Config.CustomSources([chainA.source])},
+        {chain: #1337, sourceConfig: Config.CustomSources([chainB.source])},
+      ],
+      ~shouldRollbackOnReorg=false,
+      ~mapStorage=storage => {
+        ...storage,
+        finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+          finalizeCalls := finalizeCalls.contents + 1
+          storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+        },
+      },
+    )
+    await Utils.delay(0)
+
+    chainA.resolveGetHeightOrThrow(100)
+    chainB.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    await Utils.delay(0)
+
+    await MockIndexer.Helper.waitItemsQuery(chainA)
+    chainA.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+    await indexerMock.getBatchWritePromise()
+
+    t.expect(
+      (finalizeCalls.contents, await readyAtByChainId()),
+      ~message="Chain A is at its head, but chain B is still backfilling",
+    ).toEqual((0, [(100, false), (1337, false)]))
+
+    await MockIndexer.Helper.waitItemsQuery(chainB)
+    chainB.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+    await indexerMock.waitUntilReady()
+
+    let readyAtTimes = await readyAtTimesByChainId()
+    let times = readyAtTimes->Array.map(((_, readyAt)) => readyAt)
+    t.expect(
+      (
+        finalizeCalls.contents,
+        readyAtTimes->Array.map(((id, _)) => id),
+        times->Array.every(Option.isSome),
+        times->Array.get(0) == times->Array.get(1),
+        await indexerMock.metric("envio_progress_ready"),
+      ),
+      ~message="Both chains are stamped with the same timestamp by a single finalization",
+    ).toEqual((
+      1,
+      [100, 1337],
+      true,
+      true,
+      [
+        {value: "1", labels: dict{"chainId": "100"}},
+        {value: "1", labels: dict{"chainId": "1337"}},
+      ],
+    ))
+
+    await indexerMock.stop()
   })
 
   // The false-ready bug: `A_b_id` was the name the indexer picked for
@@ -195,6 +336,8 @@ describe("Deferred schema indexes", () => {
       aIndexes->Array.map(entry => entry.name),
       ~message="The generated name can't be the one an unrelated index took",
     ).toEqual([aBIdIndexName])
+
+    await indexerMock.stop()
   })
 })
 

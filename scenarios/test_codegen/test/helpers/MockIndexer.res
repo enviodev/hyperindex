@@ -459,6 +459,9 @@ module Indexer = {
       ~scope: Internal.chainScope,
     ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
+    // Quiesce the run: its loops keep driving the shared database otherwise, and
+    // a later test resetting the schema would take their writes into it.
+    stop: unit => promise<unit>,
     restart: unit => promise<t>,
     graphql: 'data. string => promise<graphqlResponse<'data>>,
   }
@@ -611,6 +614,17 @@ module Indexer = {
       ~onExit?,
     )
     state->IndexerLoop.start
+
+    // Persist before stopping, else a resumed indexer loses uncommitted state,
+    // then let any in-flight batch or write settle so nothing from this run
+    // lands on the shared database afterwards.
+    let stop = async () => {
+      await state->Writing.flush
+      state->IndexerState.stop
+      while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
+        await Utils.delay(1)
+      }
+    }
 
     {
       getBatchWritePromise: () => {
@@ -845,18 +859,11 @@ module Indexer = {
           }
         )
       },
+      stop,
       restart: async () => {
-        // Persist before restarting, else the resumed indexer loses uncommitted state.
-        await state->Writing.flush
-        // Stop the previous run's loops so they don't keep driving the shared db
-        // once the resumed indexer takes over.
-        state->IndexerState.stop
-        // Let any in-flight batch or write from the stopped run settle before the
-        // resumed indexer takes over the shared persistence, else the two runs
-        // race against the same db.
-        while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
-          await Utils.delay(1)
-        }
+        // The previous run has to be quiet before the resumed one takes over the
+        // shared persistence, else the two race against the same db.
+        await stop()
         await make(
           ~chains,
           ~config=?customConfig,
