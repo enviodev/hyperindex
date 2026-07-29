@@ -6,7 +6,6 @@ expression: json
   "version": "0.0.1-dev",
   "name": "config1",
   "description": "Gravatar for Ethereum",
-  "chainIdMode": "int32",
   "storage": {
     "postgres": true
   },

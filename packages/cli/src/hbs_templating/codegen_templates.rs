@@ -977,6 +977,11 @@ impl ProjectTemplate {
         &self.envio_types_dts
     }
 
+    /// The generated `Indexer.res` contents (the project's ReScript surface).
+    pub fn indexer_code(&self) -> &str {
+        &self.indexer_code
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.
@@ -3507,47 +3512,6 @@ type Vault {
                 "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
             );
         }
-    }
-
-    #[test]
-    fn indexer_code_chain_id_type_follows_chain_id_mode() {
-        let yaml_for = |chain_id: &str| {
-            format!(
-                r#"
-name: chain-id-mode
-chains:
-  - id: {chain_id}
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-"#
-            )
-        };
-        let schema = "type Transfer {\n  id: ID!\n}\n";
-        let indexer_code_for = |chain_id: &str| {
-            let config = SystemConfig::parse_yaml(
-                &yaml_for(chain_id),
-                Some(schema),
-                &HashMap::new(),
-                &HashMap::new(),
-                false,
-            )
-            .expect("config should parse");
-            super::ProjectTemplate::from_config(&config)
-                .expect("project template")
-                .indexer_code
-        };
-
-        let int32 = indexer_code_for("2147483647");
-        assert!(int32.contains("type chainId = [#2147483647]"), "{int32}");
-        assert!(int32.contains("| #2147483647 => indexer.chains.\\\"2147483647\""));
-
-        // ReScript integer polyvariants can't hold an id above int32, so the
-        // wide config falls back to the opaque runtime representation.
-        let int64 = indexer_code_for("2494104990");
-        assert!(int64.contains("type chainId = ChainId.t"), "{int64}");
-        assert!(int64.contains("chainId->ChainId.toString"), "{int64}");
     }
 
     #[test]

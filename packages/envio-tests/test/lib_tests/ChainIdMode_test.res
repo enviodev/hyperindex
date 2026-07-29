@@ -94,6 +94,31 @@ describe("ChainIdMode resolution", () => {
   })
 })
 
+describe("ChainIdMode public config JSON", () => {
+  let rawConfigJson = (~id) =>
+    Core.fromUserApi(
+      ~schema,
+      `
+name: raw-json
+chains:
+${evmChain(~id)}
+`,
+    ).config->JSON.parseOrThrow
+
+  let chainIdModeKey = json =>
+    switch json {
+    | JSON.Object(dict) => dict->Dict.get("chainIdMode")
+    | _ => None
+    }
+
+  it("omits the key on Int32 so existing configs keep the same fingerprint", t => {
+    t.expect((
+      rawConfigJson(~id="2147483647")->chainIdModeKey,
+      rawConfigJson(~id="2147483648")->chainIdModeKey,
+    )).toEqual((None, Some(JSON.String("int64"))))
+  })
+})
+
 describe("ChainIdMode Postgres schema", () => {
   it("keeps INTEGER chain-id columns for small-id projects", t => {
     t.expect((
@@ -185,6 +210,41 @@ describe("ChainId runtime representation", () => {
   })
 })
 
+// The ReScript `chainId` type is the one generated surface that changes with
+// the mode, so assert on the generated code rather than the config JSON.
+let generatedRescript = (~id) =>
+  Core.fromUserApi(
+    ~schema,
+    ~withIndexerTypes=true,
+    `
+name: generated-rescript
+chains:
+${evmChain(~id)}
+`,
+  ).indexerCode->Null.getOrThrow
+
+describe("ChainIdMode generated ReScript surface", () => {
+  it("keeps the polyvariant union and its exhaustive match for int32 ids", t => {
+    let code = generatedRescript(~id="2147483647")
+    t.expect((
+      code->String.includes("type chainId = [#2147483647]"),
+      code->String.includes("switch chainId {\n  | #2147483647 => indexer.chains."),
+      code->String.includes("type chainId = ChainId.t"),
+    )).toEqual((true, true, false))
+  })
+
+  it("falls back to ChainId.t when an id exceeds int32", t => {
+    // ReScript integer polyvariants are int32-bound, so a wide config can't use
+    // them — getChainById becomes a keyed lookup instead of an exhaustive match.
+    let code = generatedRescript(~id="2494104990")
+    t.expect((
+      code->String.includes("type chainId = ChainId.t"),
+      code->String.includes("->Dict.get(chainId->ChainId.toString)"),
+      code->String.includes("type chainId = [#"),
+    )).toEqual((true, true, false))
+  })
+})
+
 describe("ChainIdMode generated TypeScript surface", () => {
   it("keeps chain.id a number and the id union a numeric literal union", _ =>
     InternalTestIndexer.fromUserApi(
@@ -207,9 +267,14 @@ expectType<number>(indexer.chains[2494104990].id);
 
 describe("ChainIdMode compat check", () => {
   it("reports a stored/current mode mismatch on its own", t => {
-    let stored = `{"version": "1.0.0", "chainIdMode": "int32", "name": "demo"}`->JSON.parseOrThrow
-    let current = `{"version": "1.0.0", "chainIdMode": "int64", "name": "demo"}`->JSON.parseOrThrow
-    t.expect(Config.diffPaths(~stored, ~current)).toEqual(["chainIdMode"])
+    // Int32 omits the key entirely, so widening shows up as an added key.
+    let int32 = `{"version": "1.0.0", "name": "demo"}`->JSON.parseOrThrow
+    let int64 = `{"version": "1.0.0", "chainIdMode": "int64", "name": "demo"}`->JSON.parseOrThrow
+    t.expect((
+      Config.diffPaths(~stored=int32, ~current=int64),
+      Config.diffPaths(~stored=int64, ~current=int32),
+      Config.diffPaths(~stored=int32, ~current=int32),
+    )).toEqual((["chainIdMode"], ["chainIdMode"], []))
   })
 
   it("fails the resume with the standard incompatible-config message", t => {

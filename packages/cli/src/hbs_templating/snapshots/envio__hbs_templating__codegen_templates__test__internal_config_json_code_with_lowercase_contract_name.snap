@@ -6,7 +6,6 @@ expression: json
   "version": "0.0.1-dev",
   "name": "lowercase-contract-name",
   "description": "Test config with lowercase contract name",
-  "chainIdMode": "int32",
   "storage": {
     "postgres": true
   },

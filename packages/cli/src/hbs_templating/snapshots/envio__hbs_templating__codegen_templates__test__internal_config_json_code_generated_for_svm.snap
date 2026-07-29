@@ -5,7 +5,6 @@ expression: json
 {
   "version": "0.0.1-dev",
   "name": "Solana indexer",
-  "chainIdMode": "int32",
   "storage": {
     "postgres": true
   },

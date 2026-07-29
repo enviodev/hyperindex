@@ -20,6 +20,13 @@ fn is_false(v: &bool) -> bool {
     !v
 }
 
+// Int32 is what every config predating the field implies, so omitting it keeps
+// the JSON — and therefore the persisted envio_info fingerprint — byte-identical
+// for small-id projects.
+fn is_default_chain_id_mode(v: &ChainIdMode) -> bool {
+    matches!(v, ChainIdMode::Int32)
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PublicConfigJson<'a> {
@@ -39,6 +46,7 @@ pub(crate) struct PublicConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    #[serde(skip_serializing_if = "is_default_chain_id_mode")]
     chain_id_mode: ChainIdMode,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
