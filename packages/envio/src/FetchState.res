@@ -100,6 +100,33 @@ type query = {
 
 let withAddresses = (p: partition, addresses: AddressSet.t) => {...p, addresses}
 
+// The selection a query over [fromBlock, toBlock] actually needs: a registration
+// whose own start block sits past the range can't produce an item there, so
+// leaving it out keeps the source from asking the server for its logs at all.
+// The address gate can't express this — it's contract-wide, so an unrestricted
+// sibling holds it open from the chain start for every registration alike.
+//
+// Returns the selection as-is when nothing is dropped (the common case) and when
+// everything would be, which happens only for an address-free partition sitting
+// below every one of its registrations' start blocks — there the query is
+// wasteful either way, and an empty selection is one no source can build.
+let narrowSelectionToRange = (selection: selection, ~toBlock) =>
+  switch toBlock {
+  | None => selection
+  | Some(toBlock) =>
+    let inRange = selection.onEventRegistrations->Array.filter(reg =>
+      switch reg.startBlock {
+      | Some(startBlock) => startBlock <= toBlock
+      | None => true
+      }
+    )
+    switch inRange->Array.length {
+    | 0 => selection
+    | length if length === selection.onEventRegistrations->Array.length => selection
+    | _ => {...selection, onEventRegistrations: inRange}
+    }
+  }
+
 // itemsEst for a query over [fromBlock, toBlock] at the given event density
 // (items/block). toBlock None is the open-ended tail, capped at
 // chainTargetBlock — the soft per-tick horizon the owning chain wants to reach
@@ -2520,9 +2547,35 @@ let make = (
   let partitions = []
 
   if notDependingOnAddresses->Array.length > 0 {
+    // An address-dependent partition starts at its addresses' effective start
+    // block; an address-free one has no addresses to derive that from, so it
+    // takes the earliest start block its own registrations declare. Without
+    // this a single wildcard event filtered to a late block still queries every
+    // block from the chain start.
+    // One unrestricted registration keeps the partition at the chain start, the
+    // same way it keeps a contract's address gate open.
+    let earliestStartBlock = if (
+      notDependingOnAddresses->Array.some(reg => reg.startBlock->Option.isNone)
+    ) {
+      None
+    } else {
+      notDependingOnAddresses->Array.reduce(None, (earliest, reg) =>
+        switch (earliest, reg.startBlock) {
+        | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
+        | (None, startBlock) => startBlock
+        | (earliest, None) => earliest
+        }
+      )
+    }
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
-      latestFetchedBlock,
+      latestFetchedBlock: switch earliestStartBlock {
+      | Some(startBlock) => {
+          ...latestFetchedBlock,
+          blockNumber: Pervasives.max(startBlock - 1, latestFetchedBlock.blockNumber),
+        }
+      | None => latestFetchedBlock
+      },
       selection: {
         dependsOnAddresses: false,
         onEventRegistrations: notDependingOnAddresses,
