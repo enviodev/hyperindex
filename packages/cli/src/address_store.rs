@@ -20,9 +20,6 @@ use napi_derive::napi;
 
 use crate::field_columns::Ecosystem;
 
-/// A registration that hasn't been given an id yet — the store is empty of it.
-const NO_ID: u64 = u64::MAX;
-
 /// Binary form of an address, the identity the store keys on.
 ///
 /// EVM and Fuel addresses are hex-decoded (20 and 32 bytes), so a checksummed
@@ -167,6 +164,19 @@ impl StoreInner {
         ids.sort_unstable_by(|&a, &b| self.sort_key(a).cmp(&self.sort_key(b)));
         ids
     }
+
+    /// Live ids from `min_id` up that `keep` accepts, in set order. Every
+    /// selection the store makes runs through here, so "skips tombstones,
+    /// comes out sorted" is one rule rather than four copies of a scan.
+    fn sorted_live_ids(&self, min_id: u64, keep: impl Fn(&Entry) -> bool) -> Vec<u64> {
+        let ids = (min_id..self.entries.len() as u64)
+            .filter(|&id| {
+                let entry = self.entry(id);
+                !entry.dead && keep(entry)
+            })
+            .collect();
+        self.sorted_ids(ids)
+    }
 }
 
 /// Contract this chain has events for, with the earliest block any of its
@@ -303,21 +313,16 @@ impl AddressStore {
             None => Vec::new(),
             Some(contract_idx) => {
                 let min_id = options.min_id.unwrap_or(0).max(0) as u64;
-                let mut ids: Vec<u64> = (min_id..store.entries.len() as u64)
-                    .filter(|&id| {
-                        let entry = store.entry(id);
-                        !entry.dead
-                            && entry.contract_idx == contract_idx
-                            && options
-                                .from_start_block
-                                .is_none_or(|from| entry.effective_start_block >= from)
-                            && options
-                                .to_start_block
-                                .is_none_or(|to| entry.effective_start_block <= to)
-                    })
-                    .collect();
-                ids = store.sorted_ids(ids);
-                apply_window(ids, options.offset, options.limit)
+                let ids = store.sorted_live_ids(min_id, |entry| {
+                    entry.contract_idx == contract_idx
+                        && options
+                            .from_start_block
+                            .is_none_or(|from| entry.effective_start_block >= from)
+                        && options
+                            .to_start_block
+                            .is_none_or(|to| entry.effective_start_block <= to)
+                });
+                apply_window(&ids, options.offset, options.limit)
             }
         };
         drop(store);
@@ -357,13 +362,8 @@ impl AddressStore {
         let Some(contract_idx) = store.contract_idx(&contract_name) else {
             return Vec::new();
         };
-        let ids: Vec<u64> = (0..store.entries.len() as u64)
-            .filter(|&id| {
-                let entry = store.entry(id);
-                !entry.dead && entry.contract_idx == contract_idx
-            })
-            .collect();
-        group_start_blocks(&store, &store.sorted_ids(ids))
+        let ids = store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx);
+        group_start_blocks(&store, &ids)
     }
 
     #[napi]
@@ -461,30 +461,17 @@ impl AddressStore {
         let store = self.read();
         let mut out: Vec<String> = match store.contract_idx(&contract_name) {
             None => Vec::new(),
-            Some(contract_idx) => {
-                let ids: Vec<u64> = (0..store.entries.len() as u64)
-                    .filter(|&id| {
-                        let entry = store.entry(id);
-                        !entry.dead && entry.contract_idx == contract_idx
-                    })
-                    .collect();
-                store
-                    .sorted_ids(ids)
-                    .into_iter()
-                    .map(|id| address_string(store.ecosystem, &store.entry(id).key))
-                    .collect()
-            }
+            Some(contract_idx) => store
+                .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
+                .into_iter()
+                .map(|id| address_string(store.ecosystem, &store.entry(id).key))
+                .collect(),
         };
-        // No-events entries have no id to order by, so they follow, ordered by
-        // their own key to keep the listing reproducible.
-        let mut no_events: Vec<String> = store
-            .no_events
-            .iter()
-            .filter(|(_, entry)| entry.contract_name == contract_name)
-            .map(|(key, _)| address_string(store.ecosystem, key))
-            .collect();
-        no_events.sort();
-        out.append(&mut no_events);
+        out.extend(
+            sorted_no_events_keys(&store, |entry| entry.contract_name == contract_name)
+                .into_iter()
+                .map(|key| address_string(store.ecosystem, key)),
+        );
         out
     }
 
@@ -493,11 +480,8 @@ impl AddressStore {
     #[napi]
     pub fn entries(&self) -> Vec<AddressEntry> {
         let store = self.read();
-        let live: Vec<u64> = (0..store.entries.len() as u64)
-            .filter(|&id| !store.entry(id).dead)
-            .collect();
         let mut out: Vec<AddressEntry> = store
-            .sorted_ids(live)
+            .sorted_live_ids(0, |_| true)
             .into_iter()
             .map(|id| {
                 let entry = store.entry(id);
@@ -509,18 +493,19 @@ impl AddressStore {
                 }
             })
             .collect();
-        let mut no_events: Vec<AddressEntry> = store
-            .no_events
-            .iter()
-            .map(|(key, entry)| AddressEntry {
-                address: address_string(store.ecosystem, key),
-                contract_name: entry.contract_name.clone(),
-                registration_block: entry.registration_block,
-                effective_start_block: entry.effective_start_block,
-            })
-            .collect();
-        no_events.sort_by(|a, b| a.address.cmp(&b.address));
-        out.append(&mut no_events);
+        out.extend(
+            sorted_no_events_keys(&store, |_| true)
+                .into_iter()
+                .map(|key| {
+                    let entry = &store.no_events[key];
+                    AddressEntry {
+                        address: address_string(store.ecosystem, key),
+                        contract_name: entry.contract_name.clone(),
+                        registration_block: entry.registration_block,
+                        effective_start_block: entry.effective_start_block,
+                    }
+                }),
+        );
         out
     }
 }
@@ -629,7 +614,6 @@ impl StoreInner {
             }
             Some(contract_idx) => {
                 let id = self.entries.len() as u64;
-                debug_assert!(id != NO_ID, "address id space exhausted");
                 self.id_by_key.insert(key.clone(), id);
                 self.entries.push(Entry {
                     key,
@@ -650,17 +634,31 @@ impl StoreInner {
     }
 }
 
-fn apply_window(ids: Vec<u64>, offset: Option<i64>, limit: Option<i64>) -> Vec<u64> {
+fn apply_window(ids: &[u64], offset: Option<i64>, limit: Option<i64>) -> Vec<u64> {
     let start = offset.unwrap_or(0).max(0) as usize;
     if start >= ids.len() {
         return Vec::new();
     }
     let end = match limit {
         Some(limit) if limit <= 0 => start,
-        Some(limit) => (start + limit as usize).min(ids.len()),
+        Some(limit) => start.saturating_add(limit as usize).min(ids.len()),
         None => ids.len(),
     };
     ids[start..end].to_vec()
+}
+
+/// No-events keys `keep` accepts, ordered by the same address bytes a live
+/// entry sorts on — they have no id to order by, and the rendered string would
+/// order checksummed EVM addresses differently from the rest of a listing.
+fn sorted_no_events_keys(store: &StoreInner, keep: impl Fn(&NoEventsEntry) -> bool) -> Vec<&Key> {
+    let mut keys: Vec<&Key> = store
+        .no_events
+        .iter()
+        .filter(|(_, entry)| keep(entry))
+        .map(|(key, _)| key)
+        .collect();
+    keys.sort_unstable();
+    keys
 }
 
 /// Ids must already be in set order, so equal start blocks are adjacent.
@@ -725,6 +723,15 @@ impl SetCache {
     }
 }
 
+/// A snapshot: the ids are fixed at construction, so a rollback that tombstones
+/// an entry leaves sets built before it still holding that id. Only
+/// `filter_by_registration_block` prunes those — everything else
+/// (`addresses`, `entries`, `slice`, `merge`, the cache) reports them, on
+/// purpose. A rollback rebuilds the fetch state's partitions from filtered sets
+/// straight after, and a stale set that outlives that still can't fetch a dead
+/// address: `is_indexed_at` answers `false` for it, so every router drops the
+/// items it would bring back. Pruning here instead would shift the offsets
+/// `start_block_groups` hands to `slice` mid-flight.
 #[napi]
 pub struct AddressSet {
     store: Arc<RwLock<StoreInner>>,
@@ -785,7 +792,7 @@ impl AddressSet {
 
     #[napi]
     pub fn slice(&self, offset: i64, limit: Option<i64>) -> AddressSet {
-        let ids = apply_window(self.ids.to_vec(), Some(offset), limit);
+        let ids = apply_window(&self.ids, Some(offset), limit);
         AddressSet::new(self.store.clone(), ids)
     }
 
@@ -793,7 +800,7 @@ impl AddressSet {
     #[napi]
     pub fn filter_by_contracts(&self, contract_names: Vec<String>) -> AddressSet {
         let store = self.store.read().unwrap();
-        let kept: Vec<u32> = contract_names
+        let kept: std::collections::HashSet<u32> = contract_names
             .iter()
             .filter_map(|name| store.contract_idx(name))
             .collect();
@@ -830,7 +837,10 @@ impl AddressSet {
     /// ids collapse, so merging overlapping partitions can't double-count.
     #[napi]
     pub fn merge(&self, other: &AddressSet) -> AddressSet {
-        debug_assert!(
+        // Not a debug assert: ids are store-scoped, so a foreign id silently
+        // indexes into the wrong entry — or out of bounds — and the query
+        // built from the result fetches addresses nobody registered.
+        assert!(
             Arc::ptr_eq(&self.store, &other.store),
             "merging address sets from different stores",
         );
@@ -1004,23 +1014,21 @@ pub(crate) mod test_support {
     /// handle alone, for routing tests that keep only the handle their client
     /// cloned.
     pub(crate) fn full_set(handle: &Arc<RwLock<StoreInner>>) -> AddressSet {
-        let ids = {
-            let store = handle.read().unwrap();
-            let live: Vec<u64> = (0..store.entries.len() as u64)
-                .filter(|&id| !store.entry(id).dead)
-                .collect();
-            store.sorted_ids(live)
-        };
-        AddressSet::new(handle.clone(), ids)
+        let ids = handle.read().unwrap().sorted_live_ids(0, |_| true);
+        let set = AddressSet::new(handle.clone(), ids);
+        let _ = set.cache();
+        set
     }
 
-    /// One set spanning every named contract's addresses.
+    /// One set spanning every named contract's addresses, with its cache
+    /// materialised — routing helpers read the cache while holding the store
+    /// guard, and initialising it there would take the same lock twice.
     pub(crate) fn set_of(store: &AddressStore, contract_names: &[&str]) -> AddressSet {
-        contract_names
-            .iter()
-            .fold(store.make_set(String::new(), None), |acc, name| {
-                acc.merge(&store.make_set(name.to_string(), None))
-            })
+        let set = contract_names.iter().fold(store.empty_set(), |acc, name| {
+            acc.merge(&store.make_set(name.to_string(), None))
+        });
+        let _ = set.cache();
+        set
     }
 }
 
@@ -1320,6 +1328,47 @@ mod tests {
                 vec![A.to_string(), B.to_string()],
             )
         );
+    }
+
+    #[test]
+    fn a_set_built_before_a_rollback_keeps_tombstones_but_cant_fetch_them() {
+        let store = store();
+        store.register_batch(vec![reg(A, "C", 100), reg(B, "C", 500)]);
+        // Cache the set before the rollback too, the way a partition that is
+        // mid-query would have.
+        let before = store.make_set("C".to_string(), None);
+        let _ = before.cache();
+        store.rollback(300);
+        assert_eq!(
+            (
+                // Still listed: only filter_by_registration_block prunes.
+                before.addresses(),
+                before.size(),
+                // But dead to every router, whichever gate it applies.
+                before.contains_at(B.to_string(), "C".to_string(), 600),
+                store.is_indexed_at(B.to_string(), "C".to_string(), 600),
+                before.filter_by_registration_block(300).addresses(),
+            ),
+            (
+                vec![A.to_string(), B.to_string()],
+                2,
+                false,
+                false,
+                vec![A.to_string()],
+            )
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "merging address sets from different stores")]
+    fn merging_sets_from_different_stores_panics() {
+        let left = store();
+        let right = store();
+        left.register_batch(vec![reg(A, "C", 100)]);
+        right.register_batch(vec![reg(B, "C", 100)]);
+        let _ = left
+            .make_set("C".to_string(), None)
+            .merge(&right.make_set("C".to_string(), None));
     }
 
     #[test]

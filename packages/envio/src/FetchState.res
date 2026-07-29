@@ -158,6 +158,10 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
       }
     )
     switch inRange->Array.length {
+    // Every registration starts above the range. Narrowing to nothing would
+    // build a selection with no log filters, which each source reads as
+    // "select everything" — the opposite of the intent. The partition is
+    // queried unnarrowed instead and the routers drop what hasn't started.
     | 0 => selection
     | length if length === selection.onEventRegistrations->Array.length => selection
     | _ =>
@@ -1413,6 +1417,65 @@ let collapseClientFilteredContracts = (
   }
 }
 
+let warnAddressRegistration = (
+  ~chainId: ChainId.t,
+  ~contractAddress: Address.t,
+  ~params,
+  message,
+) =>
+  Logging.createChild(
+    ~params={
+      "chainId": chainId,
+      "contractAddress": contractAddress->Address.toString,
+      "details": params,
+    },
+  )->Logging.childWarn(message)
+
+// A rejected registration is simply absent from every partition, so without a
+// warning the user sees a contract that never indexes and nothing saying why.
+// Shared by config-time registration in `make` and by dynamic registration.
+let warnRejectedRegistration = (
+  verdict: AddressStore.verdict,
+  ~chainId: ChainId.t,
+  ~contractAddress: Address.t,
+  ~contractName: string,
+) =>
+  switch verdict {
+  | Conflict({existingContractName}) =>
+    warnAddressRegistration(
+      ~chainId,
+      ~contractAddress,
+      ~params={
+        "existingContractType": existingContractName,
+        "newContractType": contractName,
+      },
+      `Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`,
+    )
+  | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
+    // FIXME: Instead of filtering out duplicates, we should check the block
+    // number first. If a new registration has an earlier block number we
+    // should register it for the missing block range.
+    if existingEffectiveStartBlock > effectiveStartBlock {
+      warnAddressRegistration(
+        ~chainId,
+        ~contractAddress,
+        ~params={
+          "existingBlockNumber": existingEffectiveStartBlock,
+          "newBlockNumber": effectiveStartBlock,
+        },
+        `Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`,
+      )
+    }
+  | Invalid =>
+    warnAddressRegistration(
+      ~chainId,
+      ~contractAddress,
+      ~params={"contractName": contractName},
+      `Skipping contract registration: Not a valid address for this chain's ecosystem.`,
+    )
+  | Added(_) | NoEvents(_) => ()
+  }
+
 /**
 Creates partitions from indexing addresses with two phases:
 Phase 1: Create per-contract-name partitions (smart grouping by startBlock)
@@ -1659,21 +1722,12 @@ let registerDynamicContracts = (
   // single batch conflict the same way as across batches.
   let verdicts = addressStore->AddressStore.registerBatch(registrations)
 
-  let warn = (~contractAddress, ~params, message) =>
-    Logging.createChild(
-      ~params={
-        "chainId": fetchState.chainId,
-        "contractAddress": contractAddress,
-        "details": params,
-      },
-    )->Logging.childWarn(message)
-
   let registeringContractNames = []
   let hasNoEventsUpdatesRef = ref(false)
   for idx in 0 to verdicts->Array.length - 1 {
     let registration = registrations->Array.getUnsafe(idx)
-    let contractAddress = registration.address->Address.toString
-    let keep = switch verdicts->Array.getUnsafe(idx) {
+    let verdict = verdicts->Array.getUnsafe(idx)
+    let keep = switch verdict {
     | Added(_) =>
       if !(registeringContractNames->Array.includes(registration.contractName)) {
         registeringContractNames->Array.push(registration.contractName)->ignore
@@ -1684,42 +1738,18 @@ let registerDynamicContracts = (
       // Persist the address to the db so a future config change that adds
       // events for this contract can pick it up on restart, but skip partition
       // registration since there's nothing to fetch.
-      warn(
-        ~contractAddress,
+      warnAddressRegistration(
+        ~chainId=fetchState.chainId,
+        ~contractAddress=registration.address,
         ~params={"contractName": registration.contractName},
         `Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`,
       )
       true
-    | Conflict({existingContractName}) =>
-      warn(
-        ~contractAddress,
-        ~params={
-          "existingContractType": existingContractName,
-          "newContractType": registration.contractName,
-        },
-        `Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`,
-      )
-      false
-    | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
-      // FIXME: Instead of filtering out duplicates, we should check the block
-      // number first. If a new registration has an earlier block number we
-      // should register it for the missing block range.
-      if existingEffectiveStartBlock > effectiveStartBlock {
-        warn(
-          ~contractAddress,
-          ~params={
-            "existingBlockNumber": existingEffectiveStartBlock,
-            "newBlockNumber": effectiveStartBlock,
-          },
-          `Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`,
-        )
-      }
-      false
-    | Invalid =>
-      warn(
-        ~contractAddress,
-        ~params={"contractName": registration.contractName},
-        `Skipping contract registration: Not a valid address for this chain's ecosystem.`,
+    | Conflict(_) | Duplicate(_) | Invalid =>
+      verdict->warnRejectedRegistration(
+        ~chainId=fetchState.chainId,
+        ~contractAddress=registration.address,
+        ~contractName=registration.contractName,
       )
       false
     }
@@ -2686,7 +2716,17 @@ let make = (
       registrationBlock: contract.registrationBlock,
     }),
   )
-  ->ignore
+  // Verdicts are in the batch's order, so they line up with `addresses`. A
+  // config address the store rejects is dropped exactly like a dynamic one, and
+  // needs the same warning — restored dynamic addresses come through here too.
+  ->Array.forEachWithIndex((verdict, idx) => {
+    let contract = addresses->Array.getUnsafe(idx)
+    verdict->warnRejectedRegistration(
+      ~chainId,
+      ~contractAddress=contract.address,
+      ~contractName=contract.contractName,
+    )
+  })
 
   let dynamicContracts = Utils.Set.make()
   let clientFilteredContracts = Utils.Set.make()
