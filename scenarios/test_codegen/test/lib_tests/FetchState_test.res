@@ -2351,44 +2351,6 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
   })
 
-  it("Address-free partition starts at its registrations' earliest start block", t => {
-    let makeWildcard = (~id, ~startBlock=?) =>
-      (MockIndexer.evmOnEventRegistration(
-        ~id,
-        ~contractName="Gravatar",
-        ~isWildcard=true,
-        ~startBlock?,
-      ) :> Internal.onEventRegistration)
-
-    let fromBlockOf = onEventRegistrations => {
-      let (fetchState, _) = makeFs(
-        ~onEventRegistrations,
-        ~addresses=[],
-        ~startBlock=0,
-        ~endBlock=None,
-        ~maxAddrInPartition=10,
-        ~maxOnBlockBufferSize=10,
-        ~chainId,
-        ~knownHeight,
-      )
-      (fetchState.optimizedPartitions
-      ->FetchState.OptimizedPartitions.getOrThrow(~partitionId="0")).latestFetchedBlock.blockNumber +
-        1
-    }
-
-    t.expect({
-      // Nothing before block 500 can match, so nothing before it is queried.
-      "restricted": fromBlockOf([
-        makeWildcard(~id="a", ~startBlock=500),
-        makeWildcard(~id="b", ~startBlock=900),
-      ]),
-      // An unrestricted sibling can fire from the chain start, so the partition
-      // still has to cover it.
-      "mixed": fromBlockOf([makeWildcard(~id="a", ~startBlock=500), makeWildcard(~id="b")]),
-      "unrestricted": fromBlockOf([makeWildcard(~id="a")]),
-    }).toEqual({"restricted": 500, "mixed": 0, "unrestricted": 0})
-  })
-
   it("Narrows a query's selection to the registrations its range can match", t => {
     let makeReg = (~id, ~startBlock=?) =>
       (MockIndexer.evmOnEventRegistration(

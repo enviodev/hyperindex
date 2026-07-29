@@ -2547,35 +2547,9 @@ let make = (
   let partitions = []
 
   if notDependingOnAddresses->Array.length > 0 {
-    // An address-dependent partition starts at its addresses' effective start
-    // block; an address-free one has no addresses to derive that from, so it
-    // takes the earliest start block its own registrations declare. Without
-    // this a single wildcard event filtered to a late block still queries every
-    // block from the chain start.
-    // One unrestricted registration keeps the partition at the chain start, the
-    // same way it keeps a contract's address gate open.
-    let earliestStartBlock = if (
-      notDependingOnAddresses->Array.some(reg => reg.startBlock->Option.isNone)
-    ) {
-      None
-    } else {
-      notDependingOnAddresses->Array.reduce(None, (earliest, reg) =>
-        switch (earliest, reg.startBlock) {
-        | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
-        | (None, startBlock) => startBlock
-        | (earliest, None) => earliest
-        }
-      )
-    }
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
-      latestFetchedBlock: switch earliestStartBlock {
-      | Some(startBlock) => {
-          ...latestFetchedBlock,
-          blockNumber: Pervasives.max(startBlock - 1, latestFetchedBlock.blockNumber),
-        }
-      | None => latestFetchedBlock
-      },
+      latestFetchedBlock,
       selection: {
         dependsOnAddresses: false,
         onEventRegistrations: notDependingOnAddresses,
