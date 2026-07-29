@@ -15,7 +15,7 @@ let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
     chains->Dict.set(
       chainId->ChainId.toString,
       {
-        Internal.id: chainId->ChainId.toInt,
+        Internal.id: chainId,
         isRealtime,
       },
     )

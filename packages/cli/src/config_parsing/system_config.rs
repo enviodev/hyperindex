@@ -315,13 +315,12 @@ pub enum ChainIdMode {
 pub const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
 
 impl ChainIdMode {
+    /// Skipped chains count: codegen emits a `chainId` case for every chain in
+    /// config.yaml regardless of `skip`, so a skipped wide id still has to be
+    /// representable. Including them also keeps the mode — and therefore the
+    /// physical column types — stable when a chain is skipped and unskipped.
     fn resolve(chains: &ChainMap) -> Result<Self> {
-        let max_id = chains
-            .values()
-            .filter(|chain| !chain.skip)
-            .map(|chain| chain.id)
-            .max()
-            .unwrap_or(0);
+        let max_id = chains.values().map(|chain| chain.id).max().unwrap_or(0);
         if max_id > MAX_SAFE_CHAIN_ID {
             return Err(anyhow!(
                 "Chain id {max_id} is above the maximum supported chain id \

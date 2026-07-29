@@ -1574,11 +1574,19 @@ type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   deleteUnsafe: string => unit,
 }}{custom_id_handler_ops_code}
 
+/** The chain the event being handled belongs to. */
+type handlerChain = {{
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
+}}
+
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
+  chain: handlerChain,
 {handler_context_entity_fields}
 }}"#,
         );
@@ -1825,9 +1833,9 @@ module Entities = {{
 {entities_module_code}
 }}
 
-{handler_context_code}
-
 {chain_id_type}
+
+{handler_context_code}
 
 type contractRegisterContract = {{ add: Address.t => unit }}
 

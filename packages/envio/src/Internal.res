@@ -364,8 +364,7 @@ type entityHandlerContext<'entity> = {
 }
 
 type chainInfo = {
-  // `int` rather than `ChainId.t`: this is the handler-facing `context.chain`.
-  id: int,
+  id: ChainId.t,
   // True once every chain has caught up to head/endBlock and entered real-time
   // indexing mode. False while any chain is still backfilling.
   isRealtime: bool,

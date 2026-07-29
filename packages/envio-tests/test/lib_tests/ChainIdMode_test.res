@@ -87,6 +87,31 @@ describe("ChainIdMode resolution", () => {
     )
   })
 
+  it("counts skipped chains, which codegen still emits a chainId case for", t => {
+    let skippedWide = `  - id: 1
+    rpc: https://rpc.example.test
+    start_block: 0
+  - id: 2494104990
+    skip: true
+    rpc: https://rpc.example.test
+    start_block: 0`
+    t.expect(parse(~name="skipped-wide", ~chains=skippedWide).chainIdMode).toEqual(ChainId.Int64)
+  })
+
+  it("validates skipped chain ids too", t => {
+    let skippedTooBig = `  - id: 1
+    rpc: https://rpc.example.test
+    start_block: 0
+  - id: 9007199254740992
+    skip: true
+    rpc: https://rpc.example.test
+    start_block: 0`
+    t->toThrowErrorEqual(
+      () => parse(~name="skipped-too-big", ~chains=skippedTooBig)->ignore,
+      "Config parse error: Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
+    )
+  })
+
   it("resolves the mode from the widest chain, not the first one", t => {
     t.expect(
       parse(~name="wide-second", ~chains=evmChain(~id="1") ++ "\n" ++ evmChain(~id="2147483648")).chainIdMode,
@@ -233,6 +258,31 @@ describe("ChainIdMode generated ReScript surface", () => {
     )).toEqual((true, true, false))
   })
 
+  it("uses ChainId.t when only a skipped chain is wide", t => {
+    // Skipped chains still get a `chainId` case, so `#2494104990` would be an
+    // out-of-range int polyvariant if the mode ignored them.
+    let code =
+      Core.fromUserApi(
+        ~schema,
+        ~withIndexerTypes=true,
+        `
+name: skipped-wide-rescript
+chains:
+  - id: 1
+    rpc: https://rpc.example.test
+    start_block: 0
+  - id: 2494104990
+    skip: true
+    rpc: https://rpc.example.test
+    start_block: 0
+`,
+      ).indexerCode->Null.getOrThrow
+    t.expect((
+      code->String.includes("type chainId = ChainId.t"),
+      code->String.includes("#2494104990"),
+    )).toEqual((true, false))
+  })
+
   it("falls back to ChainId.t when an id exceeds int32", t => {
     // ReScript integer polyvariants are int32-bound, so a wide config can't use
     // them — getChainById becomes a keyed lookup instead of an exhaustive match.
@@ -260,6 +310,24 @@ import { indexer } from "envio";
 
 expectType<TypeEqual<EvmChainId, 2494104990 | 3448148188>>(true);
 expectType<number>(indexer.chains[2494104990].id);
+`,
+    )->ignore
+  )
+})
+
+describe("ChainIdMode generated handler context", () => {
+  it("types context.chain.id as the generated chainId, not int", _ =>
+    InternalTestIndexer.fromUserApi(
+      ~schema,
+      ~configYaml=`
+name: wide-handler-context
+${"chains:\n" ++ evmChain(~id="2494104990")}
+`,
+      ~handlers=`
+import { expectType, type TypeEqual } from "ts-expect";
+import type { EvmOnEventContext } from "envio";
+
+expectType<TypeEqual<EvmOnEventContext["chain"]["id"], 2494104990>>(true);
 `,
     )->ignore
   )
