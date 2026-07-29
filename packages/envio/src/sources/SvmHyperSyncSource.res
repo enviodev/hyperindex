@@ -1,7 +1,7 @@
 open Source
 
 type options = {
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
   onEventRegistrations: array<Internal.svmOnEventRegistration>,
@@ -68,7 +68,7 @@ let toSvmInstruction = (
 }
 
 let make = (
-  {chain, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis, addressStore}: options,
+  {chainId, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis, addressStore}: options,
 ): t => {
   let name = "SvmHyperSync"
 
@@ -159,7 +159,7 @@ let make = (
       )
       Internal.Event({
         onEventRegistration,
-        chain,
+        chainId,
         blockNumber: item.slot,
         logIndex: synthLogIndex(
           ~transactionIndex=item.transactionIndex,
@@ -283,7 +283,7 @@ let make = (
   {
     name,
     sourceFor: Sync,
-    chain,
+    chainId,
     pollingInterval: 1000,
     poweredByHyperSync: true,
     getBlockHashes,

@@ -11,7 +11,7 @@ open Vitest
 //      logIndex, and Rust-decoded params parsed from JSON strings.
 
 let metaplexProgramId = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
+let chainId = 0->ChainId.fromInt
 
 let blockTime = 1778064393
 let slot = 417950033
@@ -143,7 +143,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
       }->(Utils.magic: {..} => Core.addon),
     )
   let source = try SvmHyperSyncSource.make({
-    chain,
+    chainId,
     endpointUrl: "https://solana.hypersync.xyz",
     apiToken: None,
     onEventRegistrations,

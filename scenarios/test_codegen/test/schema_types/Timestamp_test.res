@@ -4,7 +4,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
   Async.it("be able to set and read entities with Timestamp from DB", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -36,7 +36,8 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    let entities = await indexerMock.query(EntityWithTimestamp)
+    let entities: array<Indexer.Entities.EntityWithTimestamp.t> =
+      await indexerMock.query("EntityWithTimestamp")
     switch entities->Array.find(e => e.id === "testEntity") {
     | Some(entity) =>
       t.expect(entity.timestamp->Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")

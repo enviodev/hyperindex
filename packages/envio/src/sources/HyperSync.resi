@@ -43,7 +43,7 @@ let queryBlockData: (
   ~client: HyperSyncClient.t,
   ~blockNumber: int,
   ~sourceName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~logger: Pino.t,
 ) => promise<(
   queryResponse<option<ReorgDetection.blockDataWithTimestamp>>,
@@ -54,7 +54,7 @@ let queryBlockDataMulti: (
   ~client: HyperSyncClient.t,
   ~blockNumbers: array<int>,
   ~sourceName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~logger: Pino.t,
 ) => promise<(
   queryResponse<array<ReorgDetection.blockDataWithTimestamp>>,

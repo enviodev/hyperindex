@@ -5,7 +5,7 @@ describe("Chains State", () => {
     it(
       "should have isRealtime field set to false",
       t => {
-        let chainInfo: Internal.chainInfo = {id: 1, isRealtime: false}
+        let chainInfo: Internal.chainInfo = {id: 1->ChainId.fromInt, isRealtime: false}
         t.expect(chainInfo.isRealtime).toBe(false)
       },
     )
@@ -13,7 +13,7 @@ describe("Chains State", () => {
     it(
       "should have isRealtime field set to true",
       t => {
-        let chainInfo: Internal.chainInfo = {id: 1, isRealtime: true}
+        let chainInfo: Internal.chainInfo = {id: 1->ChainId.fromInt, isRealtime: true}
         t.expect(chainInfo.isRealtime).toBe(true)
       },
     )
@@ -24,8 +24,8 @@ describe("Chains State", () => {
       "should support multiple chains with different states",
       t => {
         let chains: Internal.chains = Dict.make()
-        chains->Dict.set("1", {Internal.id: 1, isRealtime: false})
-        chains->Dict.set("2", {Internal.id: 2, isRealtime: true})
+        chains->Dict.set("1", {Internal.id: 1->ChainId.fromInt, isRealtime: false})
+        chains->Dict.set("2", {Internal.id: 2->ChainId.fromInt, isRealtime: true})
 
         t.expect(chains->Dict.get("1")->Option.map(c => c.isRealtime)).toBe(Some(false))
         t.expect(chains->Dict.get("2")->Option.map(c => c.isRealtime)).toBe(Some(true))
@@ -45,7 +45,7 @@ describe("Chains State", () => {
         let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
 
         let chains = Dict.make()
-        chains->Dict.set("1337", {Internal.id: 1337, isRealtime: false})
+        chains->Dict.set("1337", {Internal.id: 1337->ChainId.fromInt, isRealtime: false})
 
         let handlerContext = UserContext.getHandlerContext({
           item,
@@ -63,7 +63,7 @@ describe("Chains State", () => {
 
         // Verify we can access current event's chain info
         t.expect(handlerContext.chain.isRealtime).toBe(false)
-        t.expect(handlerContext.chain.id).toBe(1337)
+        t.expect(handlerContext.chain.id).toBe(1337->ChainId.fromInt)
       },
     )
   })

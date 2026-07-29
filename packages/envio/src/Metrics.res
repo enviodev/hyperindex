@@ -1,5 +1,5 @@
 type chainMetrics = {
-  chainId: float,
+  chainId: ChainId.t,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -84,7 +84,7 @@ type historyPruneMetrics = {
 
 type sourceRequestMetrics = {
   source: string,
-  chainId: int,
+  chainId: ChainId.t,
   method: string,
   count: int,
   seconds: float,
@@ -92,7 +92,7 @@ type sourceRequestMetrics = {
 
 type sourceHeightMetrics = {
   source: string,
-  chainId: int,
+  chainId: ChainId.t,
   height: int,
 }
 
@@ -198,7 +198,7 @@ let single = (b: builder, ~name, ~help, ~kind, ~value) => {
 }
 
 let renderMetrics = (b: builder, metrics: t) => {
-  let chains = metrics.chains->Array.map(m => (`{chainId="${m.chainId->Float.toString}"}`, m))
+  let chains = metrics.chains->Array.map(m => (`{chainId="${m.chainId->ChainId.toString}"}`, m))
   let handlers =
     metrics.handlers->Array.map(s => (
       `{contract="${s.contract->escapeLabelValue}",event="${s.event->escapeLabelValue}"}`,
@@ -224,7 +224,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sourceRequests = {
     let byLabels: dict<sourceRequestMetrics> = Dict.make()
     metrics.sourceRequests->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`
+      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",method="${s.method->escapeLabelValue}"}`
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) =>
         byLabels->Dict.set(
@@ -239,7 +239,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sources = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeights->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`
+      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) if existing >= s.height => ()
       | _ => byLabels->Dict.set(labels, s.height)

@@ -54,7 +54,7 @@ module Make = () => {
   }
 
   type composedEventConstructor = (
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,
@@ -177,7 +177,7 @@ module Make = () => {
       let log = Internal.Event({
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
-        chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
+        chainId: self.chainConfig.id,
         blockNumber,
         logIndex,
         transactionIndex,

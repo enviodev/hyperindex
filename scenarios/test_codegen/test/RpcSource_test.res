@@ -38,7 +38,7 @@ describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
-      chain: MockConfig.chain1337,
+      chainId: MockConfig.chain1337,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
@@ -53,7 +53,7 @@ describe("RpcSource - getHeightOrThrow", () => {
   Async.it("Returns the current height of the chain", async t => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-      chain: MockConfig.chain1337,
+      chainId: MockConfig.chain1337,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
@@ -742,12 +742,12 @@ describe("RpcSource - fieldRegistry completeness", () => {
   })
 })
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
     let source = RpcSource.make({
       url: "http://localhost:1",
-      chain,
+      chainId,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
@@ -834,7 +834,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8
@@ -967,7 +967,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
@@ -1121,7 +1121,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
@@ -1219,7 +1219,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
@@ -1375,7 +1375,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
@@ -1510,7 +1510,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: allRegistrations,
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
@@ -1604,7 +1604,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       let addressStore = makeAddressStore(~onEventRegistrations=[eventConfig])
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
@@ -1772,7 +1772,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
       )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventA, eventB],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),

@@ -85,6 +85,8 @@ module Entities = {
     | @as("SlotPing") SlotPing: name<SlotPing.t, SlotPing.id>
 }
 
+type chainId = [#0]
+
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
@@ -94,15 +96,21 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {
   deleteUnsafe: string => unit,
 }
 
+/** The chain the event being handled belongs to. */
+type handlerChain = {
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
+}
+
 type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
+  chain: handlerChain,
   \"SlotPing": handlerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.getWhereFilter>,
 }
-
-type chainId = [#0]
 
 type contractRegisterContract = { add: Address.t => unit }
 

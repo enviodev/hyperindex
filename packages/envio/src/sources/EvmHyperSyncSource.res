@@ -6,7 +6,7 @@ open Source
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   endpointUrl: string,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
@@ -22,7 +22,7 @@ type options = {
 
 let make = (
   {
-    chain,
+    chainId,
     endpointUrl,
     onEventRegistrations,
     apiToken,
@@ -70,7 +70,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     Internal.Event({
       onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-      chain,
+      chainId,
       blockNumber: item.blockNumber,
       logIndex,
       transactionIndex,
@@ -79,7 +79,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       payload: {
         contractName: onEventRegistration.eventConfig.contractName,
         eventName: onEventRegistration.eventConfig.name,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chainId,
         params: item.params,
         srcAddress,
         logIndex,
@@ -253,7 +253,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~client,
       ~blockNumbers,
       ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~chainId=chainId,
       ~logger,
     )->Promise.thenResolve(((queryRes, requestStats)) => {
       Source.result: queryRes->HyperSync.mapExn,
@@ -263,7 +263,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   {
     name,
     sourceFor: Sync,
-    chain,
+    chainId,
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
@@ -290,7 +290,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       HyperSyncHeightStream.subscribe(
         ~hyperSyncUrl=endpointUrl,
         ~apiToken,
-        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~chainId=chainId,
         ~onHeight,
       ),
   }

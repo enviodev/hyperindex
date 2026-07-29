@@ -3,7 +3,7 @@
 // (state + transitions) and leaf effect modules.
 
 type partitionQueryResponse = {
-  chain: IndexerState.chain,
+  chainId: ChainId.t,
   response: Source.blockRangeFetchResponse,
   query: FetchState.query,
 }
@@ -106,7 +106,7 @@ let runContractRegistersOrThrow = async (
 
 let rec onQueryResponse = async (
   state: IndexerState.t,
-  {chain, response, query}: partitionQueryResponse,
+  {chainId, response, query}: partitionQueryResponse,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -115,7 +115,7 @@ let rec onQueryResponse = async (
   if state->IndexerState.isStale(~stateId) {
     ()
   } else {
-    let chainState = state->IndexerState.getChainState(~chain)
+    let chainState = state->IndexerState.getChainState(~chainId)
     let {
       parsedQueueItems,
       transactionStore,
@@ -142,7 +142,7 @@ let rec onQueryResponse = async (
     if numContractRegisterEvents === 0 {
       Logging.trace({
         "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chainId,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,
@@ -151,7 +151,7 @@ let rec onQueryResponse = async (
     } else {
       Logging.trace({
         "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chainId,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,
@@ -199,12 +199,12 @@ let rec onQueryResponse = async (
         cs->ChainState.prepareReorg(
           ~eventsProcessedDiff=switch eventsProcessedDiffByChain {
           | Some(byChain) =>
-            byChain->Utils.Dict.dangerouslyGetByIntNonOption((cs->ChainState.chainConfig).id)
+            byChain->ChainId.Dict.dangerouslyGetNonOption((cs->ChainState.chainConfig).id)
           | None => None
           },
         )
       )
-      state->IndexerState.beginReorg(~chain, ~blockNumber=reorgDetectedBlockNumber)
+      state->IndexerState.beginReorg(~chainId, ~blockNumber=reorgDetectedBlockNumber)
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
@@ -230,7 +230,7 @@ let rec onQueryResponse = async (
         if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
-            ~chain,
+            ~chainId,
             ~newItems,
             ~newItemsWithDcs,
             ~knownHeight,
@@ -265,7 +265,7 @@ let rec onQueryResponse = async (
 
 and applyQueryResponse = (
   state: IndexerState.t,
-  ~chain,
+  ~chainId,
   ~newItems,
   ~newItemsWithDcs,
   ~knownHeight,
@@ -274,7 +274,7 @@ and applyQueryResponse = (
   ~transactionStore,
   ~blockStore,
 ) => {
-  let chainState = state->IndexerState.getChainState(~chain)
+  let chainState = state->IndexerState.getChainState(~chainId)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
 
   chainState->ChainState.handleQueryResult(
@@ -308,7 +308,7 @@ and applyQueryResponse = (
 
 let finishWaitingForNewBlock = (
   state: IndexerState.t,
-  ~chain,
+  ~chainId,
   ~knownHeight,
   ~stateId,
   ~scheduleFetch,
@@ -317,7 +317,7 @@ let finishWaitingForNewBlock = (
   if state->IndexerState.isStale(~stateId) {
     ()
   } else {
-    let chainState = state->IndexerState.getChainState(~chain)
+    let chainState = state->IndexerState.getChainState(~chainId)
     chainState->ChainState.updateKnownHeight(~knownHeight)
 
     // No reorg-threshold check here: scheduleProcessing always runs at least one
@@ -328,14 +328,14 @@ let finishWaitingForNewBlock = (
 
 let fetchChain = async (
   state: IndexerState.t,
-  chain,
+  chainId,
   ~action,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
   ~scheduleRollback,
 ) => {
-  let chainState = state->IndexerState.getChainState(~chain)
+  let chainState = state->IndexerState.getChainState(~chainId)
   if !(state->IndexerState.isResolvingReorg) && !(state->IndexerState.isStopped) {
     let isRealtime = state->IndexerState.isRealtime
     let sourceManager = chainState->ChainState.sourceManager
@@ -353,7 +353,7 @@ let fetchChain = async (
         ~onNewBlock=(~knownHeight) =>
           finishWaitingForNewBlock(
             state,
-            ~chain,
+            ~chainId,
             ~knownHeight,
             ~stateId,
             ~scheduleFetch,
@@ -371,7 +371,7 @@ let fetchChain = async (
             )
             await onQueryResponse(
               state,
-              {chain, response, query},
+              {chainId, response, query},
               ~stateId,
               ~scheduleFetch,
               ~scheduleProcessing,

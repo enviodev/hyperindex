@@ -27,7 +27,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~chainId=chainConfig.id,
       ~knownHeight=0,
     )
-    let mockSource = MockIndexer.Source.make([], ~chain=#1)
+    let mockSource = MockIndexer.Source.make([], ~chainId=#1)
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
@@ -44,7 +44,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
-    chainStates->Utils.Dict.setByInt(chainConfig.id, chainState)
+    chainStates->ChainId.Dict.set(chainConfig.id, chainState)
   })
 
   IndexerState.make(

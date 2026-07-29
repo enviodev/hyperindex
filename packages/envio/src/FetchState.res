@@ -829,7 +829,7 @@ type t = {
   endBlock: option<int>,
   normalSelection: selection,
   // Not used for logic - only metadata
-  chainId: int,
+  chainId: ChainId.t,
   // The block number of the latest block which was added to the queue
   // by the onBlock configs
   // Need a separate pointer for this
@@ -2621,7 +2621,7 @@ let make = (
   ~addressStore: AddressStore.t,
   ~addresses: array<Internal.indexingAddress>,
   ~maxAddrInPartition,
-  ~chainId,
+  ~chainId: ChainId.t,
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
@@ -2750,7 +2750,7 @@ let make = (
       onBlockRegistrations->Utils.Array.isEmpty
   ) {
     JsError.throwWithMessage(
-      `Invalid configuration: Nothing to fetch on chain ${chainId->Int.toString}. ` ++
+      `Invalid configuration: Nothing to fetch on chain ${chainId->ChainId.toString}. ` ++
       `addresses=${addresses->Array.length->Int.toString}, ` ++
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations

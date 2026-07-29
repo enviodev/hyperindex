@@ -79,8 +79,8 @@ describe("HandlerRegister — onBlock validation at registration", () => {
     config.chainMap
     ->ChainMap.values
     ->Array.map(chainConfig => (
-      chainConfig.id->Int.toString,
-      {"id": chainConfig.id}->(Utils.magic: {"id": int} => unknown),
+      chainConfig.id->ChainId.toString,
+      {"id": chainConfig.id}->(Utils.magic: {"id": ChainId.t} => unknown),
     ))
     ->Dict.fromArray
 

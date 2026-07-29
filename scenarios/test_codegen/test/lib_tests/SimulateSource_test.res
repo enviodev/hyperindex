@@ -9,7 +9,7 @@ open Vitest
 
 let addr = i => Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getOrThrow
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 
 let registration = (
   ~index,
@@ -39,7 +39,7 @@ let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexi
 
 let item = (~registration: Internal.onEventRegistration, ~blockNumber, ~srcAddress, ~params=?) =>
   Internal.Event({
-    chain,
+    chainId,
     blockNumber,
     logIndex: 0,
     transactionIndex: 0,
@@ -57,7 +57,7 @@ let getItems = async (
   ~fromBlock=0,
   ~toBlock=1000,
 ) => {
-  let source = SimulateSource.make(~items, ~endBlock=1000, ~chain, ~addressStore=store)
+  let source = SimulateSource.make(~items, ~endBlock=1000, ~chainId, ~addressStore=store)
   let response = await source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),

@@ -10,7 +10,7 @@ describe("Concurrent batch write and processing", () => {
 
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -136,7 +136,7 @@ describe("Concurrent batch write and processing", () => {
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        (writeBatchErrors, await indexerMock.queryHistory(SimpleEntity)),
+        (writeBatchErrors, await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>)),
         ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
       ).toEqual((
         [],

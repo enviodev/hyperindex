@@ -8,7 +8,7 @@ open Vitest
 
 let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1) =>
+let parseEvm = (~eventFilters: option<JSON.t>, ~chainId=1->ChainId.fromInt) =>
   LogSelection.parseWhereOrThrow(
     ~where=eventFilters,
     ~sighash=transferSighash,
@@ -90,7 +90,7 @@ describe("the registration carries its address-param groups", () => {
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(eventFilters),
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     )
 

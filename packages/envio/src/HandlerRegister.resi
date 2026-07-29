@@ -26,7 +26,7 @@ let isWildcard: (~contractName: string, ~eventName: string) => bool
 let isDroppedByWhere: (~config: Config.t, Internal.onEventRegistration) => bool
 let getSimulateOnEventRegistrations: (
   ~config: Config.t,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~eventConfig: Internal.eventConfig,
 ) => array<Internal.onEventRegistration>
 

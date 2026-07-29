@@ -1,6 +1,6 @@
 open Vitest
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 
 // Mock source that throws Source.RateLimited on the first N calls, then
 // returns Ok with the requested block data. Lets us exercise
@@ -11,7 +11,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
   {
     name: "MockHyperSync",
     sourceFor: Sync,
-    chain,
+    chainId,
     poweredByHyperSync: true,
     pollingInterval: 100,
     getBlockHashes: (~blockNumbers, ~logger as _) => {

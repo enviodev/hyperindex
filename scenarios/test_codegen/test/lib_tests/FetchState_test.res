@@ -1,6 +1,6 @@
 open Vitest
 
-let chainId = 0
+let chainId = 0->ChainId.fromInt
 let targetBufferSize = 5000
 let knownHeight = 0
 
@@ -80,9 +80,14 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
 let deriveEffectiveStartBlock = (~registrationBlock, ~contractStartBlock) =>
   Pervasives.max(Pervasives.max(registrationBlock, 0), contractStartBlock->Option.getOr(0))
 
-let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1, ~registrationIndex=0): Internal.item =>
+let mockEvent = (
+  ~blockNumber,
+  ~logIndex=0,
+  ~chainId=1->ChainId.fromInt,
+  ~registrationIndex=0,
+): Internal.item =>
   Internal.Event({
-    chain: ChainMap.Chain.makeUnsafe(~chainId),
+    chainId: chainId,
     blockNumber,
     // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
     // resolves; the rest of the registration is unused by these tests.
@@ -258,7 +263,7 @@ describe("FetchState.make", () => {
       maxOnBlockBufferSize: 5000,
       buffer: [],
       normalSelection: fetchState.normalSelection,
-      chainId: 0,
+      chainId: 0->ChainId.fromInt,
       blockLag: 0,
       onBlockRegistrations: [],
       knownHeight,

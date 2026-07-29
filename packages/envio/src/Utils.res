@@ -218,10 +218,6 @@ module Dict = {
 
   @set_index
   external setByInt: (dict<'a>, int, 'a) => unit = ""
-
-  let incrementByInt: (dict<int>, int) => unit = %raw(`(dict, key) => {
-    dict[key]++
-  }`)
 }
 
 module Math = {

@@ -30,11 +30,11 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       // threshold. Head starts at 1000, so the pre-threshold head is 800.
       let chainA = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let chainB = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(
@@ -113,7 +113,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     async t => {
       let source = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
