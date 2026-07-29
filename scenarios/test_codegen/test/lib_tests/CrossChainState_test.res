@@ -4,7 +4,7 @@ let baseChainConfig = Config.load().chainMap->ChainMap.values->Utils.Array.first
 
 let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({
-    chain: ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt),
+    chain: 1->ChainId.fromInt,
     blockNumber,
     // Carries an `index` so the buffer's dedup key resolves; the rest of the
     // registration is unused by these tests.
@@ -248,7 +248,7 @@ describe("CrossChainState fetch control", () => {
 
     let dispatched = []
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
-      dispatched->Array.push((chain->ChainMap.Chain.toChainId->ChainId.toInt, action))->ignore
+      dispatched->Array.push((chain->ChainId.toInt, action))->ignore
       Promise.resolve()
     })
 
@@ -278,7 +278,7 @@ describe("CrossChainState fetch control", () => {
 
     let dispatched = []
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action as _) => {
-      dispatched->Array.push(chain->ChainMap.Chain.toChainId->ChainId.toInt)->ignore
+      dispatched->Array.push(chain->ChainId.toInt)->ignore
       Promise.resolve()
     })
 
@@ -296,7 +296,7 @@ describe("CrossChainState fetch control", () => {
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       dispatched
       ->Array.push((
-        chain->ChainMap.Chain.toChainId->ChainId.toInt,
+        chain->ChainId.toInt,
         switch action {
         | Ready(queries) => queries->Array.length
         | _ => 0
@@ -327,7 +327,7 @@ describe("CrossChainState fetch control", () => {
       | Ready(queries) =>
         admitted
         ->Array.push((
-          chain->ChainMap.Chain.toChainId->ChainId.toInt,
+          chain->ChainId.toInt,
           queries->Array.reduce(0, (sum, query: FetchState.query) => sum + query.itemsEst),
         ))
         ->ignore
@@ -363,7 +363,7 @@ describe("CrossChainState fetch control", () => {
     let dispatched = []
 
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
-      dispatched->Array.push((chain->ChainMap.Chain.toChainId->ChainId.toInt, action))->ignore
+      dispatched->Array.push((chain->ChainId.toInt, action))->ignore
       Promise.resolve()
     })
 
@@ -389,7 +389,7 @@ describe("CrossChainState fetch control", () => {
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       switch action {
       | Ready(queries) =>
-        firstTickQueries->Array.push((chain->ChainMap.Chain.toChainId->ChainId.toInt, queries))->ignore
+        firstTickQueries->Array.push((chain->ChainId.toInt, queries))->ignore
       | _ => ()
       }
       Promise.resolve()
@@ -412,7 +412,7 @@ describe("CrossChainState fetch control", () => {
     let secondTickChains = []
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       switch action {
-      | Ready(_) => secondTickChains->Array.push(chain->ChainMap.Chain.toChainId->ChainId.toInt)->ignore
+      | Ready(_) => secondTickChains->Array.push(chain->ChainId.toInt)->ignore
       | _ => ()
       }
       Promise.resolve()
@@ -510,7 +510,7 @@ describe("CrossChainState fetch control", () => {
       let dispatchedItemsByChain = Dict.make()
       await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
         dispatchedItemsByChain->ChainId.Dict.set(
-          chain->ChainMap.Chain.toChainId,
+          chain,
           switch action {
           | Ready(queries) =>
             queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
@@ -559,7 +559,7 @@ describe("CrossChainState fetch control", () => {
       let actionsByChain = Dict.make()
       await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
         actionsByChain->ChainId.Dict.set(
-          chain->ChainMap.Chain.toChainId,
+          chain,
           switch action {
           | WaitingForNewBlock => "waitingForNewBlock"
           | NothingToQuery => "nothingToQuery"
@@ -608,7 +608,7 @@ describe("CrossChainState fetch control", () => {
       let estimatesByChain = Dict.make()
       await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
         estimatesByChain->ChainId.Dict.set(
-          chain->ChainMap.Chain.toChainId,
+          chain,
           switch action {
           | Ready(queries) =>
             queries->Array.reduce(0, (total, query: FetchState.query) => total + query.itemsEst)
@@ -737,7 +737,7 @@ describe("ChainState cold start", () => {
     let dispatchedItemsByChain = Dict.make()
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       dispatchedItemsByChain->ChainId.Dict.set(
-        chain->ChainMap.Chain.toChainId,
+        chain,
         switch action {
         | Ready(queries) =>
           queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
@@ -776,7 +776,7 @@ describe("ChainState cold start", () => {
     let actionsByChain = Dict.make()
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       actionsByChain->ChainId.Dict.set(
-        chain->ChainMap.Chain.toChainId,
+        chain,
         switch action {
         | WaitingForNewBlock => "waitingForNewBlock"
         | NothingToQuery => "nothingToQuery"
@@ -821,7 +821,7 @@ describe("ChainState cold start", () => {
     let dispatchedItemsByChain = Dict.make()
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       dispatchedItemsByChain->ChainId.Dict.set(
-        chain->ChainMap.Chain.toChainId,
+        chain,
         switch action {
         | Ready(queries) =>
           queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
@@ -908,7 +908,7 @@ describe("ChainState cold start", () => {
     let itemsByChain = Dict.make()
     await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chain, ~action) => {
       itemsByChain->ChainId.Dict.set(
-        chain->ChainMap.Chain.toChainId,
+        chain,
         switch action {
         | Ready(queries) => queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
         | _ => 0

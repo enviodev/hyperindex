@@ -1,7 +1,7 @@
 // The indexer state. `t` is opaque: other modules read it through the accessors
 // and change it only through the transitions and setters exposed here.
 
-type chain = ChainMap.Chain.t
+type chain = ChainId.t
 
 type rollbackState =
   | NoRollback

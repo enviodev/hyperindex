@@ -450,7 +450,7 @@ module Indexer = {
       let chainMap =
         chains
         ->Array.map(chainConfig => {
-          let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int)->ChainId.fromInt)
+          let chain = (chainConfig.chain :> int)->ChainId.fromInt
           let originalChainConfig = baseConfig.chainMap->ChainMap.get(chain)
           (
             chain,
@@ -833,7 +833,7 @@ module Source = {
       }
     }
 
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=(chain :> int)->ChainId.fromInt)
+    let chain = (chain :> int)->ChainId.fromInt
     let getHeightOrThrowCalls = []
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
@@ -1029,7 +1029,7 @@ module Source = {
                           contractName: onEventRegistration.eventConfig.contractName,
                           eventName: onEventRegistration.eventConfig.name,
                           params: %raw(`{}`),
-                          chainId: chain->ChainMap.Chain.toChainId,
+                          chainId: chain,
                           srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                           logIndex: item.logIndex,
                           block: {

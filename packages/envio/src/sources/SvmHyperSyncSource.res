@@ -1,7 +1,7 @@
 open Source
 
 type options = {
-  chain: ChainMap.Chain.t,
+  chain: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
   onEventRegistrations: array<Internal.svmOnEventRegistration>,

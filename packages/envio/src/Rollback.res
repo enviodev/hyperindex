@@ -111,8 +111,6 @@ and executeRollback = async (
   ->IndexerState.getChainState(~chain=reorgChain)
   ->ChainState.setRollbackTargetBlock(~blockNumber=rollbackTargetBlockNumber)
 
-  let reorgChainId = reorgChain->ChainMap.Chain.toChainId
-
   // Finish pending batch writes first: the target checkpoint, the progress
   // diff and the rollback diff below must all be computed from the same db
   // state. Otherwise an in-flight batch lands after the progress reads and
@@ -122,7 +120,7 @@ and executeRollback = async (
 
   let rollbackTargetCheckpointId = {
     switch await (state->IndexerState.persistence).storage.getRollbackTargetCheckpoint(
-      ~reorgChainId,
+      ~reorgChainId=reorgChain,
       ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
     ) {
     | Some(checkpointId) => checkpointId
@@ -151,7 +149,7 @@ and executeRollback = async (
       )
       newProgressBlockNumberPerChain->ChainId.Dict.set(
         diff["chain_id"],
-        if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
+        if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChain {
           Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
         } else {
           diff["new_progress_block_number"]
@@ -174,7 +172,7 @@ and executeRollback = async (
         chainId,
       ),
       ~rollbackTargetBlockNumber,
-      ~isReorgChain=chainId === reorgChainId,
+      ~isReorgChain=chainId === reorgChain,
     )
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {

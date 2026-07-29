@@ -1,6 +1,6 @@
 open Vitest
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt)
+let chain = 1->ChainId.fromInt
 
 // Mock source that throws Source.RateLimited on the first N calls, then
 // returns Ok with the requested block data. Lets us exercise

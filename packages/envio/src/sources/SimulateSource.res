@@ -1,4 +1,4 @@
-let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
+let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainId.t): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
   {

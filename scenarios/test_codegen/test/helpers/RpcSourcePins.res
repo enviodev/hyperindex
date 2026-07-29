@@ -66,7 +66,7 @@ let normalizeEvent = item =>
       let payload = payload->Evm.toPayload
       {
         registrationId: onEventRegistration.eventConfig.id,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chain,
         blockNumber,
         logIndex,
         transactionIndex,

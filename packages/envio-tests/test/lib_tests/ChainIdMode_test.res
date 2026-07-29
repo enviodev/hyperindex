@@ -71,7 +71,7 @@ describe("ChainIdMode resolution", () => {
   it("parses wide chain ids losslessly through the public config", t => {
     t.expect(
       [tronConfig, multichainConfig, maxSafeConfig]->Array.map(config =>
-        config.chainMap->ChainMap.keys->Array.map(ChainMap.Chain.toString)
+        config.chainMap->ChainMap.keys->Array.map(ChainId.toString)
       ),
     ).toEqual([
       ["2494104990", "3448148188"],

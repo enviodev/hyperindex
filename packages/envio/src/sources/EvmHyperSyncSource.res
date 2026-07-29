@@ -6,7 +6,7 @@ open Source
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
-  chain: ChainMap.Chain.t,
+  chain: ChainId.t,
   endpointUrl: string,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
@@ -75,7 +75,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       payload: {
         contractName: onEventRegistration.eventConfig.contractName,
         eventName: onEventRegistration.eventConfig.name,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId: chain,
         params: item.params,
         srcAddress,
         logIndex,
@@ -250,7 +250,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~client,
       ~blockNumbers,
       ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~chainId=chain,
       ~logger,
     )->Promise.thenResolve(((queryRes, requestStats)) => {
       Source.result: queryRes->HyperSync.mapExn,
@@ -287,7 +287,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       HyperSyncHeightStream.subscribe(
         ~hyperSyncUrl=endpointUrl,
         ~apiToken,
-        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~chainId=chain,
         ~onHeight,
       ),
   }

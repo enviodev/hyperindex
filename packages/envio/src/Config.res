@@ -974,7 +974,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let chainMap =
     chains
     ->Array.map(chain => {
-      (ChainMap.Chain.makeUnsafe(~chainId=chain.id), chain)
+      (chain.id, chain)
     })
     ->ChainMap.fromArrayUnsafe
 
@@ -1101,8 +1101,7 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
 let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<ChainId.t>=?) => {
   let chains = switch chainId {
   | Some(chainId) =>
-    let chain = ChainMap.Chain.makeUnsafe(~chainId)
-    switch config.chainMap->ChainMap.get(chain) {
+    switch config.chainMap->ChainMap.get(chainId) {
     | chainConfig => [chainConfig]
     | exception _ =>
       JsError.throwWithMessage(
@@ -1128,14 +1127,12 @@ let shouldSaveHistory = (config, ~isInReorgThreshold) =>
 let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)
 
-let getChain = (config, ~chainId) => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId)
-  config.chainMap->ChainMap.has(chain)
-    ? chain
+let getChain = (config, ~chainId) =>
+  config.chainMap->ChainMap.has(chainId)
+    ? chainId
     : JsError.throwWithMessage(
-        "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
+        "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
-}
 
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling

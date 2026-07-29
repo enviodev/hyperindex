@@ -50,7 +50,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
       ~params={
         "program": eventItem.onEventRegistration.eventConfig.contractName,
         "instruction": eventItem.onEventRegistration.eventConfig.name,
-        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "chainId": eventItem.chain,
         "slot": eventItem.blockNumber,
         "programId": instruction.programId,
       },
@@ -72,12 +72,11 @@ module GetFinalizedSlot = {
 
 let makeRPCSource = (~chain, ~rpc: string, ~sourceFor: Source.sourceFor=Sync): Source.t => {
   let client = Rest.client(rpc)
-  let chainId = chain->ChainMap.Chain.toChainId
 
   let urlHost = switch Utils.Url.getHostFromUrl(rpc) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chain->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }

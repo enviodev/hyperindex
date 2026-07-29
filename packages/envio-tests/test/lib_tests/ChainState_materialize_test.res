@@ -28,7 +28,7 @@ let makeItem = (
     "kind": 0,
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
-    "chain": ChainMap.Chain.makeUnsafe(~chainId=materializeChainId),
+    "chain": materializeChainId,
     "onEventRegistration":
       {
         "eventConfig": {"transactionFieldMask": transactionMask, "blockFieldMask": blockMask},

@@ -246,8 +246,7 @@ let parse = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
 ): array<Internal.item> => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-  let chainId = chainConfig.id
+  let chain = chainConfig.id
   let startBlock = chainConfig.startBlock
   let currentBlock = ref(startBlock)
   let currentLogIndex = ref(0)
@@ -334,7 +333,7 @@ let parse = (
       switch seenCoordinates->Dict.get(coordinate) {
       | Some(firstIndex) =>
         JsError.throwWithMessage(
-          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chain->ChainId.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
         )
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
@@ -351,7 +350,7 @@ let parse = (
       let liveRegistrations =
         HandlerRegister.getSimulateOnEventRegistrations(
           ~config,
-          ~chainId,
+          ~chainId=chain,
           ~eventConfig,
         )->Array.filter(reg =>
           (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
@@ -363,7 +362,7 @@ let parse = (
             ->ChainMap.values
             ->Array.length {
             | 1 => ""
-            | _ => ` on chain ${chainId->ChainId.toString}`
+            | _ => ` on chain ${chain->ChainId.toString}`
             }}. Register a handler with indexer.onEvent (and check any \`where\` filter isn't excluding this chain) before simulating it.`,
         )
       }
@@ -389,7 +388,7 @@ let parse = (
                 contractName: eventConfig.contractName,
                 eventName: eventConfig.name,
                 params,
-                chainId,
+                chainId: chain,
                 srcAddress,
                 logIndex,
                 transaction,
@@ -421,7 +420,7 @@ let patchConfig = (
   switch processChains {
   | Some(chainsDict) =>
     let newChainMap = config.chainMap->ChainMap.mapWithKey((chain, chainConfig) => {
-      let chainIdStr = chain->ChainMap.Chain.toString
+      let chainIdStr = chain->ChainId.toString
       switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
         let raw = processChainJson->(Utils.magic: JSON.t => {..})

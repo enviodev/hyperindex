@@ -64,7 +64,7 @@ type sourceFor = Sync | Fallback | Realtime
 type t = {
   name: string,
   sourceFor: sourceFor,
-  chain: ChainMap.Chain.t,
+  chain: ChainId.t,
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,

@@ -3,7 +3,7 @@ open Source
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
-  chain: ChainMap.Chain.t,
+  chain: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
@@ -117,8 +117,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       blocksByHeight->Utils.Map.set(block.height, block)->ignore
     })
 
-    let chainId = chain->ChainMap.Chain.toChainId
-
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
@@ -138,7 +136,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         try decode(data) catch {
         | exn => {
             let params = {
-              "chainId": chainId,
+              "chainId": chain,
               "blockNumber": item.blockHeight,
               "logIndex": item.receiptIndex,
             }
@@ -177,7 +175,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
-          chainId,
+          chainId: chain,
           params,
           transaction: {
             "id": item.txId,

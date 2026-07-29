@@ -70,7 +70,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
 }
 
 let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
-  chain: ChainMap.Chain.makeUnsafe(~chainId),
+  chain: chainId,
   blockNumber,
   // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
   // resolves; the rest of the registration is unused by these tests.

@@ -60,7 +60,7 @@ let getKnownRawBlockWithBackoff = async (
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chain,
         "type": "EXPONENTIAL_BACKOFF",
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
@@ -613,7 +613,7 @@ type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
-  chain: ChainMap.Chain.t,
+  chain: ChainId.t,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   lowercaseAddresses: bool,
@@ -633,11 +633,10 @@ let make = (
     ?headers,
   }: options,
 ): t => {
-  let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chain->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
@@ -690,7 +689,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chain,
           "metadata": {
             {
               "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
@@ -719,7 +718,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chain,
           "metadata": {
             {
               "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
@@ -750,7 +749,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chain,
           "metadata": {
             {
               "asyncTaskName": "receiptLoader: fetching transaction receipt - `getTransactionReceipt` rpc call",
@@ -927,7 +926,7 @@ let make = (
             payload: {
               contractName: eventConfig.contractName,
               eventName: eventConfig.name,
-              chainId: chain->ChainMap.Chain.toChainId,
+              chainId: chain,
               params: decoded,
               block,
               transaction,
@@ -1019,7 +1018,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId=chain, ~onHeight)
     )
 
   {

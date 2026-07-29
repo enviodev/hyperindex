@@ -183,7 +183,7 @@ let buildChainsObject = (~config: Config.t) => {
           get: () => {
             switch getIndexerState() {
             | Some(state) => {
-                let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+                let chain = chainConfig.id
                 let chainState = state->IndexerState.getChainState(~chain)
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }

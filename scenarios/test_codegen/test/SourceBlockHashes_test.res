@@ -6,7 +6,7 @@ let testApiToken =
   )
 
 // Ethereum mainnet.
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt)
+let chain = 1->ChainId.fromInt
 
 // Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
 // 2 indexed args (token0, token1) ⇒ topicCount = 3.

@@ -223,8 +223,7 @@ let makeInitialState = (
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
-    let chainId = chainIdStr->ChainId.normalizeOrThrow
-    let chain = ChainMap.Chain.makeUnsafe(~chainId)
+    let chain = chainIdStr->ChainId.normalizeOrThrow
 
     if !(config.chainMap->ChainMap.has(chain)) {
       JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
@@ -233,7 +232,7 @@ let makeInitialState = (
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
     let indexingAddresses = indexingAddressesByChain->Dict.get(chainIdStr)->Option.getOr([])
     {
-      Persistence.id: chainId,
+      Persistence.id: chain,
       startBlock: processChainConfig.startBlock,
       endBlock: processChainConfig.endBlock,
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
@@ -310,10 +309,9 @@ let parseBlockRange = (
   ~rawChainConfig: rawChainConfig,
   ~progressBlock: option<int>,
 ): chainConfig => {
-  let chainId = try chainIdStr->ChainId.normalizeOrThrow catch {
+  let chain = try chainIdStr->ChainId.normalizeOrThrow catch {
   | _ => JsError.throwWithMessage(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
   }
-  let chain = ChainMap.Chain.makeUnsafe(~chainId)
   if !(config.chainMap->ChainMap.has(chain)) {
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }

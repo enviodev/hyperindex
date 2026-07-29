@@ -1,4 +1,4 @@
-type chain = ChainMap.Chain.t
+type chain = ChainId.t
 type rollbackState =
   | NoRollback
   | ReorgDetected({chain: chain, blockNumber: int})
@@ -361,12 +361,12 @@ let stop = (state: t) => {
 let getChainState = (state: t, ~chain: chain): ChainState.t =>
   switch state.crossChainState
   ->CrossChainState.chainStates
-  ->ChainId.Dict.dangerouslyGetNonOption(chain->ChainMap.Chain.toChainId) {
+  ->ChainId.Dict.dangerouslyGetNonOption(chain) {
   | Some(cs) => cs
   | None =>
-    // Should be unreachable, since we validate on Chain.t creation
+    // Should be unreachable: every configured chain gets a state at startup
     JsError.throwWithMessage(
-      "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in chain states",
+      "No chain with id " ++ chain->ChainId.toString ++ " found in chain states",
     )
   }
 

@@ -142,7 +142,7 @@ let rec onQueryResponse = async (
     if numContractRegisterEvents === 0 {
       Logging.trace({
         "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chain,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,
@@ -151,7 +151,7 @@ let rec onQueryResponse = async (
     } else {
       Logging.trace({
         "msg": "Finished querying",
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chain,
         "partitionId": query.partitionId,
         "fromBlock": fromBlockQueried,
         "toBlock": latestFetchedBlockNumber,

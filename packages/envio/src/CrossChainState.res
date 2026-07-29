@@ -226,7 +226,7 @@ let idleOrWaitAction = (cs: ChainState.t) =>
 // dropped — chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
-  ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chain: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
   let targetBudget = crossChainState.targetBufferSize->Int.toFloat
   let remaining = ref(
@@ -342,9 +342,7 @@ let checkAndFetch = async (
     switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) =>
-      let chain = ChainMap.Chain.makeUnsafe(~chainId)
-      promises->Array.push(dispatchChain(~chain, ~action))
+    | Some(action) => promises->Array.push(dispatchChain(~chain=chainId, ~action))
     }
   }
   let _ = await promises->Promise.all

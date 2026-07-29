@@ -189,7 +189,7 @@ describe("filterByClientAddress applies clientAddressFilter", () => {
   let onEventRegistration = (onEventRegistration :> Internal.onEventRegistration)
   let makeItem = (~to, ~blockNumber): Internal.item =>
     Internal.Event({
-      chain: ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt),
+      chain: 1->ChainId.fromInt,
       blockNumber,
       onEventRegistration,
       logIndex: 0,
@@ -242,7 +242,7 @@ describe("filterByClientAddress drops over-fetched non-wildcard srcAddress event
   let onEventRegistration = (onEventRegistration :> Internal.onEventRegistration)
   let makeItem = (~srcAddress, ~blockNumber): Internal.item =>
     Internal.Event({
-      chain: ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt),
+      chain: 1->ChainId.fromInt,
       blockNumber,
       onEventRegistration,
       logIndex: 0,

@@ -325,7 +325,7 @@ let findLastEventItem = (batch: t, ~chainId) => {
     switch item {
     | Internal.Event(_) as eventItem => {
         let eventItem = eventItem->Internal.castUnsafeEventItem
-        if eventItem.chain->ChainMap.Chain.toChainId === chainId {
+        if eventItem.chain === chainId {
           result := Some(eventItem)
         } else {
           idx := idx.contents - 1

@@ -8,7 +8,7 @@ let itemKey = (item: Internal.item): string =>
   switch item {
   | Internal.Event({chain, blockNumber, logIndex}) =>
     `${chain
-      ->ChainMap.Chain.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+      ->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
   | Internal.Block(_) => ""
   }
 

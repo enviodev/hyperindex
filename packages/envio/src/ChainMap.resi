@@ -1,22 +1,12 @@
-module Chain: {
-  type t
-
-  external toChainId: t => ChainId.t = "%identity"
-
-  let toString: t => string
-
-  external makeUnsafe: (~chainId: ChainId.t) => t = "%identity"
-}
-
 type t<'a>
-let fromArrayUnsafe: array<(Chain.t, 'a)> => t<'a>
-let get: (t<'a>, Chain.t) => 'a
-let set: (t<'a>, Chain.t, 'a) => t<'a>
+let fromArrayUnsafe: array<(ChainId.t, 'a)> => t<'a>
+let get: (t<'a>, ChainId.t) => 'a
+let set: (t<'a>, ChainId.t, 'a) => t<'a>
 let values: t<'a> => array<'a>
-let keys: t<'a> => array<Chain.t>
-let entries: t<'a> => array<(Chain.t, 'a)>
-let has: (t<'a>, Chain.t) => bool
+let keys: t<'a> => array<ChainId.t>
+let entries: t<'a> => array<(ChainId.t, 'a)>
+let has: (t<'a>, ChainId.t) => bool
 let map: (t<'a>, 'a => 'b) => t<'b>
-let mapWithKey: (t<'a>, (Chain.t, 'a) => 'b) => t<'b>
+let mapWithKey: (t<'a>, (ChainId.t, 'a) => 'b) => t<'b>
 let size: t<'a> => int
-let update: (t<'a>, Chain.t, 'a => 'a) => t<'a>
+let update: (t<'a>, ChainId.t, 'a => 'a) => t<'a>

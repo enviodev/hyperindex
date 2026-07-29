@@ -76,7 +76,7 @@ let makeConfigContract = (contractName, address): Internal.indexingAddress => {
 
 let mockEvent = (~blockNumber, ~logIndex=0, ~chainId=1->ChainId.fromInt, ~registrationIndex=0): Internal.item =>
   Internal.Event({
-    chain: ChainMap.Chain.makeUnsafe(~chainId),
+    chain: chainId,
     blockNumber,
     // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
     // resolves; the rest of the registration is unused by these tests.

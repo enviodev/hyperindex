@@ -1,6 +1,6 @@
-let chain1 = ChainMap.Chain.makeUnsafe(~chainId=1->ChainId.fromInt)
-let chain137 = ChainMap.Chain.makeUnsafe(~chainId=137->ChainId.fromInt)
-let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337->ChainId.fromInt)
+let chain1 = 1->ChainId.fromInt
+let chain137 = 137->ChainId.fromInt
+let chain1337 = 1337->ChainId.fromInt
 
 let getEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {

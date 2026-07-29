@@ -34,7 +34,6 @@ let make = (
 ): Internal.rawEvent => {
   let {chain, blockNumber, logIndex} = eventItem
   let eventConfig = eventItem.onEventRegistration.eventConfig
-  let chainId = chain->ChainMap.Chain.toChainId
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
     block
@@ -62,7 +61,7 @@ let make = (
   }
 
   {
-    chain_id: chainId,
+    chain_id: chain,
     event_id: eventId,
     event_name: eventConfig.name,
     contract_name: eventConfig.contractName,

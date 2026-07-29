@@ -204,7 +204,7 @@ let makeInternal = (
   })
 
   // Create sources lazily here - this is where API token validation happens
-  let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+  let chain = chainConfig.id
   let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
@@ -241,7 +241,7 @@ let makeInternal = (
     switch (hypersync, rpc) {
     | (None, None) =>
       JsError.throwWithMessage(
-        `Chain ${chain->ChainMap.Chain.toString} has no SVM data source`,
+        `Chain ${chain->ChainId.toString} has no SVM data source`,
       )
     | (None, Some(rpc)) => [Svm.makeRPCSource(~chain, ~rpc)]
     | (Some(hypersyncUrl), _) =>

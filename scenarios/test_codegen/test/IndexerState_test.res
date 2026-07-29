@@ -73,7 +73,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem = Internal.Event({
-          chain: ChainMap.Chain.makeUnsafe(~chainId=id),
+          chain: id,
           blockNumber: currentBlockNumber.contents,
           logIndex,
           transactionIndex: 0,
@@ -158,7 +158,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 let getItemKey = (item: Internal.item) =>
   switch item {
   | Event({chain, blockNumber, logIndex}) => (
-      chain->ChainMap.Chain.toChainId,
+      chain,
       blockNumber,
       logIndex,
     )
@@ -293,7 +293,7 @@ describe("IndexerState", () => {
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[
                     Internal.Event({
-                      chain: ChainMap.Chain.makeUnsafe(~chainId),
+                      chain: chainId,
                       blockNumber,
                       logIndex: 0,
                       transactionIndex: 0,
@@ -354,7 +354,6 @@ describe("IndexerState", () => {
           )
 
         let chain = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
-        let chainId = chain->ChainMap.Chain.toChainId
 
         // A fetch lands mid-batch and appends block 15 to this chain's buffer
         // (its batch-time snapshot held only block 5).
@@ -396,7 +395,7 @@ describe("IndexerState", () => {
         let resultCs = state->IndexerState.getChainState(~chain)
         let progressed =
           batch.progressedChainsById
-          ->ChainId.Dict.dangerouslyGetNonOption(chainId)
+          ->ChainId.Dict.dangerouslyGetNonOption(chain)
           ->Option.getUnsafe
 
         t.expect(

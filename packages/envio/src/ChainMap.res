@@ -1,40 +1,32 @@
-module Chain = {
-  type t = ChainId.t
-
-  external toChainId: t => ChainId.t = "%identity"
-
-  let toString = chainId => chainId->ChainId.toString
-
-  external makeUnsafe: (~chainId: ChainId.t) => t = "%identity"
-}
-
 module ChainIdCmp = Belt.Id.MakeComparable({
-  type t = Chain.t
+  type t = ChainId.t
   let cmp = (a, b) => ChainId.compare(a, b)->Int.fromFloat
 })
 
 type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
 
-let fromArrayUnsafe: array<(Chain.t, 'a)> => t<'a> = arr => {
+let fromArrayUnsafe: array<(ChainId.t, 'a)> => t<'a> = arr => {
   arr->Belt.Map.fromArray(~id=module(ChainIdCmp))
 }
 
-let get: (t<'a>, Chain.t) => 'a = (self, chain) =>
+let get: (t<'a>, ChainId.t) => 'a = (self, chain) =>
   switch Belt.Map.get(self, chain) {
   | Some(v) => v
   | None =>
-    // Should be unreachable, since we validate on Chain.t creation
+    // Should be unreachable, since we validate chain ids when parsing the config.
     // Still throw just in case something went wrong
-    JsError.throwWithMessage("No chain with id " ++ chain->Chain.toString ++ " found in chain map")
+    JsError.throwWithMessage(
+      "No chain with id " ++ chain->ChainId.toString ++ " found in chain map",
+    )
   }
 
-let set: (t<'a>, Chain.t, 'a) => t<'a> = (map, chain, v) => Belt.Map.set(map, chain, v)
+let set: (t<'a>, ChainId.t, 'a) => t<'a> = (map, chain, v) => Belt.Map.set(map, chain, v)
 let values: t<'a> => array<'a> = map => Belt.Map.valuesToArray(map)
-let keys: t<'a> => array<Chain.t> = map => Belt.Map.keysToArray(map)
-let entries: t<'a> => array<(Chain.t, 'a)> = map => Belt.Map.toArray(map)
-let has: (t<'a>, Chain.t) => bool = (map, chain) => Belt.Map.has(map, chain)
+let keys: t<'a> => array<ChainId.t> = map => Belt.Map.keysToArray(map)
+let entries: t<'a> => array<(ChainId.t, 'a)> = map => Belt.Map.toArray(map)
+let has: (t<'a>, ChainId.t) => bool = (map, chain) => Belt.Map.has(map, chain)
 let map: (t<'a>, 'a => 'b) => t<'b> = (map, fn) => Belt.Map.map(map, fn)
-let mapWithKey: (t<'a>, (Chain.t, 'a) => 'b) => t<'b> = (map, fn) => Belt.Map.mapWithKey(map, fn)
+let mapWithKey: (t<'a>, (ChainId.t, 'a) => 'b) => t<'b> = (map, fn) => Belt.Map.mapWithKey(map, fn)
 let size: t<'a> => int = map => Belt.Map.size(map)
-let update: (t<'a>, Chain.t, 'a => 'a) => t<'a> = (map, chain, updateFn) =>
+let update: (t<'a>, ChainId.t, 'a => 'a) => t<'a> = (map, chain, updateFn) =>
   Belt.Map.update(map, chain, opt => opt->Option.map(updateFn))
