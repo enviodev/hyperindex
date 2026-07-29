@@ -27,8 +27,9 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       ~logger as _,
     ) => {
       // Mirror a real backend: return only the items this query would match —
-      // in the block range, part of the selection, and passing the same address
-      // gates a real source applies natively while routing (the emitter must be
+      // in the block range, part of the selection, at or after the
+      // registration's own start block, and passing the same address gates a
+      // real source applies natively while routing (the emitter must be
       // registered for the event's contract at or before the item's block, and
       // any address-valued param filter must hold). Overlapping queries may
       // return the same item more than once; the buffer dedups it.
@@ -55,6 +56,14 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
         | _ => addressSet->AddressSet.containsAt(address, contractName, blockNumber)
         }
 
+      // The registration's own start block, which the contract-wide address gate
+      // can't express. Every native router applies it while routing.
+      let hasStarted = (onEventRegistration: Internal.onEventRegistration, ~blockNumber) =>
+        switch onEventRegistration.startBlock {
+        | Some(startBlock) => blockNumber >= startBlock
+        | None => true
+        }
+
       let parsedQueueItems = items->Array.filter(item => {
         let eventItem = item->Internal.castUnsafeEventItem
         let {blockNumber, onEventRegistration} = eventItem
@@ -62,14 +71,7 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
           false
         } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
           false
-        } else if (
-          // The registration's own start block, which the contract-wide address
-          // gate can't express. Every native router applies it while routing.
-          switch onEventRegistration.startBlock {
-          | Some(startBlock) => blockNumber < startBlock
-          | None => false
-          }
-        ) {
+        } else if !(onEventRegistration->hasStarted(~blockNumber)) {
           false
         } else {
           let contractName = onEventRegistration.eventConfig.contractName
