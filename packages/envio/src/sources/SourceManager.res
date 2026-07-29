@@ -754,7 +754,7 @@ let executeQuery = async (
         "source": source.name,
         "fromBlock": query.fromBlock,
         "toBlock": toBlock,
-        "addresses": query.addressesByContractName->FetchState.addressesByContractNameCount,
+        "addresses": query.addresses->AddressSet.size,
         "retry": retry,
       },
     )
@@ -763,11 +763,10 @@ let executeQuery = async (
       let response = await source.getItemsOrThrow(
         ~fromBlock=query.fromBlock,
         ~toBlock,
-        ~addressesByContractName=query.addressesByContractName,
-        ~contractNameByAddress=query.addressesByContractName->FetchState.deriveContractNameByAddress,
+        ~addressSet=query.addresses,
         ~partitionId=query.partitionId,
         ~knownHeight,
-        ~selection=query.selection,
+        ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
         ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,

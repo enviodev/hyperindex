@@ -37,6 +37,7 @@ let decodeSingle = async (
         contractName: "TestContract",
         isWildcard: false,
         dependsOnAddresses: true,
+        startBlock: None,
         params,
         topicSelections: [
           {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
@@ -46,7 +47,7 @@ let decodeSingle = async (
       },
     ],
     ~logs=[log],
-    ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+    ~ownedBy="TestContract",
   )
   (decoded[0]->Option.getUnsafe).params
 }
@@ -84,6 +85,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections,
           blockFields: [],
           transactionFields: [],
@@ -101,6 +103,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections,
           blockFields: [],
           transactionFields: [],
@@ -112,7 +115,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
       ],
       ~logs=[allIndexedLog, noneIndexedLog],
-      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+      ~ownedBy="TestContract",
     )
 
     let pick = i => (decoded[i]->Option.getUnsafe).params
@@ -160,6 +163,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections: [
             {
               topic0: [toEventSelector("event Empty()")],
@@ -174,7 +178,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
       ],
       ~logs=[([toEventSelector("event Empty()")], "0x")],
-      ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, "TestContract")]),
+      ~ownedBy="TestContract",
     )
     let result = (decoded[0]->Option.getUnsafe).params
     t.expect(result).toEqual(%raw(`{}`))

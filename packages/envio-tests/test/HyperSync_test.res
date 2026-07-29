@@ -5,6 +5,14 @@ let testApiToken =
     ~message="ENVIO_API_TOKEN env var must be set to run HyperSync tests",
   )
 
+// Wildcard-only selection, so the store holds nothing and the partition's set
+// is empty.
+let addressStore = AddressStore.make(
+  ~ecosystem=Ecosystem.Evm,
+  ~shouldChecksum=true,
+  ~contracts=[{name: "ERC20", startBlock: None}],
+)
+
 describe_skip("Test Hyperliquid broken transaction response", () => {
   Async.it("should handle broken transaction response", async _t => {
     let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -22,6 +30,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
             contractName: "ERC20",
             isWildcard: true,
             dependsOnAddresses: false,
+            startBlock: None,
             params: [],
             topicSelections: [
               {
@@ -35,12 +44,13 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
             transactionFields: ["Hash"],
           },
         ],
+        ~addressStore,
       ),
       ~fromBlock=12403138,
       ~toBlock=Some(12403139),
       ~maxNumLogs=Some(5000),
       ~registrationIndexes=[0],
-      ~addressesByContractName=Dict.make(),
+      ~addressSet=addressStore->AddressStore.emptySet,
       ~clientFilteredContracts=None,
     )
 

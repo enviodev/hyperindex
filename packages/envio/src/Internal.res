@@ -333,6 +333,11 @@ type eventPayload
 // The log's emitting address (EVM/Fuel; the program id carries it for SVM).
 @get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
 
+// The decoded params, read by name for the address-valued ones a `where`
+// filters on. Only those names are ever looked up, so the address type is
+// accurate at every use site.
+@get external getPayloadAddressParams: eventPayload => dict<Address.t> = "params"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -572,11 +577,15 @@ type onEventRegistration = {
   // Usually always false for wildcard events, but might be true for a wildcard
   // event with a dynamic event filter by addresses.
   dependsOnAddresses: bool,
-  // Precompiled predicate for events that filter an indexed address param by
-  // registered addresses (see `EventConfigBuilder.buildAddressFilter`); drops a
-  // decoded event whose param-address isn't registered at/before the log's
-  // block. Absent otherwise.
-  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
+  // Indexed address params this event filters on, in disjunctive normal form
+  // (OR of AND-groups), from `where: {params: {to: chain.C.addresses}}`. Every
+  // source applies this natively while routing; it's carried here for the
+  // simulate source, which has no native query boundary. Absent otherwise.
+  //
+  // Keep it optional: with every field required, ReScript compiles a
+  // `{...registration, ...}` spread into an explicit field-by-field copy, which
+  // drops the ecosystem-only fields an `evmOnEventRegistration` carries.
+  addressFilterParamGroups?: array<array<string>>,
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,

@@ -8,9 +8,11 @@ type options = {
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.fuelOnEventRegistration>,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
 }
 
-let make = ({chainId, endpointUrl, apiToken, onEventRegistrations}: options): t => {
+let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}: options): t => {
   let name = "HyperFuel"
 
   let apiToken = switch apiToken {
@@ -24,6 +26,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   let client = switch FuelHyperSyncClient.make(
     {url: endpointUrl, apiToken},
     ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~addressStore,
   ) {
   | client => client
   | exception exn =>
@@ -33,8 +36,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress as _,
+    ~addressSet,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -52,7 +54,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~fromBlock,
       ~toBlock,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
-      ~addressesByContractName,
+      ~addressSet,
+      ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | FuelHyperSync.GetLogs.Error(error) =>
       throw(

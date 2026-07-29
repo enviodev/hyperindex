@@ -23,7 +23,8 @@ type parsedWhere = {
   filterByAddresses: bool,
   // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
   // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
-  // Consumed by the codegen of the event's `clientAddressFilter`.
+  // Applied natively by every source while routing; carried on the registration
+  // for the simulate source, which has no native query boundary.
   addressFilterParamGroups: array<array<string>>,
 }
 

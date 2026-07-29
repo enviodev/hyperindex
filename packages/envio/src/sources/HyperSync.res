@@ -16,7 +16,7 @@ let reraisIfRateLimited = exn =>
 
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  // Block headers referenced by `items`, deduplicated by block number.
+  // Headers for every returned block, deduplicated by block number.
   blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
@@ -92,7 +92,7 @@ module GetLogs = {
     ~toBlock,
     ~maxNumLogs,
     ~registrationIndexes,
-    ~addressesByContractName,
+    ~addressSet,
     ~clientFilteredContracts,
   ): logsQueryPage => {
     let query: HyperSyncClient.EventItems.query = {
@@ -100,11 +100,13 @@ module GetLogs = {
       toBlock,
       ?maxNumLogs,
       registrationIndexes,
-      addressesByContractName,
       clientFilteredContracts,
     }
 
-    let (res, transactionStore, blockStore) = switch await client.getEventItems(~query) {
+    let (res, transactionStore, blockStore) = switch await client.getEventItems(
+      ~query,
+      ~addressSet,
+    ) {
     | res => res
     | exception exn =>
       reraisIfRateLimited(exn)

@@ -382,12 +382,17 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
     isWildcard: false,
     filterByAddresses: false,
     dependsOnAddresses: true,
+    addressFilterParamGroups: [],
     startBlock: None,
     handler: Some(handler),
     contractRegister: Some(contractRegister),
     resolvedWhere: {topicSelections: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
+
+let defineAddresses: ({..}, array<Address.t>) => unit = %raw(`(payload, addresses) => {
+  Object.defineProperty(payload, "addresses", {value: addresses});
+}`)
 
 type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef}
@@ -897,7 +902,8 @@ module Indexer = {
 
 module Source = {
   module CallPayload = {
-    @get external addresses: {..} => dict<array<Address.t>> = "addresses"
+    // The partition's addresses as the query carried them, in set order.
+    @get external addresses: {..} => array<Address.t> = "addresses"
   }
 
   type method = [
@@ -1082,8 +1088,7 @@ module Source = {
           getItemsOrThrow: implement(#getItemsOrThrow, (
             ~fromBlock,
             ~toBlock,
-            ~addressesByContractName as _addressesByContractName,
-            ~contractNameByAddress as _,
+            ~addressSet,
             ~knownHeight,
             ~partitionId,
             ~selection as _,
@@ -1098,7 +1103,9 @@ module Source = {
                 "retry": retry,
                 "p": partitionId,
               }
-              let _ = %raw(`Object.defineProperty(payload, 'addresses', { value: _addressesByContractName })`)
+              // Non-enumerable so it stays out of `toEqual` comparisons of the
+              // payload while remaining inspectable from a test.
+              payload->defineAddresses(addressSet->AddressSet.addresses)
               {
                 payload,
                 resolve: (
@@ -1321,6 +1328,7 @@ let evmOnEventRegistration = (
     isWildcard,
     filterByAddresses,
     dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
+    addressFilterParamGroups: [],
     startBlock,
     handler: None,
     contractRegister: None,

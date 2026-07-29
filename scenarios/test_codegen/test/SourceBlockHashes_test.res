@@ -66,6 +66,7 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   isWildcard: false,
   filterByAddresses: false,
   dependsOnAddresses: true,
+  addressFilterParamGroups: [],
   startBlock: None,
   handler: None,
   contractRegister: None,
@@ -82,8 +83,16 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   },
 }
 
-let makeAddressesByContractName = () =>
-  Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
+// The chain's address index, holding the one factory address these queries
+// fetch for.
+let addressStore = TestAddresses.makeStore(
+  ~onEventRegistrations=[(pairCreatedRegistration :> Internal.onEventRegistration)],
+  ~addresses=[
+    {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
+  ],
+  ~shouldChecksum=false,
+)
+let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
 
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
@@ -101,6 +110,7 @@ let makeHyperSyncSource = () =>
     serializationFormat: Env.hypersyncClientSerializationFormat,
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
+    addressStore,
   })
 
 let makeRpcSource = () =>
@@ -111,14 +121,14 @@ let makeRpcSource = () =>
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
     lowercaseAddresses: true,
+    addressStore,
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   try await source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),
-    ~addressesByContractName=makeAddressesByContractName(),
-    ~contractNameByAddress=FetchState.deriveContractNameByAddress(makeAddressesByContractName()),
+    ~addressSet=factorySet,
     ~knownHeight=toBlock + 1000,
     ~partitionId="0",
     ~selection=makeSelection(),

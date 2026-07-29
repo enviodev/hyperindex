@@ -15,13 +15,12 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ) :> Internal.onEventRegistration),
     ]
     let addresses = []
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-    let indexingAddresses = IndexingAddresses.make(~contractConfigs, ~addresses)
+    let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
     let fetchState = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
-      ~contractConfigs,
+      ~addressStore,
       ~addresses,
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
@@ -32,7 +31,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
-      ~indexingAddresses,
+      ~addressStore,
       ~sourceManager=SourceManager.make(
         ~sources=[mockSource.source],
         ~isRealtime=false,

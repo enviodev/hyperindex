@@ -10,6 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type addressStoreCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -40,6 +41,8 @@ type addon = {
   transactionStore: transactionStoreCtor,
   @as("BlockStore")
   blockStore: blockStoreCtor,
+  @as("AddressStore")
+  addressStore: addressStoreCtor,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,

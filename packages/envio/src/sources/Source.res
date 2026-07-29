@@ -73,8 +73,10 @@ type t = {
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~addressesByContractName: dict<array<Address.t>>,
-    ~contractNameByAddress: dict<string>,
+    // The partition's slice of the chain's address index. The source hands it
+    // straight to its Rust client, which builds the query's address filter from
+    // it and gates every returned item against the chain-wide store.
+    ~addressSet: AddressSet.t,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
@@ -93,8 +95,4 @@ type t = {
   // Invoked by SourceManager once a rollback target is known so the source can
   // drop any state that may now point at an orphaned chain (e.g. RPC block cache).
   onReorg?: (~rollbackTargetBlock: int) => unit,
-  // Present only on the simulate source: the items a test fed in. The chain
-  // tracks which of these never reach a handler so the run can report dead
-  // simulate inputs on completion.
-  simulateItems?: array<Internal.item>,
 }

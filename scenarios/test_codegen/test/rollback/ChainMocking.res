@@ -268,7 +268,7 @@ module Make = () => {
     }
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
-      let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])
+      let addresses = query.addresses->AddressSet.filterByContracts([c.name])->AddressSet.addresses
       {
         addresses,
         eventKeys: c.events->Array.map(eventConfig => {

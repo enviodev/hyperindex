@@ -26,7 +26,6 @@ type nextPageParams = {
   // selections and the routing index are derived on the Rust side from the
   // registrations passed at construction.
   registrationIndexes: array<int>,
-  addressesByContractName: dict<array<Address.t>>,
   // Contract names to fetch address-free even though their registrations
   // depend on addresses (client-side filtering). None/empty means
   // every address-dependent contract is filtered server-side.
@@ -42,7 +41,7 @@ type nextPageResponse = {
 // The caller provides a range; Rust decides the actual `toBlock` and returns it.
 type t = {
   getHeight: unit => promise<int>,
-  getNextPage: nextPageParams => promise<nextPageResponse>,
+  getNextPage: (nextPageParams, AddressSet.t) => promise<nextPageResponse>,
 }
 
 @send
@@ -51,6 +50,7 @@ external classNew: (
   cfg,
   array<HyperSyncClient.Registration.input>,
   ~checksumAddresses: bool,
+  ~addressStore: AddressStore.t,
 ) => t = "new"
 
 // Rust encodes JSON-RPC errors as a JSON payload in the napi error's
@@ -89,6 +89,7 @@ let make = (
   ~httpReqTimeoutMillis=?,
   ~headers=?,
   ~eventRegistrations=[],
+  ~addressStore,
 ) => {
   let client = Core.getAddon().evmRpcClient->classNew(
     {
@@ -104,9 +105,11 @@ let make = (
     },
     eventRegistrations,
     ~checksumAddresses,
+    ~addressStore,
   )
   {
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
-    getNextPage: params => client.getNextPage(params)->Promise.catch(coerceErrorOrThrow),
+    getNextPage: (params, addressSet) =>
+      client.getNextPage(params, addressSet)->Promise.catch(coerceErrorOrThrow),
   }
 }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use anyhow::Context;
 use napi::bindgen_prelude::BigInt;
@@ -8,15 +8,23 @@ mod config;
 mod selection;
 mod types;
 
+use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
 use config::ClientConfig;
+use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
-use selection::{BuiltSelection, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder};
+use selection::{
+    BuiltSelection, FuelOnEventRegistrationInput, ReceiptAddress, RegistrationKind,
+    SelectionBuilder,
+};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
 pub struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
     selection_builder: SelectionBuilder,
+    /// The chain's address index, shared with the fetch state. Read by the
+    /// per-receipt owner gate.
+    address_store: std::sync::Arc<std::sync::RwLock<StoreInner>>,
 }
 
 #[napi]
@@ -26,10 +34,15 @@ impl FuelHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<FuelOnEventRegistrationInput>,
+        address_store: &AddressStore,
     ) -> napi::Result<FuelHyperSyncClient> {
-        let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
-            .context("build selection builder")
-            .map_err(map_err)?;
+        let handle = address_store.handle();
+        let selection_builder = {
+            let store = handle.read().unwrap();
+            SelectionBuilder::from_registrations(&event_registrations, &store)
+                .context("build selection builder")
+                .map_err(map_err)?
+        };
         let client_config: hyperfuel_client::ClientConfig =
             cfg.try_into().context("build config").map_err(map_err)?;
         let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
@@ -38,6 +51,7 @@ impl FuelHyperSyncClient {
         Ok(FuelHyperSyncClient {
             inner,
             selection_builder,
+            address_store: handle,
         })
     }
 
@@ -55,13 +69,14 @@ impl FuelHyperSyncClient {
     pub async fn get_event_items(
         &self,
         params: EventItemsQuery,
+        address_set: &AddressSet,
     ) -> napi::Result<EventItemsResponse> {
+        let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
+            params.client_filtered_contracts.clone().unwrap_or_default(),
+        );
         let built = self
             .selection_builder
-            .build(
-                &params.registration_indexes,
-                &params.addresses_by_contract_name,
-            )
+            .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
 
         let query = build_query(&params, &built)
@@ -74,8 +89,22 @@ impl FuelHyperSyncClient {
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
 
-        let items =
-            route_receipts(raw.receipts, &raw.blocks, &built).map_err(convert_error_to_napi)?;
+        // Materialise the set's cache before taking the store guard: `cache()`
+        // lazily initialises by reading the same lock, and a writer queued
+        // between the two reads would deadlock the pair.
+        let set_cache = address_set.cache().clone();
+        let items = {
+            let store = self.address_store.read().unwrap();
+            route_receipts(
+                raw.receipts,
+                &raw.blocks,
+                &built,
+                &set_cache,
+                &client_filtered,
+                &store,
+            )
+            .map_err(convert_error_to_napi)?
+        };
 
         Ok(EventItemsResponse {
             archive_height: raw.archive_height,
@@ -86,17 +115,21 @@ impl FuelHyperSyncClient {
     }
 }
 
-/// The whole per-query input for `get_event_items`: the block range, the
-/// partition's registration selection (by index), and its current addresses.
-/// Receipt selections, field selection, and routing are all derived internally
-/// from the registrations passed at construction.
+/// The whole per-query input for `get_event_items`: the block range and the
+/// partition's registration selection (by index). The partition's addresses
+/// arrive separately, as the `AddressSet` handle. Receipt selections, field
+/// selection, and routing are all derived internally from the registrations
+/// passed at construction.
 #[napi(object)]
 pub struct EventItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     pub registration_indexes: Vec<i64>,
-    pub addresses_by_contract_name: HashMap<String, Vec<String>>,
+    /// Contract names to fetch address-free even though their registrations
+    /// depend on addresses (client-side filtering). Absent or empty means every
+    /// address-dependent contract is filtered server-side.
+    pub client_filtered_contracts: Option<Vec<String>>,
 }
 
 /// One routed receipt. The receipt's kind-specific columns are flattened so
@@ -197,6 +230,9 @@ fn route_receipts(
     receipts: Vec<RawReceipt>,
     blocks: &[Block],
     built: &BuiltSelection,
+    set_cache: &SetCache,
+    client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
+    address_store: &StoreInner,
 ) -> Result<Vec<EventItem>, ConvertError> {
     let present_block_heights: HashSet<i64> = blocks.iter().map(|b| b.height).collect();
     let mut items = Vec::with_capacity(receipts.len());
@@ -207,13 +243,24 @@ fn route_receipts(
             Some(address) => address.clone(),
             None => continue,
         };
-        let contract_name = built
-            .contract_name_by_address
-            .get(&src_address)
-            .map(String::as_str);
+        // A malformed root contract id can't be any registered address, so the
+        // receipt only reaches wildcard registrations.
+        let contract_id = Hash::decode_hex(&src_address).ok();
+        let key: &[u8] = contract_id.as_deref().map_or(&[], |bytes| &bytes[..]);
+        let address = ReceiptAddress {
+            key,
+            contract_name: set_cache.owner_of(key),
+            block_height: receipt.block_height,
+        };
 
         for reg in &built.registrations {
-            if !reg.matches(receipt.receipt_type, receipt.rb, contract_name) {
+            if !reg.matches(
+                receipt.receipt_type,
+                receipt.rb,
+                &address,
+                client_filtered.applies(&reg.contract_name),
+                address_store,
+            ) {
                 continue;
             }
             // Every routed item's block must resolve — JS reads it
@@ -327,6 +374,7 @@ fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::selection::FuelEventKind;
     use super::*;
+    use crate::address_store::test_support::{fuel_store, set_of};
 
     #[test]
     fn convert_error_serializes_as_expected_json() {
@@ -354,6 +402,7 @@ mod tests {
             event_name: format!("E{index}"),
             contract_name: contract_name.to_string(),
             is_wildcard,
+            start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
         }
@@ -385,34 +434,50 @@ mod tests {
         }
     }
 
+    /// Builds a selection and keeps its store and set alive — routing reads
+    /// both. `addresses` must cover every contract the registrations name.
     fn build(
         registrations: &[FuelOnEventRegistrationInput],
         indexes: &[i64],
         addresses: &[(&str, &[&str])],
-    ) -> BuiltSelection {
-        let addresses: HashMap<String, Vec<String>> = addresses
-            .iter()
-            .map(|(name, addrs)| {
-                (
-                    name.to_string(),
-                    addrs.iter().map(|a| a.to_string()).collect(),
-                )
-            })
-            .collect();
-        SelectionBuilder::from_registrations(registrations)
-            .unwrap()
-            .build(indexes, &addresses)
-            .unwrap()
+    ) -> (AddressStore, AddressSet, BuiltSelection) {
+        let store = fuel_store(addresses);
+        let names: Vec<&str> = addresses.iter().map(|(name, _)| *name).collect();
+        let set = set_of(&store, &names);
+        let built =
+            SelectionBuilder::from_registrations(registrations, &store.handle().read().unwrap())
+                .unwrap()
+                .build(indexes, &set, &Default::default())
+                .unwrap();
+        (store, set, built)
+    }
+
+    fn route(
+        store: &AddressStore,
+        set: &AddressSet,
+        built: &BuiltSelection,
+        receipts: Vec<RawReceipt>,
+    ) -> Result<Vec<EventItem>, ConvertError> {
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        route_receipts(
+            receipts,
+            &[block_42()],
+            built,
+            set.cache(),
+            &Default::default(),
+            &address_store,
+        )
     }
 
     #[test]
     fn routes_transfer_out_recipient_into_to() {
-        let built = build(
+        let (store, set, built) = build(
             &[reg_input(0, "C", FuelEventKind::Transfer, true, None)],
             &[0],
-            &[],
+            &[("C", &[])],
         );
-        let items = route_receipts(vec![raw_receipt(8)], &[block_42()], &built).unwrap();
+        let items = route(&store, &set, &built, vec![raw_receipt(8)]).unwrap();
         assert_eq!(
             items
                 .iter()
@@ -424,15 +489,15 @@ mod tests {
 
     #[test]
     fn fans_out_to_wildcard_and_owned_registration() {
-        let built = build(
+        let (store, set, built) = build(
             &[
                 reg_input(0, "Owned", FuelEventKind::Mint, false, None),
                 reg_input(1, "W", FuelEventKind::Mint, true, None),
             ],
             &[0, 1],
-            &[("Owned", &[ADDR])],
+            &[("Owned", &[ADDR]), ("W", &[])],
         );
-        let items = route_receipts(vec![raw_receipt(11)], &[block_42()], &built).unwrap();
+        let items = route(&store, &set, &built, vec![raw_receipt(11)]).unwrap();
         assert_eq!(
             items
                 .iter()
@@ -444,26 +509,26 @@ mod tests {
 
     #[test]
     fn unrouted_receipt_is_dropped() {
-        let built = build(
+        let (store, set, built) = build(
             &[reg_input(0, "C", FuelEventKind::LogData, true, Some("9"))],
             &[0],
-            &[],
+            &[("C", &[])],
         );
         // rb 7 doesn't match the registration's logId 9.
-        let items = route_receipts(vec![raw_receipt(6)], &[block_42()], &built).unwrap();
+        let items = route(&store, &set, &built, vec![raw_receipt(6)]).unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
     fn missing_kind_required_column_is_typed_error() {
-        let built = build(
+        let (store, set, built) = build(
             &[reg_input(0, "C", FuelEventKind::Mint, true, None)],
             &[0],
-            &[],
+            &[("C", &[])],
         );
         let mut receipt = raw_receipt(11);
         receipt.val = None;
-        match route_receipts(vec![receipt], &[block_42()], &built) {
+        match route(&store, &set, &built, vec![receipt]) {
             Err(ConvertError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["receipt.val".to_string()])
             }
@@ -474,12 +539,21 @@ mod tests {
 
     #[test]
     fn missing_block_for_routed_receipt_is_typed_error() {
-        let built = build(
+        let (store, set, built) = build(
             &[reg_input(0, "C", FuelEventKind::Mint, true, None)],
             &[0],
-            &[],
+            &[("C", &[])],
         );
-        match route_receipts(vec![raw_receipt(11)], &[], &built) {
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        match route_receipts(
+            vec![raw_receipt(11)],
+            &[],
+            &built,
+            set.cache(),
+            &Default::default(),
+            &address_store,
+        ) {
             Err(ConvertError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["block".to_string()])
             }

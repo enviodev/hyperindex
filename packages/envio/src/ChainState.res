@@ -7,9 +7,10 @@ type t = {
   // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
-  // The chain-wide address index. Not `mutable`: the dict is mutated in place by
-  // register/rollback, so the reference is stable across fetchState versions.
-  indexingAddresses: IndexingAddresses.t,
+  // The chain-wide address index, kept in Rust. Not `mutable`: registration and
+  // rollback mutate it in place, so the handle is stable across fetchState
+  // versions — and it's the same handle this chain's source clients hold.
+  addressStore: AddressStore.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
   mutable isProgressAtHead: bool,
@@ -83,7 +84,7 @@ let make = (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
   ~onEventRegistrations=[],
-  ~indexingAddresses: IndexingAddresses.t,
+  ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
@@ -102,7 +103,7 @@ let make = (
     logger,
     onEventRegistrations,
     fetchState,
-    indexingAddresses,
+    addressStore,
     sourceManager,
     chainConfig,
     isProgressAtHead,
@@ -146,6 +147,7 @@ let makeInternal = (
   ~reorgCheckpoints: array<Internal.reorgCheckpoint>,
   ~maxReorgDepth,
   ~knownHeight=0,
+  ~isResumed=false,
   ~reducedPollingInterval=?,
 ): t => {
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
@@ -166,12 +168,18 @@ let makeInternal = (
     }
   })
 
-  let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
-  let indexingAddressIndex = IndexingAddresses.make(~contractConfigs, ~addresses=indexingAddresses)
+  let lowercaseAddresses = config.lowercaseAddresses
+  // Created before the fetch state and the sources: `make` registers this
+  // chain's addresses into it, and every source client holds the same handle.
+  let addressStore = AddressStore.make(
+    ~ecosystem=config.ecosystem.name,
+    ~shouldChecksum=!lowercaseAddresses,
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations),
+  )
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
-    ~contractConfigs,
+    ~addressStore,
     ~addresses=indexingAddresses,
     ~progressBlockNumber,
     ~startBlock,
@@ -187,12 +195,16 @@ let makeInternal = (
     ),
     ~onBlockRegistrations,
     ~firstEventBlock,
-    // Only EVM sources (HyperSync + RPC) honor client-side address filtering so
-    // far, so switching contracts to it is gated to EVM chains.
+    // Fuel and SVM route through the address store like EVM does, so the
+    // client-side path works for them — but their address counts are nowhere
+    // near the threshold, so switching would only trade a server-side filter
+    // that costs nothing today for an over-fetch. Keep them server-side until a
+    // chain actually needs it.
     ~clientFilterAddressThreshold=switch config.ecosystem.name {
     | Evm => Some(config.clientFilterAddressThreshold)
     | Fuel | Svm => None
     },
+    ~isResumed,
   )
 
   let chainReorgCheckpoints = reorgCheckpoints->Array.filterMap(reorgCheckpoint => {
@@ -205,7 +217,6 @@ let makeInternal = (
 
   // Create sources lazily here - this is where API token validation happens
   let chainId = chainConfig.id
-  let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
     let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
@@ -228,6 +239,7 @@ let makeInternal = (
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
+      ~addressStore,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
@@ -235,14 +247,13 @@ let makeInternal = (
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations,
+        addressStore,
       }),
     ]
   | Config.SvmSourceConfig({hypersync, rpc}) =>
     switch (hypersync, rpc) {
     | (None, None) =>
-      JsError.throwWithMessage(
-        `Chain ${chainId->ChainId.toString} has no SVM data source`,
-      )
+      JsError.throwWithMessage(`Chain ${chainId->ChainId.toString} has no SVM data source`)
     | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
     | (Some(hypersyncUrl), _) =>
       // HyperSync drives instruction sync. A configured RPC is ignored for now
@@ -255,9 +266,13 @@ let makeInternal = (
           apiToken,
           onEventRegistrations,
           clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+          addressStore,
         }),
       ]
     }
+  | Config.SimulateSourceConfig({items, endBlock}) => [
+      SimulateSource.make(~items, ~endBlock, ~chainId, ~addressStore),
+    ]
   // For tests: use ready-to-use sources directly
   | Config.CustomSources(sources) => sources
   }
@@ -274,7 +289,7 @@ let makeInternal = (
     ~chainConfig,
     ~fetchState,
     ~onEventRegistrations,
-    ~indexingAddresses=indexingAddressIndex,
+    ~addressStore,
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~reorgDetection=ReorgDetection.make(
       ~chainReorgCheckpoints,
@@ -369,6 +384,7 @@ let makeFromDbState = (
     ~isInReorgThreshold,
     ~isRealtime,
     ~knownHeight=resumedChainState.sourceBlockNumber,
+    ~isResumed=true,
     ~reducedPollingInterval?,
   )
 }
@@ -413,7 +429,7 @@ let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = S
 // rather than reaching into it.
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let contractAddresses = (cs: t, ~contractName) =>
-  cs.indexingAddresses->IndexingAddresses.getContractAddresses(~contractName)
+  cs.addressStore->AddressStore.contractAddresses(contractName)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -722,6 +738,9 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
           }
         }
       }
+    // onBlock items build their block from the handler's own block number, not
+    // from the stores — which is what lets the sources keep only the blocks and
+    // transactions an event item references.
     | Internal.Block(_) => ()
     }
   )
@@ -818,15 +837,12 @@ let materializePageItems = async (
   ))
 }
 
-let filterByClientAddress = (cs: t, items: array<Internal.item>): array<Internal.item> =>
-  items->FetchState.filterByClientAddress(~indexingAddresses=cs.indexingAddresses)
-
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
   ~newItems,
   ~newItemsWithDcs,
-  ~latestFetchedBlock,
+  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
   ~blockStore as blockPage: option<BlockStore.t>,
@@ -846,7 +862,12 @@ let handleQueryResult = (
   | [] => cs.fetchState
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
-      ~indexingAddresses=cs.indexingAddresses,
+      ~addressStore=cs.addressStore,
+      // This response is applied below, after the addresses land. It was routed
+      // before they existed, so whatever it claims has to be inside the
+      // catch-up range — and an unbounded query can reach past the height that
+      // was known when it went out.
+      ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock.blockNumber),
       newItemsWithDcs,
     )
   }
@@ -922,7 +943,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   numBatchesFetched: 0,
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
-  numAddresses: cs.indexingAddresses->IndexingAddresses.size,
+  numAddresses: cs.addressStore->AddressStore.size,
   isReady: cs->isReady,
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
@@ -969,9 +990,7 @@ let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,
 // applying blockLag when this batch also crosses into the reorg threshold.
 let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
-  switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
-    cs.fetchState.chainId,
-  ) {
+  switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(cs.fetchState.chainId) {
   | Some(chainAfterBatch) =>
     cs.fetchState = enteringReorgThreshold
       ? chainAfterBatch.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
@@ -1130,7 +1149,7 @@ let rollback = (
     }
     cs.fetchState =
       cs.fetchState->FetchState.rollback(
-        ~indexingAddresses=cs.indexingAddresses,
+        ~addressStore=cs.addressStore,
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
@@ -1146,7 +1165,7 @@ let rollback = (
         )
       cs.fetchState =
         cs.fetchState->FetchState.rollback(
-          ~indexingAddresses=cs.indexingAddresses,
+          ~addressStore=cs.addressStore,
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)

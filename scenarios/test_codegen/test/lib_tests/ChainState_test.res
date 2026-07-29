@@ -94,7 +94,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   let dummyFetchState = () =>
     FetchState.make(
       ~onEventRegistrations=[],
-      ~contractConfigs=Dict.make(),
+      ~addressStore=TestAddresses.makeStore(),
       ~addresses=[],
       ~startBlock=0,
       ~endBlock=None,

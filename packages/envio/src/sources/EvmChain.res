@@ -45,6 +45,7 @@ let makeSources = (
   ~hyperSync,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
+  ~addressStore,
 ) => {
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
@@ -58,6 +59,7 @@ let makeSources = (
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
         logLevel: Env.hypersyncLogLevel,
+        addressStore,
       }),
     ]
   | _ => []
@@ -70,6 +72,7 @@ let makeSources = (
       url,
       onEventRegistrations,
       lowercaseAddresses,
+      addressStore,
       ?ws,
       ?headers,
     })

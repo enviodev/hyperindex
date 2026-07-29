@@ -32,7 +32,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~name="getHeight request contract",
       ~calls=[heightCall(~reply=RpcResult(JSON.String("0x1b4")))],
       async mock => {
-        let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+        let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig,
+        ~addressStore=TestAddresses.makeStore(),
+      )
         await client.getHeight()
       },
     )
@@ -49,7 +54,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ),
       ],
       async mock => {
-        let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+        let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig,
+        ~addressStore=TestAddresses.makeStore(),
+      )
         await getHeightJsonRpcError(client)
       },
     )
@@ -69,7 +79,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ),
       ],
       async mock => {
-        let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+        let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig,
+        ~addressStore=TestAddresses.makeStore(),
+      )
         await getHeightJsonRpcError(client)
       },
     )
@@ -82,7 +97,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~name="non-JSON upstream response",
       ~calls=[heightCall(~reply=RawHttp({status: 502, body: "upstream exploded"}))],
       async mock => {
-        let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+        let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig,
+        ~addressStore=TestAddresses.makeStore(),
+      )
         await getHeightErrorMessage(client)
       },
     )
@@ -99,7 +119,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
         heightCall(~reply=RawHttp({status: 200, body: `{"jsonrpc":"2.0","id":1}`})),
       ],
       async mock => {
-        let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+        let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig,
+        ~addressStore=TestAddresses.makeStore(),
+      )
         await getHeightErrorMessage(client)
       },
     )
@@ -114,7 +139,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~name="null height result",
       ~calls=[heightCall(~reply=RpcResult(JSON.Null))],
       async mock => {
-        let client = EvmRpcClient.make(~url=mock.url, ~checksumAddresses=false, ~syncConfig)
+        let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig,
+        ~addressStore=TestAddresses.makeStore(),
+      )
         await getHeightErrorMessage(client)
       },
     )
@@ -137,6 +167,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
           ~checksumAddresses=false,
           ~syncConfig,
           ~headers=Dict.fromArray([("Authorization", "Bearer test-token")]),
+          ~addressStore=TestAddresses.makeStore(),
         )
         let height = await client.getHeight()
         t.expect(height).toBe(436)
@@ -151,6 +182,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ~checksumAddresses=false,
         ~syncConfig,
         ~headers=Dict.fromArray([("Authorization", "Bearer bad\nvalue")]),
+        ~addressStore=TestAddresses.makeStore(),
       )
       None
     } catch {
@@ -174,6 +206,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~topicCount=3,
     ~isWildcard=false,
     ~dependsOnAddresses=true,
+    ~startBlock=None,
     ~params=transferParams,
   ): HyperSyncClient.Registration.input => {
     index,
@@ -183,6 +216,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     contractName: "ERC20",
     isWildcard,
     dependsOnAddresses,
+    startBlock,
     params,
     topicSelections: [
       {
@@ -196,8 +230,23 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     transactionFields: [],
   }
 
-  let addressesByContractName = () =>
-    Dict.fromArray([("ERC20", [contractAddress->Address.unsafeFromString])])
+  // The chain's address index, holding the one ERC20 address these logs are
+  // emitted from. Non-wildcard registrations only route emitters it holds.
+  let makeAddressStore = () => {
+    let store = AddressStore.make(
+      ~ecosystem=Ecosystem.Evm,
+      ~shouldChecksum=false,
+      ~contracts=[{name: "ERC20", startBlock: None}],
+    )
+    let _ = store->AddressStore.registerBatch([
+      {
+        address: contractAddress->Address.unsafeFromString,
+        contractName: "ERC20",
+        registrationBlock: -1,
+      },
+    ])
+    store
+  }
 
   Async.it("Decodes event params and parses hex log fields", async t => {
     let result = await MockRpcServer.withScenario(
@@ -216,21 +265,25 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         ),
       ],
       async mock => {
+        let addressStore = makeAddressStore()
         let client = EvmRpcClient.make(
           ~url=mock.url,
           ~checksumAddresses=false,
           ~syncConfig,
           ~eventRegistrations=[makeRegistration()],
+          ~addressStore,
         )
 
-        let {items, toBlock} = await client.getNextPage({
-          fromBlock: 100,
-          toBlockCeiling: 100,
-          partitionId: "0",
-          registrationIndexes: [3],
-          addressesByContractName: addressesByContractName(),
-          clientFilteredContracts: None,
-        })
+        let {items, toBlock} = await client.getNextPage(
+          {
+            fromBlock: 100,
+            toBlockCeiling: 100,
+            partitionId: "0",
+            registrationIndexes: [3],
+            clientFilteredContracts: None,
+          },
+          addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        )
         (
           toBlock,
           items->Array.map(({log, onEventRegistrationIndex, params}) => {
@@ -284,21 +337,25 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         ),
       ],
       async mock => {
+        let addressStore = makeAddressStore()
         let client = EvmRpcClient.make(
           ~url=mock.url,
           ~checksumAddresses=false,
           ~syncConfig,
           ~eventRegistrations=[makeRegistration()],
+          ~addressStore,
         )
 
-        let {items} = await client.getNextPage({
-          fromBlock: 1,
-          toBlockCeiling: 1,
-          partitionId: "0",
-          registrationIndexes: [3],
-          addressesByContractName: addressesByContractName(),
-          clientFilteredContracts: None,
-        })
+        let {items} = await client.getNextPage(
+          {
+            fromBlock: 1,
+            toBlockCeiling: 1,
+            partitionId: "0",
+            registrationIndexes: [3],
+            clientFilteredContracts: None,
+          },
+          addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        )
         items->Array.length
       },
     )
@@ -322,6 +379,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         ),
       ],
       async mock => {
+        let addressStore = makeAddressStore()
         let client = EvmRpcClient.make(
           ~url=mock.url,
           ~checksumAddresses=false,
@@ -335,16 +393,19 @@ describe("EvmRpcClient - getNextPage via napi", () => {
               ~params=[],
             ),
           ],
+          ~addressStore,
         )
         try {
-          let _ = await client.getNextPage({
-            fromBlock: 0,
-            toBlockCeiling: 5000,
-            partitionId: "0",
-            registrationIndexes: [0],
-            addressesByContractName: Dict.make(),
-            clientFilteredContracts: None,
-          })
+          let _ = await client.getNextPage(
+            {
+              fromBlock: 0,
+              toBlockCeiling: 5000,
+              partitionId: "0",
+              registrationIndexes: [0],
+              clientFilteredContracts: None,
+            },
+            addressStore->AddressStore.emptySet,
+          )
           None
         } catch {
         | exn => Some(exn)

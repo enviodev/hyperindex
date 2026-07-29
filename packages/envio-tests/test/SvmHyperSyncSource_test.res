@@ -94,11 +94,19 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
 let capturedQueries: array<SvmHyperSyncClient.EventItems.query> = []
 let capturedRegistrationInputs: array<array<SvmHyperSyncClient.Registration.input>> = []
 
+// The chain's address index; created outside the mock-addon window below so it
+// loads the real native addon.
+let addressStore = AddressStore.make(
+  ~ecosystem=Ecosystem.Svm,
+  ~shouldChecksum=false,
+  ~contracts=[{name: "TokenMetadata", startBlock: None}],
+)
+
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query as _) =>
     JsError.throwWithMessage("get should only be used for block-data queries in tests"),
-  getEventItems: (~query) => {
+  getEventItems: (~query, ~addressSet as _) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the stores from raw transactions/blocks; the
     // mock returns empty pages (materialisation is covered by the Rust unit
@@ -126,6 +134,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
             _: SvmHyperSyncClient.cfg,
             _: string,
             registrations: array<SvmHyperSyncClient.Registration.input>,
+            _: AddressStore.t,
           ) => {
             capturedRegistrationInputs->Array.push(registrations)
             client
@@ -139,6 +148,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
     apiToken: None,
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
+    addressStore,
   }) catch {
   | exn =>
     Core.addonRef := prevAddon
@@ -148,7 +158,18 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
   source
 }
 
-let contractNameByAddress = Dict.fromArray([(metaplexProgramId, "TokenMetadata")])
+// The chain's address index, with the Metaplex program registered for the
+// TokenMetadata program name.
+let programSet = {
+  let _ = addressStore->AddressStore.registerBatch([
+    {
+      address: metaplexProgramId->Address.unsafeFromString,
+      contractName: "TokenMetadata",
+      registrationBlock: -1,
+    },
+  ])
+  addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
+}
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   Async.it(
@@ -157,14 +178,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       let reg = makeReg()
       let source = makeSource(~onEventRegistrations=[reg])
 
-      let addressesByContractName = Dict.fromArray([
-        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
-      ])
       let response = await source.getItemsOrThrow(
         ~fromBlock=slot - 10,
         ~toBlock=Some(slot + 10),
-        ~addressesByContractName,
-        ~contractNameByAddress,
+        ~addressSet=programSet,
         ~knownHeight=slot + 1000,
         ~partitionId="0",
         ~itemsTarget=Some(5000),
@@ -224,7 +241,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
             toSlot: Some(slot + 10),
             maxNumInstructions: 5000,
             registrationIndexes: [0],
-            addressesByContractName,
+            clientFilteredContracts: None,
           }: SvmHyperSyncClient.EventItems.query
         ),
         "latestFetchedBlockTimestamp": blockTime,
@@ -246,6 +263,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         contractName: "TokenMetadata",
         programId: metaplexProgramId,
         isWildcard: false,
+        startBlock: None,
         discriminator: "0x21",
         discriminatorByteLen: 1,
         includeLogs: false,

@@ -25,6 +25,8 @@ module Registration = {
     contractName: string,
     programId: string,
     isWildcard: bool,
+    // Earliest slot this registration accepts; `None` is unrestricted.
+    startBlock: option<int>,
     discriminator?: string,
     discriminatorByteLen: int,
     isInner?: bool,
@@ -52,6 +54,7 @@ module Registration = {
         contractName: eventConfig.contractName,
         programId: eventConfig.programId->SvmTypes.Pubkey.toString,
         isWildcard: reg.isWildcard,
+        startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
         discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
@@ -191,7 +194,10 @@ module EventItems = {
     // Absent means no server-side cap on the number of instructions returned.
     maxNumInstructions?: int,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Program names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means every
+    // address-dependent program is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   type log = {
@@ -221,8 +227,10 @@ module EventItems = {
 
   type response = {
     nextSlot: int,
-    // One lean header per slot referenced by `items`; the full blocks live in
-    // the block store returned alongside.
+    // One lean header per returned slot, including slots no item references —
+    // reorg detection and the batch's latest timestamp read them all. The full
+    // blocks live in the block store returned alongside, which keeps only the
+    // slots items reference.
     blocks: array<ResponseTypes.block>,
     items: array<item>,
   }
@@ -240,6 +248,7 @@ type t = {
   // prep.
   getEventItems: (
     ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
 }
 
@@ -249,6 +258,7 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.input>,
+  AddressStore.t,
 ) => t = "fromConfig"
 
 let make = (
@@ -259,6 +269,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~eventRegistrations=[],
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
@@ -272,5 +283,6 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     eventRegistrations,
+    addressStore,
   )
 }

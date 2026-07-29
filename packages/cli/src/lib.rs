@@ -1,3 +1,4 @@
+mod address_store;
 mod block_store;
 mod cli_args;
 mod client_filtered_contracts;
@@ -19,6 +20,7 @@ mod hbs_templating;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
+mod registration_start_block;
 pub mod scripts;
 mod service_health;
 mod svm_hypersync_source;

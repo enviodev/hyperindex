@@ -43,16 +43,17 @@ module GetLogs = {
     ~fromBlock,
     ~toBlock,
     ~registrationIndexes,
-    ~addressesByContractName,
+    ~addressSet,
+    ~clientFilteredContracts,
   ): logsQueryPage => {
     let query: FuelHyperSyncClient.EventItems.query = {
       fromBlock,
       toBlock,
       registrationIndexes,
-      addressesByContractName,
+      clientFilteredContracts,
     }
 
-    let res = switch await client->FuelHyperSyncClient.getEventItems(query) {
+    let res = switch await client->FuelHyperSyncClient.getEventItems(query, addressSet) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {

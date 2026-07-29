@@ -209,11 +209,12 @@ let rec onQueryResponse = async (
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
     | None =>
-      // Drop over-fetched events (a merged partition returning an address before
-      // its effectiveStartBlock, or a wildcard param referencing an address
-      // registered after the log's block) before contract registration, so they
-      // neither spawn dynamic contracts nor enter the buffer.
-      let newItems = chainState->ChainState.filterByClientAddress(parsedQueueItems)
+      // Over-fetched events (a merged partition returning an address before its
+      // effectiveStartBlock, a wildcard param referencing an address registered
+      // after the log's block, or a registration whose own start block is later
+      // than its contract's) are already dropped by the source's native gates,
+      // so everything here is indexable.
+      let newItems = parsedQueueItems
       let itemsWithContractRegister = []
       for idx in 0 to newItems->Array.length - 1 {
         let item = newItems->Array.getUnsafe(idx)
