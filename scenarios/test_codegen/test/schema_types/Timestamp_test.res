@@ -36,7 +36,8 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    let entities = await indexerMock.query(EntityWithTimestamp)
+    let entities: array<Indexer.Entities.EntityWithTimestamp.t> =
+      await indexerMock.query("EntityWithTimestamp")
     switch entities->Array.find(e => e.id === "testEntity") {
     | Some(entity) =>
       t.expect(entity.timestamp->Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")

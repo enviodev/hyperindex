@@ -40,7 +40,8 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     )
     await indexerMock.getBatchWritePromise()
 
-    let entities = await indexerMock.query(EntityWithBigDecimal)
+    let entities: array<Indexer.Entities.EntityWithBigDecimal.t> =
+      await indexerMock.query("EntityWithBigDecimal")
     switch entities->Array.find(e => e.id === "testEntity") {
     | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("123.456")
     | None => JsError.throwWithMessage("testEntity1 should exist")
