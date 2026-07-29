@@ -19,6 +19,42 @@ type selection = {
   // gates each item against the chain's address store instead of the
   // partition's set. Absent for normal partitions.
   clientFilteredContracts?: array<string>,
+  // The earliest block any of these registrations can produce an item at.
+  // Derived once here, by `makeSelection`, because `getNextQuery` reads it for
+  // every partition on every tick and a chain can hold hundreds of them.
+  //
+  // Absent when a registration is unrestricted and so can fire from the chain
+  // start — which is also the only case where nothing can be skipped, so absent
+  // and "block 0" are the same answer here. Build selections through
+  // `makeSelection` rather than as literals, or this goes stale.
+  startBlock?: int,
+}
+
+// The earliest block any of the registrations can produce an item at, or `None`
+// when one of them is unrestricted. Nothing below it is worth querying.
+let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventRegistration>) => {
+  let earliest = ref(None)
+  let idx = ref(0)
+  let unrestricted = ref(onEventRegistrations->Utils.Array.isEmpty)
+  while !unrestricted.contents && idx.contents < onEventRegistrations->Array.length {
+    switch (onEventRegistrations->Array.getUnsafe(idx.contents)).startBlock {
+    | None => unrestricted := true
+    | Some(startBlock) =>
+      switch earliest.contents {
+      | Some(current) if current <= startBlock => ()
+      | _ => earliest := Some(startBlock)
+      }
+    }
+    idx := idx.contents + 1
+  }
+  unrestricted.contents ? None : earliest.contents
+}
+
+let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFilteredContracts=?) => {
+  onEventRegistrations,
+  dependsOnAddresses,
+  ?clientFilteredContracts,
+  startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
 }
 
 type pendingQuery = {
@@ -100,28 +136,6 @@ type query = {
 
 let withAddresses = (p: partition, addresses: AddressSet.t) => {...p, addresses}
 
-// The earliest block any of a selection's registrations can produce an item at,
-// or `None` when one of them is unrestricted and so can fire from the chain
-// start. Nothing below it is worth querying.
-let selectionStartBlock = (selection: selection) => {
-  let registrations = selection.onEventRegistrations
-  let earliest = ref(None)
-  let idx = ref(0)
-  let unrestricted = ref(registrations->Utils.Array.isEmpty)
-  while !unrestricted.contents && idx.contents < registrations->Array.length {
-    switch (registrations->Array.getUnsafe(idx.contents)).startBlock {
-    | None => unrestricted := true
-    | Some(startBlock) =>
-      switch earliest.contents {
-      | Some(current) if current <= startBlock => ()
-      | _ => earliest := Some(startBlock)
-      }
-    }
-    idx := idx.contents + 1
-  }
-  unrestricted.contents ? None : earliest.contents
-}
-
 // The selection a query over [fromBlock, toBlock] actually needs: a registration
 // whose own start block sits past the range can't produce an item there, so
 // leaving it out keeps the source from asking the server for its logs at all.
@@ -146,7 +160,12 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
     switch inRange->Array.length {
     | 0 => selection
     | length if length === selection.onEventRegistrations->Array.length => selection
-    | _ => {...selection, onEventRegistrations: inRange}
+    | _ =>
+      makeSelection(
+        ~onEventRegistrations=inRange,
+        ~dependsOnAddresses=selection.dependsOnAddresses,
+        ~clientFilteredContracts=?selection.clientFilteredContracts,
+      )
     }
   }
 
@@ -1268,11 +1287,11 @@ let collapseClientFilteredContracts = (
           clientFilteredContracts->Utils.Set.has(reg.eventConfig.contractName)
         ),
       )
-      let newSelection = {
-        dependsOnAddresses: false,
-        onEventRegistrations: regByIndex->Dict.valuesToArray,
-        clientFilteredContracts: clientFilteredContracts->Utils.Set.toArray,
-      }
+      let newSelection = makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=regByIndex->Dict.valuesToArray,
+        ~clientFilteredContracts=clientFilteredContracts->Utils.Set.toArray,
+      )
 
       switch standingRef.contents {
       | None =>
@@ -2095,7 +2114,7 @@ let walkPartitionPending = (
   // wasn't. Bounded by the head and the query end block: past either, the
   // partition would offer no candidate at all, so it queries as before rather
   // than going quiet until the chain reaches its start block.
-  let cursor = switch selectionStartBlock(p.selection) {
+  let cursor = switch p.selection.startBlock {
   | Some(startBlock) if startBlock > cursor.contents =>
     switch Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock) {
     | Some(reachable) if startBlock <= reachable => startBlock
@@ -2589,10 +2608,10 @@ let make = (
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       latestFetchedBlock,
-      selection: {
-        dependsOnAddresses: false,
-        onEventRegistrations: notDependingOnAddresses,
-      },
+      selection: makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=notDependingOnAddresses,
+      ),
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2604,10 +2623,10 @@ let make = (
     })
   }
 
-  let normalSelection = {
-    dependsOnAddresses: true,
-    onEventRegistrations: normalRegistrations,
-  }
+  let normalSelection = makeSelection(
+    ~dependsOnAddresses=true,
+    ~onEventRegistrations=normalRegistrations,
+  )
 
   // Every address the chain indexes goes into the store — including ones whose
   // contract has no address-dependent events, so a later registration of the
