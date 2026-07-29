@@ -104,8 +104,8 @@ describe("E2E rollback tests", () => {
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message="Should have two entities in the db",
     ).toEqual((
@@ -259,8 +259,8 @@ describe("E2E rollback tests", () => {
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message="Should correctly rollback entities",
     ).toEqual((
@@ -509,7 +509,7 @@ describe("E2E rollback tests", () => {
     let rec waitForRecreatedEntityHistory = async () => {
       if shouldKeepWaitingForHistory.contents {
         let hasRecreatedEntityHistory =
-          (await indexerMock.queryHistory(SimpleEntity))->Array.length === 3
+          (await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>))->Array.length === 3
         if shouldKeepWaitingForHistory.contents && !hasRecreatedEntityHistory {
           await Utils.delay(1)
           await waitForRecreatedEntityHistory()
@@ -535,8 +535,8 @@ describe("E2E rollback tests", () => {
 
     t.expect(
       await Promise.all2((
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message="Should establish SET -> DELETE -> SET history before the rollback",
     ).toEqual((
@@ -592,7 +592,7 @@ describe("E2E rollback tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="The entity should remain deleted at the rollback target",
     ).toEqual([])
   })
@@ -1223,8 +1223,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message=`Should create history rows and checkpoints`,
     ).toEqual((
@@ -1485,8 +1485,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
     ).toEqual((
       [
@@ -1691,8 +1691,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(SimpleEntity),
-          indexerMock.queryHistory(SimpleEntity),
+          (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+          (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
         )),
         ~message=`Should create history rows and checkpoints`,
       ).toEqual((
@@ -1793,8 +1793,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ))
       t.expect(
         await Promise.all2((
-          indexerMock.query(EntityWithBigDecimal),
-          indexerMock.queryHistory(EntityWithBigDecimal),
+          (indexerMock.query("EntityWithBigDecimal"): promise<array<Indexer.Entities.EntityWithBigDecimal.t>>),
+          (indexerMock.queryHistory("EntityWithBigDecimal"): promise<array<Change.t<Indexer.Entities.EntityWithBigDecimal.t>>>),
         )),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
       ).toEqual((
@@ -1900,8 +1900,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(SimpleEntity),
-          indexerMock.queryHistory(SimpleEntity),
+          (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+          (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
         )),
       ).toEqual((
         [
@@ -1972,8 +1972,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ))
       t.expect(
         await Promise.all2((
-          indexerMock.query(EntityWithBigDecimal),
-          indexerMock.queryHistory(EntityWithBigDecimal),
+          (indexerMock.query("EntityWithBigDecimal"): promise<array<Indexer.Entities.EntityWithBigDecimal.t>>),
+          (indexerMock.queryHistory("EntityWithBigDecimal"): promise<array<Change.t<Indexer.Entities.EntityWithBigDecimal.t>>>),
         )),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
       ).toEqual((
@@ -2099,7 +2099,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Should have all entities rolled back",
     ).toEqual([])
   })
@@ -3179,10 +3179,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       t.expect(
         (
-          (await indexerMock.query(SimpleEntity))->Array.toSorted((a, b) =>
+          (await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>))->Array.toSorted((a, b) =>
             String.compare(a.id, b.id)
           ),
-          await indexerMock.queryHistory(SimpleEntity),
+          await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
           await indexerMock.metric("envio_rollback_events"),
         ),
         ~message="Chain 100's in-flight entity change should be rolled back together with its progress and reapplied on refetch",
