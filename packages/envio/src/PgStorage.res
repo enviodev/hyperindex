@@ -20,105 +20,6 @@ let makeClient = () => {
   )
 }
 
-let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
-  let indexName = tableName ++ "_" ++ indexFields->Array.joinUnsafe("_")
-
-  // Case for indexer before envio@2.28
-  let index = indexFields->Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
-}
-
-let directionToSql = (direction: Table.indexFieldDirection) =>
-  switch direction {
-  | Asc => ""
-  | Desc => " DESC"
-  }
-
-let directionToIndexName = (direction: Table.indexFieldDirection) =>
-  switch direction {
-  | Asc => ""
-  | Desc => "_desc"
-  }
-
-let makeCreateCompositeIndexQuery = (
-  ~tableName,
-  ~indexFields: array<Table.compositeIndexField>,
-  ~pgSchema,
-) => {
-  let indexName =
-    tableName ++
-    "_" ++
-    indexFields
-    ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
-    ->Array.joinUnsafe("_")
-  let index =
-    indexFields
-    ->Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
-    ->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
-}
-
-let makeCreateTableIndexesQuery = (table: Table.table, ~pgSchema) => {
-  let tableName = table.tableName
-  let createIndex = indexField =>
-    makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
-  let createCompositeIndex = indexFields => {
-    makeCreateCompositeIndexQuery(~tableName, ~indexFields, ~pgSchema)
-  }
-
-  let singleIndexes = table->Table.getSingleIndexes
-  let compositeIndexes = table->Table.getCompositeIndexes
-
-  singleIndexes->Array.map(createIndex)->Array.joinUnsafe("\n") ++
-    compositeIndexes->Array.map(createCompositeIndex)->Array.joinUnsafe("\n")
-}
-
-// One index the schema promises: an `@index` field, a composite index, or the
-// index backing a derived relationship. Carries enough to derive its name, its
-// DDL and its registry key, so the deferred creation at the end of backfill and
-// the registry stay described by the same value.
-type schemaIndex = {
-  tableName: string,
-  indexFields: array<Table.compositeIndexField>,
-}
-
-// `<Entity>_<column>` for a single column, with each further column appended in
-// order (and `_desc` where it applies). The full description, before Postgres'
-// identifier limit is applied — `validateIndexNamesOrThrow` compares these, so
-// it can tell two descriptions apart after they truncate to the same name.
-let schemaIndexDescription = ({tableName, indexFields}: schemaIndex) =>
-  tableName ++
-  "_" ++
-  indexFields
-  ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
-  ->Array.joinUnsafe("_")
-
-// The identifier Postgres actually stores. Automatic and schema-defined indexes
-// share it, so both are named the same way and both stay reachable through
-// `CREATE INDEX IF NOT EXISTS`.
-let schemaIndexName = schemaIndex =>
-  schemaIndex->schemaIndexDescription->IndexRegistry.truncateIndexName
-
-let schemaIndexKey = ({tableName, indexFields}: schemaIndex) =>
-  IndexRegistry.makeKey(
-    ~tableName,
-    ~columns=indexFields->IndexRegistry.fromIndexFields,
-    ~method=IndexRegistry.btree,
-  )
-
-// Plain DDL, not CONCURRENTLY: it builds from a single table scan instead of
-// two, and the SHARE lock it takes blocks writes but not reads, so queries keep
-// being served while it runs. The indexer is the only writer, and both callers
-// are happy to wait on it.
-let makeCreateSchemaIndexQuery = (schemaIndex, ~pgSchema) => {
-  let {tableName, indexFields} = schemaIndex
-  let columns =
-    indexFields
-    ->Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
-    ->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${schemaIndex->schemaIndexName}" ON "${pgSchema}"."${tableName}"(${columns});`
-}
-
 let formatSeconds = (timeRef: Performance.timeRef) =>
   (Math.round(timeRef->Performance.secondsSince *. 100.) /. 100.)->Float.toString
 
@@ -127,37 +28,15 @@ let formatSeconds = (timeRef: Performance.timeRef) =>
 // stalled-looking indexer is explainable from the logs alone.
 let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 
-// An index Postgres reports as INVALID still owns its name, so
-// `CREATE INDEX IF NOT EXISTS` would quietly skip it and leave the query
-// unserved. REINDEX rebuilds it from its own stored definition — a repair, not
-// a replacement — which is right only when that definition is the one we
-// wanted. Runs inside a transaction, unlike REINDEX CONCURRENTLY.
-let makeReindexQuery = (~pgSchema, ~indexName) => `REINDEX INDEX "${pgSchema}"."${indexName}";`
-
-// A name already held by a different index isn't ours to reuse.
-// `CREATE INDEX IF NOT EXISTS` matches on name, so it would no-op and leave the
-// query unserved; rebuilding an invalid one reuses its own definition, so it
-// would come back valid but still wrong; and either could belong to a
-// constraint someone else relies on. Two field names truncating to the same
-// 63-character identifier land here too.
-let nameCollisionError = (~indexName, ~pgSchema) =>
-  Utils.Error.make(
-    `Cannot create the index "${indexName}" in schema "${pgSchema}". A different index already holds that name — it covers other columns, it is unique or partial, or two field names truncate to the same identifier — so it is left untouched. Rename the conflicting field, or drop that index by hand, then restart the indexer.`,
-  )
-
-let makeSingleColumnSchemaIndex = (~tableName, ~column): schemaIndex => {
-  tableName,
-  indexFields: [{fieldName: column, direction: Table.Asc}],
-}
-
-// Every index the entity schema promises. Deferred past the initial DDL and
+// Every index the entity schema promises: an `@index` field, a composite index,
+// or the index backing a derived relationship. Deferred past the initial DDL and
 // created in one transaction once backfill completes, so a resumed indexer that
 // reports itself ready always has all of them.
 //
 // `entities` is the Postgres-backed set, and every `@derivedFrom` target within
 // it resolves: config parsing rejects a Postgres entity deriving from one that
 // isn't in Postgres (`validate_relationship_storage`).
-let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<schemaIndex> => {
+let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<IndexDefinition.t> => {
   let derivedSchema = Schema.make(entities->Array.map(e => e.table))
   let all = []
 
@@ -165,12 +44,14 @@ let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<schemaIn
     table
     ->Table.getSingleIndexes
     ->Array.forEach(column =>
-      all->Array.push(makeSingleColumnSchemaIndex(~tableName=table.tableName, ~column))->ignore
+      all->Array.push(IndexDefinition.single(~tableName=table.tableName, ~column))->ignore
     )
     table
     ->Table.getCompositeIndexes
     ->Array.forEach(indexFields =>
-      all->Array.push({tableName: table.tableName, indexFields})->ignore
+      all
+      ->Array.push(IndexDefinition.fromIndexFields(~tableName=table.tableName, ~indexFields))
+      ->ignore
     )
   })
 
@@ -181,9 +62,7 @@ let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<schemaIn
       let column =
         derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
       all
-      ->Array.push(
-        makeSingleColumnSchemaIndex(~tableName=derivedFromField.derivedFromEntity, ~column),
-      )
+      ->Array.push(IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column))
       ->ignore
     })
   )
@@ -191,8 +70,8 @@ let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<schemaIn
   // An `@index` field and a derived relationship pointing at it describe the
   // same index, so the list is deduped on identity rather than on name.
   let seen = Utils.Set.make()
-  all->Array.filter(schemaIndex => {
-    let key = schemaIndex->schemaIndexKey
+  all->Array.filter(definition => {
+    let key = definition->IndexDefinition.key
     if seen->Utils.Set.has(key) {
       false
     } else {
@@ -331,7 +210,6 @@ let makeInitializeTransaction = (
   })
 
   let schemaIndexes = getSchemaIndexes(~entities)
-  IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
 
   let query = ref(
     (
@@ -367,8 +245,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
 
   // Then batch all indexes (better performance when tables exist)
   if !deferSchemaIndexes {
-    schemaIndexes->Array.forEach(schemaIndex => {
-      query := query.contents ++ "\n" ++ makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema)
+    schemaIndexes->Array.forEach(definition => {
+      query := query.contents ++ "\n" ++ definition->IndexDefinition.makeCreateQuery(~pgSchema)
     })
   }
 
@@ -1411,29 +1289,36 @@ let make = (
   // storage record's own name are all the same string.
   let storageName = "postgres"
 
-  let indexRegistry = IndexRegistry.make()
+  let indexManager = IndexManager.make()
 
-  // The only point where the catalog is consulted. Afterwards this process is
-  // the sole writer of the schema, so the registry is kept in sync by adding
-  // each index right after its DDL succeeds.
-  let reloadIndexRegistry = async () => {
-    let rows =
-      (await sql->Postgres.unsafe(IndexRegistry.makeCatalogQuery(~pgSchema)))->S.parseOrThrow(
-        IndexRegistry.catalogRowsSchema,
-      )
-    switch indexRegistry->IndexRegistry.reload(~rows) {
+  let loadCatalogRows = (sql, ~indexName=?) =>
+    sql
+    ->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema, ~indexName?))
+    ->Promise.thenResolve(rows => rows->S.parseOrThrow(IndexCatalog.rowsSchema))
+
+  // The whole-schema snapshot, taken on a clean initialize and on every resume.
+  // Individual indexes are re-read from the catalog as they are built, so this
+  // is the only point where the full listing is needed.
+  let refreshIndexCatalog = async () => {
+    let rows = await sql->loadCatalogRows
+    indexManager->IndexManager.reload(~rows)
+  }
+
+  let reloadIndexCatalog = async () => {
+    let catalog = await refreshIndexCatalog()
+    switch catalog->IndexCatalog.invalidNames {
     | [] => ()
     | invalidIndexNames =>
       Logging.warn({
         "storage": storageName,
-        "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They are left untouched — drop and recreate them manually if you need them.`,
+        "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
         "indexes": invalidIndexNames,
       })
     }
     Logging.info({
       "storage": storageName,
-      "msg": `Found ${indexRegistry
-        ->IndexRegistry.size
+      "msg": `Found ${catalog
+        ->IndexCatalog.size
         ->Int.toString} existing indexes in the indexer schema.`,
     })
   }
@@ -1666,7 +1551,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     let cache = await restoreEffectCache(~withUpload=true)
 
-    await reloadIndexRegistry()
+    await reloadIndexCatalog()
 
     // Integration with other tools like Hasura
     switch onInitialize {
@@ -1747,73 +1632,92 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     columns
   }
 
-  // The DDL that leaves `schemaIndex` in place. Normally a create; a repair
-  // when an invalid index already holds the name with the definition we want.
-  let makeEnsureIndexQuery = schemaIndex => {
-    let indexName = schemaIndex->schemaIndexName
-    switch indexRegistry->IndexRegistry.getKeyByName(indexName) {
-    | None => makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema)
-    | Some(_) =>
-      switch indexRegistry->IndexRegistry.getInvalid(indexName) {
-      | Some({key, isRepairable: true}) if key === schemaIndex->schemaIndexKey =>
-        makeReindexQuery(~pgSchema, ~indexName)
-      | _ => throw(nameCollisionError(~indexName, ~pgSchema))
-      }
+  // Runs a prepared build's DDL and reads the index back from pg_catalog before
+  // it counts as existing. `sql` is the transaction's handle when there is one,
+  // so a failed verification rolls the DDL back with it.
+  let runAndVerify = async (sql, prepared: IndexManager.prepared) => {
+    // Sequential rather than Promise.all: inside a transaction they share one
+    // connection, and a rebuild's DROP has to land before its CREATE.
+    for idx in 0 to prepared.queries->Array.length - 1 {
+      let _ = await sql->Postgres.unsafe(prepared.queries->Array.getUnsafe(idx))
     }
+    let rows = await sql->loadCatalogRows(~indexName=prepared.name)
+    prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
   }
 
-  let isRepair = schemaIndex =>
-    indexRegistry->IndexRegistry.getInvalid(schemaIndex->schemaIndexName)->Option.isSome
+  // A build outside a transaction can commit its DDL and still fail — the
+  // read-back is a second round trip. Re-reading the index puts the catalog
+  // back in step, so the next attempt plans against what the database holds
+  // instead of retrying a create that can only raise "already exists".
+  //
+  // If this read fails too, the next attempt does waste a create before landing
+  // here again — bounded, and it recovers as soon as the database answers.
+  let resyncIndex = async name =>
+    switch await sql->loadCatalogRows(~indexName=name) {
+    | rows => indexManager->IndexManager.resync(~name, ~rows)
+    | exception exn =>
+      Logging.debug({
+        "storage": storageName,
+        "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+        "err": exn->Utils.prettifyExn,
+      })
+    }
 
   let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
-    let missing = filterColumns(~table, ~filters)->Array.filterMap(column => {
-      let schemaIndex = makeSingleColumnSchemaIndex(~tableName=table.tableName, ~column)
-      indexRegistry->IndexRegistry.has(schemaIndex->schemaIndexKey) ? None : Some(schemaIndex)
-    })
-
-    if missing->Utils.Array.notEmpty {
-      let _ = await missing
-      ->Array.map(schemaIndex => {
-        let indexName = schemaIndex->schemaIndexName
-        indexRegistry
-        ->IndexRegistry.ensure(
-          ~key=schemaIndex->schemaIndexKey,
-          ~name=indexName,
-          ~tableName=table.tableName,
-          ~build=async () => {
-            // Resolved before logging so a repair is reported as one, and an
-            // unrelated index holding the name fails before any DDL runs.
-            let query = makeEnsureIndexQuery(schemaIndex)
-            let verb = schemaIndex->isRepair ? "Repairing invalid index" : "Creating index"
-            // Logged from inside the build so it reports the one request that
-            // actually creates the index, not the ones waiting on it.
-            Logging.info({
-              "storage": storageName,
-              "msg": `${verb} "${indexName}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-            })
-            let timeRef = Performance.now()
-            let _ = await sql->Postgres.unsafe(query)
-            indexRegistry->IndexRegistry.clearInvalidName(indexName)
-            Logging.info({
-              "storage": storageName,
-              "msg": `Index "${indexName}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
-            })
-          },
-        )
-        // A failed build leaves the registry untouched, so the next getWhere
-        // retries. Meanwhile the query still runs — just without the index.
-        ->Utils.Promise.catchResolve(exn => {
-          Logging.warn({
+    let columns = filterColumns(~table, ~filters)
+    let _ = await columns
+    ->Array.map(column => {
+      let definition = IndexDefinition.single(~tableName=table.tableName, ~column)
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=async () => {
+        // Resolved before logging so a rebuild is reported as one, and an
+        // unrelated index holding the name fails before any DDL runs.
+        switch indexManager->IndexManager.prepare(
+          ~definition,
+          ~coverage=LeadingColumns,
+          ~pgSchema,
+        ) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
+          // Logged from inside the build so it reports the one request that
+          // actually creates the index, not the ones waiting on it.
+          Logging.info({
             "storage": storageName,
-            "msg": `Failed to create the index "${indexName}" for a getWhere query. The query runs without it.`,
-            "err": exn->Utils.prettifyExn,
+            "msg": `${verb} "${prepared.name}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
           })
-        })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
+          })
+        }
       })
-      ->Promise.all
-    }
+      // A failed build records nothing, so the next getWhere retries. Meanwhile
+      // the query still runs — just without the index.
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to create an index on "${table.tableName}"("${column}") for a getWhere query. The query runs without it.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    })
+    ->Promise.all
   }
 
+  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`:
+  // its builds have to share one transaction with `ready_at`, and waiting on
+  // the per-table queues while holding that transaction open is a good way to
+  // deadlock. It's safe because the caller guarantees exclusivity —
+  // `FinalizeBackfill.run` is reached from the processing loop with processing
+  // already paused, so no handler can be running a getWhere. Were that to
+  // change, an automatic build landing the same identity mid-transaction would
+  // take the create to "already exists" and roll `ready_at` back with it; the
+  // catalog refresh below means the retry recovers rather than looping.
   let finalizeBackfill = async (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<int>,
@@ -1822,24 +1726,28 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     let schemaIndexes = getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
     )
-    IndexRegistry.validateIndexNamesOrThrow(schemaIndexes->Array.map(schemaIndexDescription))
 
+    // Resolved up front so a name held by an unrelated index fails before the
+    // transaction opens, rather than rolling one back.
+    //
+    // `Exact`, so the set built here is decided by the schema alone: matching a
+    // declared index against a composite that happens to lead with the same
+    // column would make a fresh database and an upgraded one end up holding
+    // different tables.
     let missing =
-      schemaIndexes->Array.filter(schemaIndex =>
-        !(indexRegistry->IndexRegistry.has(schemaIndex->schemaIndexKey))
+      schemaIndexes->Array.filterMap(definition =>
+        indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema)
       )
 
-    // `IF NOT EXISTS` would quietly skip an index whose name is taken by an
-    // invalid one, and the indexer would then report ready with an index the
-    // planner can't use. Those are repaired in the same transaction instead.
-    let repaired = missing->Array.filter(isRepair)
-    if repaired->Utils.Array.notEmpty {
+    switch missing->Array.filter((prepared: IndexManager.prepared) => prepared.isRebuild) {
+    | [] => ()
+    | rebuilt =>
       Logging.warn({
         "storage": storageName,
-        "msg": `PostgreSQL reports ${repaired
+        "msg": `PostgreSQL reports ${rebuilt
           ->Array.length
-          ->Int.toString} existing indexes as invalid, so they can't serve queries. Rebuilding them.`,
-        "indexes": repaired->Array.map(schemaIndexName),
+          ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
+        "indexes": rebuilt->Array.map((prepared: IndexManager.prepared) => prepared.name),
       })
     }
 
@@ -1857,42 +1765,52 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         "msg": `Creating the ${missing
           ->Array.length
           ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
-        "indexes": missing->Array.map(schemaIndexName),
+        "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
       })
     }
-    // Resolved up front so a name held by an unrelated invalid index fails
-    // before the transaction opens, rather than rolling one back.
-    let indexQueries = missing->Array.map(makeEnsureIndexQuery)
     let timeRef = Performance.now()
 
-    await sql->Postgres.beginSql(async sql => {
-      // Sequential rather than Promise.all: they share one connection inside
-      // the transaction, and several of them target the same table.
-      for idx in 0 to indexQueries->Array.length - 1 {
-        let _ = await sql->Postgres.unsafe(indexQueries->Array.getUnsafe(idx))
+    let run = () =>
+      sql->Postgres.beginSql(async sql => {
+        let verified = []
+        for idx in 0 to missing->Array.length - 1 {
+          let entry = await sql->runAndVerify(missing->Array.getUnsafe(idx))
+          verified->Array.push(entry)->ignore
+        }
+        let _ = await sql->Postgres.preparedUnsafe(
+          InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
+          [
+            readyAt->(Utils.magic: Date.t => unknown),
+            chainIds->(Utils.magic: array<int> => unknown),
+          ]->(Utils.magic: array<unknown> => unknown),
+        )
+        verified
+      })
+
+    let verified = switch await run() {
+    | verified => verified
+    | exception exn =>
+      // A rollback takes the indexes with it, but a connection lost while
+      // acknowledging the COMMIT leaves them in place and unrecorded. Re-reading
+      // the schema means the retry plans against the database rather than
+      // replaying creates that can only raise "already exists" and never reach
+      // ready.
+      try {
+        let _ = await refreshIndexCatalog()
+      } catch {
+      | refreshExn =>
+        Logging.debug({
+          "storage": storageName,
+          "msg": "Could not re-read the index catalog after a failed finalize. The next attempt reads it again.",
+          "err": refreshExn->Utils.prettifyExn,
+        })
       }
-      await sql
-      ->Postgres.preparedUnsafe(
-        InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
-        [
-          readyAt->(Utils.magic: Date.t => unknown),
-          chainIds->(Utils.magic: array<int> => unknown),
-        ]->(Utils.magic: array<unknown> => unknown),
-      )
-      ->Utils.Promise.ignoreValue
-    })
+      throw(exn)
+    }
 
     // Only after the commit: a rollback takes both the indexes and ready_at
-    // with it, and the registry must not claim what the schema doesn't have.
-    missing->Array.forEach(schemaIndex =>
-      indexRegistry->IndexRegistry.add(
-        ~key=schemaIndex->schemaIndexKey,
-        ~name=schemaIndex->schemaIndexName,
-      )
-    )
-    repaired->Array.forEach(schemaIndex =>
-      indexRegistry->IndexRegistry.clearInvalidName(schemaIndex->schemaIndexName)
-    )
+    // with it, and the catalog must not claim what the schema doesn't have.
+    verified->Array.forEach(entry => indexManager->IndexManager.record(entry))
 
     Logging.info({
       "storage": storageName,
@@ -2046,7 +1964,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       InternalTable.EnvioInfo.read(sql, ~pgSchema),
     ))
 
-    await reloadIndexRegistry()
+    await reloadIndexCatalog()
 
     let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
