@@ -6,7 +6,7 @@ let testApiToken =
   )
 
 // Ethereum mainnet.
-let chain = 1->ChainId.fromInt
+let chainId = 1->ChainId.fromInt
 
 // Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
 // 2 indexed args (token0, token1) ⇒ topicCount = 3.
@@ -92,7 +92,7 @@ let makeSelection = (): FetchState.selection => {
 
 let makeHyperSyncSource = () =>
   EvmHyperSyncSource.make({
-    chain,
+    chainId,
     endpointUrl: "https://eth.hypersync.xyz",
     onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
@@ -106,7 +106,7 @@ let makeHyperSyncSource = () =>
 let makeRpcSource = () =>
   RpcSource.make({
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-    chain,
+    chainId,
     onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),

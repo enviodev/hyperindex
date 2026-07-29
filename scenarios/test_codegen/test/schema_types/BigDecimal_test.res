@@ -4,7 +4,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
   Async.it("be able to set and read entities with BigDecimal from DB", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[

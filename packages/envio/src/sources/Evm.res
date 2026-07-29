@@ -106,7 +106,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
       ~params={
         "contract": eventItem.onEventRegistration.eventConfig.contractName,
         "event": eventItem.onEventRegistration.eventConfig.name,
-        "chainId": eventItem.chain,
+        "chainId": eventItem.chainId,
         "block": eventItem.blockNumber,
         "logIndex": eventItem.logIndex,
         "address": (eventItem.payload->toPayload).srcAddress,

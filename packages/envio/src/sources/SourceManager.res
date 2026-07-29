@@ -81,7 +81,7 @@ let getActiveSource = sourceManager => sourceManager.activeSource
 let getRequestStatSamples = (sourceManager: t): array<requestStatSample> => {
   let samples = []
   sourceManager.sourcesState->Array.forEach(sourceState => {
-    let chainId = sourceState.source.chain
+    let chainId = sourceState.source.chainId
     sourceState.requestStats->Utils.Dict.forEachWithKey((agg, method) => {
       samples
       ->Array.push({
@@ -111,7 +111,7 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
     if sourceState.knownHeight > 0 {
       samples->Array.push({
         sourceName: sourceState.source.name,
-        chainId: sourceState.source.chain,
+        chainId: sourceState.source.chainId,
         height: sourceState.knownHeight,
       })
     }
@@ -425,7 +425,7 @@ let getSourceNewHeight = async (
         logger->Logging.childTrace({
           "msg": "onHeight subscription stale, switching to polling fallback",
           "source": source.name,
-          "chainId": source.chain,
+          "chainId": source.chainId,
         })
         let h = ref(initialHeight)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
@@ -585,7 +585,7 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
 
   let logger = Logging.createChild(
     ~params={
-      "chainId": sourceManager.activeSource.chain,
+      "chainId": sourceManager.activeSource.chainId,
       "knownHeight": knownHeight,
     },
   )
@@ -725,7 +725,7 @@ let executeQuery = async (
     | Some(s) =>
       if s.source !== sourceManager.activeSource {
         let logger = Logging.createChild(
-          ~params={"chainId": sourceManager.activeSource.chain},
+          ~params={"chainId": sourceManager.activeSource.chainId},
         )
         logger->Logging.childInfo({
           "msg": "Switching data-source",
@@ -737,7 +737,7 @@ let executeQuery = async (
       s
     | None =>
       let logger = Logging.createChild(
-        ~params={"chainId": sourceManager.activeSource.chain},
+        ~params={"chainId": sourceManager.activeSource.chainId},
       )
       %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger, ~msg=noSourcesError)
     }
@@ -748,7 +748,7 @@ let executeQuery = async (
 
     let logger = Logging.createChild(
       ~params={
-        "chainId": source.chain,
+        "chainId": source.chainId,
         "logType": "Block Range Query",
         "partitionId": query.partitionId,
         "source": source.name,
@@ -897,7 +897,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     | Some(s) => s
     | None =>
       let logger = Logging.createChild(
-        ~params={"chainId": sourceManager.activeSource.chain},
+        ~params={"chainId": sourceManager.activeSource.chainId},
       )
       %raw(`null`)->ErrorHandling.mkLogAndRaise(
         ~logger,
@@ -910,7 +910,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
 
     let logger = Logging.createChild(
       ~params={
-        "chainId": source.chain,
+        "chainId": source.chainId,
         "logType": "Block Hash Query",
         "source": source.name,
         "retry": retry,

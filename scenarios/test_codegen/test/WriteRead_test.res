@@ -9,7 +9,7 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
 
 describe("Write/read tests", () => {
   Async.itSkipInClaudeCloud("Test writing and reading entities with special cases", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~saveFullHistory=true,
@@ -181,7 +181,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   Async.it(
     "Keeps committed entities across batches without rewriting their history",
     async t => {
-      let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+      let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
         ~saveFullHistory=true,
@@ -272,7 +272,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   })
 
   Async.it("Test getWhere queries with eq and gt operators", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )
@@ -464,7 +464,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   })
 
   Async.it("getWhere throws a user friendly error for an invalid filter", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )

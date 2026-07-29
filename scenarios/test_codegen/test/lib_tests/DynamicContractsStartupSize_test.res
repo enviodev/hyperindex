@@ -21,7 +21,7 @@ describe("Dynamic contracts startup size", () => {
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let _indexerMock = await MockIndexer.Indexer.make(
         ~chains=[

@@ -177,7 +177,7 @@ module Make = () => {
       let log = Internal.Event({
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
-        chain: self.chainConfig.id,
+        chainId: self.chainConfig.id,
         blockNumber,
         logIndex,
         transactionIndex,

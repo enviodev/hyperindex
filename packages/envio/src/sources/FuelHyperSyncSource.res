@@ -3,14 +3,14 @@ open Source
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
-  chain: ChainId.t,
+  chainId: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.fuelOnEventRegistration>,
 }
 
-let make = ({chain, endpointUrl, apiToken, onEventRegistrations}: options): t => {
+let make = ({chainId, endpointUrl, apiToken, onEventRegistrations}: options): t => {
   let name = "HyperFuel"
 
   let apiToken = switch apiToken {
@@ -136,7 +136,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         try decode(data) catch {
         | exn => {
             let params = {
-              "chainId": chain,
+              "chainId": chainId,
               "blockNumber": item.blockHeight,
               "logIndex": item.receiptIndex,
             }
@@ -166,7 +166,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
       Internal.Event({
         onEventRegistration,
-        chain,
+        chainId,
         blockNumber: item.blockHeight,
         logIndex: item.receiptIndex,
         // Fuel carries the transaction inline on the payload; the store key is
@@ -175,7 +175,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
-          chainId: chain,
+          chainId: chainId,
           params,
           transaction: {
             "id": item.txId,
@@ -230,7 +230,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   {
     name,
     sourceFor: Sync,
-    chain,
+    chainId,
     getBlockHashes,
     pollingInterval: 100,
     poweredByHyperSync: true,

@@ -213,7 +213,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       Internal.Event({
         onEventRegistration:
           (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-        chain: 137->ChainId.fromInt,
+        chainId: 137->ChainId.fromInt,
         blockNumber,
         logIndex,
         transactionIndex: 0,

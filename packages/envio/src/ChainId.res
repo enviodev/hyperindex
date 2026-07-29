@@ -22,11 +22,9 @@ let maxSafe = 9007199254740991.
 // tests. Both are the identity at runtime — an `int` is already a JS number.
 external fromInt: int => t = "%identity"
 external toInt: t => int = "%identity"
-external toFloat: t => float = "%identity"
 
 let toString = (chainId: t) => chainId->Float.toString
-let compare = (a: t, b: t) => a < b ? -1. : a > b ? 1. : 0.
-let equal = (a: t, b: t) => a === b
+let compare = (a: t, b: t) => a < b ? -1 : a > b ? 1 : 0
 
 // PostgreSQL BIGINT and ClickHouse UInt64 columns come back as strings (a
 // JS number can't hold their full range), so the parser accepts both and

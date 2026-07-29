@@ -616,7 +616,7 @@ type dcs = array<indexingAddress>
 type eventItem = private {
   kind: [#0],
   onEventRegistration: onEventRegistration,
-  chain: ChainId.t,
+  chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
   // Within-block transaction index — the key into the per-chain transaction
@@ -669,7 +669,7 @@ type item =
   | @as(0)
   Event({
       onEventRegistration: onEventRegistration,
-      chain: ChainId.t,
+      chainId: ChainId.t,
       blockNumber: int,
       logIndex: int,
       transactionIndex: int,
@@ -686,7 +686,7 @@ external getItemLogIndex: item => int = "logIndex"
 
 let getItemChainId = item =>
   switch item {
-  | Event({chain}) => chain
+  | Event({chainId})
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 

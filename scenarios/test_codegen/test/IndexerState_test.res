@@ -73,7 +73,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem = Internal.Event({
-          chain: id,
+          chainId: id,
           blockNumber: currentBlockNumber.contents,
           logIndex,
           transactionIndex: 0,
@@ -124,7 +124,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let chainConfig = config.defaultChain->Option.getUnsafe
     // For this test we don't need real sources - just testing event ordering
     // Create a mock source that satisfies SourceManager requirements (chain ID doesn't matter here)
-    let mockSource = MockIndexer.Source.make([], ~chain=#1)
+    let mockSource = MockIndexer.Source.make([], ~chainId=#1)
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
@@ -157,8 +157,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
 let getItemKey = (item: Internal.item) =>
   switch item {
-  | Event({chain, blockNumber, logIndex}) => (
-      chain,
+  | Event({chainId, blockNumber, logIndex}) => (
+      chainId,
       blockNumber,
       logIndex,
     )
@@ -183,7 +183,7 @@ describe("IndexerState", () => {
         let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
-          chain: MockConfig.chain1,
+          chainId: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
           transactionIndex: 0,
@@ -293,7 +293,7 @@ describe("IndexerState", () => {
                   ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
                   ~newItems=[
                     Internal.Event({
-                      chain: chainId,
+                      chainId: chainId,
                       blockNumber,
                       logIndex: 0,
                       transactionIndex: 0,
@@ -316,7 +316,7 @@ describe("IndexerState", () => {
           ->ChainMap.values
           ->Array.forEach(
             chainConfig => {
-              let mockSource = MockIndexer.Source.make([], ~chain=#1)
+              let mockSource = MockIndexer.Source.make([], ~chainId=#1)
               let (fetchState, indexingAddresses) = makeFetchState(~chainId=chainConfig.id, ~eventBlocks)
               let chainState = ChainState.make(
                 ~chainConfig,
@@ -353,11 +353,11 @@ describe("IndexerState", () => {
             ~isRollback=false,
           )
 
-        let chain = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
+        let chainId = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
 
         // A fetch lands mid-batch and appends block 15 to this chain's buffer
         // (its batch-time snapshot held only block 5).
-        let cs = state->IndexerState.getChainState(~chain)
+        let cs = state->IndexerState.getChainState(~chainId)
         let concurrentQuery: FetchState.query = {
           partitionId: "0",
           itemsTarget: Some(0),
@@ -375,7 +375,7 @@ describe("IndexerState", () => {
           ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
           ~newItems=[
             Internal.Event({
-              chain,
+              chainId,
               blockNumber: 15,
               logIndex: 0,
               transactionIndex: 0,
@@ -392,10 +392,10 @@ describe("IndexerState", () => {
         )
 
         state->IndexerState.applyBatchProgress(~batch)
-        let resultCs = state->IndexerState.getChainState(~chain)
+        let resultCs = state->IndexerState.getChainState(~chainId)
         let progressed =
           batch.progressedChainsById
-          ->ChainId.Dict.dangerouslyGetNonOption(chain)
+          ->ChainId.Dict.dangerouslyGetNonOption(chainId)
           ->Option.getUnsafe
 
         t.expect(

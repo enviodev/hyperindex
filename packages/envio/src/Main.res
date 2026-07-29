@@ -183,8 +183,7 @@ let buildChainsObject = (~config: Config.t) => {
           get: () => {
             switch getIndexerState() {
             | Some(state) => {
-                let chain = chainConfig.id
-                let chainState = state->IndexerState.getChainState(~chain)
+                let chainState = state->IndexerState.getChainState(~chainId=chainConfig.id)
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler

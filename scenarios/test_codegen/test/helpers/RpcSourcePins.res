@@ -57,7 +57,7 @@ let normalizeEvent = item =>
   switch item {
   | Internal.Event({
       onEventRegistration,
-      chain,
+      chainId,
       blockNumber,
       logIndex,
       transactionIndex,
@@ -66,7 +66,7 @@ let normalizeEvent = item =>
       let payload = payload->Evm.toPayload
       {
         registrationId: onEventRegistration.eventConfig.id,
-        chainId: chain,
+        chainId,
         blockNumber,
         logIndex,
         transactionIndex,

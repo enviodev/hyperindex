@@ -204,7 +204,7 @@ let makeInternal = (
   })
 
   // Create sources lazily here - this is where API token validation happens
-  let chain = chainConfig.id
+  let chainId = chainConfig.id
   let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
@@ -221,7 +221,7 @@ let makeInternal = (
       }
     })
     EvmChain.makeSources(
-      ~chain,
+      ~chainId,
       ~onEventRegistrations=onEventRegistrations->(
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
       ),
@@ -231,7 +231,7 @@ let makeInternal = (
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
-        chain,
+        chainId,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations,
@@ -241,16 +241,16 @@ let makeInternal = (
     switch (hypersync, rpc) {
     | (None, None) =>
       JsError.throwWithMessage(
-        `Chain ${chain->ChainId.toString} has no SVM data source`,
+        `Chain ${chainId->ChainId.toString} has no SVM data source`,
       )
-    | (None, Some(rpc)) => [Svm.makeRPCSource(~chain, ~rpc)]
+    | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
     | (Some(hypersyncUrl), _) =>
       // HyperSync drives instruction sync. A configured RPC is ignored for now
       // (RPC fallback isn't wired up yet).
       let apiToken = Env.envioApiToken
       [
         SvmHyperSyncSource.make({
-          chain,
+          chainId,
           endpointUrl: hypersyncUrl,
           apiToken,
           onEventRegistrations,

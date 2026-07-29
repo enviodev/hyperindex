@@ -36,5 +36,5 @@ let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => uni
 let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
-  ~dispatchChain: (~chain: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => promise<unit>

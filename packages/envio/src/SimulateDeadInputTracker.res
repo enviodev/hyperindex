@@ -6,8 +6,8 @@
 // transform of the item between the source and the batch.
 let itemKey = (item: Internal.item): string =>
   switch item {
-  | Internal.Event({chain, blockNumber, logIndex}) =>
-    `${chain
+  | Internal.Event({chainId, blockNumber, logIndex}) =>
+    `${chainId
       ->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
   | Internal.Block(_) => ""
   }

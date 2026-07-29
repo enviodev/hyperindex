@@ -36,7 +36,7 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
     switch prop {
     | "id" =>
       let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chain->(Utils.magic: ChainId.t => unknown)
+      eventItem.chainId->(Utils.magic: ChainId.t => unknown)
     | _ =>
       // Look up the contract name directly in config contracts across all chains.
       let contractName = prop

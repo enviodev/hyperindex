@@ -4,18 +4,14 @@ type mode = | @as("int32") Int32 | @as("int64") Int64
 
 let modeSchema: S.t<mode>
 
-let maxSafe: float
-
 // Escapes for the boundaries that stay `int`: the handler-facing
 // `context.chain.id` / `Envio.effectChain.id`, and int literals in configs and
 // tests. Both are the identity at runtime — an `int` is already a JS number.
 external fromInt: int => t = "%identity"
 external toInt: t => int = "%identity"
-external toFloat: t => float = "%identity"
 
 let toString: t => string
-let compare: (t, t) => float
-let equal: (t, t) => bool
+let compare: (t, t) => int
 
 let schema: S.t<t>
 

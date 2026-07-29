@@ -168,8 +168,8 @@ describe("ChainId runtime representation", () => {
       "3448148188"->ChainId.normalizeOrThrow->ChainId.toString,
       3448148188.->ChainId.normalizeOrThrow->ChainId.toString,
       ChainId.compare("1"->ChainId.normalizeOrThrow, "2147483648"->ChainId.normalizeOrThrow),
-      ChainId.equal("42"->ChainId.normalizeOrThrow, 42->ChainId.fromInt),
-    )).toEqual(("3448148188", "3448148188", -1., true))
+      "42"->ChainId.normalizeOrThrow === 42->ChainId.fromInt,
+    )).toEqual(("3448148188", "3448148188", -1, true))
   })
 
   it("rejects values that can't be a chain id", t => {

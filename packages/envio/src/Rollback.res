@@ -50,8 +50,8 @@ let rec rollback = async (
     switch state->IndexerState.rollbackState {
     | NoRollback | RollbackReady(_) =>
       JsError.throwWithMessage("Internal error: Rollback initiated with invalid state")
-    | ReorgDetected({chain, blockNumber: reorgBlockNumber}) =>
-      let chainState = state->IndexerState.getChainState(~chain)
+    | ReorgDetected({chainId, blockNumber: reorgBlockNumber}) =>
+      let chainState = state->IndexerState.getChainState(~chainId)
 
       state->IndexerState.enterFindingReorgDepth
       let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
@@ -63,7 +63,7 @@ let rec rollback = async (
       ->ChainState.sourceManager
       ->SourceManager.onReorg(~rollbackTargetBlock=rollbackTargetBlockNumber)
 
-      state->IndexerState.foundReorgDepth(~chain, ~rollbackTargetBlockNumber)
+      state->IndexerState.foundReorgDepth(~chainId, ~rollbackTargetBlockNumber)
       // Rendezvous with the processing loop: whichever of {depth found, loop
       // idle} happens last triggers the rollback; the earlier one finds the
       // other condition unmet and bails here.
@@ -73,7 +73,7 @@ let rec rollback = async (
     | FindingReorgDepth => ()
     | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
       Logging.trace("Waiting for batch to finish processing before executing rollback")
-    | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
+    | FoundReorgDepth({chainId: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(
         state,
         ~reorgChain,
@@ -108,7 +108,7 @@ and executeRollback = async (
   )
   logger->Logging.childInfo("Started rollback on reorg")
   state
-  ->IndexerState.getChainState(~chain=reorgChain)
+  ->IndexerState.getChainState(~chainId=reorgChain)
   ->ChainState.setRollbackTargetBlock(~blockNumber=rollbackTargetBlockNumber)
 
   // Finish pending batch writes first: the target checkpoint, the progress
@@ -195,13 +195,13 @@ and executeRollback = async (
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
   )
 
-  rolledBackChains->Array.forEach(chain => {
+  rolledBackChains->Array.forEach(rolledBack => {
     logger->Logging.childInfo({
       "msg": "Rollbacked",
-      "chainId": chain["chainId"],
-      "fromBlock": chain["fromBlock"],
-      "toBlock": chain["toBlock"],
-      "rollbackedEvents": chain["rollbackedEvents"],
+      "chainId": rolledBack["chainId"],
+      "fromBlock": rolledBack["fromBlock"],
+      "toBlock": rolledBack["toBlock"],
+      "rollbackedEvents": rolledBack["rollbackedEvents"],
     })
   })
   logger->Logging.childTrace({

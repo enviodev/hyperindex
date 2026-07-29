@@ -1,6 +1,6 @@
 module ChainIdCmp = Belt.Id.MakeComparable({
   type t = ChainId.t
-  let cmp = (a, b) => ChainId.compare(a, b)->Int.fromFloat
+  let cmp = ChainId.compare
 })
 
 type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
@@ -9,24 +9,18 @@ let fromArrayUnsafe: array<(ChainId.t, 'a)> => t<'a> = arr => {
   arr->Belt.Map.fromArray(~id=module(ChainIdCmp))
 }
 
-let get: (t<'a>, ChainId.t) => 'a = (self, chain) =>
-  switch Belt.Map.get(self, chain) {
+let get: (t<'a>, ChainId.t) => 'a = (self, chainId) =>
+  switch Belt.Map.get(self, chainId) {
   | Some(v) => v
   | None =>
     // Should be unreachable, since we validate chain ids when parsing the config.
     // Still throw just in case something went wrong
     JsError.throwWithMessage(
-      "No chain with id " ++ chain->ChainId.toString ++ " found in chain map",
+      "No chain with id " ++ chainId->ChainId.toString ++ " found in chain map",
     )
   }
 
-let set: (t<'a>, ChainId.t, 'a) => t<'a> = (map, chain, v) => Belt.Map.set(map, chain, v)
 let values: t<'a> => array<'a> = map => Belt.Map.valuesToArray(map)
 let keys: t<'a> => array<ChainId.t> = map => Belt.Map.keysToArray(map)
-let entries: t<'a> => array<(ChainId.t, 'a)> = map => Belt.Map.toArray(map)
-let has: (t<'a>, ChainId.t) => bool = (map, chain) => Belt.Map.has(map, chain)
-let map: (t<'a>, 'a => 'b) => t<'b> = (map, fn) => Belt.Map.map(map, fn)
+let has: (t<'a>, ChainId.t) => bool = (map, chainId) => Belt.Map.has(map, chainId)
 let mapWithKey: (t<'a>, (ChainId.t, 'a) => 'b) => t<'b> = (map, fn) => Belt.Map.mapWithKey(map, fn)
-let size: t<'a> => int = map => Belt.Map.size(map)
-let update: (t<'a>, ChainId.t, 'a => 'a) => t<'a> = (map, chain, updateFn) =>
-  Belt.Map.update(map, chain, opt => opt->Option.map(updateFn))
