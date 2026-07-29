@@ -57,13 +57,7 @@ let getItems = async (
   ~fromBlock=0,
   ~toBlock=1000,
 ) => {
-  let source = SimulateSource.make(~items, ~endBlock=1000, ~chain)
-  // ChainState does this once the chain's address store exists; the chain-wide
-  // gate a client-filtered contract needs isn't reachable without it.
-  switch source.setSimulateAddressStore {
-  | Some(set) => set(store)
-  | None => ()
-  }
+  let source = SimulateSource.make(~items, ~endBlock=1000, ~chain, ~addressStore=store)
   let response = await source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),

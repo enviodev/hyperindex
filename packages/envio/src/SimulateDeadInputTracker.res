@@ -25,18 +25,12 @@ let makeFromConfig = (config: Config.t): option<t> => {
     ->ChainMap.values
     ->Array.flatMap(chainConfig =>
       switch chainConfig.sourceConfig {
-      | Config.CustomSources(sources) =>
-        sources->Array.flatMap(source =>
-          source.simulateItems
-          ->Option.getOr([])
-          ->Array.mapWithIndex(
-            (item, index) => {
-              chainId: chainConfig.id,
-              index,
-              key: itemKey(item),
-            },
-          )
-        )
+      | Config.SimulateSourceConfig({items}) =>
+        items->Array.mapWithIndex((item, index) => {
+          chainId: chainConfig.id,
+          index,
+          key: itemKey(item),
+        })
       | _ => []
       }
     )

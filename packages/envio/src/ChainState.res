@@ -272,16 +272,11 @@ let makeInternal = (
         }),
       ]
     }
+  | Config.SimulateSourceConfig({items, endBlock}) => [
+      SimulateSource.make(~items, ~endBlock, ~chain, ~addressStore),
+    ]
   // For tests: use ready-to-use sources directly
-  | Config.CustomSources(sources) =>
-    // The simulate source predates the store, so it gets it here.
-    sources->Array.forEach(source =>
-      switch source.setSimulateAddressStore {
-      | Some(set) => set(addressStore)
-      | None => ()
-      }
-    )
-    sources
+  | Config.CustomSources(sources) => sources
   }
 
   // Seed chain density from whatever progress this chain already has (from a
