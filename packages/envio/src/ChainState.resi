@@ -98,6 +98,7 @@ let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
 let hasProcessedToEndblock: t => bool
+let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
@@ -136,6 +137,7 @@ let registerReorgGuard: (
   ~knownHeight: int,
 ) => ReorgDetection.reorgResult
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
+let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit

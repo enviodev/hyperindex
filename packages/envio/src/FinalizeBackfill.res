@@ -48,3 +48,14 @@ let run = (state: IndexerState.t) =>
     state->IndexerState.beginFinalizeFiber(fiber)
     fiber
   }
+
+// An indexer resumed already ready never reaches `run`, so nothing above would
+// notice an index the schema promises being dropped or invalidated while it was
+// down — `ensureQueryIndexes` only covers what a getWhere actually asks for.
+// Best-effort and not awaited by the loop: indexing is already live and correct
+// without the index, just slower.
+let repairSchemaIndexes = (state: IndexerState.t) => {
+  let persistence = state->IndexerState.persistence
+  let storage = persistence->Persistence.getInitializedStorageOrThrow
+  storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+}

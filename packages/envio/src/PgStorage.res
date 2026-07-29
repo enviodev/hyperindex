@@ -1764,6 +1764,49 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     ->Promise.all
   }
 
+  // Goes through `IndexManager.ensure`, unlike `finalizeBackfill` below: that
+  // one runs with processing paused, while this runs on a resumed indexer that
+  // is already ready, so handlers may be issuing getWhere queries alongside it
+  // and the per-table queues are what keep the two from colliding. Nothing here
+  // writes `ready_at` — the chains already carry theirs.
+  let ensureSchemaIndexes = async (~entities: array<Internal.entityConfig>) => {
+    let schemaIndexes = getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+    )
+
+    let _ = await schemaIndexes
+    ->Array.map(definition =>
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=Exact, ~build=async () => {
+        switch indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating missing index"
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s.`,
+          })
+        }
+      })
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    )
+    ->Promise.all
+  }
+
   // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
   // It's safe because the caller guarantees exclusivity — `FinalizeBackfill.run`
   // is reached from the processing loop with processing already paused, so no
@@ -2169,6 +2212,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,
+    ensureSchemaIndexes,
     finalizeBackfill,
     dumpEffectCache,
     reset,

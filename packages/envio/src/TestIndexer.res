@@ -483,6 +483,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ->(Utils.magic: array<Internal.entity> => array<unknown>),
   // The in-memory storage has no indexes to build, and it's always ready.
   ensureQueryIndexes: async (~table as _, ~filters as _) => (),
+  ensureSchemaIndexes: async (~entities as _) => (),
   finalizeBackfill: async (~entities as _, ~chainIds as _, ~readyAt as _) => (),
   writeBatch: async (
     ~batch,

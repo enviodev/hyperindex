@@ -109,6 +109,15 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
       await FinalizeBackfill.run(state)
     }
 
+    // Same realtime handoff the progressed-batch path does below. IndexerLoop
+    // starts fetching before processing, so by now the chain is already parked
+    // on a pre-realtime waiter; without this it stays there, polling the sync
+    // source at the backfill interval, until that source reports a new height.
+    if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
+      state->IndexerState.invalidateInflight
+      scheduleFetch()
+    }
+
     // When resuming from persisted state, all events may already be processed.
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       Logging.info("All chains are caught up to end blocks.")

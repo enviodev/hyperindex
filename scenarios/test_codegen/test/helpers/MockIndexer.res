@@ -245,6 +245,7 @@ module Storage = {
           ->ignore
           Promise.resolve()
         },
+        ensureSchemaIndexes: (~entities as _) => Promise.resolve(),
         finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
           finalizeBackfillCalls
           ->Array.push({
@@ -468,6 +469,7 @@ module Indexer = {
     chain: chainId,
     sourceConfig: Config.sourceConfig,
     startBlock?: int,
+    endBlock?: int,
     maxReorgDepth?: int,
     blockLag?: int,
   }
@@ -494,6 +496,8 @@ module Indexer = {
     ~reorgThresholdReadyTolerance=0,
     // Lets regression tests surface fatal errors without terminating the Vitest worker.
     ~onError=?,
+    // Same, for the success exit a finite endBlock chain reaches once it's done.
+    ~onExit=?,
     // Lets a test intercept storage methods, e.g. to stall writeBatch and
     // exercise races between in-flight writes and the indexer loop.
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
@@ -525,6 +529,10 @@ module Indexer = {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
               startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+              endBlock: ?switch chainConfig.endBlock {
+              | Some(_) as endBlock => endBlock
+              | None => originalChainConfig.endBlock
+              },
               maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
                 originalChainConfig.maxReorgDepth,
               ),
@@ -602,6 +610,7 @@ module Indexer = {
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
       ~onError,
+      ~onExit?,
     )
     state->IndexerLoop.start
 
@@ -867,6 +876,7 @@ module Indexer = {
           ~targetBufferSize?,
           ~reorgThresholdReadyTolerance,
           ~onError,
+          ~onExit?,
           ~mapStorage,
         )
       },
