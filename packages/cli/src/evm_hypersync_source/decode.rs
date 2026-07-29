@@ -147,6 +147,8 @@ struct OnEventRegistration {
     /// at construction so every per-log gate is an index compare.
     contract_idx: u32,
     is_wildcard: bool,
+    /// Earliest block this registration accepts; `None` is unrestricted.
+    start_block: Option<i64>,
     topic_filters: TopicFilters,
     params: Vec<ParamMeta>,
     decoder: DynSolEvent,
@@ -174,6 +176,7 @@ impl OnEventRegistration {
             contract_name: ep.contract_name.clone(),
             contract_idx,
             is_wildcard: ep.is_wildcard,
+            start_block: ep.start_block,
             topic_filters: TopicFilters::parse(&ep.topic_selections)
                 .context("parse topic filters")?,
             params: ep.params.clone(),
@@ -182,8 +185,8 @@ impl OnEventRegistration {
     }
 
     /// Whether a log belongs to this registration: same event signature
-    /// (topic0 + topic count), an allowed emitter, and the registration's topic
-    /// filters.
+    /// (topic0 + topic count), at or after the registration's own start block,
+    /// an allowed emitter, and the registration's topic filters.
     ///
     /// Emitter rules. A wildcard registration accepts any address. A
     /// contract-bound one accepts only an address this partition's set holds for
@@ -205,6 +208,7 @@ impl OnEventRegistration {
     ) -> bool {
         self.sighash == *topic0
             && self.topic_count == topic_count
+            && crate::registration_start_block::has_started(self.start_block, address.block_number)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.block_number)))
@@ -578,6 +582,7 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses: false,
+            start_block: None,
             topic_selections: no_filter_selection(sighash),
             block_fields: vec![],
             transaction_fields: vec![],
@@ -697,6 +702,7 @@ mod tests {
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
                 depends_on_addresses: false,
+                start_block: None,
                 topic_selections: no_filter_selection(&real_sighash),
                 block_fields: vec![],
                 transaction_fields: vec![],
@@ -764,6 +770,36 @@ mod tests {
                 routed_indexes(&route(&decoder, &log, &unowned())),
             ),
             (vec![0, 1, 2], vec![1, 2])
+        );
+    }
+
+    #[test]
+    fn registration_start_block_holds_back_only_its_own_registration() {
+        // Two registrations of one event on one contract: one unrestricted, one
+        // starting at 100. The address store's start block is contract-wide, so
+        // only this per-registration gate can separate them.
+        let mut restricted = value_reg(1, "Owned", false, VALID_SIGHASH);
+        restricted.start_block = Some(100);
+        let core = Decoder::from_registrations(
+            &[value_reg(0, "Owned", false, VALID_SIGHASH), restricted],
+            false,
+            &store(&["Owned"], Some("Owned")),
+        )
+        .unwrap();
+        let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
+        let log = value_log(VALID_SIGHASH);
+        let at = |block_number| LogAddress {
+            key: &EMITTER_KEY,
+            contract_name: Some("Owned"),
+            block_number,
+        };
+
+        assert_eq!(
+            (
+                routed_indexes(&route(&decoder, &log, &at(99))),
+                routed_indexes(&route(&decoder, &log, &at(100))),
+            ),
+            (vec![0], vec![0, 1])
         );
     }
 

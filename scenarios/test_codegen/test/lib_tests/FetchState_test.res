@@ -2351,6 +2351,109 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
   })
 
+  it("Skips the blocks below a partition's earliest registration start block", t => {
+    let makeWildcard = (~id, ~startBlock=?) =>
+      (MockIndexer.evmOnEventRegistration(
+        ~id,
+        ~contractName="Gravatar",
+        ~isWildcard=true,
+        ~startBlock?,
+      ) :> Internal.onEventRegistration)
+
+    // The address-free partition is the only one here, so its query is the
+    // whole story.
+    let fromBlockOf = (~knownHeight, ~endBlock=None, onEventRegistrations) => {
+      let (fetchState, _) = makeFs(
+        ~onEventRegistrations,
+        ~addresses=[],
+        ~startBlock=0,
+        ~endBlock,
+        ~maxAddrInPartition=10,
+        ~maxOnBlockBufferSize=10,
+        ~chainId,
+        ~knownHeight,
+      )
+      switch fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=knownHeight,
+        ~chainTargetItems=10_000.,
+      ) {
+      | Ready(queries) => queries->Array.map(q => q.fromBlock)
+      | WaitingForNewBlock => ["WaitingForNewBlock"]->Obj.magic
+      | NothingToQuery => ["NothingToQuery"]->Obj.magic
+      }
+    }
+
+    t.expect({
+      // Nothing below 500 can match, and the head is past it, so the scan
+      // starts there instead of at the chain start.
+      "restricted": fromBlockOf(~knownHeight=1000, [makeWildcard(~id="a", ~startBlock=500)]),
+      // The earliest of several still bounds the skip.
+      "twoRestricted": fromBlockOf(
+        ~knownHeight=1000,
+        [makeWildcard(~id="a", ~startBlock=900), makeWildcard(~id="b", ~startBlock=500)],
+      ),
+      // An unrestricted sibling can fire from the chain start, so nothing is
+      // skipped.
+      "mixed": fromBlockOf(
+        ~knownHeight=1000,
+        [makeWildcard(~id="a", ~startBlock=500), makeWildcard(~id="b")],
+      ),
+      // Start block past the head: skipping there would leave the partition
+      // with no query at all, so it fetches as before until the chain catches
+      // up. Same when the chain's endBlock is below it.
+      "beyondHead": fromBlockOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
+      "beyondEndBlock": fromBlockOf(
+        ~knownHeight=1000,
+        ~endBlock=Some(200),
+        [makeWildcard(~id="a", ~startBlock=500)],
+      ),
+    }).toEqual({
+      "restricted": [500],
+      "twoRestricted": [500],
+      "mixed": [0],
+      "beyondHead": [0],
+      "beyondEndBlock": [0],
+    })
+  })
+
+  it("Narrows a query's selection to the registrations its range can match", t => {
+    let makeReg = (~id, ~startBlock=?) =>
+      (MockIndexer.evmOnEventRegistration(
+        ~id,
+        ~contractName="Gravatar",
+        ~isWildcard=true,
+        ~startBlock?,
+      ) :> Internal.onEventRegistration)
+    let open_ = makeReg(~id="open")
+    let restricted = makeReg(~id="restricted", ~startBlock=100)
+    let selection: FetchState.selection = {
+      dependsOnAddresses: false,
+      onEventRegistrations: [open_, restricted],
+    }
+    let registrationIds = (selection: FetchState.selection) =>
+      selection.onEventRegistrations->Array.map(reg => reg.eventConfig.id)
+
+    t.expect({
+      // Whole range sits below the restricted registration's start block.
+      "below": (selection->FetchState.narrowSelectionToRange(~toBlock=Some(99)))->registrationIds,
+      // The range reaches it, so its logs are worth asking for.
+      "reaches": (selection->FetchState.narrowSelectionToRange(~toBlock=Some(100)))->registrationIds,
+      // Open-ended queries can't exclude anything.
+      "openEnded": (selection->FetchState.narrowSelectionToRange(~toBlock=None))->registrationIds,
+      // Narrowing to nothing would leave a query no source can build, so the
+      // selection stands as-is.
+      "allBelow": ({
+        FetchState.dependsOnAddresses: false,
+        onEventRegistrations: [restricted],
+      }->FetchState.narrowSelectionToRange(~toBlock=Some(99)))->registrationIds,
+    }).toEqual({
+      "below": ["open"],
+      "reaches": ["open", "restricted"],
+      "openEnded": ["open", "restricted"],
+      "allBelow": ["restricted"],
+    })
+  })
+
   it("Wildcard partition never merges to another one", t => {
     let wildcard = (MockIndexer.evmOnEventRegistration(
       ~id="wildcard",

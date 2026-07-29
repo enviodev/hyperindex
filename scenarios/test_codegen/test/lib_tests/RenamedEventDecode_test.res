@@ -35,6 +35,7 @@ describe("Renamed event decoding (issue #1285)", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections: [
             {
               topic0: [onChainSighash],

@@ -206,6 +206,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~topicCount=3,
     ~isWildcard=false,
     ~dependsOnAddresses=true,
+    ~startBlock=None,
     ~params=transferParams,
   ): HyperSyncClient.Registration.input => {
     index,
@@ -215,6 +216,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     contractName: "ERC20",
     isWildcard,
     dependsOnAddresses,
+    startBlock,
     params,
     topicSelections: [
       {

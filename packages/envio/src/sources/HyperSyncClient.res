@@ -254,6 +254,10 @@ module Registration = {
     contractName: string,
     isWildcard: bool,
     dependsOnAddresses: bool,
+    // Earliest block this registration accepts; `None` is unrestricted. The
+    // address store's start block is contract-wide, so it can't hold one
+    // registration back when a sibling declares no start block.
+    startBlock: option<int>,
     params: array<Internal.paramMeta>,
     topicSelections: array<topicSelectionInput>,
     // Capitalized field names matching the Rust BlockField/TransactionField
@@ -281,6 +285,7 @@ module Registration = {
         contractName: event.contractName,
         isWildcard: reg.isWildcard,
         dependsOnAddresses: reg.dependsOnAddresses,
+        startBlock: reg.startBlock,
         params: event.paramsMetadata,
         topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
           topic0: ts.topic0->EvmTypes.Hex.toStrings,

@@ -210,9 +210,10 @@ let rec onQueryResponse = async (
       scheduleRollback()
     | None =>
       // Over-fetched events (a merged partition returning an address before its
-      // effectiveStartBlock, or a wildcard param referencing an address
-      // registered after the log's block) are already dropped by the source's
-      // native address gate, so everything here is indexable.
+      // effectiveStartBlock, a wildcard param referencing an address registered
+      // after the log's block, or a registration whose own start block is later
+      // than its contract's) are already dropped by the source's native gates,
+      // so everything here is indexable.
       let newItems = parsedQueueItems
       let itemsWithContractRegister = []
       for idx in 0 to newItems->Array.length - 1 {

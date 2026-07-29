@@ -272,6 +272,9 @@ let makeInternal = (
         }),
       ]
     }
+  | Config.SimulateSourceConfig({items, endBlock}) => [
+      SimulateSource.make(~items, ~endBlock, ~chain, ~addressStore),
+    ]
   // For tests: use ready-to-use sources directly
   | Config.CustomSources(sources) => sources
   }

@@ -68,6 +68,9 @@ pub struct FuelOnEventRegistrationInput {
     pub event_name: String,
     pub contract_name: String,
     pub is_wildcard: bool,
+    /// Earliest block height this registration accepts; absent is unrestricted.
+    /// See `crate::registration_start_block`.
+    pub start_block: Option<i64>,
     pub kind: FuelEventKind,
     /// The LogData `rb` value as a decimal string (u64). Required for
     /// `LogData`, ignored otherwise.
@@ -81,6 +84,8 @@ pub(crate) struct Registration {
     /// at construction so the per-receipt gate is an index compare.
     pub contract_idx: u32,
     pub is_wildcard: bool,
+    /// Earliest block height this registration accepts; `None` is unrestricted.
+    pub start_block: Option<i64>,
     pub kind: RegistrationKind,
 }
 
@@ -95,7 +100,8 @@ pub(crate) struct ReceiptAddress<'a> {
 
 impl Registration {
     /// Whether a receipt belongs to this registration: matching receipt type
-    /// (and `rb` for LogData), emitted by an allowed contract.
+    /// (and `rb` for LogData), at or after the registration's own start block,
+    /// emitted by an allowed contract.
     ///
     /// Owner rules mirror EVM's: a wildcard registration accepts any contract;
     /// a contract-bound one needs the address to be in this partition's set for
@@ -116,6 +122,7 @@ impl Registration {
             kind => kind.receipt_types().contains(&receipt_type),
         };
         kind_matches
+            && crate::registration_start_block::has_started(self.start_block, address.block_height)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.block_height)))
@@ -196,6 +203,7 @@ impl SelectionBuilder {
                 contract_name: reg.contract_name.clone(),
                 contract_idx,
                 is_wildcard: reg.is_wildcard,
+                start_block: reg.start_block,
                 kind,
             };
             anyhow::ensure!(
@@ -355,6 +363,7 @@ mod tests {
             event_name: format!("E{index}"),
             contract_name: contract_name.to_string(),
             is_wildcard,
+            start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
         }
@@ -704,6 +713,42 @@ mod tests {
             ),
             (false, true)
         );
+    }
+
+    #[test]
+    fn registration_start_block_holds_back_only_its_own_registration() {
+        // Two registrations of one event on one contract: one unrestricted, one
+        // starting at height 100. The address store's start block is
+        // contract-wide, so only this per-registration gate separates them.
+        let mut restricted = reg(1, "Owned", FuelEventKind::Mint, false, None);
+        restricted.start_block = Some(100);
+        let (store, set) = addresses(&[("Owned", &[ADDR_1])]);
+        let builder = SelectionBuilder::from_registrations(
+            &[
+                reg(0, "Owned", FuelEventKind::Mint, false, None),
+                restricted,
+            ],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap();
+        let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        let owned_key = key_of(ADDR_1);
+        let at = |block_height| {
+            let address = ReceiptAddress {
+                key: &owned_key[..],
+                contract_name: Some("Owned"),
+                block_height,
+            };
+            built
+                .registrations
+                .iter()
+                .filter(|reg| reg.matches(RECEIPT_MINT, None, &address, false, &address_store))
+                .map(|reg| reg.index)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!((at(99), at(100)), (vec![0], vec![0, 1]));
     }
 
     #[test]

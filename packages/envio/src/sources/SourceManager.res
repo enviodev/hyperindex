@@ -766,7 +766,7 @@ let executeQuery = async (
         ~addressSet=query.addresses,
         ~partitionId=query.partitionId,
         ~knownHeight,
-        ~selection=query.selection,
+        ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
         ~itemsTarget=query.itemsTarget,
         ~retry,
         ~logger,

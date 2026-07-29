@@ -63,19 +63,86 @@ describe("AddressStore", () => {
     )
     t.expect({
       // Config address (effectiveStartBlock 0) at block 5.
-      "configAddress": store->AddressStore.has(addr(0), "A", 5),
-      "unregistered": store->AddressStore.has(addr(9), "A", 5),
+      "configAddress": store->AddressStore.isIndexedAt(addr(0), "A", 5),
+      "unregistered": store->AddressStore.isIndexedAt(addr(9), "A", 5),
       // addr(1) registered at block 10: dropped before, kept at, its start block.
-      "beforeRegistration": store->AddressStore.has(addr(1), "A", 9),
-      "atRegistration": store->AddressStore.has(addr(1), "A", 10),
+      "beforeRegistration": store->AddressStore.isIndexedAt(addr(1), "A", 9),
+      "atRegistration": store->AddressStore.isIndexedAt(addr(1), "A", 10),
       // Registered, but for a different contract.
-      "wrongContract": store->AddressStore.has(addr(0), "B", 5),
+      "wrongContract": store->AddressStore.isIndexedAt(addr(0), "B", 5),
     }).toEqual({
       "configAddress": true,
       "unregistered": false,
       "beforeRegistration": false,
       "atRegistration": true,
       "wrongContract": false,
+    })
+  })
+
+  it("scopes containsAt to the set, leaving the chain-wide gate on the store", t => {
+    let store = TestAddresses.makeStore(
+      ~onEventRegistrations,
+      ~addresses=[
+        contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1),
+        contract(~address=addr(1), ~contractName="A", ~registrationBlock=10),
+      ],
+    )
+    let set = store->AddressStore.makeSetOf([addr(0)])
+    t.expect({
+      "inSet": set->AddressSet.containsAt(addr(0), "A", 5),
+      // Registered for A, but held by another partition.
+      "outOfSet": set->AddressSet.containsAt(addr(1), "A", 10),
+      // The chain-wide gate lives on the store, so a set can't be asked it.
+      "outOfSetChainWide": store->AddressStore.isIndexedAt(addr(1), "A", 10),
+      // In the set, but registered under a different contract.
+      "inSetWrongContract": set->AddressSet.containsAt(addr(0), "B", 5),
+    }).toEqual({
+      "inSet": true,
+      "outOfSet": false,
+      "outOfSetChainWide": true,
+      "inSetWrongContract": false,
+    })
+  })
+
+  it("keeps a contract unrestricted when any registration has no start block", t => {
+    let reg = (~contractName, ~startBlock=?) =>
+      (MockIndexer.evmOnEventRegistration(
+        ~id=contractName,
+        ~contractName,
+        ~startBlock?,
+      ) :> Internal.onEventRegistration)
+
+    t.expect({
+      // A `None` start block is unrestricted, so it wins over any `Some`
+      // whichever order the registrations arrive in.
+      "noneThenSome": AddressStore.contractsOf(
+        ~onEventRegistrations=[reg(~contractName="A"), reg(~contractName="A", ~startBlock=100)],
+      ),
+      "someThenNone": AddressStore.contractsOf(
+        ~onEventRegistrations=[reg(~contractName="A", ~startBlock=100), reg(~contractName="A")],
+      ),
+      "allRestricted": AddressStore.contractsOf(
+        ~onEventRegistrations=[
+          reg(~contractName="A", ~startBlock=100),
+          reg(~contractName="A", ~startBlock=50),
+        ],
+      ),
+      // Contracts stay independent, in first-registration order.
+      "perContract": AddressStore.contractsOf(
+        ~onEventRegistrations=[
+          reg(~contractName="B", ~startBlock=100),
+          reg(~contractName="A"),
+          reg(~contractName="B", ~startBlock=50),
+        ],
+      ),
+    }).toEqual({
+      "noneThenSome": [({name: "A", startBlock: None}: AddressStore.contract)],
+      "someThenNone": [({name: "A", startBlock: None}: AddressStore.contract)],
+      "allRestricted": [({name: "A", startBlock: Some(50)}: AddressStore.contract)],
+      "perContract": [
+        ({name: "B", startBlock: Some(50)}: AddressStore.contract),
+        ({name: "A", startBlock: None}: AddressStore.contract),
+      ],
     })
   })
 

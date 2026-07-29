@@ -37,6 +37,7 @@ let decodeSingle = async (
         contractName: "TestContract",
         isWildcard: false,
         dependsOnAddresses: true,
+        startBlock: None,
         params,
         topicSelections: [
           {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
@@ -84,6 +85,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections,
           blockFields: [],
           transactionFields: [],
@@ -101,6 +103,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections,
           blockFields: [],
           transactionFields: [],
@@ -160,6 +163,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
+          startBlock: None,
           topicSelections: [
             {
               topic0: [toEventSelector("event Empty()")],
