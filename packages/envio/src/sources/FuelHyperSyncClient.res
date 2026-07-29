@@ -22,6 +22,8 @@ module Registration = {
     eventName: string,
     contractName: string,
     isWildcard: bool,
+    // Earliest block height this registration accepts; 0 is unrestricted.
+    startBlock: int,
     kind: kind,
     // The LogData `rb` value as a decimal string; absent for other kinds.
     logId?: string,
@@ -45,6 +47,7 @@ module Registration = {
         eventName: eventConfig.name,
         contractName: eventConfig.contractName,
         isWildcard: reg.isWildcard,
+        startBlock: reg.startBlock->Option.getOr(0),
         kind,
         ?logId,
       }

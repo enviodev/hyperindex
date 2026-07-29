@@ -790,6 +790,7 @@ mod tests {
                     contract_name: "Zero".to_string(),
                     is_wildcard: true,
                     depends_on_addresses: false,
+                    start_block: 0,
                     // One no-filter selection pinning topic0 (an empty list would
                     // be `where: false` and match nothing).
                     topic_selections: vec![

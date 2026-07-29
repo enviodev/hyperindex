@@ -62,6 +62,15 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
           false
         } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
           false
+        } else if (
+          // The registration's own start block, which the contract-wide address
+          // gate can't express. Every native router applies it while routing.
+          switch onEventRegistration.startBlock {
+          | Some(startBlock) => blockNumber < startBlock
+          | None => false
+          }
+        ) {
+          false
         } else {
           let contractName = onEventRegistration.eventConfig.contractName
           let emitterAllowed =

@@ -11,11 +11,18 @@ let addr = i => Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getOrThrow
 
 let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
 
-let registration = (~index, ~contractName, ~isWildcard=false, ~addressFilterParamGroups=?) => {
+let registration = (
+  ~index,
+  ~contractName,
+  ~isWildcard=false,
+  ~startBlock=?,
+  ~addressFilterParamGroups=?,
+) => {
   let base = (MockIndexer.evmOnEventRegistration(
     ~id=index->Int.toString,
     ~contractName,
     ~isWildcard,
+    ~startBlock?,
   ) :> Internal.onEventRegistration)
   {
     ...base,
@@ -217,6 +224,31 @@ describe("SimulateSource routing", () => {
       // Chain-wide, so addr(1) passes too even though the set lacks it.
       "clientFiltered": [(0, 10, addr(9)), (0, 10, addr(9))],
     })
+  })
+
+  Async.it("holds back a registration by its own start block", async t => {
+    // The store's start block is contract-wide, so the unrestricted sibling
+    // keeps the address gate open from block 0 — only the per-registration
+    // gate the native routers apply can separate the two.
+    let regOpen = registration(~index=0, ~contractName="A")
+    let regRestricted = registration(~index=1, ~contractName="A", ~startBlock=100)
+    let store = TestAddresses.makeStore(
+      ~onEventRegistrations=[regOpen, regRestricted],
+      ~addresses=[contract(~address=addr(0), ~contractName="A")],
+    )
+
+    let routed = await getItems(
+      ~items=[
+        item(~registration=regOpen, ~blockNumber=99, ~srcAddress=addr(0)),
+        item(~registration=regRestricted, ~blockNumber=99, ~srcAddress=addr(0)),
+        item(~registration=regOpen, ~blockNumber=100, ~srcAddress=addr(0)),
+        item(~registration=regRestricted, ~blockNumber=100, ~srcAddress=addr(0)),
+      ],
+      ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
+      ~selection={dependsOnAddresses: true, onEventRegistrations: [regOpen, regRestricted]},
+    )
+
+    t.expect(routed).toEqual([(0, 99, addr(0)), (0, 100, addr(0)), (1, 100, addr(0))])
   })
 
   Async.it("keeps registrations of the same event in their own partitions", async t => {

@@ -33,6 +33,12 @@ pub struct SvmOnEventRegistrationInput {
     /// (placeholder); such a registration is never fetched or routed.
     pub program_id: String,
     pub is_wildcard: bool,
+    /// Earliest slot this registration accepts: its program's configured start
+    /// block, overridden by a `where.block.slot._gte`. 0 is unrestricted.
+    /// Gated per registration here because the address store's start block is
+    /// program-wide — a sibling registration without one keeps that gate open
+    /// from the chain start.
+    pub start_block: i64,
     /// Hex-encoded discriminator. `None` matches every instruction in the
     /// program (lowest routing priority).
     pub discriminator: Option<String>,
@@ -96,6 +102,8 @@ pub(crate) struct Registration {
     pub contract_idx: u32,
     pub program_id: String,
     pub is_wildcard: bool,
+    /// Earliest slot this registration accepts; 0 is unrestricted.
+    pub start_block: i64,
     /// Decoded discriminator bytes; `None` = program-wide.
     pub discriminator: Option<Vec<u8>>,
     /// Original hex value for the query's `dN` filter.
@@ -177,6 +185,7 @@ impl Registration {
             contract_idx,
             program_id: input.program_id.clone(),
             is_wildcard: input.is_wildcard,
+            start_block: input.start_block,
             discriminator,
             discriminator_hex: input.discriminator.clone().filter(|d| !d.is_empty()),
             byte_len,
@@ -190,7 +199,8 @@ impl Registration {
     }
 
     /// Whether an instruction belongs to this registration, discriminator
-    /// aside: same program, an allowed owner, the `isInner` constraint, and the
+    /// aside: same program, at or after the registration's own start block, an
+    /// allowed owner, the `isInner` constraint, and the
     /// registration's account filters — the filters are re-applied here so an
     /// instruction fetched for a sibling selection can't leak into a
     /// registration whose own filter rejects it.
@@ -207,6 +217,7 @@ impl Registration {
         store: &StoreInner,
     ) -> bool {
         self.program_id == instr.program_id
+            && address.slot >= self.start_block
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.slot)))
@@ -475,6 +486,7 @@ mod tests {
             contract_name: format!("P_{program_id}"),
             program_id: program_id.to_string(),
             is_wildcard,
+            start_block: 0,
             discriminator: discriminator.map(str::to_string),
             discriminator_byte_len: byte_len,
             is_inner: None,
@@ -764,6 +776,25 @@ mod tests {
             route_indexes(&store, &set, &built, &instr)
         };
         assert_eq!((at(69), at(70)), (Vec::<i64>::new(), vec![0]));
+    }
+
+    #[test]
+    fn registration_start_block_holds_back_only_its_own_registration() {
+        // Two registrations of one instruction on one program: one unrestricted,
+        // one starting at slot 100. The address store's start block is
+        // program-wide, so only this per-registration gate separates them.
+        let mut open = reg(0, PROG_A, Some("0x21"), 1, false);
+        open.contract_name = "Owned".to_string();
+        let mut restricted = reg(1, PROG_A, Some("0x21"), 1, false);
+        restricted.contract_name = "Owned".to_string();
+        restricted.start_block = 100;
+        let (store, set, built) = build(&[open, restricted], &[0, 1], &[("Owned", PROG_A)]);
+        let at = |slot: u64| {
+            let mut instr = instruction(PROG_A, &[0x21]);
+            instr.slot = slot;
+            route_indexes(&store, &set, &built, &instr)
+        };
+        assert_eq!((at(99), at(100)), (vec![0], vec![0, 1]));
     }
 
     #[test]

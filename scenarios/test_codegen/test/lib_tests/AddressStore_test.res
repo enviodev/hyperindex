@@ -93,7 +93,7 @@ describe("AddressStore", () => {
       // Registered for A, but held by another partition.
       "outOfSet": set->AddressSet.containsAt(addr(1), "A", 10),
       "outOfSetChainWide": set->AddressSet.isIndexedAt(addr(1), "A", 10),
-      // In the set, but the store's start block still gates it.
+      // In the set, but registered under a different contract.
       "inSetWrongContract": set->AddressSet.containsAt(addr(0), "B", 5),
     }).toEqual({
       "inSet": true,

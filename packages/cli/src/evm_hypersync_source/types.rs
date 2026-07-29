@@ -306,6 +306,12 @@ pub struct OnEventRegistrationInput {
     /// Whether the query for this event must be scoped to (or derived from)
     /// the contract's registered addresses.
     pub depends_on_addresses: bool,
+    /// Earliest block this registration accepts: its contract's configured
+    /// start block, overridden by a `where.block.number._gte`. 0 is
+    /// unrestricted. Gated per registration here because the address store's
+    /// start block is contract-wide — a sibling registration without one keeps
+    /// that gate open from the chain start.
+    pub start_block: i64,
     pub params: Vec<ParamMeta>,
     /// The registration's resolved `where` in disjunctive normal form (outer
     /// array is OR). Empty means the event is never fetched.
