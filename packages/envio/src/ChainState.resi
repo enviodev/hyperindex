@@ -137,6 +137,7 @@ let registerReorgGuard: (
   ~knownHeight: int,
 ) => ReorgDetection.reorgResult
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
+let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit

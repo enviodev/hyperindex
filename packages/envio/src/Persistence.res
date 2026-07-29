@@ -93,6 +93,11 @@ type storage = {
   // once they're queryable. Best-effort: it resolves even when a build fails,
   // leaving the query to run unindexed rather than failing the handler.
   ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
+  // Creates every schema-defined index still missing, without touching
+  // `ready_at`. For a resumed indexer that is already ready and so never runs
+  // `finalizeBackfill`: an index dropped or invalidated while it was down would
+  // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
+  ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
   // Creates every schema-defined index still missing and stamps `ready_at` on
   // the given chains, atomically. Called once, when backfill completes.
   finalizeBackfill: (

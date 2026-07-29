@@ -166,10 +166,16 @@ WHERE "${(#id: field :> string)}" = $1;`
 
   // Written in the same transaction as the deferred schema indexes, so a chain
   // is never reported ready without the indexes the schema promises.
+  // `IS NULL` so a chain keeps the timestamp it first caught up at, matching the
+  // sticky in-memory `ChainState.markReady`. Without it a partial recovery (eg a
+  // chain added to an already-synced indexer) would restamp the ready chains in
+  // the database while their in-memory copies kept the old value — and the next
+  // chain-metadata write would push the stale value back over the committed one.
   let makeSetReadyAtQuery = (~pgSchema) =>
     `UPDATE "${pgSchema}"."${table.tableName}"
 SET "${(#ready_at: field :> string)}" = $1
-WHERE "${(#id: field :> string)}" = ANY($2::int[]);`
+WHERE "${(#id: field :> string)}" = ANY($2::int[])
+  AND "${(#ready_at: field :> string)}" IS NULL;`
 
   type rawInitialState = {
     id: int,

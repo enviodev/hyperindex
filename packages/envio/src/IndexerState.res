@@ -414,7 +414,15 @@ let clearRollback = (state: t) => state.rollbackState = NoRollback
 
 // Invalidate in-flight fetches/waiters without starting a rollback, eg on the
 // realtime transition where the parked waiter is bound to the pre-realtime source.
-let invalidateInflight = (state: t) => state.epoch = state.epoch + 1
+// Drops the pending queries with it, the way the reorg path does: a response
+// carrying the old epoch is discarded before handleQueryResult can retire its
+// query, and a partition that still holds one never asks for another range.
+let invalidateInflight = (state: t) => {
+  state.epoch = state.epoch + 1
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Utils.Dict.forEach(ChainState.resetPendingQueries)
+}
 
 let applyBatchProgress = (state: t, ~batch: Batch.t) =>
   state.crossChainState->CrossChainState.applyBatchProgress(

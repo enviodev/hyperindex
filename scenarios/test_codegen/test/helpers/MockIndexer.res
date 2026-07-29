@@ -246,6 +246,7 @@ module Storage = {
           ->ignore
           Promise.resolve()
         },
+        ensureSchemaIndexes: (~entities as _) => Promise.resolve(),
         finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
           finalizeBackfillCalls
           ->Array.push({
