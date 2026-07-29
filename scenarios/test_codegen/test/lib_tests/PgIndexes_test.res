@@ -18,16 +18,21 @@ let allEntities = entities->Array.concat([InternalTable.EnvioAddresses.entityCon
 
 // Delegates to the real client, records every statement, and can be told to
 // fail one kind of query — enough to reproduce a read-back that fails after its
-// DDL has already committed.
-let makeFlakySql: (Postgres.sql, array<string>, string => bool) => Postgres.sql = %raw(`(sql, log, shouldFail) => ({
-  unsafe: (query, params, options) => {
-    log.push(query);
-    return shouldFail(query)
-      ? Promise.reject(new Error("connection terminated unexpectedly"))
-      : sql.unsafe(query, params, options);
+// DDL has already committed. A Proxy rather than a hand-written stand-in, so
+// the storage reaching for a method this test never thought about still works.
+let makeFlakySql: (Postgres.sql, array<string>, string => bool) => Postgres.sql = %raw(`(sql, log, shouldFail) => new Proxy(sql, {
+  get(target, prop, receiver) {
+    if (prop === "unsafe") {
+      return (query, params, options) => {
+        log.push(query);
+        return shouldFail(query)
+          ? Promise.reject(new Error("connection terminated unexpectedly"))
+          : target.unsafe(query, params, options);
+      };
+    }
+    const value = Reflect.get(target, prop, receiver);
+    return typeof value === "function" ? value.bind(target) : value;
   },
-  begin: (fn) => sql.begin(fn),
-  end: () => sql.end(),
 })`)
 
 let makeStorage = (~sql=sql, pgSchema) =>
@@ -46,7 +51,18 @@ let makeStorage = (~sql=sql, pgSchema) =>
 // indexes they like behind without disturbing the other suites. `fixtures` run
 // after the tables exist, then the storage resumes — the same order a restart
 // onto an existing schema sees.
+// Each test owns a schema; they'd otherwise pile up in the developer's database
+// run after run, since nothing else ever looks at them again.
+let createdSchemas = []
+
+Async.afterAll(async () => {
+  let _ = await createdSchemas
+  ->Array.map(pgSchema => sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
+  ->Promise.all
+})
+
 let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEntities) => {
+  createdSchemas->Array.push(pgSchema)->ignore
   let storage = makeStorage(~sql=client, pgSchema)
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,

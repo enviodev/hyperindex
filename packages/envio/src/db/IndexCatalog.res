@@ -40,6 +40,11 @@ let rowsSchema = S.array(
 // INCLUDE columns are excluded (they don't affect what the index can serve),
 // and expression columns come back as their printed definition so an
 // expression index can never be mistaken for a plain-column one.
+//
+// Both interpolated values are identifiers, not user input: `pgSchema` comes
+// from the operator's own environment, and `indexName` is always a generated
+// name — a codegen-validated `[A-Za-z_][A-Za-z0-9_]*` prefix plus a base36
+// hash, so neither can carry a quote.
 let makeQuery = (~pgSchema, ~indexName=?) =>
   `SELECT
   t.relname AS "tableName",
@@ -175,13 +180,27 @@ let isExactly = (entry, definition: IndexDefinition.t) =>
   entry.columns->Array.length === definition.columns->Array.length &&
   entry->leadsWith(definition)
 
-type t = {byName: dict<entry>}
+type t = {
+  byName: dict<entry>,
+  // `find` answers "is this index already covered?", which runs per filtered
+  // column on every batched getWhere load. Scanning every index in the schema
+  // there would make a hot path grow with the size of the schema, so the
+  // answer is memoized by identity and thrown away whenever the catalog moves
+  // — which only happens when an index is built, resynced or reloaded.
+  mutable covering: dict<string>,
+}
 
-let make = () => {byName: Dict.make()}
+let make = () => {byName: Dict.make(), covering: Dict.make()}
 
-let set = (catalog, entry) => catalog.byName->Dict.set(entry.name, entry)
+let set = (catalog, entry) => {
+  catalog.byName->Dict.set(entry.name, entry)
+  catalog.covering = Dict.make()
+}
 
-let remove = (catalog, name) => catalog.byName->Utils.Dict.deleteInPlace(name)
+let remove = (catalog, name) => {
+  catalog.byName->Utils.Dict.deleteInPlace(name)
+  catalog.covering = Dict.make()
+}
 
 let fromRows = (~rows) => {
   let catalog = make()
@@ -195,8 +214,29 @@ let entries = catalog => catalog.byName->Dict.valuesToArray
 
 let size = catalog => catalog.byName->Dict.keysToArray->Array.length
 
-let find = (catalog, definition, ~coverage) =>
-  catalog->entries->Array.find(entry => entry->satisfies(definition, ~coverage))
+// Postgres has no zero-length identifier, so this can't collide with a name.
+let nothingCovers = ""
+
+let find = (catalog, definition, ~coverage) => {
+  let cacheKey = `${switch coverage {
+    | Exact => "="
+    | LeadingColumns => "^"
+    }}${definition->IndexDefinition.key}`
+  switch catalog.covering->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+  | Some(name) if name === nothingCovers => None
+  | Some(name) => catalog.byName->Utils.Dict.dangerouslyGetNonOption(name)
+  | None =>
+    let found = catalog->entries->Array.find(entry => entry->satisfies(definition, ~coverage))
+    catalog.covering->Dict.set(
+      cacheKey,
+      switch found {
+      | Some(entry) => entry.name
+      | None => nothingCovers
+      },
+    )
+    found
+  }
+}
 
 let invalidNames = catalog =>
   catalog

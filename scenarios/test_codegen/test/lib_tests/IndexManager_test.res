@@ -344,6 +344,23 @@ describe("Serialising builds", () => {
     ).toEqual((true, [], false))
   })
 
+  // Coverage answers are memoized to keep the getWhere path off a full scan of
+  // the schema. A stale "nothing covers this" rebuilds an index that exists; a
+  // stale "covered" skips one that was dropped and reports ready without it.
+  Async.it("Never answers coverage from a stale memo", async t => {
+    let manager = IndexManager.make()
+    let name = ownerId->IndexDefinition.name
+    let row = makeRow(~tableName="Token", ~indexName=name, ~columns=["owner_id"])
+
+    let beforeBuild = manager->IndexManager.isSatisfied(ownerId, ~coverage=Exact)
+    manager->IndexManager.record(row->IndexCatalog.fromRow)
+    let afterBuild = manager->IndexManager.isSatisfied(ownerId, ~coverage=Exact)
+    manager->IndexManager.resync(~name, ~rows=[])
+    let afterDrop = manager->IndexManager.isSatisfied(ownerId, ~coverage=Exact)
+
+    t.expect((beforeBuild, afterBuild, afterDrop)).toEqual((false, true, false))
+  })
+
   Async.it("Replaces the whole catalog on reload, so a restart is authoritative", async t => {
     let manager = IndexManager.make()
     await manager->build(~definition=ownerId, ~run=() => Promise.resolve())

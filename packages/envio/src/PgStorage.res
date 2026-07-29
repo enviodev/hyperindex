@@ -1655,7 +1655,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   let resyncIndex = async name =>
     switch await sql->loadCatalogRows(~indexName=name) {
     | rows => indexManager->IndexManager.resync(~name, ~rows)
-    | exception _ => ()
+    | exception exn =>
+      Logging.debug({
+        "storage": storageName,
+        "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+        "err": exn->Utils.prettifyExn,
+      })
     }
 
   let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
@@ -1704,6 +1709,15 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ->Promise.all
   }
 
+  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`:
+  // its builds have to share one transaction with `ready_at`, and waiting on
+  // the per-table queues while holding that transaction open is a good way to
+  // deadlock. It's safe because the caller guarantees exclusivity —
+  // `FinalizeBackfill.run` is reached from the processing loop with processing
+  // already paused, so no handler can be running a getWhere. Were that to
+  // change, an automatic build landing the same identity mid-transaction would
+  // take the create to "already exists" and roll `ready_at` back with it; the
+  // catalog refresh below means the retry recovers rather than looping.
   let finalizeBackfill = async (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<int>,
@@ -1781,9 +1795,15 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       // the schema means the retry plans against the database rather than
       // replaying creates that can only raise "already exists" and never reach
       // ready.
-      switch await refreshIndexCatalog() {
-      | _ => ()
-      | exception _ => ()
+      try {
+        let _ = await refreshIndexCatalog()
+      } catch {
+      | refreshExn =>
+        Logging.debug({
+          "storage": storageName,
+          "msg": "Could not re-read the index catalog after a failed finalize. The next attempt reads it again.",
+          "err": refreshExn->Utils.prettifyExn,
+        })
       }
       throw(exn)
     }
