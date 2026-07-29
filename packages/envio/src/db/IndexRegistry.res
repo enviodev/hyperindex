@@ -38,6 +38,9 @@ type catalogRow = {
   // columns. A unique or partial index carries a definition our key doesn't
   // capture, so it can never be one of ours to rebuild.
   isPlain: int,
+  // 1 for an index with a WHERE clause. It only covers rows inside its
+  // predicate, so it can't stand in for the unrestricted index a filter needs.
+  isPartial: int,
   columns: array<string>,
   // "ASC"/"DESC" per column, in the same order as `columns`.
   directions: array<string>,
@@ -50,6 +53,7 @@ let catalogRowsSchema = S.array(
     method: s.field("method", S.string),
     isValid: s.field("isValid", S.int),
     isPlain: s.field("isPlain", S.int),
+    isPartial: s.field("isPartial", S.int),
     columns: s.field("columns", S.array(S.string)),
     directions: s.field("directions", S.array(S.string)),
   }),
@@ -69,6 +73,7 @@ let makeCatalogQuery = (~pgSchema) =>
     WHEN ix.indisunique OR ix.indpred IS NOT NULL OR ix.indexprs IS NOT NULL THEN 0
     ELSE 1
   END AS "isPlain",
+  CASE WHEN ix.indpred IS NOT NULL THEN 1 ELSE 0 END AS "isPartial",
   array_agg(
     CASE WHEN k.attnum = 0
       THEN pg_get_indexdef(ix.indexrelid, k.ord::int, true)
@@ -87,7 +92,7 @@ JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON k.ord <= ix.
 LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 WHERE n.nspname = '${pgSchema}'
 GROUP BY t.relname, i.relname, am.amname, ix.indisvalid, ix.indisready,
-         ix.indisunique, ix.indpred, ix.indexprs;`
+         ix.indisunique, (ix.indpred IS NOT NULL), (ix.indexprs IS NOT NULL);`
 
 // What we know about an index that came back invalid, enough to decide whether
 // rebuilding it would produce the index we actually wanted.
@@ -98,6 +103,11 @@ type invalidIndex = {
 
 type t = {
   keys: Utils.Set.t<string>,
+  // Key of the index holding each name. Two descriptions can truncate to one
+  // 63-character identifier, and `CREATE INDEX IF NOT EXISTS` matches on name:
+  // the second would no-op, and registering its key would leave that column
+  // unindexed for the rest of the run.
+  keyByName: dict<string>,
   // Every index Postgres reports as invalid, by name. Kept because
   // `CREATE INDEX IF NOT EXISTS` matches on name: with an invalid index already
   // under the name we want, the DDL is a silent no-op and we'd register a key
@@ -112,6 +122,7 @@ type t = {
 
 let make = () => {
   keys: Utils.Set.make(),
+  keyByName: Dict.make(),
   invalidByName: Dict.make(),
   inflight: Dict.make(),
   tableQueue: Dict.make(),
@@ -119,7 +130,20 @@ let make = () => {
 
 let has = (registry, key) => registry.keys->Utils.Set.has(key)
 
-let add = (registry, key) => registry.keys->Utils.Set.add(key)->ignore
+let add = (registry, ~key, ~name) => {
+  registry.keys->Utils.Set.add(key)->ignore
+  registry.keyByName->Dict.set(name, key)
+}
+
+// The key of the index already holding `name`, valid or not.
+let getKeyByName = (registry, name) =>
+  switch registry.keyByName->Utils.Dict.dangerouslyGetNonOption(name) {
+  | Some(key) => Some(key)
+  | None =>
+    registry.invalidByName
+    ->Utils.Dict.dangerouslyGetNonOption(name)
+    ->Option.map(invalid => invalid.key)
+  }
 
 let size = registry => registry.keys->Utils.Set.size
 
@@ -138,9 +162,9 @@ let clearInvalidName = (registry, name) => registry.invalidByName->Utils.Dict.de
 // repairs it.
 let reload = (registry, ~rows: array<catalogRow>) => {
   registry.keys->Utils.Set.clear
-  registry.invalidByName
-  ->Dict.keysToArray
-  ->Array.forEach(name => registry.invalidByName->Utils.Dict.deleteInPlace(name))
+  [registry.keyByName, registry.invalidByName->Obj.magic]->Array.forEach(dict =>
+    dict->Dict.keysToArray->Array.forEach(name => dict->Utils.Dict.deleteInPlace(name))
+  )
   let invalidIndexNames = []
   rows->Array.forEach(row => {
     let key = makeKey(
@@ -157,8 +181,12 @@ let reload = (registry, ~rows: array<catalogRow>) => {
     if row.isValid === 0 {
       invalidIndexNames->Array.push(row.indexName)->ignore
       registry.invalidByName->Dict.set(row.indexName, {key, isRepairable: row.isPlain === 1})
+    } else if row.isPartial === 1 {
+      // It holds the name, so it still blocks a create there, but it can't
+      // serve filters outside its predicate — never count it as coverage.
+      registry.keyByName->Dict.set(row.indexName, key)
     } else {
-      registry->add(key)
+      registry->add(~key, ~name=row.indexName)
     }
   })
   invalidIndexNames
@@ -167,7 +195,7 @@ let reload = (registry, ~rows: array<catalogRow>) => {
 // Runs `build` unless the index is already registered. The key is added only
 // after `build` resolves, so a failed build leaves the registry untouched and
 // the next request retries.
-let ensure = (registry, ~key, ~tableName, ~build) =>
+let ensure = (registry, ~key, ~name, ~tableName, ~build) =>
   if registry->has(key) {
     Promise.resolve()
   } else {
@@ -183,7 +211,7 @@ let ensure = (registry, ~key, ~tableName, ~build) =>
         // The queued build may have been satisfied while waiting behind another
         // one on the same table (eg a finalize pass created it).
         ->Promise.then(() => registry->has(key) ? Promise.resolve() : build())
-        ->Promise.thenResolve(() => registry->add(key))
+        ->Promise.thenResolve(() => registry->add(~key, ~name))
       registry.inflight->Dict.set(key, promise)
       registry.tableQueue->Dict.set(tableName, promise->Utils.Promise.silentCatch)
       promise->Promise.finally(() => registry.inflight->Utils.Dict.deleteInPlace(key))

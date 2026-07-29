@@ -8,12 +8,14 @@ let makeRow = (
   ~method="btree",
   ~isValid=1,
   ~isPlain=1,
+  ~isPartial=0,
 ): IndexRegistry.catalogRow => {
   tableName,
   indexName,
   method,
   isValid,
   isPlain,
+  isPartial,
   columns,
   directions: switch directions {
   | Some(directions) => directions
@@ -92,7 +94,7 @@ describe("IndexRegistry", () => {
 
   Async.it("Replaces the whole registry on reload, so a restart is authoritative", async t => {
     let registry = IndexRegistry.make()
-    registry->IndexRegistry.add("Token|btree|stale")
+    registry->IndexRegistry.add(~key="Token|btree|stale", ~name="Token_stale")
     let _ = registry->IndexRegistry.reload(
       ~rows=[makeRow(~tableName="Token", ~indexName="Token_owner_id", ~columns=["owner_id"])],
     )
@@ -110,11 +112,13 @@ describe("IndexRegistry", () => {
 
     await registry->IndexRegistry.ensure(
       ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
       ~tableName="Token",
       ~build,
     )
     await registry->IndexRegistry.ensure(
       ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
       ~tableName="Token",
       ~build,
     )
@@ -136,11 +140,13 @@ describe("IndexRegistry", () => {
 
     let first = registry->IndexRegistry.ensure(
       ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
       ~tableName="Token",
       ~build,
     )
     let second = registry->IndexRegistry.ensure(
       ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
       ~tableName="Token",
       ~build,
     )
@@ -169,11 +175,13 @@ describe("IndexRegistry", () => {
 
     let owner = registry->IndexRegistry.ensure(
       ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
       ~tableName="Token",
       ~build=build("owner_id"),
     )
     let minted = registry->IndexRegistry.ensure(
       ~key="Token|btree|minted_at",
+      ~name="Token_minted_at",
       ~tableName="Token",
       ~build=build("minted_at"),
     )
@@ -210,7 +218,12 @@ describe("IndexRegistry", () => {
       }
 
     let failed = await registry
-    ->IndexRegistry.ensure(~key="Token|btree|owner_id", ~tableName="Token", ~build)
+    ->IndexRegistry.ensure(
+      ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
+      ~tableName="Token",
+      ~build,
+    )
     ->Promise.thenResolve(() => false)
     ->Utils.Promise.catchResolve(_ => true)
 
@@ -222,11 +235,53 @@ describe("IndexRegistry", () => {
     shouldFail := false
     await registry->IndexRegistry.ensure(
       ~key="Token|btree|owner_id",
+      ~name="Token_owner_id",
       ~tableName="Token",
       ~build,
     )
 
     t.expect(registry->IndexRegistry.toArray).toEqual(["Token|btree|owner_id"])
+  })
+
+  Async.it("Never counts a partial index as coverage, but still records its name", async t => {
+    let registry = IndexRegistry.make()
+    let _ = registry->IndexRegistry.reload(
+      ~rows=[
+        makeRow(
+          ~tableName="Token",
+          ~indexName="Token_owner_id",
+          ~columns=["owner_id"],
+          ~isPlain=0,
+          ~isPartial=1,
+        ),
+      ],
+    )
+
+    t.expect(
+      (registry->IndexRegistry.toArray, registry->IndexRegistry.getKeyByName("Token_owner_id")),
+      ~message="A WHERE clause can't serve arbitrary filters, but the name is taken",
+    ).toEqual(([], Some("Token|btree|owner_id")))
+  })
+
+  Async.it("Reports which index owns a name, valid or invalid", async t => {
+    let registry = IndexRegistry.make()
+    let _ = registry->IndexRegistry.reload(
+      ~rows=[
+        makeRow(~tableName="Token", ~indexName="Token_owner_id", ~columns=["owner_id"]),
+        makeRow(
+          ~tableName="Token",
+          ~indexName="Token_minted_at",
+          ~columns=["minted_at"],
+          ~isValid=0,
+        ),
+      ],
+    )
+
+    t.expect((
+      registry->IndexRegistry.getKeyByName("Token_owner_id"),
+      registry->IndexRegistry.getKeyByName("Token_minted_at"),
+      registry->IndexRegistry.getKeyByName("Token_unknown"),
+    )).toEqual((Some("Token|btree|owner_id"), Some("Token|btree|minted_at"), None))
   })
 
   Async.it("Rejects index names that truncate to the same identifier", async t => {

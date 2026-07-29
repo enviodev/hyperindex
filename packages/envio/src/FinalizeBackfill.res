@@ -1,9 +1,11 @@
 // The FinalizingIndexes phase. Runs once, from the processing loop, when every
 // chain has caught up: processing is already paused (the loop awaits this),
 // pending writes are flushed, then storage creates every missing schema-defined
-// index and stamps `ready_at` in one transaction. A failure rolls back both, so
-// the next batch simply retries — the indexer never reports ready with an index
-// the schema promised still missing.
+// index and stamps `ready_at` in one transaction. A failure rolls back both and
+// reaches the processing loop's error boundary, which stops the indexer — the
+// rollback leaves nothing half-done, so a restart picks the work up cleanly.
+// Either way the indexer never reports ready with an index the schema promised
+// still missing.
 
 let run = async (state: IndexerState.t) => {
   Logging.info(

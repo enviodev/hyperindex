@@ -134,13 +134,15 @@ let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
 // wanted. Runs inside a transaction, unlike REINDEX CONCURRENTLY.
 let makeReindexQuery = (~pgSchema, ~indexName) => `REINDEX INDEX "${pgSchema}"."${indexName}";`
 
-// A name taken by an invalid index the indexer didn't create isn't ours to
-// touch: rebuilding it reuses its own definition, so it would come back valid
-// but still not serve the query, and dropping it could take out a unique
-// constraint someone else relies on.
+// A name already held by a different index isn't ours to reuse.
+// `CREATE INDEX IF NOT EXISTS` matches on name, so it would no-op and leave the
+// query unserved; rebuilding an invalid one reuses its own definition, so it
+// would come back valid but still wrong; and either could belong to a
+// constraint someone else relies on. Two field names truncating to the same
+// 63-character identifier land here too.
 let nameCollisionError = (~indexName, ~pgSchema) =>
   Utils.Error.make(
-    `Cannot create the index "${indexName}" in schema "${pgSchema}". An index of that name already exists and PostgreSQL reports it as invalid, but it isn't one the indexer created — it covers different columns, or it is a unique or partial index — so it is left untouched. Drop or repair it by hand, then restart the indexer.`,
+    `Cannot create the index "${indexName}" in schema "${pgSchema}". A different index already holds that name — it covers other columns, it is unique or partial, or two field names truncate to the same identifier — so it is left untouched. Rename the conflicting field, or drop that index by hand, then restart the indexer.`,
   )
 
 let makeSingleColumnSchemaIndex = (~tableName, ~column): schemaIndex => {
@@ -1749,11 +1751,14 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
   // when an invalid index already holds the name with the definition we want.
   let makeEnsureIndexQuery = schemaIndex => {
     let indexName = schemaIndex->schemaIndexName
-    switch indexRegistry->IndexRegistry.getInvalid(indexName) {
+    switch indexRegistry->IndexRegistry.getKeyByName(indexName) {
     | None => makeCreateSchemaIndexQuery(schemaIndex, ~pgSchema)
-    | Some({key, isRepairable: true}) if key === schemaIndex->schemaIndexKey =>
-      makeReindexQuery(~pgSchema, ~indexName)
-    | Some(_) => throw(nameCollisionError(~indexName, ~pgSchema))
+    | Some(_) =>
+      switch indexRegistry->IndexRegistry.getInvalid(indexName) {
+      | Some({key, isRepairable: true}) if key === schemaIndex->schemaIndexKey =>
+        makeReindexQuery(~pgSchema, ~indexName)
+      | _ => throw(nameCollisionError(~indexName, ~pgSchema))
+      }
     }
   }
 
@@ -1773,6 +1778,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         indexRegistry
         ->IndexRegistry.ensure(
           ~key=schemaIndex->schemaIndexKey,
+          ~name=indexName,
           ~tableName=table.tableName,
           ~build=async () => {
             // Resolved before logging so a repair is reported as one, and an
@@ -1879,7 +1885,10 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     // Only after the commit: a rollback takes both the indexes and ready_at
     // with it, and the registry must not claim what the schema doesn't have.
     missing->Array.forEach(schemaIndex =>
-      indexRegistry->IndexRegistry.add(schemaIndex->schemaIndexKey)
+      indexRegistry->IndexRegistry.add(
+        ~key=schemaIndex->schemaIndexKey,
+        ~name=schemaIndex->schemaIndexName,
+      )
     )
     repaired->Array.forEach(schemaIndex =>
       indexRegistry->IndexRegistry.clearInvalidName(schemaIndex->schemaIndexName)

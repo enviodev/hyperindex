@@ -159,6 +159,7 @@ describe("Pre-existing invalid indexes", () => {
     method: "btree",
     isValid: 0,
     isPlain,
+    isPartial: 0,
     columns,
     directions: columns->Array.map(_ => "ASC"),
   }
@@ -236,6 +237,83 @@ WHERE "id" = ANY($2::int[]);`,
         message->String.includes(`Cannot create the index "A_b_id"`),
       ),
       ~message="No DDL at all, no transaction, and ready_at is never committed",
+    ).toEqual(([], true))
+  })
+})
+
+describe("Names already taken in the schema", () => {
+  let validRow = (~indexName, ~columns, ~isPartial=0): IndexRegistry.catalogRow => {
+    tableName: "A",
+    indexName,
+    method: "btree",
+    isValid: 1,
+    isPlain: isPartial === 1 ? 0 : 1,
+    isPartial,
+    columns,
+    directions: columns->Array.map(_ => "ASC"),
+  }
+
+  // Two long field names on one entity truncate to the same 63-character
+  // identifier. `CREATE INDEX IF NOT EXISTS` would match the first one by name
+  // and quietly do nothing, leaving the second column unindexed for good.
+  Async.it("Refuse a build that would silently no-op on a truncated name", async t => {
+    let longEntity = "Entity" ++ "x"->String.repeat(50)
+    let name = `${longEntity}_some_long_column`->String.slice(~start=0, ~end=63)
+    let table = Table.mkTable(
+      longEntity,
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("some_long_column_one", String, ~fieldSchema=S.string),
+        Table.mkField("some_long_column_two", String, ~fieldSchema=S.string),
+      ],
+    )
+    let (storage, queries) = makeStorage(
+      ~catalogRows=[
+        {
+          ...validRow(~indexName=name, ~columns=["some_long_column_one"]),
+          tableName: longEntity,
+        },
+      ],
+    )
+    let _ = await storage.resumeInitialState()
+    let queriesBefore = queries->Array.length
+
+    await storage.ensureQueryIndexes(
+      ~table,
+      ~filters=[eq(~fieldName="some_long_column_two")],
+    )
+
+    t.expect(
+      queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
+      ~message="The second column's build is refused rather than registered as done",
+    ).toEqual([])
+  })
+
+  // A partial index holds the name but only covers rows inside its predicate,
+  // so it neither satisfies the query nor can be replaced.
+  Async.it("Never treat a partial index as the index a filter needs", async t => {
+    let (storage, queries) = makeStorage(
+      ~catalogRows=[validRow(~indexName="A_b_id", ~columns=["b_id"], ~isPartial=1)],
+    )
+    let _ = await storage.resumeInitialState()
+    let queriesBefore = queries->Array.length
+
+    let message = await storage.finalizeBackfill(
+      ~entities=[entityA, entityB],
+      ~chainIds=[1],
+      ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
+    )
+    ->Promise.thenResolve(() => "")
+    ->Utils.Promise.catchResolve(exn =>
+      exn->(Utils.magic: exn => {"message": string})->(m => m["message"])
+    )
+
+    t.expect(
+      (
+        queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
+        message->String.includes(`Cannot create the index "A_b_id"`),
+      ),
+      ~message="ready_at is never committed against coverage the planner can't use",
     ).toEqual(([], true))
   })
 })
