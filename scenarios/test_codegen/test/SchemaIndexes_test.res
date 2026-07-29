@@ -26,7 +26,7 @@ describe("Deferred schema indexes", () => {
   Async.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
     async t => {
-      let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+      let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
         ~shouldRollbackOnReorg=false,
@@ -76,7 +76,7 @@ describe("Automatic getWhere indexes", () => {
   Async.it("Are built mid-backfill by the first query that needs one", async t => {
     let matched = ref([])
 
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,

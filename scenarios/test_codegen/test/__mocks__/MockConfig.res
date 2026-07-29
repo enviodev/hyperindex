@@ -1,6 +1,6 @@
-let chain1 = ChainMap.Chain.makeUnsafe(~chainId=1)
-let chain137 = ChainMap.Chain.makeUnsafe(~chainId=137)
-let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
+let chain1 = 1->ChainId.fromInt
+let chain137 = 137->ChainId.fromInt
+let chain1337 = 1337->ChainId.fromInt
 
 let getEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {
@@ -29,7 +29,11 @@ let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) 
   let eventConfig = getEventConfig(~config, ~contractName, ~eventName, ~chainId?)
   let probeChainId = switch chainId {
   | Some(id) => id
-  | None => config.chainMap->ChainMap.values->Array.get(0)->Option.mapOr(0, c => c.id)
+  | None =>
+    config.chainMap
+    ->ChainMap.values
+    ->Array.get(0)
+    ->Option.mapOr(0->ChainId.fromInt, c => c.id)
   }
   HandlerRegister.getSimulateOnEventRegistrations(~config, ~chainId=probeChainId, ~eventConfig)
   ->Array.get(0)

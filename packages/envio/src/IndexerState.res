@@ -1,9 +1,8 @@
-type chain = ChainMap.Chain.t
 type rollbackState =
   | NoRollback
-  | ReorgDetected({chain: chain, blockNumber: int})
+  | ReorgDetected({chainId: ChainId.t, blockNumber: int})
   | FindingReorgDepth
-  | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
+  | FoundReorgDepth({chainId: ChainId.t, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module EntityTables = {
@@ -256,11 +255,11 @@ let makeFromDbState = (
     false
   } else {
     // Check if any chain is in reorg threshold by comparing progress with sourceBlock - maxReorgDepth.
-    initialState.chains->Array.some(chain =>
+    initialState.chains->Array.some(resumedChainState =>
       isProgressInReorgThreshold(
-        ~progressBlockNumber=chain.progressBlockNumber,
-        ~sourceBlockNumber=chain.sourceBlockNumber,
-        ~maxReorgDepth=chain.maxReorgDepth,
+        ~progressBlockNumber=resumedChainState.progressBlockNumber,
+        ~sourceBlockNumber=resumedChainState.sourceBlockNumber,
+        ~maxReorgDepth=resumedChainState.maxReorgDepth,
       )
     )
   }
@@ -274,9 +273,9 @@ let makeFromDbState = (
 
   let chainStates = Dict.make()
   initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
-    let chain = Config.getChain(config, ~chainId=resumedChainState.id)
-    let chainConfig = config.chainMap->ChainMap.get(chain)
-    chainStates->Utils.Dict.setByInt(
+    let chainId = Config.getChain(config, ~chainId=resumedChainState.id)
+    let chainConfig = config.chainMap->ChainMap.get(chainId)
+    chainStates->ChainId.Dict.set(
       resumedChainState.id,
       chainConfig->ChainState.makeFromDbState(
         ~resumedChainState,
@@ -358,15 +357,15 @@ let stop = (state: t) => {
   state.isStopped = true
 }
 
-let getChainState = (state: t, ~chain: chain): ChainState.t =>
+let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
   switch state.crossChainState
   ->CrossChainState.chainStates
-  ->Utils.Dict.dangerouslyGetByIntNonOption(chain->ChainMap.Chain.toChainId) {
+  ->ChainId.Dict.dangerouslyGetNonOption(chainId) {
   | Some(cs) => cs
   | None =>
-    // Should be unreachable, since we validate on Chain.t creation
+    // Should be unreachable: every configured chain gets a state at startup
     JsError.throwWithMessage(
-      "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in chain states",
+      "No chain with id " ++ chainId->ChainId.toString ++ " found in chain states",
     )
   }
 
@@ -390,18 +389,18 @@ let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.e
 // ReorgDetected state as one step, so the epoch bump can never be left out. The
 // caller has already mutated the chain states (restored counters, reset pending
 // queries). isResolvingReorg derives from rollbackState.
-let beginReorg = (state: t, ~chain, ~blockNumber) => {
+let beginReorg = (state: t, ~chainId, ~blockNumber) => {
   // Settle here, or the rollback that follows would be folded into the stall on
   // the next beginProcessing — time envio_rollback_seconds already counts.
   state->settleStalledOnFetch
   state.epoch = state.epoch + 1
-  state.rollbackState = ReorgDetected({chain, blockNumber})
+  state.rollbackState = ReorgDetected({chainId, blockNumber})
 }
 
 let enterFindingReorgDepth = (state: t) => state.rollbackState = FindingReorgDepth
 
-let foundReorgDepth = (state: t, ~chain, ~rollbackTargetBlockNumber) =>
-  state.rollbackState = FoundReorgDepth({chain, rollbackTargetBlockNumber})
+let foundReorgDepth = (state: t, ~chainId, ~rollbackTargetBlockNumber) =>
+  state.rollbackState = FoundReorgDepth({chainId, rollbackTargetBlockNumber})
 
 // Finish a rollback. The caller has already rolled the chain states back in
 // place; this leaves the diff ready for the next batch to consume.

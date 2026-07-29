@@ -196,7 +196,7 @@ chains:
 `,
     )
 
-    let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#1337)
+    let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#1337)
     let indexerMock = await MockIndexer.Indexer.make(
       ~config,
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
@@ -348,7 +348,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
         },
       ],
       ~checkpointIds=[1n],
-      ~checkpointChainIds=[1337],
+      ~checkpointChainIds=[1337->ChainId.fromInt],
       ~checkpointBlockNumbers=[5],
       ~checkpointEventsProcessed=[1],
     )
@@ -361,7 +361,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
 
   it("keeps an Int id a number", t => {
     let deleted = deletedIdsOf(
-      ~entityConfig=MockIndexer.entityConfig(IntIdEntity),
+      ~entityConfig=MockIndexer.entityConfig("IntIdEntity"),
       ~entityId=137->EntityId.unsafeOfAny,
     )
     // Compared against the raw number, so a stringified "137" fails here.
@@ -370,7 +370,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
 
   it("keeps a BigInt id a bigint", t => {
     let deleted = deletedIdsOf(
-      ~entityConfig=MockIndexer.entityConfig(BigIntIdEntity),
+      ~entityConfig=MockIndexer.entityConfig("BigIntIdEntity"),
       ~entityId=999n->EntityId.unsafeOfAny,
     )
     t.expect(deleted).toEqual([999n->EntityId.unsafeOfAny])
@@ -378,7 +378,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
 
   it("keeps a string id a string", t => {
     let deleted = deletedIdsOf(
-      ~entityConfig=MockIndexer.entityConfig(User),
+      ~entityConfig=MockIndexer.entityConfig("User"),
       ~entityId="u1"->EntityId.unsafeOfString,
     )
     t.expect(deleted).toEqual(["u1"->EntityId.unsafeOfString])

@@ -3,8 +3,8 @@ use super::{
     field_types,
     human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
-        self, field_type_to_arg_type, named_field_to_arg_def, Abi, Ecosystem, EventKind,
-        FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
+        self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
+        EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
     },
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
@@ -18,6 +18,13 @@ fn is_true(v: &bool) -> bool {
 
 fn is_false(v: &bool) -> bool {
     !v
+}
+
+// Int32 is what every config predating the field implies, so omitting it keeps
+// the JSON — and therefore the persisted envio_info fingerprint — byte-identical
+// for small-id projects.
+fn is_default_chain_id_mode(v: &ChainIdMode) -> bool {
+    matches!(v, ChainIdMode::Int32)
 }
 
 #[derive(Serialize, Debug)]
@@ -39,6 +46,8 @@ pub(crate) struct PublicConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    #[serde(skip_serializing_if = "is_default_chain_id_mode")]
+    chain_id_mode: ChainIdMode,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
@@ -845,6 +854,7 @@ impl SystemConfig {
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
+            chain_id_mode: cfg.chain_id_mode,
             storage: (&cfg.storage).into(),
             evm,
             fuel,

@@ -19,7 +19,7 @@ type effectCacheRecord = {
 }
 
 type initialChainState = {
-  id: int,
+  id: ChainId.t,
   startBlock: int,
   endBlock: option<int>,
   maxReorgDepth: int,
@@ -97,7 +97,7 @@ type storage = {
   // the given chains, atomically. Called once, when backfill completes.
   finalizeBackfill: (
     ~entities: array<Internal.entityConfig>,
-    ~chainIds: array<int>,
+    ~chainIds: array<ChainId.t>,
     ~readyAt: Date.t,
   ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
@@ -115,7 +115,7 @@ type storage = {
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
-    ~reorgChainId: int,
+    ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
@@ -123,7 +123,7 @@ type storage = {
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => promise<
     array<{
-      "chain_id": int,
+      "chain_id": ChainId.t,
       "events_processed_diff": string,
       "new_progress_block_number": int,
     }>,
@@ -251,7 +251,7 @@ let init = {
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {
-            progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
+            progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
           Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,

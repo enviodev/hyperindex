@@ -370,6 +370,8 @@ module Entities = {
     | @as("User") User: name<User.t, User.id>
 }
 
+type chainId = [#1337 | #1 | #100 | #137]
+
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
@@ -388,11 +390,19 @@ type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   deleteUnsafe: 'id => unit,
 }
 
+/** The chain the event being handled belongs to. */
+type handlerChain = {
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
+}
+
 type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
+  chain: handlerChain,
   \"A": handlerEntityOperations<Entities.A.t, Entities.A.getWhereFilter>,
   \"B": handlerEntityOperations<Entities.B.t, Entities.B.getWhereFilter>,
   \"BigIntIdEntity": handlerEntityOperationsWithCustomId<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id, Entities.BigIntIdEntity.getWhereFilter>,
@@ -415,8 +425,6 @@ type handlerContext = {
   \"Token": handlerEntityOperations<Entities.Token.t, Entities.Token.getWhereFilter>,
   \"User": handlerEntityOperations<Entities.User.t, Entities.User.getWhereFilter>,
 }
-
-type chainId = [#1337 | #1 | #100 | #137]
 
 type contractRegisterContract = { add: Address.t => unit }
 

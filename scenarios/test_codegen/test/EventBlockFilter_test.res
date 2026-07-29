@@ -26,14 +26,14 @@ let parse = (~eventFilters: option<JSON.t>, ~probeChainId, ~onEventBlockFilterSc
   {startBlock: p.resolvedWhere.startBlock, filterByAddresses: p.filterByAddresses}
 }
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
+let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1->ChainId.fromInt) =>
   parse(
     ~eventFilters,
     ~probeChainId,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
-let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
+let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1->ChainId.fromInt) =>
   parse(
     ~eventFilters,
     ~probeChainId,
@@ -154,15 +154,15 @@ describe("parseWhereOrThrow — dynamic `where` callback (EVM)", () => {
     })`)
     let {startBlock: startBlockChain137} = parseEvm(
       ~eventFilters=Some(whereFn),
-      ~probeChainId=137,
+      ~probeChainId=137->ChainId.fromInt,
     )
-    let {startBlock: startBlockChain1} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1)
+    let {startBlock: startBlockChain1} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1->ChainId.fromInt)
     t.expect((startBlockChain137, startBlockChain1)).toEqual((Some(5000), Some(1000)))
   })
 
   it("returns None when the callback returns `false` for this chain", t => {
     let whereFn = %raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 5000}}} : false`)
-    let {startBlock} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1)
+    let {startBlock} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1->ChainId.fromInt)
     t.expect(startBlock).toEqual(None)
   })
 
@@ -253,7 +253,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~handler=None,
       ~contractRegister=None,
       ~where=eventFilters,
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )
@@ -303,7 +303,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(whereFn),
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -318,7 +318,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(whereFn),
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -352,7 +352,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )
@@ -377,7 +377,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~endBlock=None,
       ~maxAddrInPartition=3,
       ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~knownHeight=10000,
     )
   }

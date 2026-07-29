@@ -25,7 +25,7 @@ describe("IndexerState fetch stall accounting", () => {
       state->IndexerState.markProcessingStalledOnFetch
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
       state->IndexerState.beginReorg(
-        ~chain=ChainMap.Chain.makeUnsafe(~chainId=1),
+        ~chainId=1->ChainId.fromInt,
         ~blockNumber=100,
       )
       // Settled, not discarded: the wait before the reorg still has to land in

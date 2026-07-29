@@ -4,7 +4,7 @@ type payload = {
   contractName: string,
   eventName: string,
   params: Internal.eventParams,
-  chainId: int,
+  chainId: ChainId.t,
   srcAddress: Address.t,
   logIndex: int,
   transaction: Internal.eventTransaction,
@@ -48,7 +48,7 @@ let make = (~logger: Pino.t): Ecosystem.t => {
       ~params={
         "contract": eventItem.onEventRegistration.eventConfig.contractName,
         "event": eventItem.onEventRegistration.eventConfig.name,
-        "chainId": eventItem.chain->ChainMap.Chain.toChainId,
+        "chainId": eventItem.chainId,
         "block": eventItem.blockNumber,
         "logIndex": eventItem.logIndex,
         "address": (eventItem.payload->toPayload).srcAddress,

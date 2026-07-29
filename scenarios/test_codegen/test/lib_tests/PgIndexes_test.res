@@ -55,8 +55,8 @@ let makeStorage = (~failOn=_ => false, ~catalogRows: array<IndexRegistry.catalog
 let eq = (~fieldName): EntityFilter.t =>
   Eq({fieldName, fieldValue: "1"->(Utils.magic: string => unknown)})
 
-let entityA = MockIndexer.entityConfig(A)
-let entityB = MockIndexer.entityConfig(B)
+let entityA = MockIndexer.entityConfig("A")
+let entityB = MockIndexer.entityConfig("B")
 
 let createABId = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
 let createAOptional = `CREATE INDEX IF NOT EXISTS "A_optionalStringToTestLinkedEntities" ON "test_schema"."A"("optionalStringToTestLinkedEntities");`
@@ -190,7 +190,7 @@ describe("Pre-existing invalid indexes", () => {
 
     await storage.finalizeBackfill(
       ~entities=[entityA, entityB],
-      ~chainIds=[1],
+      ~chainIds=[ChainId.fromInt(1)],
       ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
     )
 
@@ -202,7 +202,7 @@ describe("Pre-existing invalid indexes", () => {
       reindexABId,
       `UPDATE "test_schema"."envio_chains"
 SET "ready_at" = $1
-WHERE "id" = ANY($2::int[]);`,
+WHERE "id" = $2;`,
       "COMMIT",
     ])
   })
@@ -223,7 +223,7 @@ WHERE "id" = ANY($2::int[]);`,
 
     let message = await storage.finalizeBackfill(
       ~entities=[entityA, entityB],
-      ~chainIds=[1],
+      ~chainIds=[ChainId.fromInt(1)],
       ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
     )
     ->Promise.thenResolve(() => "")
@@ -300,7 +300,7 @@ describe("Names already taken in the schema", () => {
 
     let message = await storage.finalizeBackfill(
       ~entities=[entityA, entityB],
-      ~chainIds=[1],
+      ~chainIds=[ChainId.fromInt(1)],
       ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
     )
     ->Promise.thenResolve(() => "")
@@ -322,19 +322,21 @@ describe("finalizeBackfill", () => {
   let readyAt = Date.fromString("2024-01-01T00:00:00Z")
   let setReadyAt = `UPDATE "test_schema"."envio_chains"
 SET "ready_at" = $1
-WHERE "id" = ANY($2::int[]);`
+WHERE "id" = $2;`
 
   Async.it("Commits every missing schema index together with ready_at", async t => {
     let (storage, queries) = makeStorage()
 
-    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1, 137], ~readyAt)
+    await storage.finalizeBackfill(
+      ~entities=[entityA, entityB],
+      ~chainIds=[ChainId.fromInt(1), ChainId.fromInt(137)],
+      ~readyAt,
+    )
 
-    t.expect(queries).toEqual([
-      "BEGIN",
-      createABId,
-      setReadyAt,
-      "COMMIT",
-    ])
+    t.expect(
+      queries,
+      ~message="One stamp per chain, so the id needs no cast in either ChainId mode",
+    ).toEqual(["BEGIN", createABId, setReadyAt, setReadyAt, "COMMIT"])
   })
 
   Async.it("Rolls back and leaves the registry untouched when an index fails", async t => {
@@ -345,7 +347,7 @@ WHERE "id" = ANY($2::int[]);`
 
     let failed = await storage.finalizeBackfill(
       ~entities=[entityA, entityB],
-      ~chainIds=[1],
+      ~chainIds=[ChainId.fromInt(1)],
       ~readyAt,
     )
     ->Promise.thenResolve(() => false)
@@ -360,7 +362,7 @@ WHERE "id" = ANY($2::int[]);`
     ))
 
     shouldFail := false
-    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1], ~readyAt)
+    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[ChainId.fromInt(1)], ~readyAt)
 
     t.expect(
       queries->Array.slice(~start=3, ~end=queries->Array.length),
@@ -377,7 +379,7 @@ WHERE "id" = ANY($2::int[]);`
     let (storage, queries) = makeStorage()
 
     await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1], ~readyAt)
+    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[ChainId.fromInt(1)], ~readyAt)
 
     t.expect(queries).toEqual([createABId, "BEGIN", setReadyAt, "COMMIT"])
   })

@@ -9,7 +9,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
       // indexer enters the threshold, so it parks in WaitingForNewBlock.
       let chainAtLaggedHead = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
 
       // This chain initially stops at 1000 - 200 = 800. Entering the threshold
@@ -17,7 +17,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
       // before the multichain indexer can become ready.
       let chainWithThresholdWork = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(

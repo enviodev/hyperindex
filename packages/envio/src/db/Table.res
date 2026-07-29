@@ -23,6 +23,9 @@ type fieldType =
   | UInt52
   | UInt64
   | Int32
+  // Resolved to Int32 or UInt64 storage from the config's `ChainId.mode`, so
+  // the internal tables can stay module-level constants.
+  | ChainId
   | Number
   | BigInt({precision?: int})
   | BigDecimal({config?: (int, int)}) // (precision, scale)
@@ -138,11 +141,17 @@ let getPgFieldType = (
   ~isArray,
   ~isNumericArrayAsText,
   ~isNullable,
+  ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let columnType = switch fieldType {
   | String => (Postgres.Text :> string)
   | Boolean => (Postgres.Boolean :> string)
   | Int32 => (Postgres.Integer :> string)
+  | ChainId =>
+    switch chainIdMode {
+    | Int32 => (Postgres.Integer :> string)
+    | Int64 => (Postgres.BigInt :> string)
+    }
   | Uint32 => (Postgres.BigInt :> string)
   | UInt52 => (Postgres.BigInt :> string)
   | UInt64 => (Postgres.BigInt :> string)
@@ -378,7 +387,7 @@ type sqlParams<'entity> = {
   hasArrayField: bool,
 }
 
-let toSqlParams = (table: table, ~schema, ~pgSchema) => {
+let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
@@ -441,6 +450,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               ~isArray=true,
               ~isNullable=f.isNullable,
               ~isNumericArrayAsText=false,
+              ~chainIdMode,
             )
             switch f.fieldType {
             | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
