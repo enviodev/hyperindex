@@ -5176,6 +5176,84 @@ describe("FetchState client-side address filtering", () => {
     ).toEqual((2, [(false, Some(["Gravatar"]), [])]))
   })
 
+  it("holds the frontier below a query orphaned by a client-filter switch", t => {
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig, baseEventConfig2],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=1000,
+      ~clientFilterAddressThreshold=Some(1),
+    )
+
+    // Gravatar crosses the threshold → one standing address-free partition.
+    let collapsed =
+      fetchState->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToItem,
+        makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToItem,
+      ])
+
+    let takeQuery = fs =>
+      switch fs->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=10_000.) {
+      | Ready([query]) => query
+      | _ => JsError.throwWithMessage("expected a single ready query")
+      }
+
+    // The standing partition dispatches a query over the whole known range.
+    let inFlight = collapsed->takeQuery
+    collapsed->FetchState.startFetchingQueries(~queries=[inFlight])
+
+    // NftFactory crosses the threshold while that query is still running, so the
+    // client-filtered set grows and the standing partition's selection changes.
+    let afterSwitch =
+      collapsed->FetchState.registerDynamicContracts(~addressStore, [
+        makeDynContractRegistration(
+          ~blockNumber=5,
+          ~contractAddress=mockAddress3,
+          ~contractName="NftFactory",
+        )->dcToItem,
+        makeDynContractRegistration(
+          ~blockNumber=6,
+          ~contractAddress=mockAddress4,
+          ~contractName="NftFactory",
+        )->dcToItem,
+      ])
+
+    // The new generation fetches the same range and reports it fully fetched.
+    let newQuery = afterSwitch->takeQuery
+    afterSwitch->FetchState.startFetchingQueries(~queries=[newQuery])
+    let afterNewGeneration =
+      afterSwitch->FetchState.handleQueryResult(
+        ~query=newQuery,
+        ~latestFetchedBlock=getBlockData(~blockNumber=500),
+        ~newItems=[],
+      )
+
+    // The orphaned query only now returns, carrying an event from a block the
+    // frontier above already declared fully fetched.
+    let afterOrphan =
+      afterNewGeneration->FetchState.handleQueryResult(
+        ~query=inFlight,
+        ~latestFetchedBlock=getBlockData(~blockNumber=500),
+        ~newItems=[mockEvent(~blockNumber=200)],
+      )
+
+    t.expect(
+      (
+        afterNewGeneration->FetchState.bufferBlockNumber,
+        afterOrphan.buffer->Array.map(Internal.getItemBlockNumber),
+        afterOrphan.buffer->Array.every(item =>
+          item->Internal.getItemBlockNumber >
+            afterNewGeneration->FetchState.bufferBlockNumber
+        ),
+      ),
+      ~message="the orphaned query still owns pending work, so nothing above its frontier is processable until it settles",
+    ).toEqual((0, [200], true))
+  })
+
   // The standing address-free partition: client-filtered contracts' events are
   // fetched by it, while a bounded backfill (mergeBlock set) covers overlap.
   let standingId = (fetchState: FetchState.t) =>
