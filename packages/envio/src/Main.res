@@ -151,10 +151,7 @@ let buildChainsObject = (~config: Config.t) => {
           | Some(state) => state->IndexerState.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
-          // must have previously caught up to head or endBlock. Mirror the
-          // IndexerState.makeFromDbState path: updateSyncTimeOnRestart wipes
-          // the saved timestamps so a restart re-enters backfill.
-          | None if Env.updateSyncTimeOnRestart => false
+          // must have previously caught up to head or endBlock.
           | None =>
             config.chainMap
             ->ChainMap.values

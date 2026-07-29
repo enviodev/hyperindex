@@ -52,7 +52,7 @@ const entity = await context.Entity.get(id);              // Entity | undefined
 const entity = await context.Entity.getOrThrow(id);       // throws if missing
 const entity = await context.Entity.getOrCreate({ id, ...defaults });
 
-// Query by indexed fields (@index in schema)
+// Query by any non-derived field (the index is created on demand)
 const list = await context.Entity.getWhere({ fieldName: { _eq: value } });
 const list = await context.Entity.getWhere({ fieldName: { _gt: value } });
 const list = await context.Entity.getWhere({ fieldName: { _lt: value } });
@@ -67,7 +67,7 @@ context.Entity.set(entity);          // create or update (sync — no await)
 context.Entity.deleteUnsafe(id);     // delete (sync — no await)
 ```
 
-`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Multiple fields and operators combine with AND semantics. Only `id` and `@index` fields are queryable. See `indexer-schema` for @index syntax.
+`getWhere` operators: `_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`. Multiple fields and operators combine with AND semantics. Any non-derived field is queryable — the indexer creates the matching index the first time it's queried, which pauses indexing while the index builds. Marking a field `@index` in `schema.graphql` normally avoids that pause: those indexes are created together when the backfill finishes, before the indexer reports ready. A `getWhere` on an `@index` field during backfill still builds it there and then. See `indexer-schema` for @index syntax.
 
 ### Context Properties
 

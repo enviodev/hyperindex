@@ -101,6 +101,23 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
       scheduleFetch()
     }
 
+    // Nothing progressed, but a backfill that reached the head and died before
+    // finalizing resumes exactly here: it still owes the schema its deferred
+    // indexes, and no batch will ever come along to notice.
+    state->IndexerState.markCaughtUpIfSettled
+    if state->IndexerState.isFinalizingIndexes {
+      await FinalizeBackfill.run(state)
+    }
+
+    // Same realtime handoff the progressed-batch path does below. IndexerLoop
+    // starts fetching before processing, so by now the chain is already parked
+    // on a pre-realtime waiter; without this it stays there, polling the sync
+    // source at the backfill interval, until that source reports a new height.
+    if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
+      state->IndexerState.invalidateInflight
+      scheduleFetch()
+    }
+
     // When resuming from persisted state, all events may already be processed.
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       Logging.info("All chains are caught up to end blocks.")
@@ -155,6 +172,13 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
+
+        // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
+        // processing loop for the whole finalize, which is what pauses
+        // processing while the indexes are built.
+        if state->IndexerState.isFinalizingIndexes {
+          await FinalizeBackfill.run(state)
+        }
 
         if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
           // Catching up just flipped the chain to realtime, which changes the

@@ -1815,6 +1815,29 @@ chains:
 `,
       "Config parse error: Schema validation failed:\n\nMultiple entity fields map to the same database column:\n  - \`Token\`: fields \`tokenId\`, \`token_id\` all map to the \"token_id\" column.\n\nFixes:\n  - Rename the conflicting fields in schema.graphql so they map to distinct columns. Note that entity reference fields get an \`_id\` suffix, and \`column_name_format: snake_case\` converts field names to snake_case.",
     ),
+    (
+      "rejects a derivedFrom pointing at an entity that isn't in postgres",
+      `
+type Trader @storage(postgres: true) {
+  id: ID!
+  orders: [Order!]! @derivedFrom(field: "trader")
+}
+type Order @storage(clickhouse: true) {
+  id: ID!
+  trader: Trader!
+}
+`,
+      `
+name: cross-storage-relationship
+storage:
+  postgres: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+      "Config parse error: Schema validation failed:\n\n@derivedFrom relationships between entities that don't share the postgres storage:\n  - \`Trader\`.\`orders\` derives from \`Order\`, which is not stored in postgres.\n\nFixes:\n  - Add postgres to the @storage directive of the referenced entities, or\n  - Remove the @derivedFrom fields listed above.",
+    ),
   ]->Array.forEach(((name, schema, yaml, message)) => {
     it(name, t => expectParseError(t, ~schema, yaml, message))
   })

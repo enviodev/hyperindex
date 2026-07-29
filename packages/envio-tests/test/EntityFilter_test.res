@@ -59,6 +59,8 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       parse(%raw(`{owner_id: {_eq: 1}}`)),
       // Primary key fields are allowed without an explicit index
       parse(%raw(`{id: {_eq: 1}}`)),
+      // Any non-derived field is allowed — the index is created on demand
+      parse(%raw(`{name: {_eq: 1}}`)),
     ]).toEqual([
       [Eq({fieldName: "score", fieldValue: v(1)})],
       [Gt({fieldName: "score", fieldValue: v(1)})],
@@ -69,6 +71,7 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       [],
       [Eq({fieldName: "owner_id", fieldValue: v(1)})],
       [Eq({fieldName: "id", fieldValue: v(1)})],
+      [Eq({fieldName: "name", fieldValue: v(1)})],
     ])
   })
 
@@ -139,7 +142,6 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
 
     t.expect([
       getError(%raw(`{}`)),
-      getError(%raw(`{score: {_eq: 1}, name: {_eq: "a"}}`)),
       getError(%raw(`{score: undefined}`)),
       getError(%raw(`{score: null}`)),
       getError(%raw(`{score: 5}`)),
@@ -149,14 +151,12 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       getError(%raw(`{score: {_foo: 1}}`)),
       getError(%raw(`{nonExistingField: {_eq: 1}}`)),
       getError(%raw(`{tokens: {_eq: 1}}`)),
-      getError(%raw(`{name: {_eq: "a"}}`)),
       getError(%raw(`{score: {_eq: undefined}}`)),
       getError(%raw(`{score: {_eq: null}}`)),
       getError(%raw(`{score: {_in: [1, undefined]}}`)),
       getError(%raw(`{score: {_in: 5}}`)),
     ]).toEqual([
       `Empty filter passed to context.User.getWhere(). Please provide a filter like { fieldName: { _eq: value } }.`,
-      `The field "name" on entity "User" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  name: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
       `Invalid undefined value passed to context.User.getWhere({ score: undefined }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
       `Invalid null value passed to context.User.getWhere({ score: null }). Filtering by null or undefined values is not supported in getWhere. Please provide an operator like { _eq: value }.`,
       `Invalid value passed to context.User.getWhere({ score: ... }). Please provide an operator like { _eq: value }.`,
@@ -166,7 +166,6 @@ describe("EntityFilter.parseGetWhereOrThrow", () => {
       `Invalid operator "_foo" in context.User.getWhere({ score: { _foo: ... } }). Valid operators are _eq, _gt, _lt, _gte, _lte, _in.`,
       `Invalid field "nonExistingField" in context.User.getWhere(). The field doesn't exist. Rerun 'pnpm dev' to update generated code after schema.graphql changes.`,
       `The field "tokens" on entity "User" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
-      `The field "name" on entity "User" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  name: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
       `Invalid undefined value passed to context.User.getWhere({ score: { _eq: undefined } }). Filtering by null or undefined values is not supported in getWhere.`,
       `Invalid null value passed to context.User.getWhere({ score: { _eq: null } }). Filtering by null or undefined values is not supported in getWhere.`,
       `Invalid undefined value passed to context.User.getWhere({ score: { _in: [...] } }). Filtering by null or undefined values is not supported in getWhere. The undefined value is at index 1 of the _in array.`,

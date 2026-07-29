@@ -38,6 +38,13 @@ let start = (state: IndexerState.t) => {
       Rollback.rollback(state, ~scheduleFetch, ~scheduleProcessing, ~scheduleRollback)
     )
 
+  // Resuming already ready means the FinalizingIndexes phase is behind us and
+  // won't run again, so this is the only pass that can restore an index the
+  // database lost while the indexer was down.
+  if state->IndexerState.isRealtime {
+    launch(state, () => FinalizeBackfill.repairSchemaIndexes(state))
+  }
+
   scheduleFetch()
   scheduleProcessing()
 }
