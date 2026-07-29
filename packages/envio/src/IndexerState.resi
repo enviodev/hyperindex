@@ -1,13 +1,12 @@
 // The indexer state. `t` is opaque: other modules read it through the accessors
 // and change it only through the transitions and setters exposed here.
 
-type chain = ChainMap.Chain.t
 
 type rollbackState =
   | NoRollback
-  | ReorgDetected({chain: chain, blockNumber: int})
+  | ReorgDetected({chainId: ChainId.t, blockNumber: int})
   | FindingReorgDepth
-  | FoundReorgDepth({chain: chain, rollbackTargetBlockNumber: int})
+  | FoundReorgDepth({chainId: ChainId.t, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
 module EntityTables: {
@@ -54,11 +53,11 @@ let isStale: (t, ~stateId: int) => bool
 let isResolvingReorg: t => bool
 let errorExit: (t, ErrorHandling.t) => unit
 let stop: t => unit
-let getChainState: (t, ~chain: chain) => ChainState.t
+let getChainState: (t, ~chainId: ChainId.t) => ChainState.t
 let enterReorgThreshold: t => unit
-let beginReorg: (t, ~chain: chain, ~blockNumber: int) => unit
+let beginReorg: (t, ~chainId: ChainId.t, ~blockNumber: int) => unit
 let enterFindingReorgDepth: t => unit
-let foundReorgDepth: (t, ~chain: chain, ~rollbackTargetBlockNumber: int) => unit
+let foundReorgDepth: (t, ~chainId: ChainId.t, ~rollbackTargetBlockNumber: int) => unit
 let completeRollback: (t, ~eventsProcessedDiffByChain: dict<float>) => unit
 let clearRollback: t => unit
 let invalidateInflight: t => unit

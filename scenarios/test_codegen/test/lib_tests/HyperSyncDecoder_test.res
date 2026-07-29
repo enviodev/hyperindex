@@ -213,7 +213,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       Internal.Event({
         onEventRegistration:
           (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-        chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+        chainId: 137->ChainId.fromInt,
         blockNumber,
         logIndex,
         transactionIndex: 0,
@@ -221,7 +221,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       })->Internal.castUnsafeEventItem
 
     t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
-      chain_id: 137,
+      chain_id: 137->ChainId.fromInt,
       event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
       event_name: "EventWithoutFields",
       contract_name: "ERC20",

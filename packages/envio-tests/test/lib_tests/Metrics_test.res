@@ -130,7 +130,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       rollbackEventsCount: 42.,
       chains: [
         {
-          chainId: 1.,
+          chainId: 1->ChainId.fromInt,
           poweredByHyperSync: true,
           firstEventBlockNumber: Some(100),
           latestProcessedBlock: Some(200),
@@ -216,7 +216,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       sourceRequests: [
         {
           source: "HyperSync",
-          chainId: 1,
+          chainId: 1->ChainId.fromInt,
           method: "getLogs",
           count: 42,
           seconds: 33.75,
@@ -225,7 +225,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       sourceHeights: [
         {
           source: "HyperSync",
-          chainId: 1,
+          chainId: 1->ChainId.fromInt,
           height: 305,
         },
       ],

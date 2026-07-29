@@ -6,7 +6,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for A entity table",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig(A).table,
+          MockIndexer.entityConfig("A").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -20,7 +20,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for B entity table with derived fields",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig(B).table,
+          MockIndexer.entityConfig("B").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -34,7 +34,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should handle default values",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig(A).table,
+          MockIndexer.entityConfig("A").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -52,11 +52,11 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create complete initialization queries",
       async t => {
         let entities = [
-          MockIndexer.entityConfig(A),
-          MockIndexer.entityConfig(B),
-          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________one),
-          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________two),
-          MockIndexer.entityConfig(EntityWithAllTypes),
+          MockIndexer.entityConfig("A"),
+          MockIndexer.entityConfig("B"),
+          MockIndexer.entityConfig("EntityWith63LenghtName______________________________________one"),
+          MockIndexer.entityConfig("EntityWith63LenghtName______________________________________two"),
+          MockIndexer.entityConfig("EntityWithAllTypes"),
         ]
         let enums = MockIndexer.config.allEnums
 
@@ -68,7 +68,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~chainConfigs=[
             {
               name: "Chain1",
-              id: 1,
+              id: 1->ChainId.fromInt,
               startBlock: 100,
               endBlock: 200,
               maxReorgDepth: 10,
@@ -78,7 +78,7 @@ describe("Test PgStorage SQL generation functions", () => {
             },
             {
               name: "Chain137",
-              id: 137,
+              id: 137->ChainId.fromInt,
               startBlock: 0,
               maxReorgDepth: 200,
               blockLag: 0,
@@ -222,7 +222,7 @@ FROM "test_schema"."envio_chains";`
       "Should create SQL for single entity with indexes",
       async t => {
         // Test with just entity A which has an indexed field
-        let entities = [MockIndexer.entityConfig(A)]
+        let entities = [MockIndexer.entityConfig("A")]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
@@ -287,7 +287,7 @@ FROM "public"."envio_chains";`
   })
 
   describe("Deferred schema indexes", () => {
-    let entities = [MockIndexer.entityConfig(A), MockIndexer.entityConfig(B)]
+    let entities = [MockIndexer.entityConfig("A"), MockIndexer.entityConfig("B")]
 
     Async.it(
       "Creates no schema index during the initial DDL, but still the tables and views",
@@ -342,7 +342,7 @@ FROM "public"."envio_chains";`
       "Emits the index backing a derived relationship on the referenced table",
       async t => {
         let makeEntity = (name, ~fields): Internal.entityConfig => {
-          ...MockIndexer.entityConfig(A),
+          ...MockIndexer.entityConfig("A"),
           name,
           table: Table.mkTable(name, ~fields),
           storage: {postgres: true, clickhouse: false},
@@ -512,8 +512,8 @@ FROM "public"."envio_chains";`
       async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).table,
-          ~itemSchema=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).schema,
+          ~table=MockIndexer.entityConfig("EntityWithAllNonArrayTypes").table,
+          ~itemSchema=MockIndexer.entityConfig("EntityWithAllNonArrayTypes").schema,
           ~isRawEvents=false,
         )
 
@@ -548,8 +548,8 @@ SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGE
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig(A).table,
-          ~itemSchema=MockIndexer.entityConfig(A).schema,
+          ~table=MockIndexer.entityConfig("A").table,
+          ~itemSchema=MockIndexer.entityConfig("A").schema,
           ~itemsCount=2,
         )
 
@@ -569,8 +569,8 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig(B).table,
-          ~itemSchema=MockIndexer.entityConfig(B).schema,
+          ~table=MockIndexer.entityConfig("B").table,
+          ~itemSchema=MockIndexer.entityConfig("B").schema,
           ~itemsCount=1,
         )
 
@@ -680,7 +680,7 @@ WHERE cp."block_hash" IS NOT NULL
       async t => {
         let chainConfig: Config.chain = {
           name: "Chain1",
-          id: 1,
+          id: 1->ChainId.fromInt,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
@@ -708,7 +708,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
       async t => {
         let chainConfig: Config.chain = {
           name: "Chain1",
-          id: 1,
+          id: 1->ChainId.fromInt,
           startBlock: 100,
           maxReorgDepth: 5,
           blockLag: 0,
@@ -736,7 +736,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
       async t => {
         let chainConfig1: Config.chain = {
           name: "Chain1",
-          id: 1,
+          id: 1->ChainId.fromInt,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
@@ -747,7 +747,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
 
         let chainConfig2: Config.chain = {
           name: "Chain42",
-          id: 42,
+          id: 42->ChainId.fromInt,
           startBlock: 500,
           maxReorgDepth: 0,
           blockLag: 0,
@@ -886,7 +886,7 @@ LIMIT 1;`
         )
 
         let expectedQuery = `SELECT 
-  "chain_id",
+  "chain_id"::float8 as "chain_id",
   SUM("events_processed") as events_processed_diff,
   MIN("block_number") - 1 as new_progress_block_number
 FROM "test_schema"."envio_checkpoints"
@@ -1017,7 +1017,7 @@ describe("ecosystem.toRawEvent", () => {
         Internal.Event({
           onEventRegistration:
             (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-          chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+          chainId: 137->ChainId.fromInt,
           blockNumber,
           logIndex,
           transactionIndex: 0,
@@ -1025,7 +1025,7 @@ describe("ecosystem.toRawEvent", () => {
         })->Internal.castUnsafeEventItem
 
       t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
-        chain_id: 137,
+        chain_id: 137->ChainId.fromInt,
         event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
         event_name: "EventWithoutFields",
         contract_name: "ERC20",
@@ -1047,7 +1047,7 @@ describe("PgStorage.removeInvalidUtf8InPlace", () => {
     "Strips NUL bytes from raw event rows, including deep inside jsonb params and field selections",
     async t => {
       let rawEvent: InternalTable.RawEvents.t = {
-        chain_id: 1,
+        chain_id: 1->ChainId.fromInt,
         event_id: 42n,
         event_name: "Name\x00Changed",
         contract_name: "Resolver",
@@ -1066,7 +1066,7 @@ describe("PgStorage.removeInvalidUtf8InPlace", () => {
       [rawEvent]->PgStorage.removeInvalidUtf8InPlace
 
       t.expect(rawEvent).toEqual({
-        chain_id: 1,
+        chain_id: 1->ChainId.fromInt,
         event_id: 42n,
         event_name: "NameChanged",
         contract_name: "Resolver",

@@ -45,7 +45,7 @@ let aBIdIndex = IndexDefinition.single(~tableName="A", ~column="b_id")
 let aBIdIndexName = aBIdIndex->IndexDefinition.name
 
 let readyAtRows = async () => {
-  let rows: array<{"id": int, "ready_at": Null.t<Date.t>}> =
+  let rows: array<{"id": ChainId.t, "ready_at": Null.t<Date.t>}> =
     await sql->Postgres.unsafe(
       `SELECT "id", "ready_at" FROM "${Env.Db.publicSchema}"."envio_chains" ORDER BY "id";`,
     )
@@ -66,7 +66,7 @@ describe("Deferred schema indexes", () => {
   Async.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
     async t => {
-      let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+      let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
         ~shouldRollbackOnReorg=false,
@@ -80,7 +80,7 @@ describe("Deferred schema indexes", () => {
           await indexerMock.metric("envio_progress_ready"),
         ),
         ~message="Backfill runs without the schema's read indexes, and nothing is ready",
-      ).toEqual(([], [(1337, false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
+      ).toEqual(([], [(ChainId.fromInt(1337), false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
 
       sourceMock.resolveGetHeightOrThrow(100)
       await Utils.delay(0)
@@ -102,7 +102,7 @@ describe("Deferred schema indexes", () => {
         ~message="ready_at is only committed once every schema-defined index exists",
       ).toEqual((
         [(aBIdIndexName, true, false, "btree")],
-        [(1337, true)],
+        [(ChainId.fromInt(1337), true)],
         [{value: "1", labels: dict{"chainId": "1337"}}],
       ))
 
@@ -113,7 +113,7 @@ describe("Deferred schema indexes", () => {
       t.expect(
         (await indexNames(), await readyAtByChainId()),
         ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
-      ).toEqual((indexesBeforeRestart, [(1337, true)]))
+      ).toEqual((indexesBeforeRestart, [(ChainId.fromInt(1337), true)]))
 
       await restarted.stop()
     },
@@ -121,7 +121,7 @@ describe("Deferred schema indexes", () => {
 
   Async.it("Hold the indexer short of ready until they are committed", async t => {
     let gate = MockIndexer.Gate.make()
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,
@@ -150,7 +150,7 @@ describe("Deferred schema indexes", () => {
         await indexerMock.metric("envio_progress_ready"),
       ),
       ~message="Caught up to the head, but the indexes aren't committed so nothing is ready",
-    ).toEqual(([], [(1337, false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
+    ).toEqual(([], [(ChainId.fromInt(1337), false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
 
     gate.release()
     await indexerMock.waitUntilReady()
@@ -160,7 +160,7 @@ describe("Deferred schema indexes", () => {
         (await findIndexes(~tableName="A", ~columns=["b_id"]))->Array.map(entry => entry.name),
         await readyAtByChainId(),
       ),
-    ).toEqual(([aBIdIndexName], [(1337, true)]))
+    ).toEqual(([aBIdIndexName], [(ChainId.fromInt(1337), true)]))
 
     await indexerMock.stop()
   })
@@ -171,7 +171,7 @@ describe("Deferred schema indexes", () => {
   Async.it("Finalize once however many ticks reach the phase", async t => {
     let gate = MockIndexer.Gate.make()
     let finalizeCalls = ref(0)
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,
@@ -231,8 +231,8 @@ describe("Deferred schema indexes", () => {
   // nothing while another is still backfilling.
   Async.it("Wait for every chain before finalizing, and stamp them together", async t => {
     let finalizeCalls = ref(0)
-    let chainA = MockIndexer.Source.make(~chain=#100, [#getHeightOrThrow, #getItemsOrThrow])
-    let chainB = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let chainA = MockIndexer.Source.make(~chainId=#100, [#getHeightOrThrow, #getItemsOrThrow])
+    let chainB = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
         {chain: #100, sourceConfig: Config.CustomSources([chainA.source])},
@@ -261,7 +261,7 @@ describe("Deferred schema indexes", () => {
     t.expect(
       (finalizeCalls.contents, await readyAtByChainId()),
       ~message="Chain A is at its head, but chain B is still backfilling",
-    ).toEqual((0, [(100, false), (1337, false)]))
+    ).toEqual((0, [(ChainId.fromInt(100), false), (ChainId.fromInt(1337), false)]))
 
     await MockIndexer.Helper.waitItemsQuery(chainB)
     chainB.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -280,7 +280,7 @@ describe("Deferred schema indexes", () => {
       ~message="Both chains are stamped with the same timestamp by a single finalization",
     ).toEqual((
       1,
-      [100, 1337],
+      [ChainId.fromInt(100), ChainId.fromInt(1337)],
       true,
       true,
       [
@@ -297,7 +297,7 @@ describe("Deferred schema indexes", () => {
   // `CREATE INDEX IF NOT EXISTS` into a no-op and the indexer reported ready
   // with `A(b_id)` unindexed.
   Async.it("Reach ready even when another table holds the legacy index name", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,
@@ -349,7 +349,7 @@ describe("Automatic getWhere indexes", () => {
     let matched = ref([])
     let optionalColumn = "optionalStringToTestLinkedEntities"
 
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,
@@ -432,7 +432,7 @@ describe("Automatic getWhere indexes", () => {
         ),
       ],
       [],
-      [(1337, false)],
+      [(ChainId.fromInt(1337), false)],
     ))
 
     // The automatic index is the indexer's own, so finalizing must leave it be.
@@ -446,6 +446,6 @@ describe("Automatic getWhere indexes", () => {
         await readyAtByChainId(),
       ),
       ~message="Reaching ready adds the schema indexes without disturbing the automatic one",
-    ).toEqual((1, [aBIdIndexName], [(1337, true)]))
+    ).toEqual((1, [aBIdIndexName], [(ChainId.fromInt(1337), true)]))
   })
 })

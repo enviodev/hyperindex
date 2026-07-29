@@ -204,7 +204,7 @@ module App = {
             knownHeight: data.knownHeight,
             latestFetchedBlockNumber,
             eventsProcessed: numEventsProcessed,
-            chainId: (cs->ChainState.chainConfig).id->Int.toString,
+            chainId: (cs->ChainState.chainConfig).id->ChainId.toString,
             progressBlock: committedProgressBlockNumber < data.startBlock
               ? Some(data.startBlock)
               : Some(committedProgressBlockNumber),

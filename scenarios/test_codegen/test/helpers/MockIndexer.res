@@ -6,8 +6,7 @@ let config = Config.load()
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let entityConfig = (name: Indexer.Entities.name<_, _>): Internal.entityConfig =>
-  config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<_, _> => string))
+let entityConfig = (name: string): Internal.entityConfig => config->entityConfigByName(name)
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
@@ -127,7 +126,7 @@ module Storage = {
     ensureQueryIndexesCalls: array<{"tableName": string, "filters": array<EntityFilter.t>}>,
     finalizeBackfillCalls: array<{
       "entityNames": array<string>,
-      "chainIds": array<int>,
+      "chainIds": array<ChainId.t>,
       "readyAt": Date.t,
     }>,
     dumpEffectCacheCalls: ref<int>,
@@ -412,7 +411,7 @@ let installMockSourceRegistrations = (
     | _ => []
     }
     if !(sourceStates->Utils.Array.isEmpty) {
-      let key = chainConfig.id->Int.toString
+      let key = chainConfig.id->ChainId.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
       | None =>
@@ -450,8 +449,8 @@ module Indexer = {
     getRollbackReadyPromise: unit => promise<unit>,
     waitUntilIdle: unit => promise<unit>,
     waitUntilReady: unit => promise<unit>,
-    query: 'entity 'id. Indexer.Entities.name<'entity, 'id> => promise<array<'entity>>,
-    queryHistory: 'entity 'id. Indexer.Entities.name<'entity, 'id> => promise<array<Change.t<'entity>>>,
+    query: 'entity. string => promise<array<'entity>>,
+    queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
     queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
     queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
     queryEffectCache: 'input 'output. (
@@ -522,10 +521,10 @@ module Indexer = {
       let chainMap =
         chains
         ->Array.map(chainConfig => {
-          let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
-          let originalChainConfig = baseConfig.chainMap->ChainMap.get(chain)
+          let chainId = (chainConfig.chain :> int)->ChainId.fromInt
+          let originalChainConfig = baseConfig.chainMap->ChainMap.get(chainId)
           (
-            chain,
+            chainId,
             {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
@@ -726,9 +725,8 @@ module Indexer = {
           resolve()
         })
       },
-      query: (type entity id, name: Indexer.Entities.name<entity, id>) => {
-        let ec =
-          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity, id> => string))
+      query: (type entity, name) => {
+        let ec = config->entityConfigByName(name)
         sql
         ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
         ->Promise.thenResolve(items => {
@@ -736,9 +734,8 @@ module Indexer = {
         })
         ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
       },
-      queryHistory: (type entity id, name: Indexer.Entities.name<entity, id>) => {
-        let ec =
-          config->entityConfigByName(name->(Utils.magic: Indexer.Entities.name<entity, id> => string))
+      queryHistory: (type entity, name) => {
+        let ec = config->entityConfigByName(name)
         sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
@@ -754,7 +751,7 @@ module Indexer = {
             S.array(
               S.union([
                 PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
-                S.object((s): Change.t<'entity> => {
+                S.object((s): Change.t<Internal.entity> => {
                   s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                   Delete({
                     entityId: s.field("id", ec.table->Table.getIdSchema),
@@ -954,7 +951,7 @@ module Source = {
     unsubscribeHeightSubscription: unit => unit,
   }
 
-  let make = (methods, ~chain=#1: chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+  let make = (methods, ~chainId=#1: chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
     let implement = (method: method, fn) => {
       if methods->Array.includes(method) {
         fn
@@ -963,7 +960,7 @@ module Source = {
       }
     }
 
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=(chain :> int))
+    let chainId = (chainId :> int)->ChainId.fromInt
     let getHeightOrThrowCalls = []
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
@@ -1067,7 +1064,7 @@ module Source = {
           name: "MockSource",
           sourceFor,
           poweredByHyperSync: false,
-          chain,
+          chainId,
           pollingInterval,
           getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
             getBlockHashesCalls->Array.push(blockNumbers)->ignore
@@ -1159,7 +1156,7 @@ module Source = {
                           contractName: onEventRegistration.eventConfig.contractName,
                           eventName: onEventRegistration.eventConfig.name,
                           params: %raw(`{}`),
-                          chainId: chain->ChainMap.Chain.toChainId,
+                          chainId,
                           srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                           logIndex: item.logIndex,
                           block: {
@@ -1174,7 +1171,7 @@ module Source = {
                         })`)
                         Internal.Event({
                           onEventRegistration,
-                          chain,
+                          chainId,
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
                           transactionIndex: 0,
@@ -1259,7 +1256,7 @@ module Helper = {
 }
 
 let mockRawEventRow: InternalTable.RawEvents.t = {
-  chain_id: 1,
+  chain_id: 1->ChainId.fromInt,
   event_id: 1234567890n,
   contract_name: "NftFactory",
   event_name: "SimpleNftCreated",

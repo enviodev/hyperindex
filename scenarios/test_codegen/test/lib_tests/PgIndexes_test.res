@@ -9,8 +9,8 @@ let config = Config.load()
 let enums =
   config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
 
-let entityA = MockIndexer.entityConfig(A)
-let entityB = MockIndexer.entityConfig(B)
+let entityA = MockIndexer.entityConfig("A")
+let entityB = MockIndexer.entityConfig("B")
 let entities = [entityA, entityB]
 // The storage creates exactly the tables it is handed, so the internal ones a
 // resume reads back have to be in the list too.
@@ -119,7 +119,7 @@ let aBIdName = aBId->IndexDefinition.name
 let readyAt = Date.fromString("2024-01-01T00:00:00Z")
 
 let readyAtByChainId = async pgSchema => {
-  let rows: array<{"id": int, "ready_at": Null.t<Date.t>}> =
+  let rows: array<{"id": ChainId.t, "ready_at": Null.t<Date.t>}> =
     await sql->Postgres.unsafe(
       `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
     )

@@ -50,8 +50,8 @@ let rec rollback = async (
     switch state->IndexerState.rollbackState {
     | NoRollback | RollbackReady(_) =>
       JsError.throwWithMessage("Internal error: Rollback initiated with invalid state")
-    | ReorgDetected({chain, blockNumber: reorgBlockNumber}) =>
-      let chainState = state->IndexerState.getChainState(~chain)
+    | ReorgDetected({chainId, blockNumber: reorgBlockNumber}) =>
+      let chainState = state->IndexerState.getChainState(~chainId)
 
       state->IndexerState.enterFindingReorgDepth
       let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
@@ -63,7 +63,7 @@ let rec rollback = async (
       ->ChainState.sourceManager
       ->SourceManager.onReorg(~rollbackTargetBlock=rollbackTargetBlockNumber)
 
-      state->IndexerState.foundReorgDepth(~chain, ~rollbackTargetBlockNumber)
+      state->IndexerState.foundReorgDepth(~chainId, ~rollbackTargetBlockNumber)
       // Rendezvous with the processing loop: whichever of {depth found, loop
       // idle} happens last triggers the rollback; the earlier one finds the
       // other condition unmet and bails here.
@@ -73,7 +73,7 @@ let rec rollback = async (
     | FindingReorgDepth => ()
     | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
       Logging.trace("Waiting for batch to finish processing before executing rollback")
-    | FoundReorgDepth({chain: reorgChain, rollbackTargetBlockNumber}) =>
+    | FoundReorgDepth({chainId: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(
         state,
         ~reorgChain,
@@ -108,10 +108,8 @@ and executeRollback = async (
   )
   logger->Logging.childInfo("Started rollback on reorg")
   state
-  ->IndexerState.getChainState(~chain=reorgChain)
+  ->IndexerState.getChainState(~chainId=reorgChain)
   ->ChainState.setRollbackTargetBlock(~blockNumber=rollbackTargetBlockNumber)
-
-  let reorgChainId = reorgChain->ChainMap.Chain.toChainId
 
   // Finish pending batch writes first: the target checkpoint, the progress
   // diff and the rollback diff below must all be computed from the same db
@@ -122,7 +120,7 @@ and executeRollback = async (
 
   let rollbackTargetCheckpointId = {
     switch await (state->IndexerState.persistence).storage.getRollbackTargetCheckpoint(
-      ~reorgChainId,
+      ~reorgChainId=reorgChain,
       ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
     ) {
     | Some(checkpointId) => checkpointId
@@ -140,7 +138,7 @@ and executeRollback = async (
     ).storage.getRollbackProgressDiff(~rollbackTargetCheckpointId)
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
       let diff = rollbackProgressDiff->Array.getUnsafe(idx)
-      eventsProcessedDiffByChain->Utils.Dict.setByInt(
+      eventsProcessedDiffByChain->ChainId.Dict.set(
         diff["chain_id"],
         {
           let eventsProcessedDiff =
@@ -149,9 +147,9 @@ and executeRollback = async (
           eventsProcessedDiff
         },
       )
-      newProgressBlockNumberPerChain->Utils.Dict.setByInt(
+      newProgressBlockNumberPerChain->ChainId.Dict.set(
         diff["chain_id"],
-        if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChainId {
+        if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChain {
           Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
         } else {
           diff["new_progress_block_number"]
@@ -167,14 +165,14 @@ and executeRollback = async (
     let chainId = (cs->ChainState.chainConfig).id
     let fromBlock = cs->ChainState.committedProgressBlockNumber
     cs->ChainState.rollback(
-      ~newProgressBlockNumber=newProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
+      ~newProgressBlockNumber=newProgressBlockNumberPerChain->ChainId.Dict.dangerouslyGetNonOption(
         chainId,
       ),
-      ~eventsProcessedDiff=eventsProcessedDiffByChain->Utils.Dict.dangerouslyGetByIntNonOption(
+      ~eventsProcessedDiff=eventsProcessedDiffByChain->ChainId.Dict.dangerouslyGetNonOption(
         chainId,
       ),
       ~rollbackTargetBlockNumber,
-      ~isReorgChain=chainId === reorgChainId,
+      ~isReorgChain=chainId === reorgChain,
     )
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {
@@ -184,7 +182,7 @@ and executeRollback = async (
         "fromBlock": fromBlock,
         "toBlock": toBlock,
         "rollbackedEvents": eventsProcessedDiffByChain
-        ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+        ->ChainId.Dict.dangerouslyGetNonOption(chainId)
         ->Option.getOr(0.),
       })
       ->ignore
@@ -197,13 +195,13 @@ and executeRollback = async (
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
   )
 
-  rolledBackChains->Array.forEach(chain => {
+  rolledBackChains->Array.forEach(rolledBack => {
     logger->Logging.childInfo({
       "msg": "Rollbacked",
-      "chainId": chain["chainId"],
-      "fromBlock": chain["fromBlock"],
-      "toBlock": chain["toBlock"],
-      "rollbackedEvents": chain["rollbackedEvents"],
+      "chainId": rolledBack["chainId"],
+      "fromBlock": rolledBack["fromBlock"],
+      "toBlock": rolledBack["toBlock"],
+      "rollbackedEvents": rolledBack["rollbackedEvents"],
     })
   })
   logger->Logging.childTrace({

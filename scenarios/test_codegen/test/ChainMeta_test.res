@@ -18,7 +18,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
   progressedChainsById: Dict.make(),
   isInReorgThreshold: false,
   checkpointIds: [checkpointId],
-  checkpointChainIds: [1],
+  checkpointChainIds: [1->ChainId.fromInt],
   checkpointBlockNumbers: [checkpointId->BigInt.toInt],
   checkpointBlockHashes: [`0x${checkpointId->BigInt.toString}`->Null.make],
   checkpointEventsProcessed: [0],

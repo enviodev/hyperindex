@@ -20,6 +20,7 @@ type fromUserApiOptions = {
 type fromUserApiResult = {
   config: string,
   indexerTypes: Null.t<string>,
+  indexerCode: Null.t<string>,
 }
 
 type addon = {

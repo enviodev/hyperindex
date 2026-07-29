@@ -9,7 +9,7 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
 
 describe("Write/read tests", () => {
   Async.itSkipInClaudeCloud("Test writing and reading entities with special cases", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~saveFullHistory=true,
@@ -96,18 +96,18 @@ describe("Write/read tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    t.expect(await indexerMock.query(EntityWithAllTypes)).toEqual([entityWithAllTypes])
-    t.expect(await indexerMock.queryHistory(EntityWithAllTypes)).toEqual([
+    t.expect(await (indexerMock.query("EntityWithAllTypes"): promise<array<Indexer.Entities.EntityWithAllTypes.t>>)).toEqual([entityWithAllTypes])
+    t.expect(await (indexerMock.queryHistory("EntityWithAllTypes"): promise<array<Change.t<Indexer.Entities.EntityWithAllTypes.t>>>)).toEqual([
       Set({
         checkpointId: 1n,
         entityId: "1"->EntityId.unsafeOfString,
         entity: entityWithAllTypes,
       }),
     ])
-    t.expect(await indexerMock.query(EntityWithAllNonArrayTypes)).toEqual([
+    t.expect(await (indexerMock.query("EntityWithAllNonArrayTypes"): promise<array<Indexer.Entities.EntityWithAllNonArrayTypes.t>>)).toEqual([
       entityWithAllNonArrayTypes,
     ])
-    t.expect(await indexerMock.queryHistory(EntityWithAllNonArrayTypes)).toEqual([
+    t.expect(await (indexerMock.queryHistory("EntityWithAllNonArrayTypes"): promise<array<Change.t<Indexer.Entities.EntityWithAllNonArrayTypes.t>>>)).toEqual([
       Set({
         checkpointId: 1n,
         entityId: "1"->EntityId.unsafeOfString,
@@ -116,16 +116,14 @@ describe("Write/read tests", () => {
     ])
 
     t.expect(
-      await indexerMock.query(EntityWith63LenghtName______________________________________one),
+      await (indexerMock.query("EntityWith63LenghtName______________________________________one"): promise<array<Indexer.Entities.EntityWith63LenghtName______________________________________one.t>>),
     ).toEqual([
       {
         id: "1",
       },
     ])
     t.expect(
-      await indexerMock.queryHistory(
-        EntityWith63LenghtName______________________________________one,
-      ),
+      await (indexerMock.queryHistory("EntityWith63LenghtName______________________________________one"): promise<array<Change.t<Indexer.Entities.EntityWith63LenghtName______________________________________one.t>>>),
     ).toEqual([
       Set({
         checkpointId: 1n,
@@ -136,16 +134,14 @@ describe("Write/read tests", () => {
       }),
     ])
     t.expect(
-      await indexerMock.query(EntityWith63LenghtName______________________________________two),
+      await (indexerMock.query("EntityWith63LenghtName______________________________________two"): promise<array<Indexer.Entities.EntityWith63LenghtName______________________________________two.t>>),
     ).toEqual([
       {
         id: "2",
       },
     ])
     t.expect(
-      await indexerMock.queryHistory(
-        EntityWith63LenghtName______________________________________two,
-      ),
+      await (indexerMock.queryHistory("EntityWith63LenghtName______________________________________two"): promise<array<Change.t<Indexer.Entities.EntityWith63LenghtName______________________________________two.t>>>),
     ).toEqual([
       Set({
         checkpointId: 1n,
@@ -181,7 +177,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   Async.it(
     "Keeps committed entities across batches without rewriting their history",
     async t => {
-      let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+      let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
         ~saveFullHistory=true,
@@ -219,7 +215,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
       ])
       await indexerMock.getBatchWritePromise()
 
-      t.expect(await indexerMock.queryHistory(SimpleEntity)).toEqual([
+      t.expect(await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>)).toEqual([
         Set({checkpointId: 1n, entityId: "untouched"->EntityId.unsafeOfString, entity: {id: "untouched", value: "batch1"}}),
         Set({checkpointId: 1n, entityId: "updated"->EntityId.unsafeOfString, entity: {id: "updated", value: "batch1"}}),
         Set({checkpointId: 3n, entityId: "updated"->EntityId.unsafeOfString, entity: {id: "updated", value: "batch2"}}),
@@ -272,7 +268,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   })
 
   Async.it("Test getWhere queries with eq and gt operators", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )
@@ -464,7 +460,7 @@ breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/
   })
 
   Async.it("getWhere throws a user friendly error for an invalid filter", async t => {
-    let sourceMock = MockIndexer.Source.make(~chain=#1337, [#getHeightOrThrow, #getItemsOrThrow])
+    let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
     )

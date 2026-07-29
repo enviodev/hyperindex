@@ -79,7 +79,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -142,7 +142,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -183,7 +183,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -236,11 +236,11 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock1 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1,
+      ~chainId=#1,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -300,7 +300,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     // Once set, heights resolve on their own, so the resumed run learns the new
     // head before its processing loop builds a first batch.
@@ -351,7 +351,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -405,7 +405,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
@@ -472,7 +472,7 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     // The resumed run learns a moved head on its own, so it dispatches a
     // catch-up query while the finalize pass is still awaiting its indexes.
@@ -548,11 +548,11 @@ describe("Resuming a backfill that never finalized", () => {
 
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock1 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1,
+      ~chainId=#1,
     )
     let chains: array<MockIndexer.Indexer.chainConfig> = [
       {chain: #1337, sourceConfig: Config.CustomSources([sourceMock1337.source])},

@@ -68,13 +68,13 @@ let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddres
 }
 
 let validateOnEventRegistrations = (
-  ~chainId: int,
+  ~chainId: ChainId.t,
   registrations: array<Internal.onEventRegistration>,
 ) =>
   registrations->Array.forEachWithIndex((registration, expectedIndex) => {
     if registration.index !== expectedIndex {
       JsError.throwWithMessage(
-        `Invalid onEvent registration index for chain ${chainId->Int.toString}: ${registration.eventConfig.contractName}.${registration.eventConfig.name} has index ${registration.index->Int.toString}, but its ChainState position is ${expectedIndex->Int.toString}.`,
+        `Invalid onEvent registration index for chain ${chainId->ChainId.toString}: ${registration.eventConfig.contractName}.${registration.eventConfig.name} has index ${registration.index->Int.toString}, but its ChainState position is ${expectedIndex->Int.toString}.`,
       )
     }
   })
@@ -153,7 +153,7 @@ let makeInternal = (
   // chain - this just looks up this chain's slice.
   let {onEventRegistrations, onBlockRegistrations} =
     registrationsByChainId
-    ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->Int.toString)
+    ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
     ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
 
   chainConfig.contracts->Array.forEach(contract => {
@@ -204,7 +204,7 @@ let makeInternal = (
   })
 
   // Create sources lazily here - this is where API token validation happens
-  let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
+  let chainId = chainConfig.id
   let lowercaseAddresses = config.lowercaseAddresses
   let sources = switch chainConfig.sourceConfig {
   | Config.EvmSourceConfig({hypersync, rpcs}) =>
@@ -221,7 +221,7 @@ let makeInternal = (
       }
     })
     EvmChain.makeSources(
-      ~chain,
+      ~chainId,
       ~onEventRegistrations=onEventRegistrations->(
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
       ),
@@ -231,7 +231,7 @@ let makeInternal = (
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
-        chain,
+        chainId,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations,
@@ -241,16 +241,16 @@ let makeInternal = (
     switch (hypersync, rpc) {
     | (None, None) =>
       JsError.throwWithMessage(
-        `Chain ${chain->ChainMap.Chain.toChainId->Int.toString} has no SVM data source`,
+        `Chain ${chainId->ChainId.toString} has no SVM data source`,
       )
-    | (None, Some(rpc)) => [Svm.makeRPCSource(~chain, ~rpc)]
+    | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
     | (Some(hypersyncUrl), _) =>
       // HyperSync drives instruction sync. A configured RPC is ignored for now
       // (RPC fallback isn't wired up yet).
       let apiToken = Env.envioApiToken
       [
         SvmHyperSyncSource.make({
-          chain,
+          chainId,
           endpointUrl: hypersyncUrl,
           apiToken,
           onEventRegistrations,
@@ -907,7 +907,7 @@ let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {
 }
 
 let toMetrics = (cs: t): Metrics.chainMetrics => {
-  chainId: cs.chainConfig.id->Int.toFloat,
+  chainId: cs.chainConfig.id,
   poweredByHyperSync: (cs.sourceManager->SourceManager.getActiveSource).poweredByHyperSync,
   firstEventBlockNumber: cs.fetchState.firstEventBlock,
   latestProcessedBlock: cs.committedProgressBlockNumber === -1
@@ -957,7 +957,7 @@ let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
 // Whether the chain's post-batch fetch frontier is ready to cross into the reorg
 // threshold, using the batch's progressed frontier when this chain advanced.
 let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
-  let fetchState = switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+  let fetchState = switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
     cs.fetchState.chainId,
   ) {
   | Some(chainAfterBatch) => chainAfterBatch.fetchState
@@ -969,7 +969,7 @@ let isReadyToEnterReorgThresholdAfterBatch = (cs: t, ~batch: Batch.t) => {
 // Commit the post-batch fetch frontier for a chain that progressed in the batch,
 // applying blockLag when this batch also crosses into the reorg threshold.
 let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
-  switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(
+  switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(
     cs.fetchState.chainId,
   ) {
   | Some(chainAfterBatch) =>
@@ -991,7 +991,7 @@ let advanceAfterBatch = (cs: t, ~batch: Batch.t, ~enteringReorgThreshold) =>
 let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainId = cs.chainConfig.id
 
-  switch batch.progressedChainsById->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+  switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(chainId) {
   | Some(chainAfterBatch) => {
       // Calculate and set latency metrics. The payload block is materialised or
       // inline by processing time; its timestamp may still be absent (e.g. an

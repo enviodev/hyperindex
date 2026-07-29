@@ -397,7 +397,7 @@ let buildEvmOnEventRegistration = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~where: option<JSON.t>,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {

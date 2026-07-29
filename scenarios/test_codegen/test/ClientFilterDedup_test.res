@@ -14,7 +14,7 @@ describe("Client-side address filtering item dedup", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],

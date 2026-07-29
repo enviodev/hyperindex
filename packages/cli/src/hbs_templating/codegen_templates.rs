@@ -12,7 +12,8 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
+            self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
+            SystemConfig,
         },
     },
     constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
@@ -976,6 +977,11 @@ impl ProjectTemplate {
         &self.envio_types_dts
     }
 
+    /// The generated `Indexer.res` contents (the project's ReScript surface).
+    pub fn indexer_code(&self) -> &str {
+        &self.indexer_code
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.
@@ -1336,14 +1342,20 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        let chain_id_type = format!(
-            "type chainId = [{}]",
-            chain_id_cases
-                .iter()
-                .map(|chain_id_case| format!("#{}", chain_id_case))
-                .collect::<Vec<_>>()
-                .join(" | "),
-        );
+        // ReScript integer polyvariants (`#137`) are int32-bound, so a config
+        // with a wider id falls back to the opaque runtime representation.
+        // TypeScript keeps its numeric literal union either way.
+        let chain_id_type = match cfg.chain_id_mode {
+            ChainIdMode::Int64 => "type chainId = ChainId.t".to_string(),
+            ChainIdMode::Int32 => format!(
+                "type chainId = [{}]",
+                chain_id_cases
+                    .iter()
+                    .map(|chain_id_case| format!("#{}", chain_id_case))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            ),
+        };
 
         // Generate indexer types and value
         let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
@@ -1475,27 +1487,43 @@ type indexer = {{
             ),
         };
 
-        // Generate getChainById function
-        let get_chain_by_id_cases = chain_configs
-            .iter()
-            .map(|chain| {
-                format!(
-                    "  | #{} => indexer.chains.\\\"{}\"",
-                    chain.network_config.id, chain.network_config.id
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Generate getChainById function. `chainId` is only a polyvariant in
+        // Int32 mode, so the Int64 form looks the key up on the chains record
+        // (whose fields are already the decimal ids) instead of matching.
+        let get_chain_by_id = match cfg.chain_id_mode {
+            ChainIdMode::Int64 => r#"/** Get chain configuration by chain ID. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch indexer.chains
+->(Utils.magic: indexerChains => dict<indexerChain>)
+->Dict.get(chainId->ChainId.toString) {
+| Some(chain) => chain
+| None => JsError.throwWithMessage("Chain " ++ chainId->ChainId.toString ++ " is not configured.")
+}
+}"#
+            .to_string(),
+            ChainIdMode::Int32 => {
+                let get_chain_by_id_cases = chain_configs
+                    .iter()
+                    .map(|chain| {
+                        format!(
+                            "  | #{} => indexer.chains.\\\"{}\"",
+                            chain.network_config.id, chain.network_config.id
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        let get_chain_by_id = format!(
-            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+                format!(
+                    r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {{
 switch chainId {{
 {}
 }}
 }}"#,
-            get_chain_by_id_cases
-        );
+                    get_chain_by_id_cases
+                )
+            }
+        };
 
         // Generate Enums and Entities modules
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
@@ -1546,11 +1574,19 @@ type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   deleteUnsafe: string => unit,
 }}{custom_id_handler_ops_code}
 
+/** The chain the event being handled belongs to. */
+type handlerChain = {{
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
+}}
+
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
+  chain: handlerChain,
 {handler_context_entity_fields}
 }}"#,
         );
@@ -1797,9 +1833,9 @@ module Entities = {{
 {entities_module_code}
 }}
 
-{handler_context_code}
-
 {chain_id_type}
+
+{handler_context_code}
 
 type contractRegisterContract = {{ add: Address.t => unit }}
 

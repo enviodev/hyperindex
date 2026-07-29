@@ -7,7 +7,7 @@ type t = {
   chainStates: dict<ChainState.t>,
   // Chain ids in a stable order, so the cross-chain loops iterate the chains
   // without allocating a values array on every tick.
-  chainIds: array<int>,
+  chainIds: array<ChainId.t>,
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
   // True once every chain has caught up and there's nothing left to process,
@@ -45,7 +45,7 @@ let make = (
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
 // derived from `chainStates`, so the entry is guaranteed present.
 let getChainState = (crossChainState: t, chainId) =>
-  crossChainState.chainStates->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Option.getUnsafe
+  crossChainState.chainStates->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.getUnsafe
 
 // --- Accessors. ---
 
@@ -296,7 +296,7 @@ let idleOrWaitAction = (cs: ChainState.t) =>
 // dropped — chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
-  ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
   let targetBudget = crossChainState.targetBufferSize->Int.toFloat
   let remaining = ref(
@@ -344,14 +344,14 @@ let checkAndFetch = async (
       // hold the whole pool. (The general can't-fetch-yet rule, including
       // blockLag, lives in FetchState.getNextQuery — this branch only
       // short-circuits the unambiguous no-height case.)
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
+      actionByChain->ChainId.Dict.set(chainId, FetchState.WaitingForNewBlock)
     } else if remaining.contents < minimumAdmissionBudget {
       // More than 90% of the target pool is ready or reserved. Don't admit new
       // queries until a full admission unit becomes free. No wake-up poll is
       // needed: a saturated pool means some chain holds ready items or
       // in-flight reservations, so a batch completion or landing response is
       // guaranteed to schedule another tick that revisits this chain.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+      actionByChain->ChainId.Dict.set(chainId, FetchState.NothingToQuery)
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =
@@ -366,12 +366,12 @@ let checkAndFetch = async (
       | _ => None
       }
       switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
-      | WaitingForNewBlock as action => actionByChain->Utils.Dict.setByInt(chainId, action)
+      | WaitingForNewBlock as action => actionByChain->ChainId.Dict.set(chainId, action)
       | NothingToQuery =>
         // A chain below its head can emit no query when its budget went to
         // more-behind chains or the cross-chain alignment clamped its range to
         // nothing — idleOrWaitAction keeps it polling for new blocks.
-        actionByChain->Utils.Dict.setByInt(chainId, idleOrWaitAction(cs))
+        actionByChain->ChainId.Dict.set(chainId, idleOrWaitAction(cs))
       | Ready(queries) => {
           let consumed =
             queries->Array.reduce(0., (acc, query: FetchState.query) =>
@@ -395,7 +395,7 @@ let checkAndFetch = async (
             "partitions": partitions,
           })
 
-          actionByChain->Utils.Dict.setByInt(chainId, FetchState.Ready(queries))
+          actionByChain->ChainId.Dict.set(chainId, FetchState.Ready(queries))
           // Mark the queries in flight and reserve their size against the
           // shared budget; released as each response lands in
           // handleQueryResult.
@@ -409,12 +409,10 @@ let checkAndFetch = async (
   let promises = []
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let chainId = crossChainState.chainIds->Array.getUnsafe(i)
-    switch actionByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+    switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) =>
-      let chain = ChainMap.Chain.makeUnsafe(~chainId)
-      promises->Array.push(dispatchChain(~chain, ~action))
+    | Some(action) => promises->Array.push(dispatchChain(~chainId=chainId, ~action))
     }
   }
   let _ = await promises->Promise.all

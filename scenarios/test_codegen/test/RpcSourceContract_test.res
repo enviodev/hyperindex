@@ -2,7 +2,7 @@ open Vitest
 
 type sourceFactory = RpcSource.options => Source.t
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
 let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
 let contractAddress = "0x00000000000000000000000000000000000000AA"
@@ -71,7 +71,7 @@ let syncConfig = EvmChain.getSyncConfig({
 let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
   let options: RpcSource.options = {
     url,
-    chain,
+    chainId,
     onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig,
@@ -419,7 +419,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let registration = makeRegistration()
           let options: RpcSource.options = {
             url: mock.url,
-            chain,
+            chainId,
             onEventRegistrations: [registration],
             sourceFor: Sync,
             syncConfig: defaultSyncConfig,
@@ -679,7 +679,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         async mock => {
           let options: RpcSource.options = {
             url: mock.url,
-            chain,
+            chainId,
             onEventRegistrations: [eventA, eventB],
             sourceFor: Sync,
             syncConfig,
