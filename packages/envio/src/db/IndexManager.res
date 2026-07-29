@@ -14,7 +14,8 @@ type prepared = {
 
 type t = {
   mutable catalog: IndexCatalog.t,
-  // Keyed by index identity so concurrent identical requests await one build.
+  // Keyed by index identity and coverage so concurrent identical requests
+  // await one build.
   inflight: dict<promise<unit>>,
   // Tail of the build chain per table, so two different indexes on the same
   // table are built one after the other rather than at once.
@@ -117,7 +118,11 @@ let ensure = (manager, ~definition: IndexDefinition.t, ~coverage, ~build) =>
   if manager->isSatisfied(definition, ~coverage) {
     Promise.resolve()
   } else {
-    let key = definition->IndexDefinition.key
+    // Keyed by coverage as well as identity: an `Exact` request joining an
+    // in-flight `LeadingColumns` one would resolve as soon as that build
+    // decided a leading composite already served it, and the declared index
+    // would never be created.
+    let key = `${coverage->IndexCatalog.coverageKey}${definition->IndexDefinition.key}`
     switch manager.inflight->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(promise) => promise
     | None =>

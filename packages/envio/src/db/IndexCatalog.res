@@ -132,6 +132,12 @@ let leadsWith = (entry, definition: IndexDefinition.t) =>
 // amplification.
 type coverage = Exact | LeadingColumns
 
+let coverageKey = coverage =>
+  switch coverage {
+  | Exact => "="
+  | LeadingColumns => "^"
+  }
+
 // Why an index can't serve a request, in the order the checks are worth
 // reporting. `None` means it can.
 let rejectReason = (entry, definition: IndexDefinition.t, ~coverage) =>
@@ -218,10 +224,7 @@ let size = catalog => catalog.byName->Dict.keysToArray->Array.length
 let nothingCovers = ""
 
 let find = (catalog, definition, ~coverage) => {
-  let cacheKey = `${switch coverage {
-    | Exact => "="
-    | LeadingColumns => "^"
-    }}${definition->IndexDefinition.key}`
+  let cacheKey = `${coverage->coverageKey}${definition->IndexDefinition.key}`
   switch catalog.covering->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
   | Some(name) if name === nothingCovers => None
   | Some(name) => catalog.byName->Utils.Dict.dangerouslyGetNonOption(name)
