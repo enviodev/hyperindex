@@ -55,7 +55,7 @@ let getIndexingAddressesByChain = (state: testIndexerState): dict<
     ->Dict.valuesToArray
     ->Array.forEach(entity => {
       let dc = entity->castToEnvioAddresses
-      let chainIdStr = dc.chainId->Int.toString
+      let chainIdStr = dc.chainId->ChainId.toString
       let contracts = switch byChain->Dict.get(chainIdStr) {
       | Some(arr) => arr
       | None =>
@@ -96,7 +96,7 @@ let handleWriteBatch = (
   state: testIndexerState,
   ~updatedEntities: array<Persistence.updatedEntity>,
   ~checkpointIds: array<bigint>,
-  ~checkpointChainIds: array<int>,
+  ~checkpointChainIds: array<ChainId.t>,
   ~checkpointBlockNumbers: array<int>,
   ~checkpointEventsProcessed: array<int>,
 ): unit => {
@@ -158,7 +158,7 @@ let handleWriteBatch = (
 
     // Update progress tracking from checkpoint data
     state.progressBlockByChain->Dict.set(
-      checkpointChainIds->Array.getUnsafe(i)->Int.toString,
+      checkpointChainIds->Array.getUnsafe(i)->ChainId.toString,
       checkpointBlockNumbers->Array.getUnsafe(i),
     )
 
@@ -223,8 +223,7 @@ let makeInitialState = (
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
-    let chainId = chainIdStr->Int.fromString->Option.getOr(0)
-    let chain = ChainMap.Chain.makeUnsafe(~chainId)
+    let chain = chainIdStr->ChainId.normalizeOrThrow
 
     if !(config.chainMap->ChainMap.has(chain)) {
       JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
@@ -233,7 +232,7 @@ let makeInitialState = (
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
     let indexingAddresses = indexingAddressesByChain->Dict.get(chainIdStr)->Option.getOr([])
     {
-      Persistence.id: chainId,
+      Persistence.id: chain,
       startBlock: processChainConfig.startBlock,
       endBlock: processChainConfig.endBlock,
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
@@ -310,12 +309,9 @@ let parseBlockRange = (
   ~rawChainConfig: rawChainConfig,
   ~progressBlock: option<int>,
 ): chainConfig => {
-  let chainId = switch chainIdStr->Int.fromString {
-  | Some(id) => id
-  | None =>
-    JsError.throwWithMessage(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
+  let chain = try chainIdStr->ChainId.normalizeOrThrow catch {
+  | _ => JsError.throwWithMessage(`Invalid chain ID "${chainIdStr}": expected a numeric chain ID`)
   }
-  let chain = ChainMap.Chain.makeUnsafe(~chainId)
   if !(config.chainMap->ChainMap.has(chain)) {
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
@@ -638,7 +634,7 @@ let createTestIndexer = (): t<'processConfig> => {
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
-    let chainIdStr = chainConfig.id->Int.toString
+    let chainIdStr = chainConfig.id->ChainId.toString
     chainIds->Array.push(chainConfig.id)->ignore
 
     let chainObj = Utils.Object.createNullObject()
@@ -673,7 +669,7 @@ let createTestIndexer = (): t<'processConfig> => {
               )
             }
             getIndexingAddressesByChain(state)
-            ->Dict.get(chainConfig.id->Int.toString)
+            ->Dict.get(chainConfig.id->ChainId.toString)
             ->Option.getOr([])
             ->Array.filterMap(ia => ia.contractName === contract.name ? Some(ia.address) : None)
           },
@@ -699,7 +695,7 @@ let createTestIndexer = (): t<'processConfig> => {
 
   // Build the result object with process + entity operations + chain info
   let result: dict<unknown> = Dict.make()
-  result->Dict.set("chainIds", chainIds->(Utils.magic: array<int> => unknown))
+  result->Dict.set("chainIds", chainIds->(Utils.magic: array<ChainId.t> => unknown))
   result->Dict.set("chains", chains->(Utils.magic: {..} => unknown))
   entityOpsDict
   ->Dict.toArray

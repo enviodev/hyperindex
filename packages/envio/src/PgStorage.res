@@ -73,7 +73,12 @@ let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
     compositeIndices->Array.map(createCompositeIndex)->Array.joinUnsafe("\n")
 }
 
-let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
+let makeCreateTableQuery = (
+  table: Table.table,
+  ~pgSchema,
+  ~isNumericArrayAsText,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   let fieldsMapped =
     table
     ->Table.getFields
@@ -83,6 +88,7 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
 
       {
         `"${fieldName}" ${Table.getPgFieldType(
+            ~chainIdMode,
             ~fieldType,
             ~pgSchema,
             ~isArray,
@@ -183,6 +189,7 @@ let makeInitializeTransaction = (
   ~entities=[],
   ~enums=[],
   ~isEmptyPgSchema=false,
+  ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
@@ -229,7 +236,7 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
     query :=
       query.contents ++
       "\n" ++
-      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled)
+      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
   })
 
   // Then batch all indices (better performance when tables exist)
@@ -366,9 +373,15 @@ let makeLoadAllQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}";`
 }
 
-let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
+let makeInsertUnnestSetQuery = (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema,
+  ~isRawEvents,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
 
@@ -396,9 +409,15 @@ SELECT * FROM unnest(${arrayFieldTypes
   } ++ ";"
 }
 
-let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
+let makeInsertValuesSetQuery = (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema,
+  ~itemsCount,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
@@ -441,8 +460,14 @@ VALUES${placeholders.contents}` ++
 // Constants for chunking
 let maxItemsPerQuery = 500
 
-let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
-  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+let makeTableBatchSetQuery = (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema: S.t<'item>,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
+  let {dbSchema, hasArrayField} =
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   // Should move this to a better place
   // We need it for the isRawEvents check in makeTableBatchSet
@@ -466,7 +491,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
 
   if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
     {
-      "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
       "convertOrThrow": S.compile(
         S.unnest(dbSchema),
         ~input=Value,
@@ -483,6 +508,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~table,
         ~itemSchema,
         ~itemsCount=maxItemsPerQuery,
+        ~chainIdMode,
       ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
@@ -571,7 +597,14 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
 
 // WeakMap for caching table batch set queries
 let setQueryCache = Utils.WeakMap.make()
-let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
+let setOrThrow = async (
+  sql,
+  ~items,
+  ~table: Table.table,
+  ~itemSchema,
+  ~pgSchema,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   if items->Array.length === 0 {
     ()
   } else {
@@ -583,6 +616,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           ~pgSchema,
           ~table,
           ~itemSchema=itemSchema->S.toUnknown,
+          ~chainIdMode,
         )
         setQueryCache->Utils.WeakMap.set(table, newQuery)->ignore
         newQuery
@@ -603,7 +637,13 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let response = isFullChunk
             ? sql->Postgres.preparedUnsafe(data["query"], params)
             : sql->Postgres.unpreparedUnsafe(
-                makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
+                makeInsertValuesSetQuery(
+                  ~pgSchema,
+                  ~table,
+                  ~itemSchema,
+                  ~itemsCount=chunkSize,
+                  ~chainIdMode,
+                ),
                 params,
               )
           responses->Array.push(response)->ignore
@@ -857,6 +897,7 @@ let rec writeBatch = async (
   ~escapeTables=?,
 ) => {
   try {
+    let chainIdMode = config.chainIdMode
     let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
 
     let specificError = ref(None)
@@ -871,7 +912,7 @@ let rec writeBatch = async (
         | Internal.Event(_) =>
           let coordinate = `${item
             ->Internal.getItemChainId
-            ->Int.toString}-${item
+            ->ChainId.toString}-${item
             ->Internal.getItemBlockNumber
             ->Int.toString}-${item->Internal.getItemLogIndex->Int.toString}`
           if seenLogCoordinates->Utils.Set.has(coordinate) {
@@ -901,6 +942,7 @@ let rec writeBatch = async (
             ~table=InternalTable.RawEvents.table,
             ~itemSchema=InternalTable.RawEvents.schema,
             ~pgSchema,
+            ~chainIdMode,
           )
         }, ~items=rawEvents)
       } catch {
@@ -1020,6 +1062,7 @@ let rec writeBatch = async (
                   ~itemSchema=entityHistory.setChangeSchema,
                   ~table=entityHistory.table,
                   ~pgSchema,
+                  ~chainIdMode,
                 ),
               )
               ->ignore
@@ -1036,6 +1079,7 @@ let rec writeBatch = async (
                 ~table=entityConfig.table,
                 ~itemSchema=entityConfig.schema,
                 ~pgSchema,
+                ~chainIdMode,
               ),
             )
           }
@@ -1131,6 +1175,7 @@ let rec writeBatch = async (
                 ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
                 ~checkpointBlockHashes=batch.checkpointBlockHashes,
                 ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+                ~chainIdMode,
               )
             )
           }
@@ -1277,6 +1322,7 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
+  ~chainIdMode: ChainId.mode=Int32,
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
@@ -1484,6 +1530,7 @@ let make = (
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
+      ~chainIdMode,
     )
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
@@ -1511,9 +1558,17 @@ let make = (
       })
     })
     if ids->Array.length > 0 {
+      let addrChainIdArrayType = Table.getPgFieldType(
+        ~fieldType=ChainId,
+        ~pgSchema,
+        ~isArray=true,
+        ~isNumericArrayAsText=false,
+        ~isNullable=false,
+        ~chainIdMode,
+      )
       await sql->Postgres.unpreparedUnsafe(
         `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::text[]) AS t(id, chain_id, contract_name);`,
+SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChainIdArrayType},$3::text[]) AS t(id, chain_id, contract_name);`,
         (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
       )
     }
@@ -1725,7 +1780,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
       checkpointId: raw["id"]->BigInt.fromStringOrThrow,
-      chainId: raw["chain_id"],
+      chainId: raw["chain_id"]->ChainId.normalizeOrThrow,
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
     })
@@ -1907,6 +1962,7 @@ let makeStorageFromEnv = (
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
+    ~chainIdMode=config.chainIdMode,
     ~sink=?{
       // Internally ClickHouse storage is implemented as a sync of the
       // Postgres storage. Required env vars are validated here only when
@@ -1939,6 +1995,7 @@ let makeStorageFromEnv = (
             ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
+            ~chainIdMode=config.chainIdMode,
           ),
         )
       } else {

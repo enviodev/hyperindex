@@ -2,7 +2,7 @@
 // backward compatibility with consumers like RACE — new metric fields stay off
 // the HTTP response.
 type chainData = {
-  chainId: float,
+  chainId: ChainId.t,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -46,7 +46,7 @@ let toChainData = (m: Metrics.chainMetrics): chainData => {
 }
 
 let chainDataSchema = S.schema((s): chainData => {
-  chainId: s.matches(S.float),
+  chainId: s.matches(ChainId.schema),
   poweredByHyperSync: s.matches(S.bool),
   firstEventBlockNumber: s.matches(S.option(S.int)),
   latestProcessedBlock: s.matches(S.option(S.int)),
@@ -88,7 +88,7 @@ let getGlobalPersistence = () =>
 let setGlobalPersistence = (persistence: Persistence.t) =>
   EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
-let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
+let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> => {
   switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
@@ -107,7 +107,7 @@ let buildChainsObject = (~config: Config.t) => {
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
-    let chainIdStr = chainConfig.id->Int.toString
+    let chainIdStr = chainConfig.id->ChainId.toString
 
     chainIds->Array.push(chainConfig.id)->ignore
 
@@ -183,8 +183,7 @@ let buildChainsObject = (~config: Config.t) => {
           get: () => {
             switch getIndexerState() {
             | Some(state) => {
-                let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainState = state->IndexerState.getChainState(~chain)
+                let chainState = state->IndexerState.getChainState(~chainId=chainConfig.id)
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
@@ -423,7 +422,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "description" => Config.load().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
         let (_, chainIds) = buildChainsObject(~config=Config.load())
-        chainIds->(Utils.magic: array<int> => unknown)
+        chainIds->(Utils.magic: array<ChainId.t> => unknown)
       }
     | "chains" => {
         let (chains, _) = buildChainsObject(~config=Config.load())

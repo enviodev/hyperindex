@@ -82,8 +82,8 @@ let startRegistration = (~config: Config.t) => {
   }
 }
 
-let getChainRegistrations = (r: activeRegistration, ~chainId: int): chainRegistrations => {
-  let key = chainId->Int.toString
+let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainRegistrations => {
+  let key = chainId->ChainId.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(existing) => existing
   | None =>
@@ -98,7 +98,7 @@ let getChainRegistrations = (r: activeRegistration, ~chainId: int): chainRegistr
 
 let buildOnEventRegistrationWith = (
   ~config: Config.t,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~eventConfig: Internal.eventConfig,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
@@ -342,10 +342,10 @@ let setContractRegister = (~contractName, ~eventName, contractRegister, ~eventOp
 }
 
 // Raw onEvent registrations stored for a chain (empty if the chain has none).
-let storedOnEventRegistrations = (r: activeRegistration, ~chainId: int): array<
+let storedOnEventRegistrations = (r: activeRegistration, ~chainId: ChainId.t): array<
   Internal.onEventRegistration,
 > =>
-  switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->Int.toString) {
+  switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(chainId->ChainId.toString) {
   | Some(chainRegs) => chainRegs.onEventRegistrations
   | None => []
   }
@@ -373,7 +373,7 @@ let isWildcard = (~contractName, ~eventName) =>
 // item still produces an item to run.
 let getSimulateOnEventRegistrations = (
   ~config: Config.t,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~eventConfig: Internal.eventConfig,
 ): array<Internal.onEventRegistration> => {
   let stored = switch getActiveRegistration() {
@@ -412,7 +412,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
       ->ChainMap.values
       ->Array.forEach(chainConfig => {
         let chainId = chainConfig.id
-        let key = chainId->Int.toString
+        let key = chainId->ChainId.toString
 
         let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
         let registeredKeys = Utils.Set.make()
@@ -638,7 +638,7 @@ let registerOnBlock = (
     ->ChainMap.values
     ->Array.forEach(chainConfig => {
       let chainId = chainConfig.id
-      let chainObj = chainsDict->Dict.getUnsafe(chainId->Int.toString)
+      let chainObj = chainsDict->Dict.getUnsafe(chainId->ChainId.toString)
 
       // Predicate returns `true` → match with no filter; `false` → skip;
       // any plain object → structured filter. `undefined`/`null` returns

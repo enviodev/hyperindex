@@ -246,7 +246,6 @@ let parse = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
 ): array<Internal.item> => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
   let currentBlock = ref(startBlock)
@@ -334,7 +333,7 @@ let parse = (
       switch seenCoordinates->Dict.get(coordinate) {
       | Some(firstIndex) =>
         JsError.throwWithMessage(
-          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->Int.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} both resolve to block ${blockNumber->Int.toString}, logIndex ${logIndex->Int.toString}. Give each item a distinct logIndex (or omit logIndex so they auto-increment).`,
         )
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
@@ -351,7 +350,7 @@ let parse = (
       let liveRegistrations =
         HandlerRegister.getSimulateOnEventRegistrations(
           ~config,
-          ~chainId,
+          ~chainId=chainId,
           ~eventConfig,
         )->Array.filter(reg =>
           (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
@@ -363,7 +362,7 @@ let parse = (
             ->ChainMap.values
             ->Array.length {
             | 1 => ""
-            | _ => ` on chain ${chainId->Int.toString}`
+            | _ => ` on chain ${chainId->ChainId.toString}`
             }}. Register a handler with indexer.onEvent (and check any \`where\` filter isn't excluding this chain) before simulating it.`,
         )
       }
@@ -378,7 +377,7 @@ let parse = (
         ->Array.push(
           Internal.Event({
             onEventRegistration,
-            chain,
+            chainId,
             blockNumber,
             logIndex,
             // Simulate keeps the transaction inline on the payload, so the store
@@ -389,7 +388,7 @@ let parse = (
                 contractName: eventConfig.contractName,
                 eventName: eventConfig.name,
                 params,
-                chainId,
+                chainId: chainId,
                 srcAddress,
                 logIndex,
                 transaction,
@@ -420,8 +419,8 @@ let patchConfig = (
     (processConfig->(Utils.magic: JSON.t => {..}))["chains"]->Nullable.toOption
   switch processChains {
   | Some(chainsDict) =>
-    let newChainMap = config.chainMap->ChainMap.mapWithKey((chain, chainConfig) => {
-      let chainIdStr = chain->ChainMap.Chain.toChainId->Int.toString
+    let newChainMap = config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) => {
+      let chainIdStr = chainId->ChainId.toString
       switch chainsDict->Dict.get(chainIdStr) {
       | Some(processChainJson) =>
         let raw = processChainJson->(Utils.magic: JSON.t => {..})
@@ -451,7 +450,7 @@ let patchConfig = (
             ~chainConfig,
             ~onEventRegistrations=chainRegistrations.onEventRegistrations,
           )
-          let source = SimulateSource.make(~items, ~endBlock, ~chain)
+          let source = SimulateSource.make(~items, ~endBlock, ~chainId)
           {...chainConfig, sourceConfig: Config.CustomSources([source])}
         | None => chainConfig
         }

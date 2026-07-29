@@ -37,7 +37,7 @@ chains:
 `,
       )
 
-      let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chain=#1337)
+      let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#1337)
       let indexerMock = await MockIndexer.Indexer.make(
         ~config,
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],

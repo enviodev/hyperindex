@@ -84,7 +84,7 @@ let extractStartBlock = (
 // getter — the enclosing chainObj is a plain JS object.
 let makeChainArg = (
   ~contractName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~getAddresses: unit => array<Address.t>,
 ) => {
   let contractObj = Utils.Object.createNullObject()
@@ -124,7 +124,7 @@ let parseWhereOrThrow = {
     ~sighash,
     ~params: array<string>,
     ~contractName: string,
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~onEventBlockFilterSchema: S.t<option<unknown>>,
     ~topic1=noopGetter,
     ~topic2=noopGetter,

@@ -28,7 +28,7 @@ type t = {
   isInReorgThreshold: bool,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,
-  checkpointChainIds: array<int>,
+  checkpointChainIds: array<ChainId.t>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Null.t<string>>,
   checkpointEventsProcessed: array<int>,
@@ -80,14 +80,14 @@ let getProgressedChainsById = {
       let fetchState = chainBeforeBatch.fetchState
 
       let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->Int.toString,
+        fetchState.chainId->ChainId.toString,
       ) {
       | Some(progressBlockNumber) => progressBlockNumber
       | None => chainBeforeBatch.progressBlockNumber
       }
 
       switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->Int.toString,
+        fetchState.chainId->ChainId.toString,
       ) {
       | Some(batchSize) =>
         let leftItems = fetchState.buffer->Array.slice(~start=batchSize)
@@ -107,7 +107,7 @@ let getProgressedChainsById = {
         )
       } {
       | Some(progressedChain) =>
-        progressedChainsById->Utils.Dict.setByInt(
+        progressedChainsById->ChainId.Dict.set(
           chainBeforeBatch.fetchState.chainId,
           progressedChain,
         )
@@ -195,7 +195,7 @@ let prepareBatch = (
       )
     let chainBeforeBatch =
       chainsBeforeBatch
-      ->Utils.Dict.dangerouslyGetByIntNonOption(fetchState.chainId)
+      ->ChainId.Dict.dangerouslyGetNonOption(fetchState.chainId)
       ->Option.getUnsafe
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
@@ -245,7 +245,7 @@ let prepareBatch = (
       }
 
       totalBatchSize := totalBatchSize.contents + chainBatchSize
-      mutBatchSizePerChain->Utils.Dict.setByInt(fetchState.chainId, chainBatchSize)
+      mutBatchSizePerChain->ChainId.Dict.set(fetchState.chainId, chainBatchSize)
     }
 
     let progressBlockNumberAfterBatch =
@@ -265,7 +265,7 @@ let prepareBatch = (
         ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
       )
 
-    mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+    mutProgressBlockNumberPerChain->ChainId.Dict.set(
       fetchState.chainId,
       progressBlockNumberAfterBatch,
     )
@@ -325,7 +325,7 @@ let findLastEventItem = (batch: t, ~chainId) => {
     switch item {
     | Internal.Event(_) as eventItem => {
         let eventItem = eventItem->Internal.castUnsafeEventItem
-        if eventItem.chain->ChainMap.Chain.toChainId === chainId {
+        if eventItem.chainId === chainId {
           result := Some(eventItem)
         } else {
           idx := idx.contents - 1

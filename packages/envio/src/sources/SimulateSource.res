@@ -1,11 +1,11 @@
-let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
+let make = (~items: array<Internal.item>, ~endBlock: int, ~chainId: ChainId.t): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
   {
     name: "SimulateSource",
     simulateItems: items,
     sourceFor: Sync,
-    chain,
+    chainId,
     poweredByHyperSync: false,
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {

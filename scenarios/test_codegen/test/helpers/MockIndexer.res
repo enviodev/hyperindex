@@ -347,7 +347,7 @@ let installMockSourceRegistrations = (
     | _ => []
     }
     if !(sourceStates->Utils.Array.isEmpty) {
-      let key = chainConfig.id->Int.toString
+      let key = chainConfig.id->ChainId.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
       | None =>
@@ -449,10 +449,10 @@ module Indexer = {
       let chainMap =
         chains
         ->Array.map(chainConfig => {
-          let chain = ChainMap.Chain.makeUnsafe(~chainId=(chainConfig.chain :> int))
-          let originalChainConfig = baseConfig.chainMap->ChainMap.get(chain)
+          let chainId = (chainConfig.chain :> int)->ChainId.fromInt
+          let originalChainConfig = baseConfig.chainMap->ChainMap.get(chainId)
           (
-            chain,
+            chainId,
             {
               ...originalChainConfig,
               sourceConfig: chainConfig.sourceConfig,
@@ -821,7 +821,7 @@ module Source = {
     unsubscribeHeightSubscription: unit => unit,
   }
 
-  let make = (methods, ~chain=#1: chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+  let make = (methods, ~chainId=#1: chainId, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
     let implement = (method: method, fn) => {
       if methods->Array.includes(method) {
         fn
@@ -830,7 +830,7 @@ module Source = {
       }
     }
 
-    let chain = ChainMap.Chain.makeUnsafe(~chainId=(chain :> int))
+    let chainId = (chainId :> int)->ChainId.fromInt
     let getHeightOrThrowCalls = []
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
@@ -934,7 +934,7 @@ module Source = {
           name: "MockSource",
           sourceFor,
           poweredByHyperSync: false,
-          chain,
+          chainId,
           pollingInterval,
           getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
             getBlockHashesCalls->Array.push(blockNumbers)->ignore
@@ -1026,7 +1026,7 @@ module Source = {
                           contractName: onEventRegistration.eventConfig.contractName,
                           eventName: onEventRegistration.eventConfig.name,
                           params: %raw(`{}`),
-                          chainId: chain->ChainMap.Chain.toChainId,
+                          chainId,
                           srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
                           logIndex: item.logIndex,
                           block: {
@@ -1041,7 +1041,7 @@ module Source = {
                         })`)
                         Internal.Event({
                           onEventRegistration,
-                          chain,
+                          chainId,
                           blockNumber: item.blockNumber,
                           logIndex: item.logIndex,
                           transactionIndex: 0,
@@ -1126,7 +1126,7 @@ module Helper = {
 }
 
 let mockRawEventRow: InternalTable.RawEvents.t = {
-  chain_id: 1,
+  chain_id: 1->ChainId.fromInt,
   event_id: 1234567890n,
   contract_name: "NftFactory",
   event_name: "SimpleNftCreated",

@@ -226,7 +226,7 @@ let loadEffect = (
   // the storage-load metric stays stable.
   let key = switch scope {
   | CrossChain => `${effectName}.effect`
-  | Chain(chainId) => `${effectName}.effect.${chainId->Int.toString}`
+  | Chain(chainId) => `${effectName}.effect.${chainId->ChainId.toString}`
   }
 
   let load = async (args, ~onError) => {

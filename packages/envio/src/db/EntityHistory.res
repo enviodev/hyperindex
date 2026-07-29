@@ -64,7 +64,7 @@ let historyTableName = (~entityName, ~entityIndex) => {
 }
 
 type safeReorgBlocks = {
-  chainIds: array<int>,
+  chainIds: array<ChainId.t>,
   blockNumbers: array<int>,
 }
 

@@ -52,7 +52,7 @@ EffectContext.prototype = effectContextPrototype;
 @new
 external makeEffectContext: (
   contextParams,
-  ~chainId: option<int>,
+  ~chainId: option<ChainId.t>,
   ~effectName: string,
   ~defaultShouldCache: bool,
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
@@ -318,7 +318,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
       params.chains
-      ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+      ->ChainId.Dict.dangerouslyGetNonOption(chainId)
       ->(Utils.magic: option<Internal.chainInfo> => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
