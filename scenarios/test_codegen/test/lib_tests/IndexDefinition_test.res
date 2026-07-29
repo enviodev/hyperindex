@@ -123,8 +123,8 @@ describe("Matching the catalog against a desired index", () => {
     let legacy = makeRow(~tableName="Token", ~indexName="Token_owner_id", ~columns=["owner_id"])
 
     t.expect((
-      legacy->entry->IndexCatalog.satisfies(ownerIdIndex),
-      legacy->entry->IndexCatalog.rejectReason(ownerIdIndex),
+      legacy->entry->IndexCatalog.satisfies(ownerIdIndex, ~coverage=LeadingColumns),
+      legacy->entry->IndexCatalog.rejectReason(ownerIdIndex, ~coverage=LeadingColumns),
     )).toEqual((true, None))
   })
 
@@ -137,8 +137,8 @@ describe("Matching the catalog against a desired index", () => {
     )
 
     t.expect((
-      broken->entry->IndexCatalog.satisfies(ownerIdIndex),
-      broken->entry->IndexCatalog.rejectReason(ownerIdIndex),
+      broken->entry->IndexCatalog.satisfies(ownerIdIndex, ~coverage=LeadingColumns),
+      broken->entry->IndexCatalog.rejectReason(ownerIdIndex, ~coverage=LeadingColumns),
     )).toEqual((false, Some("PostgreSQL reports it as invalid or not ready")))
   })
 
@@ -154,8 +154,8 @@ describe("Matching the catalog against a desired index", () => {
     )
 
     t.expect((
-      partial->entry->IndexCatalog.satisfies(ownerIdIndex),
-      partial->entry->IndexCatalog.rejectReason(ownerIdIndex),
+      partial->entry->IndexCatalog.satisfies(ownerIdIndex, ~coverage=LeadingColumns),
+      partial->entry->IndexCatalog.rejectReason(ownerIdIndex, ~coverage=LeadingColumns),
     )).toEqual((
       false,
       Some(`it is partial (WHERE ("owner_id" IS NOT NULL)), so it only covers part of the table`),
@@ -177,8 +177,8 @@ describe("Matching the catalog against a desired index", () => {
     )
 
     t.expect((
-      expression->entry->IndexCatalog.rejectReason(ownerIdIndex),
-      hash->entry->IndexCatalog.rejectReason(ownerIdIndex),
+      expression->entry->IndexCatalog.rejectReason(ownerIdIndex, ~coverage=LeadingColumns),
+      hash->entry->IndexCatalog.rejectReason(ownerIdIndex, ~coverage=LeadingColumns),
     )).toEqual((
       Some("it indexes an expression rather than plain columns"),
       Some("it uses the hash access method, not btree"),
@@ -191,8 +191,8 @@ describe("Matching the catalog against a desired index", () => {
     let composite = makeRow(~tableName="Token", ~indexName="Token_a_b", ~columns=["a", "b"])
 
     t.expect((
-      composite->entry->IndexCatalog.satisfies(IndexDefinition.single(~tableName="Token", ~column="a")),
-      composite->entry->IndexCatalog.satisfies(IndexDefinition.single(~tableName="Token", ~column="b")),
+      composite->entry->IndexCatalog.satisfies(IndexDefinition.single(~tableName="Token", ~column="a"), ~coverage=LeadingColumns),
+      composite->entry->IndexCatalog.satisfies(IndexDefinition.single(~tableName="Token", ~column="b"), ~coverage=LeadingColumns),
     )).toEqual((true, false))
   })
 
@@ -207,10 +207,10 @@ describe("Matching the catalog against a desired index", () => {
     t.expect(
       (
         catalog
-        ->IndexCatalog.find(IndexDefinition.single(~tableName="Token", ~column="a"))
+        ->IndexCatalog.find(IndexDefinition.single(~tableName="Token", ~column="a"), ~coverage=LeadingColumns)
         ->Option.map((e: IndexCatalog.entry) => e.name),
         catalog
-        ->IndexCatalog.find(IndexDefinition.single(~tableName="Token", ~column="b"))
+        ->IndexCatalog.find(IndexDefinition.single(~tableName="Token", ~column="b"), ~coverage=LeadingColumns)
         ->Option.map((e: IndexCatalog.entry) => e.name),
       ),
       ~message="Table names are part of the identity, so Transfer_a can't serve Token",

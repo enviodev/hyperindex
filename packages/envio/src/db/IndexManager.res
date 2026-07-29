@@ -34,8 +34,8 @@ let reload = (manager, ~rows) => {
 
 let catalog = manager => manager.catalog
 
-let isSatisfied = (manager, definition) =>
-  manager.catalog->IndexCatalog.find(definition)->Option.isSome
+let isSatisfied = (manager, definition, ~coverage) =>
+  manager.catalog->IndexCatalog.find(definition, ~coverage)->Option.isSome
 
 // The name is derived from a hash of the full identity, so an index holding it
 // was generated for this exact identity. Anything else under that name is
@@ -43,7 +43,7 @@ let isSatisfied = (manager, definition) =>
 let conflictError = (~entry: IndexCatalog.entry, ~definition, ~pgSchema) =>
   Utils.Error.make(
     `Cannot create the index "${entry.name}" in schema "${pgSchema}" for ${definition->IndexDefinition.describe}. A different index already holds that name and the indexer can't safely replace it: ${entry
-      ->IndexCatalog.rejectReason(definition)
+      ->IndexCatalog.rejectReason(definition, ~coverage=IndexCatalog.Exact)
       ->Option.getOr("it is unique")}. Drop that index by hand, then restart the indexer.`,
   )
 
@@ -55,8 +55,8 @@ let verificationError = (~name, ~definition, ~pgSchema, ~reason) =>
 // `None` when the catalog already covers the definition. Resolving this before
 // any DDL runs means a name held by an unrelated index fails while nothing is
 // half-built.
-let prepare = (manager, ~definition, ~pgSchema): option<prepared> =>
-  switch manager.catalog->IndexCatalog.find(definition) {
+let prepare = (manager, ~definition, ~coverage, ~pgSchema): option<prepared> =>
+  switch manager.catalog->IndexCatalog.find(definition, ~coverage) {
   | Some(_) => None
   | None =>
     let name = definition->IndexDefinition.name
@@ -85,7 +85,10 @@ let verifyOrThrow = (prepared, ~rows, ~pgSchema): IndexCatalog.entry => {
   | None =>
     throw(verificationError(~name, ~definition, ~pgSchema, ~reason="PostgreSQL has no such index"))
   | Some(entry) =>
-    switch entry->IndexCatalog.rejectReason(definition) {
+    // The build is verified against `Exact` whatever the request asked for: we
+    // just created this index from the definition, so anything short of a
+    // byte-for-byte match means Postgres built something else.
+    switch entry->IndexCatalog.rejectReason(definition, ~coverage=IndexCatalog.Exact) {
     | Some(reason) => throw(verificationError(~name, ~definition, ~pgSchema, ~reason))
     | None => entry
     }
@@ -97,11 +100,21 @@ let verifyOrThrow = (prepared, ~rows, ~pgSchema): IndexCatalog.entry => {
 // schema doesn't have.
 let record = (manager, entry) => manager.catalog->IndexCatalog.set(entry)
 
+// Puts one index back in step with the database. A build that commits its DDL
+// and then fails to read it back would otherwise leave the catalog claiming the
+// name is free, and every later attempt would replan a create and hit
+// "relation already exists" for the rest of the run.
+let resync = (manager, ~name, ~rows) =>
+  switch rows->Array.map(IndexCatalog.fromRow)->Array.find(entry => entry.name === name) {
+  | Some(entry) => manager.catalog->IndexCatalog.set(entry)
+  | None => manager.catalog->IndexCatalog.remove(name)
+  }
+
 // Runs `build` unless the catalog already covers the definition. Nothing is
 // recorded here: `build` owns the verification, so a failed or unverified build
 // leaves the manager untouched and the next request retries.
-let ensure = (manager, ~definition: IndexDefinition.t, ~build) =>
-  if manager->isSatisfied(definition) {
+let ensure = (manager, ~definition: IndexDefinition.t, ~coverage, ~build) =>
+  if manager->isSatisfied(definition, ~coverage) {
     Promise.resolve()
   } else {
     let key = definition->IndexDefinition.key
@@ -117,7 +130,9 @@ let ensure = (manager, ~definition: IndexDefinition.t, ~build) =>
       let promise = tail
       // The queued build may have been satisfied while waiting behind another
       // one on the same table (eg a finalize pass created it).
-      ->Promise.then(() => manager->isSatisfied(definition) ? Promise.resolve() : build())
+      ->Promise.then(() =>
+        manager->isSatisfied(definition, ~coverage) ? Promise.resolve() : build()
+      )
       manager.inflight->Dict.set(key, promise)
       manager.tableQueue->Dict.set(definition.tableName, promise->Utils.Promise.silentCatch)
       promise->Promise.finally(() => manager.inflight->Utils.Dict.deleteInPlace(key))

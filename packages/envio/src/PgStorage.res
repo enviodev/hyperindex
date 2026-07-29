@@ -1299,9 +1299,13 @@ let make = (
   // The whole-schema snapshot, taken on a clean initialize and on every resume.
   // Individual indexes are re-read from the catalog as they are built, so this
   // is the only point where the full listing is needed.
-  let reloadIndexCatalog = async () => {
+  let refreshIndexCatalog = async () => {
     let rows = await sql->loadCatalogRows
-    let catalog = indexManager->IndexManager.reload(~rows)
+    indexManager->IndexManager.reload(~rows)
+  }
+
+  let reloadIndexCatalog = async () => {
+    let catalog = await refreshIndexCatalog()
     switch catalog->IndexCatalog.invalidNames {
     | [] => ()
     | invalidIndexNames =>
@@ -1641,16 +1645,33 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
   }
 
+  // A build outside a transaction can commit its DDL and still fail — the
+  // read-back is a second round trip. Re-reading the index puts the catalog
+  // back in step, so the next attempt plans against what the database holds
+  // instead of retrying a create that can only raise "already exists".
+  //
+  // If this read fails too, the next attempt does waste a create before landing
+  // here again — bounded, and it recovers as soon as the database answers.
+  let resyncIndex = async name =>
+    switch await sql->loadCatalogRows(~indexName=name) {
+    | rows => indexManager->IndexManager.resync(~name, ~rows)
+    | exception _ => ()
+    }
+
   let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
     let columns = filterColumns(~table, ~filters)
     let _ = await columns
     ->Array.map(column => {
       let definition = IndexDefinition.single(~tableName=table.tableName, ~column)
       indexManager
-      ->IndexManager.ensure(~definition, ~build=async () => {
+      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=async () => {
         // Resolved before logging so a rebuild is reported as one, and an
         // unrelated index holding the name fails before any DDL runs.
-        switch indexManager->IndexManager.prepare(~definition, ~pgSchema) {
+        switch indexManager->IndexManager.prepare(
+          ~definition,
+          ~coverage=LeadingColumns,
+          ~pgSchema,
+        ) {
         | None => ()
         | Some(prepared) =>
           let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
@@ -1671,12 +1692,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       })
       // A failed build records nothing, so the next getWhere retries. Meanwhile
       // the query still runs — just without the index.
-      ->Utils.Promise.catchResolve(exn => {
+      ->Promise.catch(async exn => {
         Logging.warn({
           "storage": storageName,
           "msg": `Failed to create an index on "${table.tableName}"("${column}") for a getWhere query. The query runs without it.`,
           "err": exn->Utils.prettifyExn,
         })
+        await resyncIndex(definition->IndexDefinition.name)
       })
     })
     ->Promise.all
@@ -1693,9 +1715,14 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
     // Resolved up front so a name held by an unrelated index fails before the
     // transaction opens, rather than rolling one back.
+    //
+    // `Exact`, so the set built here is decided by the schema alone: matching a
+    // declared index against a composite that happens to lead with the same
+    // column would make a fresh database and an upgraded one end up holding
+    // different tables.
     let missing =
       schemaIndexes->Array.filterMap(definition =>
-        indexManager->IndexManager.prepare(~definition, ~pgSchema)
+        indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema)
       )
 
     switch missing->Array.filter((prepared: IndexManager.prepared) => prepared.isRebuild) {
@@ -1729,21 +1756,37 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
     let timeRef = Performance.now()
 
-    let verified = await sql->Postgres.beginSql(async sql => {
-      let verified = []
-      for idx in 0 to missing->Array.length - 1 {
-        let entry = await sql->runAndVerify(missing->Array.getUnsafe(idx))
-        verified->Array.push(entry)->ignore
+    let run = () =>
+      sql->Postgres.beginSql(async sql => {
+        let verified = []
+        for idx in 0 to missing->Array.length - 1 {
+          let entry = await sql->runAndVerify(missing->Array.getUnsafe(idx))
+          verified->Array.push(entry)->ignore
+        }
+        let _ = await sql->Postgres.preparedUnsafe(
+          InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
+          [
+            readyAt->(Utils.magic: Date.t => unknown),
+            chainIds->(Utils.magic: array<int> => unknown),
+          ]->(Utils.magic: array<unknown> => unknown),
+        )
+        verified
+      })
+
+    let verified = switch await run() {
+    | verified => verified
+    | exception exn =>
+      // A rollback takes the indexes with it, but a connection lost while
+      // acknowledging the COMMIT leaves them in place and unrecorded. Re-reading
+      // the schema means the retry plans against the database rather than
+      // replaying creates that can only raise "already exists" and never reach
+      // ready.
+      switch await refreshIndexCatalog() {
+      | _ => ()
+      | exception _ => ()
       }
-      let _ = await sql->Postgres.preparedUnsafe(
-        InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
-        [
-          readyAt->(Utils.magic: Date.t => unknown),
-          chainIds->(Utils.magic: array<int> => unknown),
-        ]->(Utils.magic: array<unknown> => unknown),
-      )
-      verified
-    })
+      throw(exn)
+    }
 
     // Only after the commit: a rollback takes both the indexes and ready_at
     // with it, and the catalog must not claim what the schema doesn't have.

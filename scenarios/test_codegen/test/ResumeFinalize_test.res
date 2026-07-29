@@ -7,7 +7,7 @@ let hasIndex = async definition => {
     (
       await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema=Env.Db.publicSchema))
     )->S.parseOrThrow(IndexCatalog.rowsSchema)
-  IndexCatalog.fromRows(~rows)->IndexCatalog.find(definition)->Option.isSome
+  IndexCatalog.fromRows(~rows)->IndexCatalog.find(definition, ~coverage=Exact)->Option.isSome
 }
 
 let aBIdIndex = IndexDefinition.single(~tableName="A", ~column="b_id")

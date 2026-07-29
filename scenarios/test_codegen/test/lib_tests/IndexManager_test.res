@@ -37,8 +37,8 @@ describe("Planning a build", () => {
 
     t.expect(
       (
-        manager->IndexManager.isSatisfied(ownerId),
-        manager->IndexManager.prepare(~definition=ownerId, ~pgSchema)->Option.isNone,
+        manager->IndexManager.isSatisfied(ownerId, ~coverage=LeadingColumns),
+        manager->IndexManager.prepare(~definition=ownerId, ~coverage=LeadingColumns, ~pgSchema)->Option.isNone,
       ),
       ~message="A valid legacy index is kept, not duplicated under a generated name",
     ).toEqual((true, true))
@@ -46,7 +46,7 @@ describe("Planning a build", () => {
 
   Async.it("Plans a plain create when nothing holds the generated name", async t => {
     let manager = IndexManager.make()
-    let prepared = manager->IndexManager.prepare(~definition=ownerId, ~pgSchema)->Option.getOrThrow
+    let prepared = manager->IndexManager.prepare(~definition=ownerId, ~coverage=LeadingColumns, ~pgSchema)->Option.getOrThrow
 
     t.expect((prepared.name, prepared.isRebuild, prepared.queries)).toEqual((
       ownerId->IndexDefinition.name,
@@ -66,7 +66,7 @@ describe("Planning a build", () => {
         makeRow(~tableName="Token", ~indexName=name, ~columns=["owner_id"], ~isValid=0),
       ],
     )
-    let prepared = manager->IndexManager.prepare(~definition=ownerId, ~pgSchema)->Option.getOrThrow
+    let prepared = manager->IndexManager.prepare(~definition=ownerId, ~coverage=LeadingColumns, ~pgSchema)->Option.getOrThrow
 
     t.expect((prepared.isRebuild, prepared.queries)).toEqual((
       true,
@@ -92,16 +92,75 @@ describe("Planning a build", () => {
     )
 
     t.expect(
-      () => manager->IndexManager.prepare(~definition=ownerId, ~pgSchema),
+      () => manager->IndexManager.prepare(~definition=ownerId, ~coverage=LeadingColumns, ~pgSchema),
       ~message="A unique index isn't one the indexer created, so it is never dropped",
     ).toThrow()
+  })
+})
+
+describe("Reconciling a declared schema", () => {
+  let single = IndexDefinition.single(~tableName="Token", ~column="a")
+  let composite = IndexDefinition.make(
+    ~tableName="Token",
+    ~columns=[{name: "a", direction: Table.Asc}, {name: "b", direction: Table.Asc}],
+  )
+  let compositeRow = makeRow(
+    ~tableName="Token",
+    ~indexName=composite->IndexDefinition.name,
+    ~columns=["a", "b"],
+  )
+
+  // What the schema declares, in the order getSchemaIndexes yields it.
+  let declared = [single, composite]
+
+  let namesAfterReconciling = (~rows) => {
+    let manager = IndexManager.make()
+    let _ = manager->IndexManager.reload(~rows)
+    rows
+    ->Array.map((row: IndexCatalog.row) => row.indexName)
+    ->Array.concat(
+      declared
+      ->Array.filterMap(definition =>
+        manager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema)
+      )
+      ->Array.map((prepared: IndexManager.prepared) => prepared.name),
+    )
+    ->Array.toSorted(String.compare)
+  }
+
+  // The composite leads with `a`, so matching declared indexes by leading
+  // columns would skip the single-column index on a database that already has
+  // the composite, while a fresh database built both. Same schema, different
+  // tables — and no way to tell from the schema which one you have.
+  Async.it("Reaches the same indexes on a fresh and on an upgraded database", async t => {
+    let expected =
+      [single->IndexDefinition.name, composite->IndexDefinition.name]->Array.toSorted(
+        String.compare,
+      )
+
+    t.expect((
+      namesAfterReconciling(~rows=[]),
+      namesAfterReconciling(~rows=[compositeRow]),
+    )).toEqual((expected, expected))
+  })
+
+  // The optimization is still there where it's safe: nobody declared the
+  // automatic index, so an existing composite is good enough for it.
+  Async.it("Still lets a composite serve an automatic request for its lead column", async t => {
+    let manager = IndexManager.make()
+    let _ = manager->IndexManager.reload(~rows=[compositeRow])
+
+    t.expect((
+      manager->IndexManager.isSatisfied(single, ~coverage=LeadingColumns),
+      manager->IndexManager.isSatisfied(single, ~coverage=Exact),
+    )).toEqual((true, false))
   })
 })
 
 describe("Verifying a build against the catalog", () => {
   let prepare = () => {
     let manager = IndexManager.make()
-    (manager, manager->IndexManager.prepare(~definition=ownerId, ~pgSchema)->Option.getOrThrow)
+    (manager, manager->IndexManager.prepare(~definition=ownerId, ~coverage=LeadingColumns, ~pgSchema)->Option.getOrThrow)
   }
 
   Async.it("Records the index only once PostgreSQL reports it back as usable", async t => {
@@ -112,7 +171,7 @@ describe("Verifying a build against the catalog", () => {
     )
     manager->IndexManager.record(entry)
 
-    t.expect((manager->names, manager->IndexManager.isSatisfied(ownerId))).toEqual((
+    t.expect((manager->names, manager->IndexManager.isSatisfied(ownerId, ~coverage=LeadingColumns))).toEqual((
       [prepared.name],
       true,
     ))
@@ -160,6 +219,7 @@ describe("Serialising builds", () => {
   let build = (manager, ~definition, ~run) =>
     manager->IndexManager.ensure(
       ~definition,
+      ~coverage=LeadingColumns,
       ~build=async () => {
         await run()
         manager->IndexManager.record(
@@ -259,6 +319,31 @@ describe("Serialising builds", () => {
     t.expect(manager->names).toEqual([ownerId->IndexDefinition.name])
   })
 
+  // Outside a transaction the DDL can commit and the read-back still fail, so
+  // the catalog would keep claiming the name is free and every later attempt
+  // would replan a create that can only raise "relation already exists".
+  Async.it("Resyncs a single index from the database after a failed read-back", async t => {
+    let manager = IndexManager.make()
+    let name = ownerId->IndexDefinition.name
+
+    manager->IndexManager.resync(
+      ~name,
+      ~rows=[makeRow(~tableName="Token", ~indexName=name, ~columns=["owner_id"])],
+    )
+    let recovered = manager->IndexManager.prepare(
+      ~definition=ownerId,
+      ~coverage=Exact,
+      ~pgSchema,
+    )
+
+    manager->IndexManager.resync(~name, ~rows=[])
+
+    t.expect(
+      (recovered->Option.isNone, manager->names, manager->IndexManager.isSatisfied(ownerId, ~coverage=Exact)),
+      ~message="An index the database doesn't have is forgotten again, so the build retries",
+    ).toEqual((true, [], false))
+  })
+
   Async.it("Replaces the whole catalog on reload, so a restart is authoritative", async t => {
     let manager = IndexManager.make()
     await manager->build(~definition=ownerId, ~run=() => Promise.resolve())
@@ -266,7 +351,7 @@ describe("Serialising builds", () => {
       ~rows=[makeRow(~tableName="Token", ~indexName="Token_minted_at", ~columns=["minted_at"])],
     )
 
-    t.expect((manager->names, manager->IndexManager.isSatisfied(ownerId))).toEqual((
+    t.expect((manager->names, manager->IndexManager.isSatisfied(ownerId, ~coverage=LeadingColumns))).toEqual((
       ["Token_minted_at"],
       false,
     ))

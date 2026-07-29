@@ -103,9 +103,33 @@ let fromRow = (row: row): entry => {
   predicate: row.predicate,
 }
 
+// A btree's key columns are ordered, so an index leading with the requested
+// columns can serve them. The reverse isn't true, which is why order matters.
+let leadsWith = (entry, definition: IndexDefinition.t) =>
+  definition.columns->Array.length <= entry.columns->Array.length &&
+    definition.columns->Array.everyWithIndex((column, idx) =>
+      switch entry.columns->Array.get(idx) {
+      | Some(actual) => actual.name === column.name && actual.direction === column.direction
+      | None => false
+      }
+    )
+
+// How much of an existing index has to line up before it counts as coverage.
+//
+// A schema-declared `@index` is a promise about the physical schema, so it is
+// matched `Exact`: whether some composite index happens to exist must not
+// change what a fresh database ends up with, or two indexers on the same
+// schema would hold different tables.
+//
+// An automatic getWhere index is an optimization nobody declared, so
+// `LeadingColumns` is enough — an existing composite that already starts with
+// the column serves the query, and building a second one would only cost write
+// amplification.
+type coverage = Exact | LeadingColumns
+
 // Why an index can't serve a request, in the order the checks are worth
 // reporting. `None` means it can.
-let rejectReason = (entry, definition: IndexDefinition.t) =>
+let rejectReason = (entry, definition: IndexDefinition.t, ~coverage) =>
   if entry.tableName !== definition.tableName {
     Some(`it is on table "${entry.tableName}"`)
   } else if !entry.isValid {
@@ -120,32 +144,28 @@ let rejectReason = (entry, definition: IndexDefinition.t) =>
     Some("it indexes an expression rather than plain columns")
   } else if entry.method !== definition.method {
     Some(`it uses the ${entry.method} access method, not ${definition.method}`)
-  } else if (
-    definition.columns->Array.length > entry.columns->Array.length ||
-      !(
-        definition.columns->Array.everyWithIndex((column, idx) =>
-          switch entry.columns->Array.get(idx) {
-          | Some(actual) => actual.name === column.name && actual.direction === column.direction
-          | None => false
-          }
-        )
-      )
-  ) {
+  } else if !(entry->leadsWith(definition)) {
     Some(
       `it covers (${entry.columns
         ->Array.map(IndexDefinition.columnKey)
         ->Array.joinUnsafe(", ")}) instead of leading with the requested columns`,
     )
+  } else if coverage === Exact && entry.columns->Array.length !== definition.columns->Array.length {
+    Some(
+      `it covers (${entry.columns
+        ->Array.map(IndexDefinition.columnKey)
+        ->Array.joinUnsafe(", ")}) rather than exactly the declared columns`,
+    )
   } else {
     None
   }
 
-// A leading-column match is enough: a btree on (a, b) serves everything a btree
-// on (a) does. The reverse isn't true, which is why the order matters.
-let satisfies = (entry, definition) => entry->rejectReason(definition)->Option.isNone
+let satisfies = (entry, definition, ~coverage) =>
+  entry->rejectReason(definition, ~coverage)->Option.isNone
 
 // The index is byte-for-byte what `definition` asks for, valid or not. Used to
-// decide ownership, where a prefix match would be too loose.
+// decide ownership, where even an exact-coverage match would be too loose: a
+// unique index covering the same columns still isn't one the indexer created.
 let isExactly = (entry, definition: IndexDefinition.t) =>
   entry.tableName === definition.tableName &&
   entry.method === definition.method &&
@@ -153,18 +173,15 @@ let isExactly = (entry, definition: IndexDefinition.t) =>
   !entry.isPartial &&
   !entry.isExpression &&
   entry.columns->Array.length === definition.columns->Array.length &&
-  definition.columns->Array.everyWithIndex((column, idx) =>
-    switch entry.columns->Array.get(idx) {
-    | Some(actual) => actual.name === column.name && actual.direction === column.direction
-    | None => false
-    }
-  )
+  entry->leadsWith(definition)
 
 type t = {byName: dict<entry>}
 
 let make = () => {byName: Dict.make()}
 
 let set = (catalog, entry) => catalog.byName->Dict.set(entry.name, entry)
+
+let remove = (catalog, name) => catalog.byName->Utils.Dict.deleteInPlace(name)
 
 let fromRows = (~rows) => {
   let catalog = make()
@@ -178,8 +195,8 @@ let entries = catalog => catalog.byName->Dict.valuesToArray
 
 let size = catalog => catalog.byName->Dict.keysToArray->Array.length
 
-let find = (catalog, definition) =>
-  catalog->entries->Array.find(entry => entry->satisfies(definition))
+let find = (catalog, definition, ~coverage) =>
+  catalog->entries->Array.find(entry => entry->satisfies(definition, ~coverage))
 
 let invalidNames = catalog =>
   catalog
