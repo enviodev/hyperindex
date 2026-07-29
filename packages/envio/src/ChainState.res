@@ -600,6 +600,24 @@ let hasProcessedToEndblock = (cs: t) => {
   }
 }
 
+// Caught up as judged by persisted values alone: progress reached the endBlock,
+// or the head the previous run had already observed (less the lag that holds the
+// tip back). Unlike `isFetchingAtHead` this doesn't move when a fresh height
+// lands, so a run resumed at the head still knows it was caught up even once the
+// head has run away from it while the indexer was down.
+let isDurablyCaughtUp = (cs: t) => {
+  let {committedProgressBlockNumber, fetchState} = cs
+  switch fetchState.endBlock {
+  | Some(endBlock) => committedProgressBlockNumber >= endBlock
+  | None =>
+    // The configured lag, not the fetch state's: pre-threshold that one also
+    // carries maxReorgDepth, which would read a chain a whole reorg depth behind
+    // the head as caught up.
+    fetchState.knownHeight > 0 &&
+      committedProgressBlockNumber >= fetchState.knownHeight - cs.chainConfig.blockLag
+  }
+}
+
 let getHighestBlockBelowThreshold = (cs: t): int => {
   let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.chainConfig.maxReorgDepth
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold

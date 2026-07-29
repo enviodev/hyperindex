@@ -304,6 +304,7 @@ let makeFromDbState = (
     ~onError,
     ~onExit?,
   )
+  state.crossChainState->CrossChainState.markCaughtUpOnResume
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
     state.effectState->EffectState.setUnregisteredCacheCount(~effectName, ~scope, ~count)
   })

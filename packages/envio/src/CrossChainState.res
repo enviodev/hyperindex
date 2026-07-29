@@ -174,8 +174,13 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
 let isSettledAtHead = (crossChainState: t) => {
   let settled = ref(crossChainState->nextItemIsNone)
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    if !(crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-      ->ChainState.isFetchingAtHead) {
+    if (
+      !(
+        crossChainState
+        ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+        ->ChainState.isFetchingAtHead
+      )
+    ) {
       settled := false
     }
   }
@@ -187,6 +192,32 @@ let markCaughtUpIfSettled = (crossChainState: t) =>
   if crossChainState->isSettledAtHead {
     crossChainState.isCaughtUp = true
   }
+
+// The same resume, decided from persisted values at construction instead of from
+// the fetch frontier. A run that reached the head and died before finalizing has
+// no batch to process on resume, and by the time the first height lands the head
+// may have moved on — at which point no chain looks at head any more and the
+// indexes it still owes would wait out another whole backfill. Deciding here,
+// before any source request, keeps that debt tied to the progress that was
+// actually committed. Skipped once every chain carries `ready_at`: those indexes
+// were committed together with the stamps.
+let markCaughtUpOnResume = (crossChainState: t) => {
+  let everyChainCaughtUp = ref(crossChainState.chainIds->Array.length > 0)
+  let everyChainReady = ref(true)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    if !(cs->ChainState.isDurablyCaughtUp) {
+      everyChainCaughtUp := false
+    }
+    if !(cs->ChainState.isReady) {
+      everyChainReady := false
+    }
+  }
+
+  if everyChainCaughtUp.contents && !everyChainReady.contents && crossChainState->nextItemIsNone {
+    crossChainState.isCaughtUp = true
+  }
+}
 
 // Concludes the FinalizingIndexes phase: stamps every chain with the `ready_at`
 // already committed alongside the deferred schema indexes and switches the

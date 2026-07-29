@@ -33,6 +33,7 @@ let createBatch: (
 let enterReorgThreshold: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markCaughtUpIfSettled: t => unit
+let markCaughtUpOnResume: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 
 // Fetch control.
