@@ -361,6 +361,49 @@ describe("Serialising builds", () => {
     t.expect((beforeBuild, afterBuild, afterDrop)).toEqual((false, true, false))
   })
 
+  // A getWhere build settles for any index leading with its column, a schema
+  // index doesn't. Sharing one in-flight slot between them would let the
+  // declared index resolve on the getWhere's answer and never get built.
+  Async.it("Doesn't let an Exact request resolve on an in-flight LeadingColumns build", async t => {
+    let manager = IndexManager.make()
+    let composite = makeRow(
+      ~tableName="Token",
+      ~indexName="Token_owner_id_minted_at",
+      ~columns=["owner_id", "minted_at"],
+    )
+    let exactRuns = ref(0)
+    let releaseLeading = ref(() => ())
+
+    let leading =
+      manager->IndexManager.ensure(~definition=ownerId, ~coverage=LeadingColumns, ~build=async () => {
+        await Promise.make((resolve, _) => releaseLeading := (() => resolve()))
+        // The composite already serves the query, so nothing under the
+        // generated name is created.
+        manager->IndexManager.record(composite->IndexCatalog.fromRow)
+      })
+    let exact =
+      manager->IndexManager.ensure(~definition=ownerId, ~coverage=Exact, ~build=async () => {
+        exactRuns := exactRuns.contents + 1
+        manager->IndexManager.record(
+          makeRow(
+            ~tableName="Token",
+            ~indexName=ownerId->IndexDefinition.name,
+            ~columns=["owner_id"],
+          )->IndexCatalog.fromRow,
+        )
+      })
+
+    await tick()
+    releaseLeading.contents()
+    await leading
+    await exact
+
+    t.expect((exactRuns.contents, manager->names)).toEqual((
+      1,
+      ["Token_owner_id_minted_at", ownerId->IndexDefinition.name]->Array.toSorted(String.compare),
+    ))
+  })
+
   Async.it("Replaces the whole catalog on reload, so a restart is authoritative", async t => {
     let manager = IndexManager.make()
     await manager->build(~definition=ownerId, ~run=() => Promise.resolve())

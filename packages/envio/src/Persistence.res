@@ -98,8 +98,11 @@ type storage = {
   // `finalizeBackfill`: an index dropped or invalidated while it was down would
   // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
   ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
-  // Creates every schema-defined index still missing and stamps `ready_at` on
-  // the given chains, atomically. Called once, when backfill completes.
+  // Creates every schema-defined index still missing, then stamps `ready_at` on
+  // the given chains. Called once, when backfill completes. The indexes are
+  // committed one at a time so a failure part way through doesn't undo the ones
+  // already built; `ready_at` is only written once they all verify, and all
+  // chains are stamped together.
   finalizeBackfill: (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<ChainId.t>,

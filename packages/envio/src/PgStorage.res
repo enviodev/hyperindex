@@ -1886,16 +1886,22 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     // Reached only once every definition is verified against pg_catalog, so a
     // crash either leaves `ready_at` null and the retry finds the indexes
     // already built, or commits readiness the schema backs.
+    //
+    // One transaction for the whole set: readiness is an indexer-wide fact, and
+    // a crash part way through would otherwise leave some chains stamped and
+    // some not, reporting the indexer as half ready.
     let setReadyAtQuery = InternalTable.Chains.makeSetReadyAtQuery(~pgSchema)
-    for idx in 0 to chainIds->Array.length - 1 {
-      let _ = await sql->Postgres.preparedUnsafe(
-        setReadyAtQuery,
-        [
-          readyAt->(Utils.magic: Date.t => unknown),
-          chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
-        ]->(Utils.magic: array<unknown> => unknown),
-      )
-    }
+    let _ = await sql->Postgres.beginSql(async sql => {
+      for idx in 0 to chainIds->Array.length - 1 {
+        let _ = await sql->Postgres.preparedUnsafe(
+          setReadyAtQuery,
+          [
+            readyAt->(Utils.magic: Date.t => unknown),
+            chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
+          ]->(Utils.magic: array<unknown> => unknown),
+        )
+      }
+    })
 
     Logging.info({
       "storage": storageName,
