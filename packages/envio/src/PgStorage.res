@@ -1067,14 +1067,19 @@ let rec writeBatch = async (
     | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
       Some(
         sql => {
-          let promises = allEntities->Array.map(entityConfig => {
-            sql->EntityHistory.rollback(
-              ~pgSchema,
-              ~entityName=entityConfig.name,
-              ~entityIndex=entityConfig.index,
-              ~rollbackTargetCheckpointId,
-            )
-          })
+          // Postgres owns history tables only for Postgres-backed entities;
+          // ClickHouse-only entities have none to roll back.
+          let promises =
+            allEntities
+            ->Array.filter(entityConfig => entityConfig.storage.postgres)
+            ->Array.map(entityConfig => {
+              sql->EntityHistory.rollback(
+                ~pgSchema,
+                ~entityName=entityConfig.name,
+                ~entityIndex=entityConfig.index,
+                ~rollbackTargetCheckpointId,
+              )
+            })
           promises
           ->Array.push(
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),

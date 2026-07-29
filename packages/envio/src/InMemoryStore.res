@@ -108,7 +108,11 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
+  // Rollback data comes from Postgres entity history, which is kept only for
+  // Postgres-backed entities. ClickHouse-only entities have no history to
+  // restore from, so a reorg leaves them un-reverted in the sink.
   let _ = await persistence.allEntities
+  ->Array.filter(entityConfig => entityConfig.storage.postgres)
   ->Array.map(async entityConfig => {
     let entityTable = state->getInMemTable(~entityConfig)
 
