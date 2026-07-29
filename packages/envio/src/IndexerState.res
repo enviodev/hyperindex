@@ -90,6 +90,10 @@ type t = {
   mutable processedBatchesCount: int,
   // The single in-flight write loop, None when idle.
   mutable writeFiber: option<promise<unit>>,
+  // The single in-flight finalization, None when none is running. Every path
+  // that reaches the FinalizingIndexes phase awaits this one instead of
+  // starting a second pass over the same indexes.
+  mutable finalizeFiber: option<promise<unit>>,
   // Set once a write throws, to stop the loop. The error itself goes to onError.
   mutable hasFailedWrite: bool,
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
@@ -191,6 +195,7 @@ let make = (
     processedBatches: [],
     processedBatchesCount: 0,
     writeFiber: None,
+    finalizeFiber: None,
     hasFailedWrite: false,
     commitWaiters: [],
     chainMeta: Dict.make(),
@@ -461,6 +466,7 @@ let processedCheckpointId = (state: t) => state.processedCheckpointId
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber
+let finalizeFiber = (state: t) => state.finalizeFiber
 let hasFailedWrite = (state: t) => state.hasFailedWrite
 let chainMetaDirty = (state: t) => state.chainMetaDirty
 let chainMetaThrottler = (state: t) => state.chainMetaThrottler
@@ -806,6 +812,9 @@ let recordWriteFailure = (state: t, exn) => {
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)
 let endWriteFiber = (state: t) => state.writeFiber = None
+
+let beginFinalizeFiber = (state: t, fiber) => state.finalizeFiber = Some(fiber)
+let endFinalizeFiber = (state: t) => state.finalizeFiber = None
 
 // Resolve and clear everyone waiting on a commit so they can re-evaluate.
 let wakeCommitWaiters = (state: t) => {

@@ -1709,15 +1709,14 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     ->Promise.all
   }
 
-  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`:
-  // its builds have to share one transaction with `ready_at`, and waiting on
-  // the per-table queues while holding that transaction open is a good way to
-  // deadlock. It's safe because the caller guarantees exclusivity —
-  // `FinalizeBackfill.run` is reached from the processing loop with processing
-  // already paused, so no handler can be running a getWhere. Were that to
-  // change, an automatic build landing the same identity mid-transaction would
-  // take the create to "already exists" and roll `ready_at` back with it; the
-  // catalog refresh below means the retry recovers rather than looping.
+  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
+  // It's safe because the caller guarantees exclusivity — `FinalizeBackfill.run`
+  // is reached from the processing loop with processing already paused, so no
+  // handler can be running a getWhere.
+  //
+  // Each index is built on its own rather than in one transaction with
+  // `ready_at`: a build that dies half way through a large schema would
+  // otherwise roll back every index before it and make the retry start over.
   let finalizeBackfill = async (
     ~entities: array<Internal.entityConfig>,
     ~chainIds: array<int>,
@@ -1727,8 +1726,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
     )
 
-    // Resolved up front so a name held by an unrelated index fails before the
-    // transaction opens, rather than rolling one back.
+    // Resolved up front so a name held by an unrelated index fails before any
+    // DDL runs, rather than part way through the set.
     //
     // `Exact`, so the set built here is decided by the schema alone: matching a
     // declared index against a composite that happens to lead with the same
@@ -1770,47 +1769,31 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
     let timeRef = Performance.now()
 
-    let run = () =>
-      sql->Postgres.beginSql(async sql => {
-        let verified = []
-        for idx in 0 to missing->Array.length - 1 {
-          let entry = await sql->runAndVerify(missing->Array.getUnsafe(idx))
-          verified->Array.push(entry)->ignore
-        }
-        let _ = await sql->Postgres.preparedUnsafe(
-          InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
-          [
-            readyAt->(Utils.magic: Date.t => unknown),
-            chainIds->(Utils.magic: array<int> => unknown),
-          ]->(Utils.magic: array<unknown> => unknown),
-        )
-        verified
-      })
-
-    let verified = switch await run() {
-    | verified => verified
-    | exception exn =>
-      // A rollback takes the indexes with it, but a connection lost while
-      // acknowledging the COMMIT leaves them in place and unrecorded. Re-reading
-      // the schema means the retry plans against the database rather than
-      // replaying creates that can only raise "already exists" and never reach
-      // ready.
-      try {
-        let _ = await refreshIndexCatalog()
-      } catch {
-      | refreshExn =>
-        Logging.debug({
-          "storage": storageName,
-          "msg": "Could not re-read the index catalog after a failed finalize. The next attempt reads it again.",
-          "err": refreshExn->Utils.prettifyExn,
-        })
+    // Sequential, one committed index at a time: whatever is built before a
+    // failure stays built and recorded, so the retry owes only the rest.
+    for idx in 0 to missing->Array.length - 1 {
+      let prepared = missing->Array.getUnsafe(idx)
+      switch await sql->runAndVerify(prepared) {
+      | entry => indexManager->IndexManager.record(entry)
+      | exception exn =>
+        // The DDL is outside a transaction, so a create that commits and then
+        // fails its read-back leaves the index in place and unrecorded.
+        // Re-reading it means the retry plans against the database rather than
+        // replaying a create that can only raise "already exists".
+        await resyncIndex(prepared.name)
+        throw(exn)
       }
-      throw(exn)
     }
 
-    // Only after the commit: a rollback takes both the indexes and ready_at
-    // with it, and the catalog must not claim what the schema doesn't have.
-    verified->Array.forEach(entry => indexManager->IndexManager.record(entry))
+    // Reached only once every definition is verified against pg_catalog. A
+    // single statement, so a crash either leaves `ready_at` null and the retry
+    // finds the indexes already built, or commits readiness the schema backs.
+    let _ = await sql->Postgres.unpreparedUnsafe(
+      InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
+      [readyAt->(Utils.magic: Date.t => unknown), chainIds->(Utils.magic: array<int> => unknown)]->(
+        Utils.magic: array<unknown> => unknown
+      ),
+    )
 
     Logging.info({
       "storage": storageName,

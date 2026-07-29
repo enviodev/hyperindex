@@ -118,6 +118,14 @@ let aBIdName = aBId->IndexDefinition.name
 
 let readyAt = Date.fromString("2024-01-01T00:00:00Z")
 
+let readyAtByChainId = async pgSchema => {
+  let rows: array<{"id": int, "ready_at": Null.t<Date.t>}> =
+    await sql->Postgres.unsafe(
+      `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
+    )
+  rows->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
+}
+
 let catchMessage = promise =>
   promise
   ->Promise.thenResolve(_ => None)
@@ -323,6 +331,88 @@ describe("Indexes built against a real schema", () => {
       ),
       ~message="Later requests are served from the catalog instead of retrying a doomed create",
     ).toEqual(([], [aBIdName]))
+  })
+
+  // A finalize that dies part way through must not undo the indexes it already
+  // built, and must not claim readiness the schema doesn't back yet.
+  Async.it("Keeps the indexes it built when a later one fails, and retries the rest", async t => {
+    let pgSchema = "test_pg_indexes_partial_failure"
+    let tableName = "Triple"
+    let entity: Internal.entityConfig = {
+      ...entityA,
+      name: tableName,
+      table: Table.mkTable(
+        tableName,
+        ~fields=[
+          Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+          Table.mkField("first_id", String, ~isIndex=true, ~fieldSchema=S.string),
+          Table.mkField("second_id", String, ~isIndex=true, ~fieldSchema=S.string),
+          Table.mkField("third_id", String, ~isIndex=true, ~fieldSchema=S.string),
+        ],
+      ),
+    }
+    let indexNames =
+      ["first_id", "second_id", "third_id"]->Array.map(column =>
+        IndexDefinition.single(~tableName, ~column)->IndexDefinition.name
+      )
+    let secondName = indexNames->Array.getUnsafe(1)
+
+    let queries = []
+    let failSecondBuild = ref(true)
+    let flakySql = makeFlakySql(sql, queries, query =>
+      failSecondBuild.contents &&
+        query->String.includes("CREATE INDEX") &&
+        query->String.includes(secondName)
+    )
+    let storage = await setup(
+      ~pgSchema,
+      ~sql=flakySql,
+      ~entities=[entity, InternalTable.EnvioAddresses.entityConfig],
+    )
+    let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
+    let createdIndexNames = async () =>
+      (await loadCatalog(pgSchema))
+      ->IndexCatalog.entries
+      ->Array.filterMap((entry: IndexCatalog.entry) =>
+        indexNames->Array.includes(entry.name) ? Some(entry.name) : None
+      )
+      ->Array.toSorted(String.compare)
+    let attemptedBuilds = () =>
+      indexNames->Array.filter(name =>
+        queries->Array.some(query =>
+          query->String.includes("CREATE INDEX") && query->String.includes(name)
+        )
+      )
+
+    let failure = await storage.finalizeBackfill(~entities=[entity], ~chainIds, ~readyAt)->catchMessage
+
+    t.expect(
+      (
+        failure->Option.isSome,
+        await createdIndexNames(),
+        attemptedBuilds(),
+        await readyAtByChainId(pgSchema),
+      ),
+      ~message="The first index survives the failure, the third is never attempted, and nothing is ready",
+    ).toEqual((
+      true,
+      [indexNames->Array.getUnsafe(0)],
+      indexNames->Array.slice(~start=0, ~end=2),
+      chainIds->Array.map(id => (id, false)),
+    ))
+
+    failSecondBuild := false
+    queries->Utils.Array.clearInPlace
+    await storage.finalizeBackfill(~entities=[entity], ~chainIds, ~readyAt)
+
+    t.expect(
+      (await createdIndexNames(), attemptedBuilds(), await readyAtByChainId(pgSchema)),
+      ~message="The retry owes only what's left, and readiness is committed once it's all there",
+    ).toEqual((
+      indexNames->Array.toSorted(String.compare),
+      indexNames->Array.slice(~start=1, ~end=3),
+      chainIds->Array.map(id => (id, true)),
+    ))
   })
 
   Async.it("Skips the schema index an automatic build already created", async t => {
