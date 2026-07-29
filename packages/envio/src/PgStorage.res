@@ -1788,7 +1788,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     // Reached only once every definition is verified against pg_catalog. A
     // single statement, so a crash either leaves `ready_at` null and the retry
     // finds the indexes already built, or commits readiness the schema backs.
-    let _ = await sql->Postgres.preparedUnsafe(
+    let _ = await sql->Postgres.unpreparedUnsafe(
       InternalTable.Chains.makeSetReadyAtQuery(~pgSchema),
       [readyAt->(Utils.magic: Date.t => unknown), chainIds->(Utils.magic: array<int> => unknown)]->(
         Utils.magic: array<unknown> => unknown
