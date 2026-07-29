@@ -476,7 +476,8 @@ let isFinalizingIndexes = (state: t) =>
   state.crossChainState->CrossChainState.isCaughtUp &&
     !(state.crossChainState->CrossChainState.isRealtime)
 
-let markCaughtUp = (state: t) => state.crossChainState->CrossChainState.markCaughtUp
+let markCaughtUpIfSettled = (state: t) =>
+  state.crossChainState->CrossChainState.markCaughtUpIfSettled
 
 let markReady = (state: t, ~readyAt) => state.crossChainState->CrossChainState.markReady(~readyAt)
 

@@ -101,16 +101,17 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
       scheduleFetch()
     }
 
+    // Nothing progressed, but a backfill that reached the head and died before
+    // finalizing resumes exactly here: it still owes the schema its deferred
+    // indexes, and no batch will ever come along to notice.
+    state->IndexerState.markCaughtUpIfSettled
+    if state->IndexerState.isFinalizingIndexes {
+      await FinalizeBackfill.run(state)
+    }
+
     // When resuming from persisted state, all events may already be processed.
     if EventProcessing.allChainsEventsProcessedToEndblock(state->IndexerState.chainStates) {
       Logging.info("All chains are caught up to end blocks.")
-      // A run that has nothing left to process still owes the schema its
-      // deferred indexes — otherwise a resume of a backfill that died right
-      // before finalizing would report ready without them.
-      state->IndexerState.markCaughtUp
-      if state->IndexerState.isFinalizingIndexes {
-        await FinalizeBackfill.run(state)
-      }
       if !(state->IndexerState.keepProcessAlive) {
         await ExitOnCaughtUp.run(state)
       }

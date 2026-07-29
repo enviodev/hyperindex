@@ -167,10 +167,26 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
   crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
 }
 
-// Enter the FinalizingIndexes phase without a batch. Used when the loop finds
-// every chain already processed to its endblock — a resume that has nothing
-// left to do still owes the schema its deferred indexes before it reports ready.
-let markCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp = true
+// Every chain has buffered up to its head (or endblock) with nothing
+// processable left. Derived from current state rather than from the flag a
+// progressed batch sets, because a run that reached the head and died before
+// finalizing resumes with no batch to process — nothing would ever set it.
+let isSettledAtHead = (crossChainState: t) => {
+  let settled = ref(crossChainState->nextItemIsNone)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    if !(crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+      ->ChainState.isFetchingAtHead) {
+      settled := false
+    }
+  }
+  settled.contents
+}
+
+// Enter the FinalizingIndexes phase without a batch, for the resume above.
+let markCaughtUpIfSettled = (crossChainState: t) =>
+  if crossChainState->isSettledAtHead {
+    crossChainState.isCaughtUp = true
+  }
 
 // Concludes the FinalizingIndexes phase: stamps every chain with the `ready_at`
 // already committed alongside the deferred schema indexes and switches the
