@@ -2,15 +2,15 @@ open Vitest
 
 let sql = PgStorage.makeClient()
 
-let hasIndex = async indexName => {
+let hasIndex = async definition => {
   let rows =
     (
-      await sql->Postgres.unsafe(
-        IndexRegistry.makeCatalogQuery(~pgSchema=Env.Db.publicSchema),
-      )
-    )->S.parseOrThrow(IndexRegistry.catalogRowsSchema)
-  rows->Array.some((row: IndexRegistry.catalogRow) => row.indexName === indexName)
+      await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema=Env.Db.publicSchema))
+    )->S.parseOrThrow(IndexCatalog.rowsSchema)
+  IndexCatalog.fromRows(~rows)->IndexCatalog.find(definition)->Option.isSome
 }
+
+let aBIdIndex = IndexDefinition.single(~tableName="A", ~column="b_id")
 
 let isReadyInDb = async () => {
   let rows: array<{"ready_at": Null.t<Date.t>}> =
@@ -66,7 +66,7 @@ describe("Resuming a backfill that never finalized", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      (finalizeCalls.contents, await isReadyInDb(), await hasIndex("A_b_id")),
+      (finalizeCalls.contents, await isReadyInDb(), await hasIndex(aBIdIndex)),
       ~message="The first run reached the head, then died before committing anything",
     ).toEqual((1, false, false))
 
@@ -85,7 +85,7 @@ describe("Resuming a backfill that never finalized", () => {
       (
         finalizeCalls.contents,
         await isReadyInDb(),
-        await hasIndex("A_b_id"),
+        await hasIndex(aBIdIndex),
         await restarted.metric("envio_progress_ready"),
       ),
       ~message="The resumed run owes the schema its indexes even with no work left",

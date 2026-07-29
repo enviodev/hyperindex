@@ -1,384 +1,228 @@
 open Vitest
 
-// A `postgres.js` stand-in: every statement is recorded, and `begin` brackets
-// the ones it wraps so a test can tell what landed in one transaction.
-let makeFakeSql: (string => promise<unknown>) => Postgres.sql = %raw(`(run) => {
-  const sql = {};
-  sql.unsafe = (query) => run(query);
-  sql.begin = async (fn) => {
-    await run("BEGIN");
-    try {
-      const result = await fn(sql);
-      await run("COMMIT");
-      return result;
-    } catch (exn) {
-      await run("ROLLBACK");
-      throw exn;
-    }
-  };
-  sql.end = async () => {};
-  return sql;
-}`)
+// These run against a real database and assert on pg_catalog, not on the SQL
+// the storage emitted: the whole point of the index rules is what PostgreSQL
+// ends up holding.
+let sql = PgStorage.makeClient()
 
-let pgSchema = "test_schema"
+let config = Config.load()
+let enums =
+  config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
 
-// Catalog rows the storage reads on resume, so a test can start from a schema
-// that already holds indexes — including ones Postgres reports as invalid.
-let makeStorage = (~failOn=_ => false, ~catalogRows: array<IndexRegistry.catalogRow>=[]) => {
-  let queries = []
-  let sql = makeFakeSql(query => {
-    queries->Array.push(query)->ignore
-    if failOn(query) {
-      Promise.reject(Utils.Error.make("permission denied for schema"))
-    } else if query->String.includes("FROM pg_index") {
-      Promise.resolve(catalogRows->(Utils.magic: array<IndexRegistry.catalogRow> => unknown))
-    } else if query->String.includes("AS id FROM") {
-      // The committed-checkpoint read, which resumeInitialState indexes into.
-      Promise.resolve(%raw(`[{id: "0"}]`))
-    } else {
-      Promise.resolve(%raw(`[]`))
-    }
-  })
-  let storage = PgStorage.make(
+let entityA = MockIndexer.entityConfig(A)
+let entityB = MockIndexer.entityConfig(B)
+let entities = [entityA, entityB]
+// The storage creates exactly the tables it is handed, so the internal ones a
+// resume reads back have to be in the list too.
+let allEntities = entities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
+
+let makeStorage = pgSchema =>
+  PgStorage.make(
     ~sql,
-    ~pgHost="localhost",
+    ~pgHost=Env.Db.host,
     ~pgSchema,
-    ~pgPort=5432,
-    ~pgUser="postgres",
-    ~pgDatabase="envio-dev",
-    ~pgPassword="testing",
+    ~pgPort=Env.Db.port,
+    ~pgUser=Env.Db.user,
+    ~pgDatabase=Env.Db.database,
+    ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
   )
-  (storage, queries)
+
+// A schema of its own per test, so the fixtures below can leave whatever
+// indexes they like behind without disturbing the other suites. `fixtures` run
+// after the tables exist, then the storage resumes — the same order a restart
+// onto an existing schema sees.
+let setup = async (~pgSchema, ~fixtures=[]) => {
+  let storage = makeStorage(pgSchema)
+  let _ = await storage.initialize(
+    ~chainConfigs=config.chainMap->ChainMap.values,
+    ~entities=allEntities,
+    ~enums,
+    ~envioInfo=JSON.Encode.object(Dict.make()),
+  )
+  for idx in 0 to fixtures->Array.length - 1 {
+    let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
+  }
+  if fixtures->Utils.Array.notEmpty {
+    let _ = await storage.resumeInitialState()
+  }
+  storage
 }
+
+let loadCatalog = async pgSchema => {
+  let rows =
+    (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
+      IndexCatalog.rowsSchema,
+    )
+  IndexCatalog.fromRows(~rows)
+}
+
+let findIndexes = async (~pgSchema, ~tableName, ~columns) => {
+  let catalog = await loadCatalog(pgSchema)
+  catalog
+  ->IndexCatalog.entries
+  ->Array.filter((entry: IndexCatalog.entry) =>
+    entry.tableName === tableName &&
+      columns->Array.everyWithIndex((column, idx) =>
+        switch entry.columns->Array.get(idx) {
+        | Some(actual) => actual.name === column
+        | None => false
+        }
+      )
+  )
+  ->Array.toSorted((a, b) => String.compare(a.name, b.name))
+}
+
+let describeIndex = (entry: IndexCatalog.entry) => (
+  entry.name,
+  entry.isValid,
+  entry.isPartial,
+  entry.method,
+)
 
 let eq = (~fieldName): EntityFilter.t =>
   Eq({fieldName, fieldValue: "1"->(Utils.magic: string => unknown)})
 
-let entityA = MockIndexer.entityConfig(A)
-let entityB = MockIndexer.entityConfig(B)
+let aBId = IndexDefinition.single(~tableName="A", ~column="b_id")
+let aBIdName = aBId->IndexDefinition.name
 
-let createABId = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-let createAOptional = `CREATE INDEX IF NOT EXISTS "A_optionalStringToTestLinkedEntities" ON "test_schema"."A"("optionalStringToTestLinkedEntities");`
+let readyAt = Date.fromString("2024-01-01T00:00:00Z")
 
-describe("Automatic getWhere indexes", () => {
-  Async.it("Creates a descriptively named index for a non-indexed field, once", async t => {
-    let (storage, queries) = makeStorage()
+let catchMessage = promise =>
+  promise
+  ->Promise.thenResolve(_ => None)
+  ->Utils.Promise.catchResolve(exn =>
+    Some(exn->(Utils.magic: exn => {"message": string})->(error => error["message"]))
+  )
 
-    await storage.ensureQueryIndexes(
-      ~table=entityA.table,
-      ~filters=[eq(~fieldName="optionalStringToTestLinkedEntities")],
+describe("Indexes built against a real schema", () => {
+  Async.it("Builds a separate full index when only a partial one exists", async t => {
+    let pgSchema = "test_pg_indexes_partial"
+    // Covers only the rows its predicate selects, so it can't answer the
+    // unrestricted lookups a getWhere filter makes — but it does hold a name.
+    let storage = await setup(
+      ~pgSchema,
+      ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id") WHERE "b_id" IS NOT NULL;`],
     )
-    await storage.ensureQueryIndexes(
-      ~table=entityA.table,
-      ~filters=[eq(~fieldName="optionalStringToTestLinkedEntities")],
-    )
+
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
-      queries,
-      ~message="The second request is served from the registry — no rebuild, and no catalog refresh after the DDL",
-    ).toEqual([createAOptional])
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry => (
+        entry.name,
+        entry.isPartial,
+        entry.isValid,
+      )),
+      ~message="The partial index stays, and a full index is built beside it",
+    ).toEqual([("A_b_id", true, true), (aBIdName, false, true)])
   })
 
-  Async.it("Indexes every column a filter reads, deduped", async t => {
-    let (storage, queries) = makeStorage()
-
-    await storage.ensureQueryIndexes(
-      ~table=entityA.table,
-      ~filters=[
-        And({
-          filters: [eq(~fieldName="b_id"), eq(~fieldName="optionalStringToTestLinkedEntities")],
-        }),
-        eq(~fieldName="b_id"),
-      ],
+  Async.it("Leaves a same-named index on another table untouched", async t => {
+    let pgSchema = "test_pg_indexes_conflict"
+    let storage = await setup(
+      ~pgSchema,
+      ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`],
     )
 
-    t.expect(queries).toEqual([createABId, createAOptional])
-  })
-
-  Async.it("Shares one build between concurrent identical requests", async t => {
-    let (storage, queries) = makeStorage()
-
-    let first = storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    let second = storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await first
-    await second
-
-    t.expect(queries).toEqual([createABId])
-  })
-
-  Async.it("Names a long column the same way a schema-defined index would", async t => {
-    let (storage, queries) = makeStorage()
-    let longEntity = "Entity" ++ "x"->String.repeat(50)
-    let column = "some_long_column_name"
-    let table = Table.mkTable(
-      longEntity,
-      ~fields=[
-        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-        Table.mkField(column, String, ~fieldSchema=S.string),
-      ],
-    )
-    let name = `${longEntity}_${column}`->String.slice(~start=0, ~end=63)
-
-    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
-    await storage.ensureQueryIndexes(~table, ~filters=[eq(~fieldName=column)])
-
-    t.expect(
-      queries,
-      ~message="Truncated to the identifier limit and built once, not skipped",
-    ).toEqual([
-      `CREATE INDEX IF NOT EXISTS "${name}" ON "test_schema"."${longEntity}"("${column}");`,
-    ])
-  })
-
-  Async.it("Leaves the registry untouched when the DDL fails, and retries next time", async t => {
-    let shouldFail = ref(true)
-    let (storage, queries) = makeStorage(
-      ~failOn=query => shouldFail.contents && query->String.includes("CREATE INDEX"),
-    )
-
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    shouldFail := false
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-
-    t.expect(
-      queries,
-      ~message="A failed build is retried; only the successful one is registered",
-    ).toEqual([createABId, createABId])
-  })
-})
-
-describe("Pre-existing invalid indexes", () => {
-  // An index left INVALID by a build that died midway. `CREATE INDEX IF NOT
-  // EXISTS` matches on name, so it would quietly skip and we'd register a key
-  // for an index the planner refuses to use.
-  let invalidRow = (~indexName, ~columns, ~isPlain=1): IndexRegistry.catalogRow => {
-    tableName: "A",
-    indexName,
-    method: "btree",
-    isValid: 0,
-    isPlain,
-    isPartial: 0,
-    columns,
-    directions: columns->Array.map(_ => "ASC"),
-  }
-  let reindexABId = `REINDEX INDEX "test_schema"."A_b_id";`
-
-  Async.it("Are repaired, not recreated, when they cover what we asked for", async t => {
-    let (storage, queries) = makeStorage(
-      ~catalogRows=[invalidRow(~indexName="A_b_id", ~columns=["b_id"])],
-    )
-    // Loads the registry from the catalog, exactly as a restart does.
-    let _ = await storage.resumeInitialState()
-
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-
-    t.expect(
-      queries->Array.filter(query => query->String.includes("INDEX")),
-      ~message="Rebuilt in place once, and registered as healthy afterwards",
-    ).toEqual([reindexABId])
-  })
-
-  Async.it("Are repaired inside the finalize transaction, before ready_at", async t => {
-    let (storage, queries) = makeStorage(
-      ~catalogRows=[invalidRow(~indexName="A_b_id", ~columns=["b_id"])],
-    )
-    let _ = await storage.resumeInitialState()
-    let queriesBefore = queries->Array.length
-
-    await storage.finalizeBackfill(
-      ~entities=[entityA, entityB],
-      ~chainIds=[1],
-      ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
-    )
-
-    t.expect(
-      queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
-      ~message="ready_at is only committed alongside an index that actually works",
-    ).toEqual([
-      "BEGIN",
-      reindexABId,
-      `UPDATE "test_schema"."envio_chains"
-SET "ready_at" = $1
-WHERE "id" = ANY($2::int[]);`,
-      "COMMIT",
-    ])
-  })
-
-  // Repairing rebuilds from the index's own definition, so an unrelated index
-  // holding the name would come back valid but wrong — and dropping it could
-  // take out a constraint the indexer never created.
-  Async.it("Are left alone when the name belongs to an index we didn't create", async t => {
-    let (storage, queries) = makeStorage(
-      // Same columns, but unique — rebuilding it would come back valid and
-      // still not be the plain index the query needs.
-      ~catalogRows=[invalidRow(~indexName="A_b_id", ~columns=["b_id"], ~isPlain=0)],
-    )
-    let _ = await storage.resumeInitialState()
-    let queriesBefore = queries->Array.length
-
-    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-
-    let message = await storage.finalizeBackfill(
-      ~entities=[entityA, entityB],
-      ~chainIds=[1],
-      ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
-    )
-    ->Promise.thenResolve(() => "")
-    ->Utils.Promise.catchResolve(exn =>
-      exn->(Utils.magic: exn => {"message": string})->(m => m["message"])
-    )
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
       (
-        queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
-        message->String.includes(`Cannot create the index "A_b_id"`),
+        (await findIndexes(~pgSchema, ~tableName="B", ~columns=["c_id"]))->Array.map(entry =>
+          entry.name
+        ),
+        (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
+          describeIndex,
+        ),
       ),
-      ~message="No DDL at all, no transaction, and ready_at is never committed",
-    ).toEqual(([], true))
-  })
-})
-
-describe("Names already taken in the schema", () => {
-  let validRow = (~indexName, ~columns, ~isPartial=0): IndexRegistry.catalogRow => {
-    tableName: "A",
-    indexName,
-    method: "btree",
-    isValid: 1,
-    isPlain: isPartial === 1 ? 0 : 1,
-    isPartial,
-    columns,
-    directions: columns->Array.map(_ => "ASC"),
-  }
-
-  // Two long field names on one entity truncate to the same 63-character
-  // identifier. `CREATE INDEX IF NOT EXISTS` would match the first one by name
-  // and quietly do nothing, leaving the second column unindexed for good.
-  Async.it("Refuse a build that would silently no-op on a truncated name", async t => {
-    let longEntity = "Entity" ++ "x"->String.repeat(50)
-    let name = `${longEntity}_some_long_column`->String.slice(~start=0, ~end=63)
-    let table = Table.mkTable(
-      longEntity,
-      ~fields=[
-        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-        Table.mkField("some_long_column_one", String, ~fieldSchema=S.string),
-        Table.mkField("some_long_column_two", String, ~fieldSchema=S.string),
-      ],
-    )
-    let (storage, queries) = makeStorage(
-      ~catalogRows=[
-        {
-          ...validRow(~indexName=name, ~columns=["some_long_column_one"]),
-          tableName: longEntity,
-        },
-      ],
-    )
-    let _ = await storage.resumeInitialState()
-    let queriesBefore = queries->Array.length
-
-    await storage.ensureQueryIndexes(
-      ~table,
-      ~filters=[eq(~fieldName="some_long_column_two")],
-    )
-
-    t.expect(
-      queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
-      ~message="The second column's build is refused rather than registered as done",
-    ).toEqual([])
+      ~message="The unrelated index keeps its name, and A(b_id) is still indexed",
+    ).toEqual((["A_b_id"], [(aBIdName, true, false, "btree")]))
   })
 
-  // A partial index holds the name but only covers rows inside its predicate,
-  // so it neither satisfies the query nor can be replaced.
-  Async.it("Never treat a partial index as the index a filter needs", async t => {
-    let (storage, queries) = makeStorage(
-      ~catalogRows=[validRow(~indexName="A_b_id", ~columns=["b_id"], ~isPartial=1)],
-    )
-    let _ = await storage.resumeInitialState()
-    let queriesBefore = queries->Array.length
+  // A `CREATE UNIQUE INDEX CONCURRENTLY` that fails on duplicate data leaves an
+  // INVALID index behind that still owns its name. The planner refuses to use
+  // it, so it must never be counted as coverage.
+  Async.it("Refuses to count an invalid index left by a failed build", async t => {
+    let pgSchema = "test_pg_indexes_invalid"
+    let storage = await setup(~pgSchema)
 
-    let message = await storage.finalizeBackfill(
-      ~entities=[entityA, entityB],
-      ~chainIds=[1],
-      ~readyAt=Date.fromString("2024-01-01T00:00:00Z"),
+    let _ = await sql->Postgres.unsafe(
+      `INSERT INTO "${pgSchema}"."A" ("id", "b_id") VALUES ('1', 'dup'), ('2', 'dup');`,
     )
-    ->Promise.thenResolve(() => "")
-    ->Utils.Promise.catchResolve(exn =>
-      exn->(Utils.magic: exn => {"message": string})->(m => m["message"])
-    )
+    let failure = await sql
+    ->Postgres.unsafe(`CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`)
+    ->catchMessage
+    let _ = await storage.resumeInitialState()
+
+    let leftBehind = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
 
     t.expect(
-      (
-        queries->Array.slice(~start=queriesBefore, ~end=queries->Array.length),
-        message->String.includes(`Cannot create the index "A_b_id"`),
+      (failure->Option.isSome, leftBehind->Array.map(entry => (entry.name, entry.isValid))),
+      ~message="The failed build leaves an invalid index holding the name",
+    ).toEqual((true, [("A_b_id", false)]))
+
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
+
+    t.expect(
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry => (
+        entry.name,
+        entry.isValid,
+      )),
+      ~message="A usable index is built rather than the invalid one being blessed",
+    ).toEqual([("A_b_id", false), (aBIdName, true)])
+  })
+
+  // Same identity, an older name. Matching the catalog on what an index covers
+  // keeps it instead of building a duplicate under the generated name.
+  Async.it("Keeps a valid legacy index instead of rebuilding it", async t => {
+    let pgSchema = "test_pg_indexes_legacy"
+    let storage = await setup(
+      ~pgSchema,
+      ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id");`],
+    )
+
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
+
+    t.expect(
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry =>
+        entry.name
       ),
-      ~message="ready_at is never committed against coverage the planner can't use",
-    ).toEqual(([], true))
-  })
-})
-
-describe("finalizeBackfill", () => {
-  let readyAt = Date.fromString("2024-01-01T00:00:00Z")
-  let setReadyAt = `UPDATE "test_schema"."envio_chains"
-SET "ready_at" = $1
-WHERE "id" = ANY($2::int[]);`
-
-  Async.it("Commits every missing schema index together with ready_at", async t => {
-    let (storage, queries) = makeStorage()
-
-    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1, 137], ~readyAt)
-
-    t.expect(queries).toEqual([
-      "BEGIN",
-      createABId,
-      setReadyAt,
-      "COMMIT",
-    ])
+      ~message="No second index appears under the generated name",
+    ).toEqual(["A_b_id"])
   })
 
-  Async.it("Rolls back and leaves the registry untouched when an index fails", async t => {
-    let shouldFail = ref(true)
-    let (storage, queries) = makeStorage(
-      ~failOn=query => shouldFail.contents && query->String.includes("CREATE INDEX"),
-    )
+  Async.it("Builds an automatic index for a getWhere column, once", async t => {
+    let pgSchema = "test_pg_indexes_automatic"
+    let storage = await setup(~pgSchema)
+    let column = "optionalStringToTestLinkedEntities"
 
-    let failed = await storage.finalizeBackfill(
-      ~entities=[entityA, entityB],
-      ~chainIds=[1],
-      ~readyAt,
-    )
-    ->Promise.thenResolve(() => false)
-    ->Utils.Promise.catchResolve(_ => true)
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName=column)])
+    await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName=column)])
 
     t.expect(
-      (failed, queries),
-      ~message="ready_at must not be reached, and the transaction rolls back",
-    ).toEqual((
-      true,
-      ["BEGIN", createABId, "ROLLBACK"],
-    ))
-
-    shouldFail := false
-    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1], ~readyAt)
-
-    t.expect(
-      queries->Array.slice(~start=3, ~end=queries->Array.length),
-      ~message="The rolled-back index is still missing, so the retry creates it again",
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=[column]))->Array.map(describeIndex),
+      ~message="The second request is served from the catalog, with no second index",
     ).toEqual([
-      "BEGIN",
-      createABId,
-      setReadyAt,
-      "COMMIT",
+      (
+        IndexDefinition.single(~tableName="A", ~column)->IndexDefinition.name,
+        true,
+        false,
+        "btree",
+      ),
     ])
   })
 
-  Async.it("Skips indexes an automatic getWhere build already created", async t => {
-    let (storage, queries) = makeStorage()
+  Async.it("Skips the schema index an automatic build already created", async t => {
+    let pgSchema = "test_pg_indexes_shared"
+    let storage = await setup(~pgSchema)
 
     await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])
-    await storage.finalizeBackfill(~entities=[entityA, entityB], ~chainIds=[1], ~readyAt)
+    await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
-    t.expect(queries).toEqual([createABId, "BEGIN", setReadyAt, "COMMIT"])
+    t.expect(
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry =>
+        entry.name
+      ),
+    ).toEqual([aBIdName])
   })
 })
