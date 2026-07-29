@@ -100,16 +100,39 @@ type query = {
 
 let withAddresses = (p: partition, addresses: AddressSet.t) => {...p, addresses}
 
+// The earliest block any of a selection's registrations can produce an item at,
+// or `None` when one of them is unrestricted and so can fire from the chain
+// start. Nothing below it is worth querying.
+let selectionStartBlock = (selection: selection) => {
+  let registrations = selection.onEventRegistrations
+  let earliest = ref(None)
+  let idx = ref(0)
+  let unrestricted = ref(registrations->Utils.Array.isEmpty)
+  while !unrestricted.contents && idx.contents < registrations->Array.length {
+    switch (registrations->Array.getUnsafe(idx.contents)).startBlock {
+    | None => unrestricted := true
+    | Some(startBlock) =>
+      switch earliest.contents {
+      | Some(current) if current <= startBlock => ()
+      | _ => earliest := Some(startBlock)
+      }
+    }
+    idx := idx.contents + 1
+  }
+  unrestricted.contents ? None : earliest.contents
+}
+
 // The selection a query over [fromBlock, toBlock] actually needs: a registration
 // whose own start block sits past the range can't produce an item there, so
 // leaving it out keeps the source from asking the server for its logs at all.
 // The address gate can't express this — it's contract-wide, so an unrestricted
 // sibling holds it open from the chain start for every registration alike.
 //
-// Returns the selection as-is when nothing is dropped (the common case) and when
-// everything would be, which happens only for an address-free partition sitting
-// below every one of its registrations' start blocks — there the query is
-// wasteful either way, and an empty selection is one no source can build.
+// Returns the selection as-is when nothing is dropped (the common case), and
+// for an open-ended query, which may reach any block and so can exclude nothing.
+// Also when every registration would be dropped: `selectionStartBlock` keeps a
+// partition's cursor at or above its earliest start block, so a query below all
+// of them shouldn't exist — and an empty selection is one no source can build.
 let narrowSelectionToRange = (selection: selection, ~toBlock) =>
   switch toBlock {
   | None => selection
@@ -2065,11 +2088,27 @@ let walkPartitionPending = (
     pqIdx := pqIdx.contents + 1
   }
 
+  // Nothing in this partition's selection can match below its earliest start
+  // block, so forward work skips straight to it instead of scanning up to it and
+  // discarding whole pages. Only the cursor moves — `latestFetchedBlock` still
+  // advances solely on a response, so no block is ever reported fetched that
+  // wasn't. Bounded by the head and the query end block: past either, the
+  // partition would offer no candidate at all, so it queries as before rather
+  // than going quiet until the chain reaches its start block.
+  let cursor = switch selectionStartBlock(p.selection) {
+  | Some(startBlock) if startBlock > cursor.contents =>
+    switch Utils.Math.minOptInt(Some(headBlockNumber), queryEndBlock) {
+    | Some(reachable) if startBlock <= reachable => startBlock
+    | _ => cursor.contents
+    }
+  | _ => cursor.contents
+  }
+
   canContinue.contents
     ? Some({
         partitionId,
         p,
-        cursor: cursor.contents,
+        cursor,
         chunksUsedThisCall: chunksUsedThisCall.contents,
         inFlightCount,
         queryEndBlock,

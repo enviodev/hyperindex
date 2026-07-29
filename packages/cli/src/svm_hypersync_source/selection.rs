@@ -33,12 +33,9 @@ pub struct SvmOnEventRegistrationInput {
     /// (placeholder); such a registration is never fetched or routed.
     pub program_id: String,
     pub is_wildcard: bool,
-    /// Earliest slot this registration accepts: its program's configured start
-    /// block, overridden by a `where.block.slot._gte`. 0 is unrestricted.
-    /// Gated per registration here because the address store's start block is
-    /// program-wide — a sibling registration without one keeps that gate open
-    /// from the chain start.
-    pub start_block: i64,
+    /// Earliest slot this registration accepts; absent is unrestricted. See
+    /// `crate::registration_start_block`.
+    pub start_block: Option<i64>,
     /// Hex-encoded discriminator. `None` matches every instruction in the
     /// program (lowest routing priority).
     pub discriminator: Option<String>,
@@ -102,8 +99,8 @@ pub(crate) struct Registration {
     pub contract_idx: u32,
     pub program_id: String,
     pub is_wildcard: bool,
-    /// Earliest slot this registration accepts; 0 is unrestricted.
-    pub start_block: i64,
+    /// Earliest slot this registration accepts; `None` is unrestricted.
+    pub start_block: Option<i64>,
     /// Decoded discriminator bytes; `None` = program-wide.
     pub discriminator: Option<Vec<u8>>,
     /// Original hex value for the query's `dN` filter.
@@ -217,7 +214,7 @@ impl Registration {
         store: &StoreInner,
     ) -> bool {
         self.program_id == instr.program_id
-            && address.slot >= self.start_block
+            && crate::registration_start_block::has_started(self.start_block, address.slot)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.slot)))
@@ -486,7 +483,7 @@ mod tests {
             contract_name: format!("P_{program_id}"),
             program_id: program_id.to_string(),
             is_wildcard,
-            start_block: 0,
+            start_block: None,
             discriminator: discriminator.map(str::to_string),
             discriminator_byte_len: byte_len,
             is_inner: None,
@@ -787,7 +784,7 @@ mod tests {
         open.contract_name = "Owned".to_string();
         let mut restricted = reg(1, PROG_A, Some("0x21"), 1, false);
         restricted.contract_name = "Owned".to_string();
-        restricted.start_block = 100;
+        restricted.start_block = Some(100);
         let (store, set, built) = build(&[open, restricted], &[0, 1], &[("Owned", PROG_A)]);
         let at = |slot: u64| {
             let mut instr = instruction(PROG_A, &[0x21]);

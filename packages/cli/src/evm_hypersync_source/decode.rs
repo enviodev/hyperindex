@@ -147,8 +147,8 @@ struct OnEventRegistration {
     /// at construction so every per-log gate is an index compare.
     contract_idx: u32,
     is_wildcard: bool,
-    /// Earliest block this registration accepts; 0 is unrestricted.
-    start_block: i64,
+    /// Earliest block this registration accepts; `None` is unrestricted.
+    start_block: Option<i64>,
     topic_filters: TopicFilters,
     params: Vec<ParamMeta>,
     decoder: DynSolEvent,
@@ -208,7 +208,7 @@ impl OnEventRegistration {
     ) -> bool {
         self.sighash == *topic0
             && self.topic_count == topic_count
-            && address.block_number >= self.start_block
+            && crate::registration_start_block::has_started(self.start_block, address.block_number)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.block_number)))
@@ -582,7 +582,7 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses: false,
-            start_block: 0,
+            start_block: None,
             topic_selections: no_filter_selection(sighash),
             block_fields: vec![],
             transaction_fields: vec![],
@@ -702,7 +702,7 @@ mod tests {
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
                 depends_on_addresses: false,
-                start_block: 0,
+                start_block: None,
                 topic_selections: no_filter_selection(&real_sighash),
                 block_fields: vec![],
                 transaction_fields: vec![],
@@ -779,7 +779,7 @@ mod tests {
         // starting at 100. The address store's start block is contract-wide, so
         // only this per-registration gate can separate them.
         let mut restricted = value_reg(1, "Owned", false, VALID_SIGHASH);
-        restricted.start_block = 100;
+        restricted.start_block = Some(100);
         let core = Decoder::from_registrations(
             &[value_reg(0, "Owned", false, VALID_SIGHASH), restricted],
             false,

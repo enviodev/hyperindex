@@ -206,7 +206,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~topicCount=3,
     ~isWildcard=false,
     ~dependsOnAddresses=true,
-    ~startBlock=0,
+    ~startBlock=None,
     ~params=transferParams,
   ): HyperSyncClient.Registration.input => {
     index,

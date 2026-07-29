@@ -402,7 +402,7 @@ mod tests {
             event_name: format!("E{index}"),
             contract_name: contract_name.to_string(),
             is_wildcard,
-            start_block: 0,
+            start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
         }

@@ -68,12 +68,9 @@ pub struct FuelOnEventRegistrationInput {
     pub event_name: String,
     pub contract_name: String,
     pub is_wildcard: bool,
-    /// Earliest block height this registration accepts: its contract's
-    /// configured start block, overridden by a `where.block.height._gte`. 0 is
-    /// unrestricted. Gated per registration here because the address store's
-    /// start block is contract-wide — a sibling registration without one keeps
-    /// that gate open from the chain start.
-    pub start_block: i64,
+    /// Earliest block height this registration accepts; absent is unrestricted.
+    /// See `crate::registration_start_block`.
+    pub start_block: Option<i64>,
     pub kind: FuelEventKind,
     /// The LogData `rb` value as a decimal string (u64). Required for
     /// `LogData`, ignored otherwise.
@@ -87,8 +84,8 @@ pub(crate) struct Registration {
     /// at construction so the per-receipt gate is an index compare.
     pub contract_idx: u32,
     pub is_wildcard: bool,
-    /// Earliest block height this registration accepts; 0 is unrestricted.
-    pub start_block: i64,
+    /// Earliest block height this registration accepts; `None` is unrestricted.
+    pub start_block: Option<i64>,
     pub kind: RegistrationKind,
 }
 
@@ -125,7 +122,7 @@ impl Registration {
             kind => kind.receipt_types().contains(&receipt_type),
         };
         kind_matches
-            && address.block_height >= self.start_block
+            && crate::registration_start_block::has_started(self.start_block, address.block_height)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.block_height)))
@@ -366,7 +363,7 @@ mod tests {
             event_name: format!("E{index}"),
             contract_name: contract_name.to_string(),
             is_wildcard,
-            start_block: 0,
+            start_block: None,
             kind,
             log_id: log_id.map(str::to_string),
         }
@@ -724,10 +721,13 @@ mod tests {
         // starting at height 100. The address store's start block is
         // contract-wide, so only this per-registration gate separates them.
         let mut restricted = reg(1, "Owned", FuelEventKind::Mint, false, None);
-        restricted.start_block = 100;
+        restricted.start_block = Some(100);
         let (store, set) = addresses(&[("Owned", &[ADDR_1])]);
         let builder = SelectionBuilder::from_registrations(
-            &[reg(0, "Owned", FuelEventKind::Mint, false, None), restricted],
+            &[
+                reg(0, "Owned", FuelEventKind::Mint, false, None),
+                restricted,
+            ],
             &store.handle().read().unwrap(),
         )
         .unwrap();

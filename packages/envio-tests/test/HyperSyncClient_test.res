@@ -23,7 +23,7 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
   contractName: "ERC20",
   isWildcard: false,
   dependsOnAddresses: true,
-  startBlock: 0,
+  startBlock: None,
   params: transferParams,
   topicSelections: [
     {
@@ -137,7 +137,7 @@ describe("HyperSync client getEventItems (live)", () => {
       contractName: "Unrelated",
       isWildcard: true,
       dependsOnAddresses: false,
-      startBlock: 0,
+      startBlock: None,
       params: [],
       topicSelections: [
         {

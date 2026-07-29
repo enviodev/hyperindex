@@ -740,22 +740,6 @@ impl AddressSet {
         self.ids.len() as i64
     }
 
-    /// The chain-wide gate, reachable through any set of the store. Deliberately
-    /// not set membership: a client-filtered contract holds none of its
-    /// addresses in the querying set, so this is the only gate that can answer
-    /// for it — which is exactly what every real source's router falls back to.
-    #[napi]
-    pub fn is_indexed_at(&self, address: String, contract_name: String, block_number: i64) -> bool {
-        let store = self.store.read().unwrap();
-        let (Some(key), Some(contract_idx)) = (
-            address_key(store.ecosystem, &address),
-            store.contract_idx(&contract_name),
-        ) else {
-            return false;
-        };
-        store.is_indexed_at(&key, contract_idx, block_number)
-    }
-
     /// Whether this set holds the address under `contract_name` and it has
     /// already started at `block_number` — the gate a real source's router
     /// applies to a server-side address-filtered query: ownership answered by
@@ -1375,9 +1359,10 @@ mod tests {
                 set.contains_at(A.to_string(), "C".to_string(), 300),
                 set.contains_at(A.to_string(), "C".to_string(), 299),
                 set.contains_at(A.to_string(), "D".to_string(), 300),
-                // Registered for the same contract, but held by another set.
+                // Registered for the same contract, but held by another set;
+                // only the chain-wide gate on the store answers for it.
                 set.contains_at(B.to_string(), "C".to_string(), 300),
-                set.is_indexed_at(B.to_string(), "C".to_string(), 300),
+                store.is_indexed_at(B.to_string(), "C".to_string(), 300),
             ),
             (true, false, false, false, true)
         );

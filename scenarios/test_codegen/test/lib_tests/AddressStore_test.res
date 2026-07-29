@@ -79,7 +79,7 @@ describe("AddressStore", () => {
     })
   })
 
-  it("scopes containsAt to the set while isIndexedAt answers chain-wide", t => {
+  it("scopes containsAt to the set, leaving the chain-wide gate on the store", t => {
     let store = TestAddresses.makeStore(
       ~onEventRegistrations,
       ~addresses=[
@@ -92,7 +92,8 @@ describe("AddressStore", () => {
       "inSet": set->AddressSet.containsAt(addr(0), "A", 5),
       // Registered for A, but held by another partition.
       "outOfSet": set->AddressSet.containsAt(addr(1), "A", 10),
-      "outOfSetChainWide": set->AddressSet.isIndexedAt(addr(1), "A", 10),
+      // The chain-wide gate lives on the store, so a set can't be asked it.
+      "outOfSetChainWide": store->AddressStore.isIndexedAt(addr(1), "A", 10),
       // In the set, but registered under a different contract.
       "inSetWrongContract": set->AddressSet.containsAt(addr(0), "B", 5),
     }).toEqual({

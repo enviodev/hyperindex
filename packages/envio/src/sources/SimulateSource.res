@@ -1,9 +1,12 @@
 let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain.t): Source.t => {
   let reportedHeight = max(endBlock, 1)
+  // Filled in by ChainState once the chain's address store exists.
+  let addressStoreRef: ref<option<AddressStore.t>> = ref(None)
 
   {
     name: "SimulateSource",
     simulateItems: items,
+    setSimulateAddressStore: addressStore => addressStoreRef := Some(addressStore),
     sourceFor: Sync,
     chain,
     poweredByHyperSync: false,
@@ -52,7 +55,14 @@ let make = (~items: array<Internal.item>, ~endBlock: int, ~chain: ChainMap.Chain
       let isAddressAllowed = (address, ~contractName, ~blockNumber) =>
         switch selection.clientFilteredContracts {
         | Some(contractNames) if contractNames->Array.includes(contractName) =>
-          addressSet->AddressSet.isIndexedAt(address, contractName, blockNumber)
+          switch addressStoreRef.contents {
+          | Some(addressStore) =>
+            addressStore->AddressStore.isIndexedAt(address, contractName, blockNumber)
+          | None =>
+            JsError.throwWithMessage(
+              "SimulateSource was queried for a client-filtered contract before the chain handed it an address store",
+            )
+          }
         | _ => addressSet->AddressSet.containsAt(address, contractName, blockNumber)
         }
 

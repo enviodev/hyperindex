@@ -30,7 +30,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
             contractName: "ERC20",
             isWildcard: true,
             dependsOnAddresses: false,
-            startBlock: 0,
+            startBlock: None,
             params: [],
             topicSelections: [
               {

@@ -25,8 +25,8 @@ module Registration = {
     contractName: string,
     programId: string,
     isWildcard: bool,
-    // Earliest slot this registration accepts; 0 is unrestricted.
-    startBlock: int,
+    // Earliest slot this registration accepts; `None` is unrestricted.
+    startBlock: option<int>,
     discriminator?: string,
     discriminatorByteLen: int,
     isInner?: bool,
@@ -54,7 +54,7 @@ module Registration = {
         contractName: eventConfig.contractName,
         programId: eventConfig.programId->SvmTypes.Pubkey.toString,
         isWildcard: reg.isWildcard,
-        startBlock: reg.startBlock->Option.getOr(0),
+        startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
         discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,

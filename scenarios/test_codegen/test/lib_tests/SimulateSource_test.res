@@ -51,12 +51,19 @@ let item = (~registration: Internal.onEventRegistration, ~blockNumber, ~srcAddre
 
 let getItems = async (
   ~items,
+  ~store,
   ~addressSet,
   ~selection: FetchState.selection,
   ~fromBlock=0,
   ~toBlock=1000,
 ) => {
   let source = SimulateSource.make(~items, ~endBlock=1000, ~chain)
+  // ChainState does this once the chain's address store exists; the chain-wide
+  // gate a client-filtered contract needs isn't reachable without it.
+  switch source.setSimulateAddressStore {
+  | Some(set) => set(store)
+  | None => ()
+  }
   let response = await source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),
@@ -99,11 +106,13 @@ describe("SimulateSource routing", () => {
 
     let first = await getItems(
       ~items,
+      ~store,
       ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
       ~selection,
     )
     let second = await getItems(
       ~items,
+      ~store,
       ~addressSet=store->AddressStore.makeSetOf([addr(1)]),
       ~selection,
     )
@@ -126,6 +135,7 @@ describe("SimulateSource routing", () => {
     }
 
     let routed = await getItems(
+      ~store,
       ~items=[
         item(~registration=regA, ~blockNumber=49, ~srcAddress=addr(0)),
         item(~registration=regA, ~blockNumber=50, ~srcAddress=addr(0)),
@@ -154,6 +164,7 @@ describe("SimulateSource routing", () => {
 
     let clientFiltered = await getItems(
       ~items,
+      ~store,
       ~addressSet,
       ~selection={
         dependsOnAddresses: true,
@@ -165,6 +176,7 @@ describe("SimulateSource routing", () => {
     // that simply holds no addresses, so it routes nothing.
     let normal = await getItems(
       ~items,
+      ~store,
       ~addressSet,
       ~selection={dependsOnAddresses: true, onEventRegistrations: [regA]},
     )
@@ -210,11 +222,13 @@ describe("SimulateSource routing", () => {
 
     let partitionScoped = await getItems(
       ~items,
+      ~store,
       ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
       ~selection,
     )
     let clientFiltered = await getItems(
       ~items,
+      ~store,
       ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
       ~selection={...selection, clientFilteredContracts: ["A"]},
     )
@@ -238,6 +252,7 @@ describe("SimulateSource routing", () => {
     )
 
     let routed = await getItems(
+      ~store,
       ~items=[
         item(~registration=regOpen, ~blockNumber=99, ~srcAddress=addr(0)),
         item(~registration=regRestricted, ~blockNumber=99, ~srcAddress=addr(0)),
@@ -268,11 +283,13 @@ describe("SimulateSource routing", () => {
 
     let first = await getItems(
       ~items,
+      ~store,
       ~addressSet,
       ~selection={dependsOnAddresses: true, onEventRegistrations: [regFirst]},
     )
     let both = await getItems(
       ~items,
+      ~store,
       ~addressSet,
       ~selection={dependsOnAddresses: true, onEventRegistrations: [regFirst, regSecond]},
     )

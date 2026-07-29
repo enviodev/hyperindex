@@ -99,4 +99,11 @@ type t = {
   // tracks which of these never reach a handler so the run can report dead
   // simulate inputs on completion.
   simulateItems?: array<Internal.item>,
+  // Every other source takes the chain's address store at construction, but the
+  // simulate source is built from `simulate` items before the chain state
+  // exists, so ChainState hands it over through this once it does. It needs the
+  // store for the same reason the others do: a client-filtered contract has no
+  // addresses in the querying partition, so only the chain-wide gate can answer
+  // for it.
+  setSimulateAddressStore?: AddressStore.t => unit,
 }

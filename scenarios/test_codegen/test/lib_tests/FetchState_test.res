@@ -2351,6 +2351,71 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
   })
 
+  it("Skips the blocks below a partition's earliest registration start block", t => {
+    let makeWildcard = (~id, ~startBlock=?) =>
+      (MockIndexer.evmOnEventRegistration(
+        ~id,
+        ~contractName="Gravatar",
+        ~isWildcard=true,
+        ~startBlock?,
+      ) :> Internal.onEventRegistration)
+
+    // The address-free partition is the only one here, so its query is the
+    // whole story.
+    let fromBlockOf = (~knownHeight, ~endBlock=None, onEventRegistrations) => {
+      let (fetchState, _) = makeFs(
+        ~onEventRegistrations,
+        ~addresses=[],
+        ~startBlock=0,
+        ~endBlock,
+        ~maxAddrInPartition=10,
+        ~maxOnBlockBufferSize=10,
+        ~chainId,
+        ~knownHeight,
+      )
+      switch fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=knownHeight,
+        ~chainTargetItems=10_000.,
+      ) {
+      | Ready(queries) => queries->Array.map(q => q.fromBlock)
+      | WaitingForNewBlock => ["WaitingForNewBlock"]->Obj.magic
+      | NothingToQuery => ["NothingToQuery"]->Obj.magic
+      }
+    }
+
+    t.expect({
+      // Nothing below 500 can match, and the head is past it, so the scan
+      // starts there instead of at the chain start.
+      "restricted": fromBlockOf(~knownHeight=1000, [makeWildcard(~id="a", ~startBlock=500)]),
+      // The earliest of several still bounds the skip.
+      "twoRestricted": fromBlockOf(
+        ~knownHeight=1000,
+        [makeWildcard(~id="a", ~startBlock=900), makeWildcard(~id="b", ~startBlock=500)],
+      ),
+      // An unrestricted sibling can fire from the chain start, so nothing is
+      // skipped.
+      "mixed": fromBlockOf(
+        ~knownHeight=1000,
+        [makeWildcard(~id="a", ~startBlock=500), makeWildcard(~id="b")],
+      ),
+      // Start block past the head: skipping there would leave the partition
+      // with no query at all, so it fetches as before until the chain catches
+      // up. Same when the chain's endBlock is below it.
+      "beyondHead": fromBlockOf(~knownHeight=100, [makeWildcard(~id="a", ~startBlock=500)]),
+      "beyondEndBlock": fromBlockOf(
+        ~knownHeight=1000,
+        ~endBlock=Some(200),
+        [makeWildcard(~id="a", ~startBlock=500)],
+      ),
+    }).toEqual({
+      "restricted": [500],
+      "twoRestricted": [500],
+      "mixed": [0],
+      "beyondHead": [0],
+      "beyondEndBlock": [0],
+    })
+  })
+
   it("Narrows a query's selection to the registrations its range can match", t => {
     let makeReg = (~id, ~startBlock=?) =>
       (MockIndexer.evmOnEventRegistration(

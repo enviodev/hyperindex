@@ -263,7 +263,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         contractName: "TokenMetadata",
         programId: metaplexProgramId,
         isWildcard: false,
-        startBlock: 0,
+        startBlock: None,
         discriminator: "0x21",
         discriminatorByteLen: 1,
         includeLogs: false,

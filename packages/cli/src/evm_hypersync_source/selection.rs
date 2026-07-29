@@ -323,7 +323,7 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses,
-            start_block: 0,
+            start_block: None,
             params: vec![],
             topic_selections: vec![TopicSelectionInput {
                 topic0: vec![sighash.to_string()],
