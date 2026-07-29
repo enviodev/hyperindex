@@ -29,7 +29,7 @@ let makeConfig = () => {
     // The mock source registration binds to the chain's first contract, which
     // must have config addresses for the fetch partition to exist. Contracts
     // are ordered alphabetically, so put the ones with addresses first.
-    chainMap: base.chainMap->ChainMap.map(chain => {
+    chainMap: base.chainMap->ChainMap.mapWithKey((_, chain) => {
       ...chain,
       contracts: chain.contracts->Array.toSorted((a, b) =>
         Int.toFloat(b.addresses->Array.length - a.addresses->Array.length)
@@ -47,7 +47,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let resolveIndexerError = ref(None)
       let indexerErrorPromise = Promise.make((resolve, _reject) => {
@@ -110,15 +110,21 @@ describe("Rollback with a ClickHouse-only entity", () => {
       )
       await indexerMock.getBatchWritePromise()->raiseOnIndexerError
 
-      let missingHistoryRelation = try {
+      let missingHistoryRelationError = try {
         let _ = await indexerMock.queryHistory(chOnlyEntityName)
-        false
+        "the history table exists"
       } catch {
-      | _ => true
+      | exn =>
+        exn
+        ->JsExn.fromException
+        ->Option.flatMap(JsExn.message)
+        ->Option.getOr("unknown error")
       }
       t.expect(
         (
-          missingHistoryRelation,
+          missingHistoryRelationError->String.includes(
+            `relation "public.envio_history_${chOnlyEntityName}" does not exist`,
+          ),
           await (
             indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
           ),
