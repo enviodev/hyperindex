@@ -46,18 +46,19 @@ let decodeLogs = async (
         ~contracts=eventRegistrations->Array.map((reg): AddressStore.contract => {
           name: reg.contractName,
           startBlock: None,
+          hasEvents: true,
         }),
       )
       let addressSet = switch ownedBy {
       | None => addressStore->AddressStore.emptySet
       | Some(contractName) =>
-        let _ = addressStore->AddressStore.registerBatch([
+        let _ = addressStore->AddressStore.seedBatch([
           {
             address: mockAddress->Address.unsafeFromString,
             contractName,
             registrationBlock: -1,
           },
-        ], ~trackUnwritten=false)
+        ])
         addressStore->AddressStore.makeSet(~contractName)
       }
       let client = EvmRpcClient.make(

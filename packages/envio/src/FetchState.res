@@ -1689,42 +1689,33 @@ let registerDynamicContracts = (
     )
   }
 
-  // Registering an address only causes fetching when the chain has
-  // address-dependent events for its contract — the same gate `make` applies to
-  // the addresses it restores.
-  let contractNamesWithNormalEvents = Utils.Set.make()
-  fetchState.normalSelection.onEventRegistrations->Array.forEach(reg =>
-    contractNamesWithNormalEvents->Utils.Set.add(reg.eventConfig.contractName)->ignore
-  )
-
   // Ids are handed out in registration order, so a cursor taken now selects
   // exactly what this batch adds.
   let idCursor = addressStore->AddressStore.nextId
   // The store resolves each address against both what it already holds and the
   // batch's own earlier entries, so two contracts claiming one address inside a
-  // single batch conflict the same way as across batches.
-  let verdicts = addressStore->AddressStore.registerBatch(registrations, ~trackUnwritten=true)
+  // single batch conflict the same way as across batches. It also decides which
+  // additions this chain fetches for, since it's what holds the contract list.
+  let verdicts = addressStore->AddressStore.registerBatch(registrations)
 
   let registeringContractNames = []
   for idx in 0 to verdicts->Array.length - 1 {
     let registration = registrations->Array.getUnsafe(idx)
     let verdict = verdicts->Array.getUnsafe(idx)
     switch verdict {
-    | Added(_) =>
-      if contractNamesWithNormalEvents->Utils.Set.has(registration.contractName) {
-        if !(registeringContractNames->Array.includes(registration.contractName)) {
-          registeringContractNames->Array.push(registration.contractName)->ignore
-        }
-      } else {
-        // The address is still stored and persisted, so a future config change
-        // that adds events for this contract picks it up on restart.
-        warnAddressRegistration(
-          ~chainId=fetchState.chainId,
-          ~contractAddress=registration.address,
-          ~params={"contractName": registration.contractName},
-          `Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`,
-        )
+    | Added({fetchable: true}) =>
+      if !(registeringContractNames->Array.includes(registration.contractName)) {
+        registeringContractNames->Array.push(registration.contractName)->ignore
       }
+    | Added({fetchable: false}) =>
+      // The address is still stored and persisted, so a future config change
+      // that adds events for this contract picks it up on restart.
+      warnAddressRegistration(
+        ~chainId=fetchState.chainId,
+        ~contractAddress=registration.address,
+        ~params={"contractName": registration.contractName},
+        `Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`,
+      )
     | Conflict(_) | Duplicate(_) | Invalid =>
       verdict->warnRejectedRegistration(
         ~chainId=fetchState.chainId,
@@ -2674,14 +2665,14 @@ let make = (
   // contract has no address-dependent events, so a later registration of the
   // same address still conflicts and the address is still persisted.
   addressStore
-  ->AddressStore.registerBatch(
+  // These come from the config or from a resume, so they're already stored and
+  // must never be drained back into a write.
+  ->AddressStore.seedBatch(
     addresses->Array.map((contract): AddressStore.registration => {
       address: contract.address,
       contractName: contract.contractName,
       registrationBlock: contract.registrationBlock,
     }),
-    // These come from the config or from a resume, so they're already stored.
-    ~trackUnwritten=false,
   )
   // Verdicts are in the batch's order, so they line up with `addresses`. A
   // config address the store rejects is dropped exactly like a dynamic one, and

@@ -69,7 +69,12 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
-let takeUnwrittenAddresses: (t, ~toBlockInclusive: int) => array<Internal.indexingContract>
+let drainAddressesForWrite: (
+  t,
+  ~toBlockInclusive: int,
+  ~checkpointBlockNumbers: array<int>,
+) => array<AddressStore.drainedAddress>
+let hasAddressesToWrite: t => bool
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float

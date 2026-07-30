@@ -892,7 +892,7 @@ describe("FetchState.registerDynamicContracts", () => {
           // still written to the db, so a config that later adds events for
           // the contract picks the address up on restart
           addressStore
-          ->AddressStore.takeUnwrittenEntries(10)
+          ->AddressStore.pendingEntries
           ->Array.map(ia => ia.address),
           // partitions unchanged - no fetching for contracts without events
           updatedFetchState.optimizedPartitions === fetchState.optimizedPartitions,
@@ -950,7 +950,7 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // Only the first registration is ever written.
           addressStore
-          ->AddressStore.takeUnwrittenEntries(12)
+          ->AddressStore.pendingEntries
           ->Array.map(ia => (ia.address, ia.contractName, ia.registrationBlock)),
           // First registration is the tracked one (first wins).
           addressStore->AddressStore.get(mockAddress1)
@@ -1042,7 +1042,7 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // rejected, so it never reaches the db and can't overwrite the
           // existing Gravatar entry
-          addressStore->AddressStore.takeUnwrittenEntries(10),
+          addressStore->AddressStore.pendingEntries,
           // addressStore still has the original contract name
           addressStore->AddressStore.get(mockAddress0)
           ->Option.map(ia => ia.contractName),
@@ -1081,7 +1081,7 @@ describe("FetchState.registerDynamicContracts", () => {
         ->Option.map(ia => ia.contractName),
         // the rejected dc is never persisted to envio_addresses
         addressStore
-        ->AddressStore.takeUnwrittenEntries(10)
+        ->AddressStore.pendingEntries
         ->Array.map(ia => (ia.address, ia.contractName)),
         updatedFetchState.optimizedPartitions.entities
         ->Dict.valuesToArray
@@ -1128,7 +1128,7 @@ describe("FetchState.registerDynamicContracts", () => {
           ->Option.map(ia => ia.contractName),
           // one row for the address, under the contract that claimed it first
           addressStore
-          ->AddressStore.takeUnwrittenEntries(10)
+          ->AddressStore.pendingEntries
           ->Array.map(ia => (ia.address, ia.contractName)),
         ),
         ~message=`the events registration is preserved on addressStore
@@ -1163,7 +1163,7 @@ describe("FetchState.registerDynamicContracts", () => {
           addressStore->AddressStore.get(mockAddress1)
           ->Option.map(ia => ia.contractName),
           addressStore
-          ->AddressStore.takeUnwrittenEntries(10)
+          ->AddressStore.pendingEntries
           ->Array.map(ia => (ia.address, ia.contractName)),
           updatedFetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -1489,7 +1489,7 @@ describe("FetchState.registerDynamicContracts", () => {
 
     t.expect(
       addressStore
-      ->AddressStore.takeUnwrittenEntries(20)
+      ->AddressStore.pendingEntries
       ->Array.map(ia => (ia.address, ia.registrationBlock)),
       ~message=`Should choose the earliest dc from the batch
   And drop the later one, so they are not duplicated in the db`,

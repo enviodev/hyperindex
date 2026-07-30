@@ -139,13 +139,22 @@ describe("AddressStore", () => {
         ],
         ~configContractNames=[],
       ),
+      // A contract only the config names is registrable but never fetched.
+      "configOnly": AddressStore.contractsOf(
+        ~onEventRegistrations=[reg(~contractName="A")],
+        ~configContractNames=["A", "NoEvents"],
+      ),
     }).toEqual({
-      "noneThenSome": [({name: "A", startBlock: None}: AddressStore.contract)],
-      "someThenNone": [({name: "A", startBlock: None}: AddressStore.contract)],
-      "allRestricted": [({name: "A", startBlock: Some(50)}: AddressStore.contract)],
+      "noneThenSome": [({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract)],
+      "someThenNone": [({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract)],
+      "allRestricted": [({name: "A", startBlock: Some(50), hasEvents: true}: AddressStore.contract)],
       "perContract": [
-        ({name: "B", startBlock: Some(50)}: AddressStore.contract),
-        ({name: "A", startBlock: None}: AddressStore.contract),
+        ({name: "B", startBlock: Some(50), hasEvents: true}: AddressStore.contract),
+        ({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract),
+      ],
+      "configOnly": [
+        ({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract),
+        ({name: "NoEvents", startBlock: None, hasEvents: false}: AddressStore.contract),
       ],
     })
   })
@@ -167,7 +176,6 @@ describe("AddressStore", () => {
           // state is what decides nothing is queried for it.
           {address: addr(5), contractName: "NoEvents", registrationBlock: 40},
         ],
-        ~trackUnwritten=false,
       )
     let added = store->AddressStore.makeSet(~contractName="B", ~options={minId: cursor})
     t.expect({
@@ -177,10 +185,11 @@ describe("AddressStore", () => {
       "size": store->AddressStore.size,
     }).toEqual({
       "verdicts": [
-        AddressStore.Added({effectiveStartBlock: 30}),
-        Added({effectiveStartBlock: 10}),
+        AddressStore.Added({effectiveStartBlock: 30, fetchable: true}),
+        Added({effectiveStartBlock: 10, fetchable: true}),
         Duplicate({effectiveStartBlock: 30, existingEffectiveStartBlock: 30}),
-        Added({effectiveStartBlock: 40}),
+        // Registered and persisted, but nothing on this chain fetches for it.
+        Added({effectiveStartBlock: 40, fetchable: false}),
       ],
       // Ordered by effectiveStartBlock, so addr(4) (10) precedes addr(3) (30).
       "added": [addr(4), addr(3)],
@@ -195,7 +204,6 @@ describe("AddressStore", () => {
       () =>
         store->AddressStore.registerBatch(
           [{address: addr(3), contractName: "Missing", registrationBlock: 7}],
-          ~trackUnwritten=true,
         ),
     ).toThrow()
   })
@@ -206,24 +214,45 @@ describe("AddressStore", () => {
       ~addresses=[contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1)],
     )
     let _ =
-      store->AddressStore.registerBatch(
-        [
-          {address: addr(1), contractName: "A", registrationBlock: 10},
-          {address: addr(2), contractName: "A", registrationBlock: 30},
-        ],
-        ~trackUnwritten=true,
-      )
+      store->AddressStore.registerBatch([
+        {address: addr(1), contractName: "A", registrationBlock: 10},
+        {address: addr(2), contractName: "A", registrationBlock: 30},
+      ])
+
+    let drain = (~toBlockInclusive, ~checkpointBlockNumbers) =>
+      store
+      ->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
+      ->Array.map(dc => (dc.address, dc.checkpointIdx))
 
     t.expect({
       // The config address was never pending, and addr(2) is above the bound.
-      "upToBlock20": store->AddressStore.takeUnwrittenEntries(20)->Array.map(ia => ia.address),
-      "drainedOnce": store->AddressStore.takeUnwrittenEntries(20)->Array.map(ia => ia.address),
-      "rest": store->AddressStore.takeUnwrittenEntries(30)->Array.map(ia => ia.address),
+      "upToBlock20": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
+      "drainedOnce": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
+      "rest": drain(~toBlockInclusive=30, ~checkpointBlockNumbers=[30]),
+      "nothingLeftPending": store->AddressStore.pendingEntries,
     }).toEqual({
-      "upToBlock20": [addr(1)],
+      // The checkpoint index points back at the block numbers passed in.
+      "upToBlock20": [(addr(1), 1)],
       "drainedOnce": [],
-      "rest": [addr(2)],
+      "rest": [(addr(2), 0)],
+      "nothingLeftPending": [],
     })
+  })
+
+  it("refuses to drain a registration the batch has no checkpoint for", t => {
+    let store = TestAddresses.makeStore(~onEventRegistrations)
+    let _ =
+      store->AddressStore.registerBatch([
+        {address: addr(1), contractName: "A", registrationBlock: 10},
+      ])
+
+    t.expect(() => store->AddressStore.drainForWrite(20, [9])).toThrow()
+    t.expect(
+      // The failed drain consumed nothing, so the registration is still there
+      // to be written by a batch that does cover it.
+      store->AddressStore.pendingEntries->Array.map(ia => ia.address),
+      ~message="a failed drain leaves the queue intact",
+    ).toEqual([addr(1)])
   })
 
   it("rejects an address already held by another contract", t => {
@@ -234,7 +263,6 @@ describe("AddressStore", () => {
     t.expect(
       store->AddressStore.registerBatch(
         [{address: addr(0), contractName: "B", registrationBlock: 7}],
-        ~trackUnwritten=true,
       ),
     ).toEqual([AddressStore.Conflict({existingContractName: "A"})])
   })

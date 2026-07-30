@@ -236,15 +236,15 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     let store = AddressStore.make(
       ~ecosystem=Ecosystem.Evm,
       ~shouldChecksum=false,
-      ~contracts=[{name: "ERC20", startBlock: None}],
+      ~contracts=[{name: "ERC20", startBlock: None, hasEvents: true}],
     )
-    let _ = store->AddressStore.registerBatch([
+    let _ = store->AddressStore.seedBatch([
       {
         address: contractAddress->Address.unsafeFromString,
         contractName: "ERC20",
         registrationBlock: -1,
       },
-    ], ~trackUnwritten=false)
+    ])
     store
   }
 
