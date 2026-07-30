@@ -167,7 +167,7 @@ let programSet = {
       contractName: "TokenMetadata",
       registrationBlock: -1,
     },
-  ])
+  ], ~trackUnwritten=false)
   addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
 }
 

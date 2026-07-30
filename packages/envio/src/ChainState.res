@@ -174,7 +174,14 @@ let makeInternal = (
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations),
+    ~contracts=AddressStore.contractsOf(
+      ~onEventRegistrations,
+      // Every chain's contracts, not just this one's: `context.chain.X.add`
+      // accepts any config contract, whichever chain declared it.
+      ~configContractNames=config.chainMap
+      ->ChainMap.values
+      ->Array.flatMap(chain => chain.contracts->Array.map(contract => contract.name)),
+    ),
   )
 
   let fetchState = FetchState.make(
@@ -430,6 +437,12 @@ let setRollbackTargetBlock = (cs: t, ~blockNumber) => cs.rollbackTargetBlock = S
 let knownHeight = (cs: t) => cs.fetchState.knownHeight
 let contractAddresses = (cs: t, ~contractName) =>
   cs.addressStore->AddressStore.contractAddresses(contractName)
+
+// Hands over the dynamically registered addresses the database hasn't seen yet,
+// up to the block the caller is about to commit. Destructive: the caller must
+// persist them or take the indexer down.
+let takeUnwrittenAddresses = (cs: t, ~toBlockInclusive) =>
+  cs.addressStore->AddressStore.takeUnwrittenEntries(toBlockInclusive)
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
@@ -841,7 +854,7 @@ let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
   ~newItems,
-  ~newItemsWithDcs,
+  ~newRegistrations,
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
@@ -858,7 +871,7 @@ let handleQueryResult = (
   | None => ()
   }
 
-  let fs = switch newItemsWithDcs {
+  let fs = switch newRegistrations {
   | [] => cs.fetchState
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
@@ -868,7 +881,7 @@ let handleQueryResult = (
       // catch-up range — and an unbounded query can reach past the height that
       // was known when it went out.
       ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock.blockNumber),
-      newItemsWithDcs,
+      newRegistrations,
     )
   }
 

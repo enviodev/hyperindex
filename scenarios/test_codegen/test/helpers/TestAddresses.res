@@ -6,6 +6,10 @@ let makeStore = (
   ~onEventRegistrations: array<Internal.onEventRegistration>=[],
   ~addresses: array<Internal.indexingAddress>=[],
   ~ecosystem: Ecosystem.name=Evm,
+  // Config contracts the chain has no events for. Registering an address for a
+  // name outside the store's contracts throws, so a test exercising the
+  // no-events path declares it here.
+  ~configContractNames: array<string>=[],
   // Matches the common `lowercaseAddresses: false`, so entries render like the
   // checksummed mock addresses the tests use.
   ~shouldChecksum=true,
@@ -13,7 +17,7 @@ let makeStore = (
   let store = AddressStore.make(
     ~ecosystem,
     ~shouldChecksum,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations),
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~configContractNames),
   )
   let _ = store->AddressStore.registerBatch(
     addresses->Array.map((contract): AddressStore.registration => {
@@ -21,6 +25,7 @@ let makeStore = (
       contractName: contract.contractName,
       registrationBlock: contract.registrationBlock,
     }),
+    ~trackUnwritten=false,
   )
   store
 }

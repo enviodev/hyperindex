@@ -7,9 +7,9 @@
 // (or address-valued param) isn't registered at the item's block.
 type t
 
-// A contract the chain has events for. An address registered for anything else
-// gets the `NoEvents` verdict: persisted so a future config that adds events
-// picks it up, but never fetched.
+// A contract an address may be registered for. Every config contract of every
+// chain, since `context.chain.<Contract>.add` validates against that whole set
+// — a name outside it makes the store throw.
 type contract = {name: string, startBlock: option<int>}
 
 type registration = {
@@ -21,8 +21,6 @@ type registration = {
 
 type verdict =
   | Added({effectiveStartBlock: int})
-  // Contract has no events; tracked and persisted, never fetched.
-  | NoEvents({effectiveStartBlock: int})
   // Already registered for the same contract.
   | Duplicate({effectiveStartBlock: int, existingEffectiveStartBlock: int})
   // Already registered for a different contract.
@@ -66,12 +64,17 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array
   }
 }
 
-// The contracts of a chain that have events, with the earliest block any of
-// their events may fire at. `None` means unrestricted, so it wins over any
-// `Some`: one registration without a start block makes the whole contract's
-// address gate open from the chain's start, and the per-registration start
-// block still holds back the registrations that declared one.
-let contractsOf = (~onEventRegistrations: array<Internal.onEventRegistration>): array<contract> => {
+// Every contract an address may be registered for, with the earliest block any
+// of this chain's events for it may fire at. `None` means unrestricted, so it
+// wins over any `Some`: one registration without a start block makes the whole
+// contract's address gate open from the chain's start, and the per-registration
+// start block still holds back the registrations that declared one. Contracts
+// this chain has no events for carry `None` — nothing is fetched for them, so
+// their effective start block only shapes what gets persisted.
+let contractsOf = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~configContractNames: array<string>,
+): array<contract> => {
   // Only ever holds a declared start block, so a missing key is unambiguous —
   // storing `None` in a dict would be indistinguishable from "not seen yet".
   let startBlocks: dict<int> = Dict.make()
@@ -94,6 +97,11 @@ let contractsOf = (~onEventRegistrations: array<Internal.onEventRegistration>): 
       )
     }
   })
+  configContractNames->Array.forEach(name => {
+    if !(names->Array.includes(name)) {
+      names->Array.push(name)->ignore
+    }
+  })
   names->Array.map(name => {
     name,
     startBlock: unrestricted->Utils.Set.has(name)
@@ -112,7 +120,13 @@ let contractsOf = (~onEventRegistrations: array<Internal.onEventRegistration>): 
 // come from that chain's one store — ids are store-scoped, so sets from
 // different stores can't be merged.
 @send external makeSetOf: (t, array<Address.t>) => AddressSet.t = "makeSetOf"
-@send external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
+@send
+external registerBatchRaw: (t, array<registration>, bool) => array<rawVerdict> = "registerBatch"
+
+// Drains the registrations awaiting persistence at or below the given block —
+// what the batch being written covers. Later registrations stay pending.
+@send
+external takeUnwrittenEntries: (t, int) => array<Internal.indexingContract> = "takeUnwrittenEntries"
 @send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
 @send
 external startBlockGroups: (t, string) => array<AddressSet.startBlockGroup> = "startBlockGroups"
@@ -137,7 +151,6 @@ external startBlockGroups: (t, string) => array<AddressSet.startBlockGroup> = "s
 let toVerdict = (raw: rawVerdict): verdict =>
   switch raw.kind {
   | "added" => Added({effectiveStartBlock: raw.effectiveStartBlock})
-  | "noEvents" => NoEvents({effectiveStartBlock: raw.effectiveStartBlock})
   | "duplicate" =>
     Duplicate({
       effectiveStartBlock: raw.effectiveStartBlock,
@@ -152,8 +165,12 @@ let toVerdict = (raw: rawVerdict): verdict =>
 // batch's own earlier entries — so two contracts claiming one address inside a
 // single batch conflict just as they would across batches. Verdicts come back
 // in the batch's order.
-let registerBatch = (store: t, registrations: array<registration>): array<verdict> =>
-  store->registerBatchRaw(registrations)->Array.map(toVerdict)
+//
+// `trackUnwritten` marks what the batch adds as pending persistence. Addresses
+// restored from the database are already stored, so they pass `false`.
+let registerBatch = (store: t, registrations: array<registration>, ~trackUnwritten): array<
+  verdict,
+> => store->registerBatchRaw(registrations, trackUnwritten)->Array.map(toVerdict)
 
 let makeSet = (store: t, ~contractName, ~options={}: makeSetOptions) =>
   store->makeSetRaw(contractName, options)

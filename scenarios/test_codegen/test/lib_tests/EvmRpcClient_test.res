@@ -244,7 +244,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         contractName: "ERC20",
         registrationBlock: -1,
       },
-    ])
+    ], ~trackUnwritten=false)
     store
   }
 

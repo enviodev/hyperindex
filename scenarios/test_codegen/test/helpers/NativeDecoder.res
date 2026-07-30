@@ -57,7 +57,7 @@ let decodeLogs = async (
             contractName,
             registrationBlock: -1,
           },
-        ])
+        ], ~trackUnwritten=false)
         addressStore->AddressStore.makeSet(~contractName)
       }
       let client = EvmRpcClient.make(

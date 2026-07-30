@@ -49,7 +49,7 @@ let addressStore = AddressStore.make(
 )
 let _ = addressStore->AddressStore.registerBatch([
   {address: usdcAddress, contractName: "ERC20", registrationBlock: -1},
-])
+], ~trackUnwritten=false)
 let usdcSet = addressStore->AddressStore.makeSet(~contractName="ERC20")
 
 let makeClient = (~eventRegistrations) =>

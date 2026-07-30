@@ -157,46 +157,74 @@ let prepareRollbackDiff = async (
   }
 }
 
+// Stages the addresses registered by this batch's events for the write. They're
+// drained from each chain's address store rather than carried on the items that
+// registered them: the store is where they already live, and it knows which
+// ones the database hasn't seen yet.
 let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
   let inMemTable = state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
   let committedCheckpointId = state->IndexerState.committedCheckpointId
 
-  let itemIdx = ref(0)
+  let checkpointKey = (~chainId, ~blockNumber) =>
+    chainId->ChainId.toString ++ "-" ++ blockNumber->Int.toString
 
-  for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpoint)
-    let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpoint)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpoint)
-
-    for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
-      switch item->Internal.getItemDcs {
-      | None => ()
-      | Some(dcs) =>
-        // Currently only events support contract registration, so we can cast to event item
-        let eventItem = item->Internal.castUnsafeEventItem
-        for dcIdx in 0 to dcs->Array.length - 1 {
-          let dc = dcs->Array.getUnsafe(dcIdx)
-          let entity: InternalTable.EnvioAddresses.t = {
-            id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
-            chainId,
-            contractName: dc.contractName,
-            registrationBlock: eventItem.blockNumber,
-            registrationLogIndex: eventItem.logIndex,
-          }
-
-          inMemTable->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
-            Set({
-              entityId: entity.id->EntityId.unsafeOfString,
-              checkpointId,
-              entity: entity->InternalTable.EnvioAddresses.castToInternal,
-            }),
+  // Built on first use: most batches register nothing.
+  let checkpointIdByKeyRef = ref(None)
+  let getCheckpointId = (~chainId, ~blockNumber) => {
+    let checkpointIdByKey = switch checkpointIdByKeyRef.contents {
+    | Some(dict) => dict
+    | None => {
+        let dict = Dict.make()
+        for idx in 0 to batch.checkpointIds->Array.length - 1 {
+          dict->Dict.set(
+            checkpointKey(
+              ~chainId=batch.checkpointChainIds->Array.getUnsafe(idx),
+              ~blockNumber=batch.checkpointBlockNumbers->Array.getUnsafe(idx),
+            ),
+            batch.checkpointIds->Array.getUnsafe(idx),
           )
         }
+        checkpointIdByKeyRef := Some(dict)
+        dict
       }
     }
-
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
+    switch checkpointIdByKey->Utils.Dict.dangerouslyGetNonOption(
+      checkpointKey(~chainId, ~blockNumber),
+    ) {
+    | Some(checkpointId) => checkpointId
+    | None =>
+      // A registration can only come from an event the batch itself processes,
+      // and every block with a processed event gets a checkpoint.
+      JsError.throwWithMessage(
+        `Registered address at block ${blockNumber->Int.toString} of chain ${chainId->ChainId.toString} has no checkpoint in the batch that writes it.`,
+      )
+    }
   }
+
+  batch.progressedChainsById->Utils.Dict.forEach(progressedChain => {
+    let chainId = progressedChain.fetchState.chainId
+    state
+    ->IndexerState.getChainState(~chainId)
+    ->ChainState.takeUnwrittenAddresses(~toBlockInclusive=progressedChain.progressBlockNumber)
+    ->Array.forEach(dc => {
+      let entity: InternalTable.EnvioAddresses.t = {
+        id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
+        chainId,
+        contractName: dc.contractName,
+        registrationBlock: dc.registrationBlock,
+        // Only ever written, never read back. Kept on the table so the column
+        // doesn't need a migration.
+        registrationLogIndex: -1,
+      }
+
+      inMemTable->InMemoryTable.Entity.set(
+        ~committedCheckpointId,
+        Set({
+          entityId: entity.id->EntityId.unsafeOfString,
+          checkpointId: getCheckpointId(~chainId, ~blockNumber=dc.registrationBlock),
+          entity: entity->InternalTable.EnvioAddresses.castToInternal,
+        }),
+      )
+    })
+  })
 }

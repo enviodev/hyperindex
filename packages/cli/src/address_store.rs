@@ -97,16 +97,6 @@ struct Entry {
     dead: bool,
 }
 
-/// An address registered for a contract the config has no events for. Kept out
-/// of every set and every selection — it exists so a later registration of the
-/// same address is still detected as a duplicate/conflict, and so the address is
-/// persisted for a future config that does declare events for it.
-struct NoEventsEntry {
-    contract_name: String,
-    registration_block: i64,
-    effective_start_block: i64,
-}
-
 pub struct StoreInner {
     ecosystem: Ecosystem,
     contract_names: Vec<String>,
@@ -115,7 +105,10 @@ pub struct StoreInner {
     entries: Vec<Entry>,
     id_by_key: HashMap<Key, u64>,
     live_count_by_contract: Vec<u32>,
-    no_events: HashMap<Key, NoEventsEntry>,
+    /// Ids of dynamic registrations not yet persisted to `envio_addresses`,
+    /// in registration order. Drained by `take_unwritten_entries` when the
+    /// batch covering their registration block is written.
+    unwritten: Vec<u64>,
 }
 
 impl StoreInner {
@@ -179,15 +172,15 @@ impl StoreInner {
     }
 }
 
-/// Contract this chain has events for, with the earliest block any of its
-/// events may fire at. Fixed at construction — it mirrors the chain's
-/// `onEventRegistrations`, which never change during a run.
+/// A contract an address may be registered for: every contract the config
+/// declares, on any chain, since `context.chain.<Contract>.add` validates
+/// against that whole set. Fixed at construction.
 #[napi(object)]
 pub struct AddressStoreContract {
     pub name: String,
-    /// The minimum `startBlock` across the contract's registrations; absent
-    /// means block 0, since partitions never query below the chain's own start
-    /// block anyway.
+    /// The minimum `startBlock` across the contract's registrations on this
+    /// chain; absent means block 0, since partitions never query below the
+    /// chain's own start block anyway.
     pub start_block: Option<i64>,
 }
 
@@ -201,11 +194,10 @@ pub struct AddressRegistration {
 }
 
 /// What the store did with one registration, in the batch's order. The caller
-/// turns `duplicate`/`conflict`/`invalid` into the user-facing warning and drops
-/// the dynamic contract from its item so it isn't persisted twice.
+/// turns `duplicate`/`conflict`/`invalid` into the user-facing warning.
 #[napi(object)]
 pub struct RegistrationVerdict {
-    /// `added` | `noEvents` | `duplicate` | `conflict` | `invalid`
+    /// `added` | `duplicate` | `conflict` | `invalid`
     pub kind: String,
     /// Derived for the incoming registration; 0 when the address was rejected.
     pub effective_start_block: i64,
@@ -218,7 +210,6 @@ pub struct RegistrationVerdict {
 }
 
 pub const VERDICT_ADDED: &str = "added";
-pub const VERDICT_NO_EVENTS: &str = "noEvents";
 pub const VERDICT_DUPLICATE: &str = "duplicate";
 pub const VERDICT_CONFLICT: &str = "conflict";
 pub const VERDICT_INVALID: &str = "invalid";
@@ -264,8 +255,9 @@ pub struct AddressStore {
 
 #[napi]
 impl AddressStore {
-    /// `contracts` are the chain's contracts that have events; an address
-    /// registered for anything else gets the `noEvents` verdict.
+    /// `contracts` are every contract the config declares — registering an
+    /// address for a name that isn't among them is a caller bug, not a
+    /// user-facing rejection.
     #[napi(factory)]
     pub fn new_evm(should_checksum: bool, contracts: Vec<AddressStoreContract>) -> Self {
         Self::with_ecosystem(Ecosystem::Evm { should_checksum }, contracts)
@@ -291,16 +283,49 @@ impl AddressStore {
     /// Registers a batch, resolving each address against both the store and the
     /// batch's own earlier entries, so two contracts claiming one address inside
     /// a single batch conflict just as they would across batches.
+    ///
+    /// `track_unwritten` marks what this batch adds as pending persistence.
+    /// Registrations restored from the database (config addresses and resumed
+    /// dynamic ones) are already stored, so they pass `false`.
     #[napi]
     pub fn register_batch(
         &self,
         registrations: Vec<AddressRegistration>,
-    ) -> Vec<RegistrationVerdict> {
+        track_unwritten: bool,
+    ) -> napi::Result<Vec<RegistrationVerdict>> {
         let mut store = self.inner.write().unwrap();
         registrations
             .iter()
-            .map(|reg| store.register_one(reg))
+            .map(|reg| store.register_one(reg, track_unwritten))
             .collect()
+    }
+
+    /// Drains the registrations awaiting persistence whose registration block is
+    /// at or below `to_block_inclusive` — everything the batch being written
+    /// covers. What sits above that block stays pending for a later batch.
+    ///
+    /// Draining is destructive: a batch write that fails takes the indexer down,
+    /// and the restart re-seeds every stored address from the database.
+    #[napi]
+    pub fn take_unwritten_entries(&self, to_block_inclusive: i64) -> Vec<AddressEntry> {
+        let mut store = self.inner.write().unwrap();
+        let mut taken = Vec::new();
+        let mut pending = Vec::new();
+        for id in std::mem::take(&mut store.unwritten) {
+            let entry = store.entry(id);
+            if entry.registration_block <= to_block_inclusive {
+                taken.push(AddressEntry {
+                    address: address_string(store.ecosystem, &entry.key),
+                    contract_name: store.contract_name(entry.contract_idx).to_string(),
+                    registration_block: entry.registration_block,
+                    effective_start_block: entry.effective_start_block,
+                });
+            } else {
+                pending.push(id);
+            }
+        }
+        store.unwritten = pending;
+        taken
     }
 
     /// An ordered snapshot of one contract's addresses. Empty selections are
@@ -375,13 +400,13 @@ impl AddressStore {
         }
     }
 
-    /// Every live address across every contract, plus the no-events ones — the
-    /// count the chain reports as `numAddresses`.
+    /// Every live address across every contract — the count the chain reports
+    /// as `numAddresses`.
     #[napi]
     pub fn size(&self) -> i64 {
         let store = self.read();
         let live: u32 = store.live_count_by_contract.iter().sum();
-        i64::from(live) + store.no_events.len() as i64
+        i64::from(live)
     }
 
     /// Whether an address is registered for a contract and already started at
@@ -421,9 +446,13 @@ impl AddressStore {
             store.live_count_by_contract[contract_idx] -= 1;
             removed += 1;
         }
-        store
-            .no_events
-            .retain(|_, entry| entry.registration_block <= target_block);
+        // A pending write whose entry just died must never reach the database:
+        // the refetch registers the address afresh under a new id.
+        let live_unwritten = std::mem::take(&mut store.unwritten)
+            .into_iter()
+            .filter(|&id| !store.entry(id).dead)
+            .collect();
+        store.unwritten = live_unwritten;
         removed
     }
 
@@ -433,54 +462,36 @@ impl AddressStore {
     pub fn get(&self, address: String) -> Option<AddressEntry> {
         let store = self.read();
         let key = address_key(store.ecosystem, &address)?;
-        match store.live_id(&key) {
-            Some(id) => {
-                let entry = store.entry(id);
-                Some(AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                })
-            }
-            None => store.no_events.get(&key).map(|entry| AddressEntry {
-                address: address_string(store.ecosystem, &key),
-                contract_name: entry.contract_name.clone(),
-                registration_block: entry.registration_block,
-                effective_start_block: entry.effective_start_block,
-            }),
-        }
+        let id = store.live_id(&key)?;
+        let entry = store.entry(id);
+        Some(AddressEntry {
+            address: address_string(store.ecosystem, &entry.key),
+            contract_name: store.contract_name(entry.contract_idx).to_string(),
+            registration_block: entry.registration_block,
+            effective_start_block: entry.effective_start_block,
+        })
     }
 
     /// Canonical strings for every address registered under one contract, in set
-    /// order. Used by `chain.<Contract>.addresses` and by tests. Addresses of a
-    /// contract with no events are included: they're registered and persisted,
-    /// just never fetched, so the getter must still report them.
+    /// order. Used by `chain.<Contract>.addresses` and by tests.
     #[napi]
     pub fn contract_addresses(&self, contract_name: String) -> Vec<String> {
         let store = self.read();
-        let mut out: Vec<String> = match store.contract_idx(&contract_name) {
+        match store.contract_idx(&contract_name) {
             None => Vec::new(),
             Some(contract_idx) => store
                 .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
                 .into_iter()
                 .map(|id| address_string(store.ecosystem, &store.entry(id).key))
                 .collect(),
-        };
-        out.extend(
-            sorted_no_events_keys(&store, |entry| entry.contract_name == contract_name)
-                .into_iter()
-                .map(|key| address_string(store.ecosystem, key)),
-        );
-        out
+        }
     }
 
-    /// Every registered address in set order, no-events ones last (ordered by
-    /// their own key so the listing is reproducible). For assertions.
+    /// Every registered address in set order. For assertions.
     #[napi]
     pub fn entries(&self) -> Vec<AddressEntry> {
         let store = self.read();
-        let mut out: Vec<AddressEntry> = store
+        store
             .sorted_live_ids(0, |_| true)
             .into_iter()
             .map(|id| {
@@ -492,21 +503,7 @@ impl AddressStore {
                     effective_start_block: entry.effective_start_block,
                 }
             })
-            .collect();
-        out.extend(
-            sorted_no_events_keys(&store, |_| true)
-                .into_iter()
-                .map(|key| {
-                    let entry = &store.no_events[key];
-                    AddressEntry {
-                        address: address_string(store.ecosystem, key),
-                        contract_name: entry.contract_name.clone(),
-                        registration_block: entry.registration_block,
-                        effective_start_block: entry.effective_start_block,
-                    }
-                }),
-        );
-        out
+            .collect()
     }
 }
 
@@ -533,7 +530,7 @@ impl AddressStore {
                 entries: Vec::new(),
                 id_by_key: HashMap::new(),
                 live_count_by_contract,
-                no_events: HashMap::new(),
+                unwritten: Vec::new(),
             })),
         }
     }
@@ -550,87 +547,68 @@ impl AddressStore {
 }
 
 impl StoreInner {
-    fn register_one(&mut self, reg: &AddressRegistration) -> RegistrationVerdict {
+    fn register_one(
+        &mut self,
+        reg: &AddressRegistration,
+        track_unwritten: bool,
+    ) -> napi::Result<RegistrationVerdict> {
         let Some(key) = address_key(self.ecosystem, &reg.address) else {
-            return RegistrationVerdict {
+            return Ok(RegistrationVerdict {
                 kind: VERDICT_INVALID.to_string(),
                 effective_start_block: 0,
                 existing_contract_name: None,
                 existing_effective_start_block: None,
-            };
+            });
         };
 
-        let contract_idx = self.contract_idx(&reg.contract_name);
-        let contract_start_block =
-            contract_idx.map_or(0, |idx| self.contract_start_blocks[idx as usize]);
+        // Every name the user can register is a config contract, and a config
+        // contract that disappears fails the resume compat check before any
+        // address is restored — so an unknown name here is a bug upstream.
+        let Some(contract_idx) = self.contract_idx(&reg.contract_name) else {
+            return Err(napi::Error::from_reason(format!(
+                "Address {} registered for contract \"{}\", which the chain doesn't index.",
+                reg.address, reg.contract_name
+            )));
+        };
+        let contract_start_block = self.contract_start_blocks[contract_idx as usize];
         let effective_start_block =
             derive_effective_start_block(reg.registration_block, contract_start_block);
 
-        // An address is unique across the whole chain, so both maps are
-        // consulted whichever one a new registration would land in.
-        let existing = match self.live_id(&key) {
-            Some(id) => {
-                let entry = self.entry(id);
-                Some((
-                    self.contract_name(entry.contract_idx).to_string(),
-                    entry.effective_start_block,
-                ))
-            }
-            None => self
-                .no_events
-                .get(&key)
-                .map(|entry| (entry.contract_name.clone(), entry.effective_start_block)),
-        };
-        if let Some((existing_contract_name, existing_effective_start_block)) = existing {
+        if let Some(id) = self.live_id(&key) {
+            let entry = self.entry(id);
+            let existing_contract_name = self.contract_name(entry.contract_idx).to_string();
             let kind = if existing_contract_name == reg.contract_name {
                 VERDICT_DUPLICATE
             } else {
                 VERDICT_CONFLICT
             };
-            return RegistrationVerdict {
+            return Ok(RegistrationVerdict {
                 kind: kind.to_string(),
                 effective_start_block,
+                existing_effective_start_block: Some(entry.effective_start_block),
                 existing_contract_name: Some(existing_contract_name),
-                existing_effective_start_block: Some(existing_effective_start_block),
-            };
+            });
         }
 
-        match contract_idx {
-            None => {
-                self.no_events.insert(
-                    key,
-                    NoEventsEntry {
-                        contract_name: reg.contract_name.clone(),
-                        registration_block: reg.registration_block,
-                        effective_start_block,
-                    },
-                );
-                RegistrationVerdict {
-                    kind: VERDICT_NO_EVENTS.to_string(),
-                    effective_start_block,
-                    existing_contract_name: None,
-                    existing_effective_start_block: None,
-                }
-            }
-            Some(contract_idx) => {
-                let id = self.entries.len() as u64;
-                self.id_by_key.insert(key.clone(), id);
-                self.entries.push(Entry {
-                    key,
-                    contract_idx,
-                    registration_block: reg.registration_block,
-                    effective_start_block,
-                    dead: false,
-                });
-                self.live_count_by_contract[contract_idx as usize] += 1;
-                RegistrationVerdict {
-                    kind: VERDICT_ADDED.to_string(),
-                    effective_start_block,
-                    existing_contract_name: None,
-                    existing_effective_start_block: None,
-                }
-            }
+        let id = self.entries.len() as u64;
+        self.id_by_key.insert(key.clone(), id);
+        self.entries.push(Entry {
+            key,
+            contract_idx,
+            registration_block: reg.registration_block,
+            effective_start_block,
+            dead: false,
+        });
+        self.live_count_by_contract[contract_idx as usize] += 1;
+        if track_unwritten {
+            self.unwritten.push(id);
         }
+        Ok(RegistrationVerdict {
+            kind: VERDICT_ADDED.to_string(),
+            effective_start_block,
+            existing_contract_name: None,
+            existing_effective_start_block: None,
+        })
     }
 }
 
@@ -645,20 +623,6 @@ fn apply_window(ids: &[u64], offset: Option<i64>, limit: Option<i64>) -> Vec<u64
         None => ids.len(),
     };
     ids[start..end].to_vec()
-}
-
-/// No-events keys `keep` accepts, ordered by the same address bytes a live
-/// entry sorts on — they have no id to order by, and the rendered string would
-/// order checksummed EVM addresses differently from the rest of a listing.
-fn sorted_no_events_keys(store: &StoreInner, keep: impl Fn(&NoEventsEntry) -> bool) -> Vec<&Key> {
-    let mut keys: Vec<&Key> = store
-        .no_events
-        .iter()
-        .filter(|(_, entry)| keep(entry))
-        .map(|(key, _)| key)
-        .collect();
-    keys.sort_unstable();
-    keys
 }
 
 /// Ids must already be in set order, so equal start blocks are adjacent.
@@ -956,6 +920,17 @@ impl AddressSet {
     }
 }
 
+#[cfg(test)]
+impl AddressStore {
+    /// `register_batch` for tests that aren't exercising pending-write tracking.
+    pub(crate) fn register_seed(
+        &self,
+        registrations: Vec<AddressRegistration>,
+    ) -> Vec<RegistrationVerdict> {
+        self.register_batch(registrations, false).unwrap()
+    }
+}
+
 /// Store scaffolding for the source modules' routing tests, which need a real
 /// store because every address gate reads one.
 #[cfg(test)]
@@ -985,7 +960,7 @@ pub(crate) mod test_support {
                 })
             })
             .collect();
-        for verdict in store.register_batch(registrations) {
+        for verdict in store.register_seed(registrations) {
             assert_eq!(verdict.kind, VERDICT_ADDED, "test fixture address rejected");
         }
         store
@@ -1083,7 +1058,7 @@ mod tests {
     #[test]
     fn derives_effective_start_block_from_contract_and_registration() {
         let store = store();
-        let verdicts = store.register_batch(vec![
+        let verdicts = store.register_seed(vec![
             // Config address of a contract starting at 100.
             reg(A, "C", -1),
             // Dynamic registration below the contract start block.
@@ -1103,7 +1078,7 @@ mod tests {
     #[test]
     fn duplicate_and_conflict_carry_the_existing_registration() {
         let store = store();
-        let verdicts = store.register_batch(vec![
+        let verdicts = store.register_seed(vec![
             reg(A, "C", 10),
             // Same address, same contract — duplicate, with what's already held.
             reg(A, "C", 20),
@@ -1133,48 +1108,47 @@ mod tests {
     }
 
     #[test]
-    fn no_events_addresses_stay_out_of_sets_but_still_conflict() {
+    fn an_address_belongs_to_one_contract_whether_or_not_it_has_events() {
+        // "D" stands in for a contract the chain indexes no events for: the
+        // store treats it like any other, and the fetch state decides nothing
+        // is queried for it.
         let store = store();
-        let verdicts = store.register_batch(vec![
-            reg(A, "Unknown", 10),
-            reg(A, "C", 20),
-            reg(A, "Unknown", 30),
-        ]);
-        assert_eq!(kinds(&verdicts), vec!["noEvents", "conflict", "duplicate"]);
-        // Never fetched: no contract owns it in a set, but it is still counted,
-        // listed and reported by `chain.<Contract>.addresses` so it gets
-        // persisted and stays visible to the user.
+        let verdicts = store.register_seed(vec![reg(A, "D", 10), reg(A, "C", 20), reg(A, "D", 30)]);
         assert_eq!(
             (
-                store.make_set("Unknown".to_string(), None).size(),
+                kinds(&verdicts),
                 store.size(),
-                store.entries().len(),
-                store.contract_addresses("Unknown".to_string()),
+                store.contract_addresses("D".to_string()),
             ),
-            (0, 1, 1, vec![A.to_string()])
+            (
+                vec!["added", "conflict", "duplicate"],
+                1,
+                vec![A.to_string()]
+            )
         );
     }
 
     #[test]
-    fn contract_addresses_lists_live_and_no_events_entries() {
-        // A contract can hold both at once after a config change removes the
-        // events of some addresses but not others; the getter reports every
-        // address registered under the name, fetched or not.
-        let store = AddressStore::new_evm(false, contracts(&[("C", None)]));
-        let verdicts = store.register_batch(vec![
-            reg(B, "C", 20),
-            reg(A, "C", 10),
-            reg(C, "NoEvents", 30),
-        ]);
+    fn registering_for_a_contract_the_chain_doesnt_index_is_an_error() {
+        let store = store();
+        assert!(store
+            .register_batch(vec![reg(A, "Unknown", 10)], false)
+            .is_err());
+    }
+
+    #[test]
+    fn contract_addresses_are_listed_per_contract_in_set_order() {
+        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)]));
+        let verdicts = store.register_seed(vec![reg(B, "C", 20), reg(A, "C", 10), reg(C, "D", 30)]);
         assert_eq!(
             (
                 kinds(&verdicts),
                 store.contract_addresses("C".to_string()),
-                store.contract_addresses("NoEvents".to_string()),
+                store.contract_addresses("D".to_string()),
                 store.contract_addresses("Missing".to_string()),
             ),
             (
-                vec!["added", "added", "noEvents"],
+                vec!["added", "added", "added"],
                 // Set order: A(10) before B(20).
                 vec![A.to_string(), B.to_string()],
                 vec![C.to_string()],
@@ -1184,9 +1158,56 @@ mod tests {
     }
 
     #[test]
+    fn unwritten_entries_drain_up_to_the_written_block() {
+        let store = store();
+        store.register_seed(vec![reg(A, "C", 100)]);
+        store
+            .register_batch(vec![reg(B, "C", 200), reg(C, "C", 400)], true)
+            .unwrap();
+
+        let taken = store.take_unwritten_entries(300);
+        assert_eq!(
+            (
+                // The seeded address is already stored, so it never drains.
+                taken
+                    .iter()
+                    .map(|e| (e.address.as_str(), e.registration_block))
+                    .collect::<Vec<_>>(),
+                store.take_unwritten_entries(300).len(),
+                store
+                    .take_unwritten_entries(400)
+                    .iter()
+                    .map(|e| e.address.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            (vec![(B, 200)], 0, vec![C.to_string()])
+        );
+    }
+
+    #[test]
+    fn rollback_drops_pending_writes_of_the_addresses_it_kills() {
+        let store = store();
+        store
+            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 400)], true)
+            .unwrap();
+        store.rollback(200);
+        // Re-registering after the rollback makes the address pending again.
+        store.register_batch(vec![reg(B, "C", 500)], true).unwrap();
+
+        assert_eq!(
+            store
+                .take_unwritten_entries(1000)
+                .iter()
+                .map(|e| (e.address.as_str(), e.registration_block))
+                .collect::<Vec<_>>(),
+            vec![(A, 100), (B, 500)]
+        );
+    }
+
+    #[test]
     fn checksummed_and_lowercase_spellings_are_one_address() {
         let store = AddressStore::new_evm(true, contracts(&[("C", None)]));
-        let verdicts = store.register_batch(vec![
+        let verdicts = store.register_seed(vec![
             reg("0x85149247691df622eaf1a8bd0cafd40bc45154a9", "C", 1),
             reg("0x85149247691df622eaF1a8Bd0CaFd40BC45154a9", "C", 2),
         ]);
@@ -1203,7 +1224,7 @@ mod tests {
     #[test]
     fn malformed_address_is_rejected_not_registered() {
         let store = store();
-        let verdicts = store.register_batch(vec![reg("not-an-address", "C", 1)]);
+        let verdicts = store.register_seed(vec![reg("not-an-address", "C", 1)]);
         assert_eq!((kinds(&verdicts), store.size()), (vec!["invalid"], 0));
     }
 
@@ -1214,21 +1235,21 @@ mod tests {
         // what lets a restored indexer rebuild the partitions it had.
         let expected = {
             let store = store();
-            store.register_batch(vec![reg(A, "C", 30), reg(B, "C", 10), reg(C, "C", 20)]);
+            store.register_seed(vec![reg(A, "C", 30), reg(B, "C", 10), reg(C, "C", 20)]);
             set_entries(&store.make_set("C".to_string(), None))
         };
 
         let reversed = {
             let store = store();
-            store.register_batch(vec![reg(C, "C", 20), reg(B, "C", 10), reg(A, "C", 30)]);
+            store.register_seed(vec![reg(C, "C", 20), reg(B, "C", 10), reg(A, "C", 30)]);
             set_entries(&store.make_set("C".to_string(), None))
         };
 
         let split_batches = {
             let store = store();
-            store.register_batch(vec![reg(B, "C", 10)]);
-            store.register_batch(vec![reg(A, "C", 30)]);
-            store.register_batch(vec![reg(C, "C", 20)]);
+            store.register_seed(vec![reg(B, "C", 10)]);
+            store.register_seed(vec![reg(A, "C", 30)]);
+            store.register_seed(vec![reg(C, "C", 20)]);
             set_entries(&store.make_set("C".to_string(), None))
         };
 
@@ -1242,9 +1263,9 @@ mod tests {
     #[test]
     fn min_id_selects_only_a_batch_additions() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 10)]);
+        store.register_seed(vec![reg(A, "C", 10)]);
         let cursor = store.next_id();
-        store.register_batch(vec![reg(B, "C", 20), reg(C, "C", 30)]);
+        store.register_seed(vec![reg(B, "C", 20), reg(C, "C", 30)]);
         let added = store.make_set(
             "C".to_string(),
             Some(MakeSetOptions {
@@ -1258,7 +1279,7 @@ mod tests {
     #[test]
     fn start_block_windows_and_grouping() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "C", 300)]);
+        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "C", 300)]);
         let window = store.make_set(
             "C".to_string(),
             Some(MakeSetOptions {
@@ -1287,7 +1308,7 @@ mod tests {
     #[test]
     fn merge_and_slice_keep_set_order_and_dedupe() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
+        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
         let c_set = store.make_set("C".to_string(), None);
         let d_set = store.make_set("D".to_string(), None);
         let merged = c_set.merge(&d_set).merge(&c_set);
@@ -1311,7 +1332,7 @@ mod tests {
     #[test]
     fn rollback_tombstones_and_filters_existing_sets() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 100), reg(B, "C", 300), reg(C, "C", 500)]);
+        store.register_seed(vec![reg(A, "C", 100), reg(B, "C", 300), reg(C, "C", 500)]);
         let before = store.make_set("C".to_string(), None);
         let removed = store.rollback(300);
         assert_eq!(
@@ -1333,7 +1354,7 @@ mod tests {
     #[test]
     fn a_set_built_before_a_rollback_keeps_tombstones_but_cant_fetch_them() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 100), reg(B, "C", 500)]);
+        store.register_seed(vec![reg(A, "C", 100), reg(B, "C", 500)]);
         // Cache the set before the rollback too, the way a partition that is
         // mid-query would have.
         let before = store.make_set("C".to_string(), None);
@@ -1364,8 +1385,8 @@ mod tests {
     fn merging_sets_from_different_stores_panics() {
         let left = store();
         let right = store();
-        left.register_batch(vec![reg(A, "C", 100)]);
-        right.register_batch(vec![reg(B, "C", 100)]);
+        left.register_seed(vec![reg(A, "C", 100)]);
+        right.register_seed(vec![reg(B, "C", 100)]);
         let _ = left
             .make_set("C".to_string(), None)
             .merge(&right.make_set("C".to_string(), None));
@@ -1374,9 +1395,9 @@ mod tests {
     #[test]
     fn rolled_back_address_can_be_registered_again() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 500)]);
+        store.register_seed(vec![reg(A, "C", 500)]);
         store.rollback(300);
-        let verdicts = store.register_batch(vec![reg(A, "D", 400)]);
+        let verdicts = store.register_seed(vec![reg(A, "D", 400)]);
         assert_eq!(
             (kinds(&verdicts), store.contract_addresses("D".to_string())),
             (vec!["added"], vec![A.to_string()])
@@ -1386,7 +1407,7 @@ mod tests {
     #[test]
     fn is_indexed_at_gates_on_contract_and_effective_start_block() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 300)]);
+        store.register_seed(vec![reg(A, "C", 300)]);
         assert_eq!(
             (
                 store.is_indexed_at(A.to_string(), "C".to_string(), 300),
@@ -1401,7 +1422,7 @@ mod tests {
     #[test]
     fn contains_at_scopes_the_gate_to_the_set() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 300), reg(B, "C", 300)]);
+        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 300)]);
         let set = store.make_set_of(vec![A.to_string()]);
         assert_eq!(
             (
@@ -1420,7 +1441,7 @@ mod tests {
     #[test]
     fn set_cache_indexes_owners_and_padded_topics() {
         let store = store();
-        store.register_batch(vec![reg(A, "C", 100), reg(C, "D", 200)]);
+        store.register_seed(vec![reg(A, "C", 100), reg(C, "D", 200)]);
         let set = store
             .make_set("C".to_string(), None)
             .merge(&store.make_set("D".to_string(), None));
@@ -1455,7 +1476,7 @@ mod tests {
     fn svm_keys_on_the_base58_text() {
         let store = AddressStore::new_svm(contracts(&[("P", None)]));
         let program = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-        let verdicts = store.register_batch(vec![reg(program, "P", 5)]);
+        let verdicts = store.register_seed(vec![reg(program, "P", 5)]);
         assert_eq!(
             (
                 kinds(&verdicts),
