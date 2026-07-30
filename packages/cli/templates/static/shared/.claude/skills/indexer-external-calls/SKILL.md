@@ -61,7 +61,6 @@ Always pass `{ batch: true }` to the transport. The preload pass fires effects f
 
 ```ts
 const client = createPublicClient({
-  chain: mainnet,
   transport: http(process.env.ENVIO_RPC_URL, { batch: true }),
 });
 
