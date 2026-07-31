@@ -57,8 +57,12 @@ Full ref: https://raw.githubusercontent.com/DZakh/sury/refs/tags/v9.3.0/docs/js-
 
 ## RPC pattern (viem)
 
+Always pass `{ batch: true }` to the transport. The preload pass fires effects for the whole batch concurrently, and batching collapses them into a few JSON-RPC requests instead of one request per read.
+
 ```ts
-const client = createPublicClient({ transport: http(process.env.ENVIO_RPC_URL) });
+const client = createPublicClient({
+  transport: http(process.env.ENVIO_RPC_URL, { batch: true }),
+});
 
 const getTokenMetadata = createEffect(
   {
