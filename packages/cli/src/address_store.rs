@@ -556,25 +556,6 @@ impl AddressStore {
                 .collect(),
         }
     }
-
-    /// Every registered address in set order. For assertions.
-    #[napi]
-    pub fn entries(&self) -> Vec<AddressEntry> {
-        let store = self.read();
-        store
-            .sorted_live_ids(0, |_| true)
-            .into_iter()
-            .map(|id| {
-                let entry = store.entry(id);
-                AddressEntry {
-                    address: address_string(store.ecosystem, &entry.key),
-                    contract_name: store.contract_name(entry.contract_idx).to_string(),
-                    registration_block: entry.registration_block,
-                    effective_start_block: entry.effective_start_block,
-                }
-            })
-            .collect()
-    }
 }
 
 impl AddressStore {

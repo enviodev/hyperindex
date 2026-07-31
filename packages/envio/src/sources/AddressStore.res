@@ -161,8 +161,6 @@ external drainForWrite: (t, int, array<int>) => array<drainedAddress> = "drainFo
 // The registrations still awaiting persistence. For assertions.
 @send external pendingEntries: t => array<Internal.indexingContract> = "pendingEntries"
 @send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
-@send
-external startBlockGroups: (t, string) => array<AddressSet.startBlockGroup> = "startBlockGroups"
 @send external contractCount: (t, string) => int = "contractCount"
 @send external size: t => int = "size"
 
@@ -178,8 +176,6 @@ external startBlockGroups: (t, string) => array<AddressSet.startBlockGroup> = "s
 @send external getRaw: (t, Address.t) => Null.t<Internal.indexingContract> = "get"
 
 @send external contractAddresses: (t, string) => array<Address.t> = "contractAddresses"
-
-@send external entries: t => array<Internal.indexingContract> = "entries"
 
 let toVerdict = (raw: rawVerdict): verdict =>
   switch raw.kind {
