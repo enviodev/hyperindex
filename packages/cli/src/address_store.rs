@@ -101,7 +101,7 @@ pub struct StoreInner {
     ecosystem: Ecosystem,
     contract_names: Vec<String>,
     contract_start_blocks: Vec<i64>,
-    contract_has_events: Vec<bool>,
+    contract_depends_on_addresses: Vec<bool>,
     contract_idx_by_name: HashMap<String, u32>,
     entries: Vec<Entry>,
     id_by_key: HashMap<Key, u64>,
@@ -183,11 +183,11 @@ pub struct AddressStoreContract {
     /// chain; absent means block 0, since partitions never query below the
     /// chain's own start block anyway.
     pub start_block: Option<i64>,
-    /// Whether this chain has address-dependent events for the contract. False
-    /// for a config contract this chain never fetches for: its addresses are
-    /// still registered and persisted, so a config that later adds events picks
-    /// them up, but no partition is ever built from them.
-    pub has_events: bool,
+    /// Whether any of this chain's events for the contract are fetched by
+    /// address. False both for a config contract this chain has no events for
+    /// and for one whose events are all wildcard — either way its addresses are
+    /// registered and persisted, but no partition is ever built from them.
+    pub depends_on_addresses: bool,
 }
 
 /// One address a batch asks the store to register.
@@ -582,7 +582,7 @@ impl AddressStore {
         let mut contract_names = Vec::with_capacity(contracts.len());
         let mut contract_start_blocks = Vec::with_capacity(contracts.len());
         let mut contract_idx_by_name = HashMap::with_capacity(contracts.len());
-        let mut contract_has_events = Vec::with_capacity(contracts.len());
+        let mut contract_depends_on_addresses = Vec::with_capacity(contracts.len());
         for contract in contracts {
             if contract_idx_by_name.contains_key(&contract.name) {
                 continue;
@@ -590,7 +590,7 @@ impl AddressStore {
             contract_idx_by_name.insert(contract.name.clone(), contract_names.len() as u32);
             contract_names.push(contract.name);
             contract_start_blocks.push(contract.start_block.unwrap_or(0).max(0));
-            contract_has_events.push(contract.has_events);
+            contract_depends_on_addresses.push(contract.depends_on_addresses);
         }
         let live_count_by_contract = vec![0u32; contract_names.len()];
         Self {
@@ -598,7 +598,7 @@ impl AddressStore {
                 ecosystem,
                 contract_names,
                 contract_start_blocks,
-                contract_has_events,
+                contract_depends_on_addresses,
                 contract_idx_by_name,
                 entries: Vec::new(),
                 id_by_key: HashMap::new(),
@@ -699,7 +699,7 @@ impl StoreInner {
         }
         RegistrationVerdict {
             kind: VERDICT_ADDED.to_string(),
-            fetchable: self.contract_has_events[contract_idx as usize],
+            fetchable: self.contract_depends_on_addresses[contract_idx as usize],
             effective_start_block,
             existing_contract_name: None,
             existing_effective_start_block: None,
@@ -1040,7 +1040,7 @@ pub(crate) mod test_support {
                 .map(|(name, _)| AddressStoreContract {
                     name: name.to_string(),
                     start_block: None,
-                    has_events: true,
+                    depends_on_addresses: true,
                 })
                 .collect(),
         );
@@ -1117,18 +1117,19 @@ mod tests {
             .map(|(name, start_block)| AddressStoreContract {
                 name: name.to_string(),
                 start_block: *start_block,
-                has_events: true,
+                depends_on_addresses: true,
             })
             .collect()
     }
 
-    /// A contract the chain indexes no events for — registered and persisted
-    /// like any other, never fetched.
-    fn no_events_contract(name: &str) -> AddressStoreContract {
+    /// A contract nothing on this chain fetches by address — either it has no
+    /// events here, or they're all wildcard. Registered and persisted like any
+    /// other, never fetched.
+    fn address_independent_contract(name: &str) -> AddressStoreContract {
         AddressStoreContract {
             name: name.to_string(),
             start_block: None,
-            has_events: false,
+            depends_on_addresses: false,
         }
     }
 
@@ -1215,10 +1216,10 @@ mod tests {
     }
 
     #[test]
-    fn an_address_belongs_to_one_contract_whether_or_not_it_has_events() {
-        // "D" stands in for a contract the chain indexes no events for: the
-        // store treats it like any other, and the fetch state decides nothing
-        // is queried for it.
+    fn an_address_belongs_to_one_contract_whether_or_not_it_is_fetched() {
+        // "D" stands in for a contract nothing on this chain fetches by
+        // address: the store treats it like any other, and the fetch state
+        // decides nothing is queried for it.
         let store = store();
         let verdicts = store.register_seed(vec![reg(A, "D", 10), reg(A, "C", 20), reg(A, "D", 30)]);
         assert_eq!(
@@ -1255,10 +1256,13 @@ mod tests {
     }
 
     #[test]
-    fn only_a_contract_with_events_is_fetchable() {
+    fn only_an_address_dependent_contract_is_fetchable() {
         let store = AddressStore::new_evm(
             false,
-            vec![contracts(&[("C", None)]).remove(0), no_events_contract("D")],
+            vec![
+                contracts(&[("C", None)]).remove(0),
+                address_independent_contract("D"),
+            ],
         );
         let verdicts = store.register_seed(vec![reg(A, "C", 10), reg(B, "D", 20)]);
         assert_eq!(

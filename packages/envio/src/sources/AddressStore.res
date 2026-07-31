@@ -9,10 +9,10 @@ type t
 
 // A contract an address may be registered for. Every config contract of every
 // chain, since `context.chain.<Contract>.add` validates against that whole set
-// — a name outside it makes the store throw. `hasEvents` is whether this chain
-// fetches for the contract at all, which is what makes the store able to answer
-// `fetchable` on a verdict.
-type contract = {name: string, startBlock: option<int>, hasEvents: bool}
+// — a name outside it makes the store throw. `dependsOnAddresses` is whether
+// this chain fetches for the contract by address, which is what makes the store
+// able to answer `fetchable` on a verdict.
+type contract = {name: string, startBlock: option<int>, dependsOnAddresses: bool}
 
 type registration = {
   address: Address.t,
@@ -22,7 +22,7 @@ type registration = {
 }
 
 type verdict =
-  // `fetchable` is false when the chain has no address-dependent events for the
+  // `fetchable` is false when nothing on the chain is fetched by address for the
   // contract: the address is still stored and persisted, so a config that later
   // adds events picks it up on restart, but no partition is built from it.
   | Added({effectiveStartBlock: int, fetchable: bool})
@@ -86,11 +86,11 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array
 // contract's address gate open from the chain's start, and the per-registration
 // start block still holds back the registrations that declared one.
 //
-// `hasEvents` follows `dependsOnAddresses` rather than the mere presence of a
-// registration: a contract whose events are all wildcard is fetched without
-// consulting addresses, so registering one changes nothing about what's queried.
-// Contracts named only by `configContractNames` carry `false` — their addresses
-// are stored and persisted, never fetched.
+// A contract whose events are all wildcard is fetched without consulting
+// addresses, so registering one changes nothing about what's queried — it
+// carries `dependsOnAddresses: false` just like a contract named only by
+// `configContractNames`. Either way the addresses are stored and persisted,
+// never fetched.
 let contractsOf = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~configContractNames: array<string>,
@@ -99,7 +99,7 @@ let contractsOf = (
   // storing `None` in a dict would be indistinguishable from "not seen yet".
   let startBlocks: dict<int> = Dict.make()
   let unrestricted = Utils.Set.make()
-  let withEvents = Utils.Set.make()
+  let addressDependent = Utils.Set.make()
   let names = []
   let addName = name =>
     if !(names->Array.includes(name)) {
@@ -109,7 +109,7 @@ let contractsOf = (
     let name = reg.eventConfig.contractName
     addName(name)
     if reg.dependsOnAddresses {
-      withEvents->Utils.Set.add(name)->ignore
+      addressDependent->Utils.Set.add(name)->ignore
     }
     switch reg.startBlock {
     | None => unrestricted->Utils.Set.add(name)->ignore
@@ -129,7 +129,7 @@ let contractsOf = (
     startBlock: unrestricted->Utils.Set.has(name)
       ? None
       : startBlocks->Utils.Dict.dangerouslyGetNonOption(name),
-    hasEvents: withEvents->Utils.Set.has(name),
+    dependsOnAddresses: addressDependent->Utils.Set.has(name),
   })
 }
 

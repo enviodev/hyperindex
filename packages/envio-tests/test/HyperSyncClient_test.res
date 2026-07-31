@@ -45,7 +45,7 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
 let addressStore = AddressStore.make(
   ~ecosystem=Ecosystem.Evm,
   ~shouldChecksum=false,
-  ~contracts=[{name: "ERC20", startBlock: None, hasEvents: true}, {name: "Unrelated", startBlock: None, hasEvents: true}],
+  ~contracts=[{name: "ERC20", startBlock: None, dependsOnAddresses: true}, {name: "Unrelated", startBlock: None, dependsOnAddresses: true}],
 )
 let _ = addressStore->AddressStore.seedBatch([
   {address: usdcAddress, contractName: "ERC20", registrationBlock: -1},

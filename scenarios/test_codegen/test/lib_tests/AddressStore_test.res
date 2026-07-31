@@ -105,11 +105,12 @@ describe("AddressStore", () => {
   })
 
   it("keeps a contract unrestricted when any registration has no start block", t => {
-    let reg = (~contractName, ~startBlock=?) =>
+    let reg = (~contractName, ~startBlock=?, ~isWildcard=false) =>
       (MockIndexer.evmOnEventRegistration(
         ~id=contractName,
         ~contractName,
         ~startBlock?,
+        ~isWildcard,
       ) :> Internal.onEventRegistration)
 
     t.expect({
@@ -144,18 +145,25 @@ describe("AddressStore", () => {
         ~onEventRegistrations=[reg(~contractName="A")],
         ~configContractNames=["A", "NoEvents"],
       ),
+      // A wildcard event is fetched without consulting addresses, so
+      // registering one changes nothing about what's queried.
+      "wildcardOnly": AddressStore.contractsOf(
+        ~onEventRegistrations=[reg(~contractName="A", ~isWildcard=true)],
+        ~configContractNames=["A"],
+      ),
     }).toEqual({
-      "noneThenSome": [({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract)],
-      "someThenNone": [({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract)],
-      "allRestricted": [({name: "A", startBlock: Some(50), hasEvents: true}: AddressStore.contract)],
+      "noneThenSome": [({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract)],
+      "someThenNone": [({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract)],
+      "allRestricted": [({name: "A", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract)],
       "perContract": [
-        ({name: "B", startBlock: Some(50), hasEvents: true}: AddressStore.contract),
-        ({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract),
+        ({name: "B", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
       ],
       "configOnly": [
-        ({name: "A", startBlock: None, hasEvents: true}: AddressStore.contract),
-        ({name: "NoEvents", startBlock: None, hasEvents: false}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "NoEvents", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
       ],
+      "wildcardOnly": [({name: "A", startBlock: None, dependsOnAddresses: false}: AddressStore.contract)],
     })
   })
 

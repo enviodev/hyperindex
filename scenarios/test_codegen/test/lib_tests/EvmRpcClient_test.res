@@ -236,7 +236,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     let store = AddressStore.make(
       ~ecosystem=Ecosystem.Evm,
       ~shouldChecksum=false,
-      ~contracts=[{name: "ERC20", startBlock: None, hasEvents: true}],
+      ~contracts=[{name: "ERC20", startBlock: None, dependsOnAddresses: true}],
     )
     let _ = store->AddressStore.seedBatch([
       {

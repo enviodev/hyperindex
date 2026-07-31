@@ -852,7 +852,7 @@ mod tests {
             vec![crate::address_store::AddressStoreContract {
                 name: "Owned".to_string(),
                 start_block: None,
-                has_events: true,
+                depends_on_addresses: true,
             }],
         );
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
@@ -1067,7 +1067,7 @@ mod tests {
             vec![crate::address_store::AddressStoreContract {
                 name: "C".to_string(),
                 start_block: None,
-                has_events: true,
+                depends_on_addresses: true,
             }],
         );
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
