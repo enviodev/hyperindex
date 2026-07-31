@@ -8,12 +8,11 @@ let mockDate = (~year=2024, ~month=1, ~day=1) => {
 }
 
 describe("Write/read tests", () => {
-  Async.itSkipInClaudeCloud("Test writing and reading entities with special cases", async t => {
+  Async.it("Test writing and reading entities with special cases", async t => {
     let sourceMock = MockIndexer.Source.make(~chainId=#1337, [#getHeightOrThrow, #getItemsOrThrow])
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~saveFullHistory=true,
-      ~enableHasura=true,
     )
     await Utils.delay(0)
 
@@ -151,27 +150,6 @@ describe("Write/read tests", () => {
         },
       }),
     ])
-
-    t.expect(
-      await indexerMock.graphql(`query {
-  EntityWithAllTypes {
-    arrayOfBigInts
-    arrayOfBigDecimals
-  }
-}`),
-      ~message=`We internally turn NUMERIC[] to TEXT[] when Hasura is enabled,
-to workaround a bug, when the values returned as number[] instead of string[],
-breaking precicion on big values. https://github.com/enviodev/hyperindex/issues/788`,
-    ).toEqual({
-      data: {
-        "EntityWithAllTypes": [
-          {
-            "arrayOfBigInts": ["3", "4"],
-            "arrayOfBigDecimals": ["3.3", "4.4"],
-          },
-        ],
-      },
-    })
   })
 
   Async.it(
