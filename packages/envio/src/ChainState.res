@@ -130,6 +130,19 @@ let make = (
   }
 }
 
+// Every chain's contracts, not just one chain's: `context.chain.X.add` accepts
+// any config contract, whichever chain declared it, so every chain's address
+// store has to hold the whole set.
+let configContractNames = (config: Config.t) => {
+  let names = Utils.Set.make()
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chain =>
+    chain.contracts->Array.forEach(contract => names->Utils.Set.add(contract.name)->ignore)
+  )
+  names->Utils.Set.toArray
+}
+
 let makeInternal = (
   ~chainConfig: Config.chain,
   ~indexingAddresses: array<Internal.indexingAddress>,
@@ -176,11 +189,7 @@ let makeInternal = (
     ~shouldChecksum=!lowercaseAddresses,
     ~contracts=AddressStore.contractsOf(
       ~onEventRegistrations,
-      // Every chain's contracts, not just this one's: `context.chain.X.add`
-      // accepts any config contract, whichever chain declared it.
-      ~configContractNames=config.chainMap
-      ->ChainMap.values
-      ->Array.flatMap(chain => chain.contracts->Array.map(contract => contract.name)),
+      ~configContractNames=config->configContractNames,
     ),
   )
 
@@ -439,10 +448,13 @@ let contractAddresses = (cs: t, ~contractName) =>
   cs.addressStore->AddressStore.contractAddresses(contractName)
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
-// up to the block the caller is about to commit. Destructive: the caller must
-// persist them or take the indexer down.
-let takeUnwrittenAddresses = (cs: t, ~toBlockInclusive) =>
-  cs.addressStore->AddressStore.takeUnwrittenEntries(toBlockInclusive)
+// up to the block the caller is about to commit, each paired with the checkpoint
+// that owns its row. Destructive: the caller must persist them or take the
+// indexer down. Throws with nothing consumed when a registration's block has no
+// checkpoint in the batch.
+let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
+  cs.addressStore->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
+let hasAddressesToWrite = (cs: t) => cs.addressStore->AddressStore.pendingCount > 0
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
 let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage

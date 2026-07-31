@@ -19,13 +19,14 @@ let makeStore = (
     ~shouldChecksum,
     ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~configContractNames),
   )
-  let _ = store->AddressStore.registerBatch(
+  // Config addresses, like `FetchState.make` seeds them: already stored, so
+  // they never drain back into a write.
+  let _ = store->AddressStore.seedBatch(
     addresses->Array.map((contract): AddressStore.registration => {
       address: contract.address,
       contractName: contract.contractName,
       registrationBlock: contract.registrationBlock,
     }),
-    ~trackUnwritten=false,
   )
   store
 }

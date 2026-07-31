@@ -101,13 +101,14 @@ pub struct StoreInner {
     ecosystem: Ecosystem,
     contract_names: Vec<String>,
     contract_start_blocks: Vec<i64>,
+    contract_has_events: Vec<bool>,
     contract_idx_by_name: HashMap<String, u32>,
     entries: Vec<Entry>,
     id_by_key: HashMap<Key, u64>,
     live_count_by_contract: Vec<u32>,
     /// Ids of dynamic registrations not yet persisted to `envio_addresses`,
-    /// in registration order. Drained by `take_unwritten_entries` when the
-    /// batch covering their registration block is written.
+    /// in registration order. Drained by `drain_for_write` when the batch
+    /// covering their registration block is written.
     unwritten: Vec<u64>,
 }
 
@@ -182,6 +183,11 @@ pub struct AddressStoreContract {
     /// chain; absent means block 0, since partitions never query below the
     /// chain's own start block anyway.
     pub start_block: Option<i64>,
+    /// Whether this chain has address-dependent events for the contract. False
+    /// for a config contract this chain never fetches for: its addresses are
+    /// still registered and persisted, so a config that later adds events picks
+    /// them up, but no partition is ever built from them.
+    pub has_events: bool,
 }
 
 /// One address a batch asks the store to register.
@@ -199,6 +205,10 @@ pub struct AddressRegistration {
 pub struct RegistrationVerdict {
     /// `added` | `duplicate` | `conflict` | `invalid`
     pub kind: String,
+    /// Whether an `added` address is one this chain fetches for — the store
+    /// answers it because the store is what holds the contract list. False for
+    /// every rejected verdict.
+    pub fetchable: bool,
     /// Derived for the incoming registration; 0 when the address was rejected.
     pub effective_start_block: i64,
     /// The contract already holding this address — set for `duplicate` (same
@@ -230,6 +240,18 @@ pub struct AddressEntry {
     pub contract_name: String,
     pub registration_block: i64,
     pub effective_start_block: i64,
+}
+
+/// A drained registration paired with the checkpoint that must own its row.
+#[napi(object)]
+pub struct DrainedAddress {
+    pub address: String,
+    pub contract_name: String,
+    pub registration_block: i64,
+    /// Index into the `checkpoint_block_numbers` passed to `drain_for_write`.
+    /// The ids themselves are bigints the caller already holds, so only the
+    /// pairing crosses the boundary.
+    pub checkpoint_idx: u32,
 }
 
 /// Which of a contract's addresses `makeSet` should take.
@@ -280,52 +302,100 @@ impl AddressStore {
         self.read().entries.len() as i64
     }
 
-    /// Registers a batch, resolving each address against both the store and the
-    /// batch's own earlier entries, so two contracts claiming one address inside
-    /// a single batch conflict just as they would across batches.
-    ///
-    /// `track_unwritten` marks what this batch adds as pending persistence.
-    /// Registrations restored from the database (config addresses and resumed
-    /// dynamic ones) are already stored, so they pass `false`.
+    /// Registers a batch of dynamic registrations, resolving each address
+    /// against both the store and the batch's own earlier entries, so two
+    /// contracts claiming one address inside a single batch conflict just as
+    /// they would across batches. What it adds is marked pending persistence.
     #[napi]
     pub fn register_batch(
         &self,
         registrations: Vec<AddressRegistration>,
-        track_unwritten: bool,
     ) -> napi::Result<Vec<RegistrationVerdict>> {
-        let mut store = self.inner.write().unwrap();
-        registrations
-            .iter()
-            .map(|reg| store.register_one(reg, track_unwritten))
-            .collect()
+        self.register_all(registrations, true)
+    }
+
+    /// `register_batch` for addresses the database already holds — config
+    /// addresses and the dynamic ones a resume restores. Nothing is marked
+    /// pending, so nothing is ever written back.
+    #[napi]
+    pub fn seed_batch(
+        &self,
+        registrations: Vec<AddressRegistration>,
+    ) -> napi::Result<Vec<RegistrationVerdict>> {
+        self.register_all(registrations, false)
     }
 
     /// Drains the registrations awaiting persistence whose registration block is
     /// at or below `to_block_inclusive` — everything the batch being written
-    /// covers. What sits above that block stays pending for a later batch.
+    /// covers — pairing each with the checkpoint at its registration block.
+    /// What sits above that block stays pending for a later batch.
     ///
-    /// Draining is destructive: a batch write that fails takes the indexer down,
-    /// and the restart re-seeds every stored address from the database.
+    /// A drained registration with no checkpoint at its block means it came from
+    /// an event this batch never processed, which would write a row no rollback
+    /// could reach. That errors with the queue untouched, so the caller can fail
+    /// without the store having lied about what is still pending.
     #[napi]
-    pub fn take_unwritten_entries(&self, to_block_inclusive: i64) -> Vec<AddressEntry> {
+    pub fn drain_for_write(
+        &self,
+        to_block_inclusive: i64,
+        checkpoint_block_numbers: Vec<i64>,
+    ) -> napi::Result<Vec<DrainedAddress>> {
         let mut store = self.inner.write().unwrap();
-        let mut taken = Vec::new();
+        let mut drained = Vec::new();
         let mut pending = Vec::new();
-        for id in std::mem::take(&mut store.unwritten) {
+        for &id in store.unwritten.iter() {
             let entry = store.entry(id);
-            if entry.registration_block <= to_block_inclusive {
-                taken.push(AddressEntry {
+            if entry.registration_block > to_block_inclusive {
+                pending.push(id);
+                continue;
+            }
+            let Some(checkpoint_idx) = checkpoint_block_numbers
+                .iter()
+                .position(|&block| block == entry.registration_block)
+            else {
+                return Err(napi::Error::from_reason(format!(
+                    "Registered address {} at block {} has no checkpoint in the batch that writes it.",
+                    address_string(store.ecosystem, &entry.key),
+                    entry.registration_block
+                )));
+            };
+            drained.push(DrainedAddress {
+                address: address_string(store.ecosystem, &entry.key),
+                contract_name: store.contract_name(entry.contract_idx).to_string(),
+                registration_block: entry.registration_block,
+                checkpoint_idx: checkpoint_idx as u32,
+            });
+        }
+        store.unwritten = pending;
+        Ok(drained)
+    }
+
+    /// How many registrations await persistence. Lets the write path skip
+    /// assembling a batch's checkpoints for the common chain that registered
+    /// nothing.
+    #[napi]
+    pub fn pending_count(&self) -> i64 {
+        self.read().unwritten.len() as i64
+    }
+
+    /// The registrations still awaiting persistence, in registration order. For
+    /// assertions — draining is what the write path uses.
+    #[napi]
+    pub fn pending_entries(&self) -> Vec<AddressEntry> {
+        let store = self.read();
+        store
+            .unwritten
+            .iter()
+            .map(|&id| {
+                let entry = store.entry(id);
+                AddressEntry {
                     address: address_string(store.ecosystem, &entry.key),
                     contract_name: store.contract_name(entry.contract_idx).to_string(),
                     registration_block: entry.registration_block,
                     effective_start_block: entry.effective_start_block,
-                });
-            } else {
-                pending.push(id);
-            }
-        }
-        store.unwritten = pending;
-        taken
+                }
+            })
+            .collect()
     }
 
     /// An ordered snapshot of one contract's addresses. Empty selections are
@@ -512,6 +582,7 @@ impl AddressStore {
         let mut contract_names = Vec::with_capacity(contracts.len());
         let mut contract_start_blocks = Vec::with_capacity(contracts.len());
         let mut contract_idx_by_name = HashMap::with_capacity(contracts.len());
+        let mut contract_has_events = Vec::with_capacity(contracts.len());
         for contract in contracts {
             if contract_idx_by_name.contains_key(&contract.name) {
                 continue;
@@ -519,6 +590,7 @@ impl AddressStore {
             contract_idx_by_name.insert(contract.name.clone(), contract_names.len() as u32);
             contract_names.push(contract.name);
             contract_start_blocks.push(contract.start_block.unwrap_or(0).max(0));
+            contract_has_events.push(contract.has_events);
         }
         let live_count_by_contract = vec![0u32; contract_names.len()];
         Self {
@@ -526,6 +598,7 @@ impl AddressStore {
                 ecosystem,
                 contract_names,
                 contract_start_blocks,
+                contract_has_events,
                 contract_idx_by_name,
                 entries: Vec::new(),
                 id_by_key: HashMap::new(),
@@ -544,32 +617,52 @@ impl AddressStore {
     pub fn handle(&self) -> Arc<RwLock<StoreInner>> {
         self.inner.clone()
     }
+
+    /// Rejects the whole batch before applying any of it: an unknown contract
+    /// name is a bug upstream, and a caller that survives the error must not
+    /// find the earlier registrations already applied.
+    fn register_all(
+        &self,
+        registrations: Vec<AddressRegistration>,
+        track_unwritten: bool,
+    ) -> napi::Result<Vec<RegistrationVerdict>> {
+        let mut store = self.inner.write().unwrap();
+        for reg in registrations.iter() {
+            if store.contract_idx(&reg.contract_name).is_none() {
+                return Err(napi::Error::from_reason(format!(
+                    "Address {} registered for contract \"{}\", which the chain doesn't index.",
+                    reg.address, reg.contract_name
+                )));
+            }
+        }
+        Ok(registrations
+            .iter()
+            .map(|reg| store.register_one(reg, track_unwritten))
+            .collect())
+    }
 }
 
 impl StoreInner {
+    /// Infallible: `register_all` has already rejected every unknown contract
+    /// name, so nothing here can fail partway through a batch.
     fn register_one(
         &mut self,
         reg: &AddressRegistration,
         track_unwritten: bool,
-    ) -> napi::Result<RegistrationVerdict> {
+    ) -> RegistrationVerdict {
         let Some(key) = address_key(self.ecosystem, &reg.address) else {
-            return Ok(RegistrationVerdict {
+            return RegistrationVerdict {
                 kind: VERDICT_INVALID.to_string(),
+                fetchable: false,
                 effective_start_block: 0,
                 existing_contract_name: None,
                 existing_effective_start_block: None,
-            });
+            };
         };
 
-        // Every name the user can register is a config contract, and a config
-        // contract that disappears fails the resume compat check before any
-        // address is restored — so an unknown name here is a bug upstream.
-        let Some(contract_idx) = self.contract_idx(&reg.contract_name) else {
-            return Err(napi::Error::from_reason(format!(
-                "Address {} registered for contract \"{}\", which the chain doesn't index.",
-                reg.address, reg.contract_name
-            )));
-        };
+        let contract_idx = self
+            .contract_idx(&reg.contract_name)
+            .expect("register_all validates every contract name before applying the batch");
         let contract_start_block = self.contract_start_blocks[contract_idx as usize];
         let effective_start_block =
             derive_effective_start_block(reg.registration_block, contract_start_block);
@@ -582,12 +675,13 @@ impl StoreInner {
             } else {
                 VERDICT_CONFLICT
             };
-            return Ok(RegistrationVerdict {
+            return RegistrationVerdict {
                 kind: kind.to_string(),
+                fetchable: false,
                 effective_start_block,
                 existing_effective_start_block: Some(entry.effective_start_block),
                 existing_contract_name: Some(existing_contract_name),
-            });
+            };
         }
 
         let id = self.entries.len() as u64;
@@ -603,12 +697,13 @@ impl StoreInner {
         if track_unwritten {
             self.unwritten.push(id);
         }
-        Ok(RegistrationVerdict {
+        RegistrationVerdict {
             kind: VERDICT_ADDED.to_string(),
+            fetchable: self.contract_has_events[contract_idx as usize],
             effective_start_block,
             existing_contract_name: None,
             existing_effective_start_block: None,
-        })
+        }
     }
 }
 
@@ -922,12 +1017,12 @@ impl AddressSet {
 
 #[cfg(test)]
 impl AddressStore {
-    /// `register_batch` for tests that aren't exercising pending-write tracking.
+    /// `seed_batch` for tests, which never register an unknown contract name.
     pub(crate) fn register_seed(
         &self,
         registrations: Vec<AddressRegistration>,
     ) -> Vec<RegistrationVerdict> {
-        self.register_batch(registrations, false).unwrap()
+        self.seed_batch(registrations).unwrap()
     }
 }
 
@@ -945,6 +1040,7 @@ pub(crate) mod test_support {
                 .map(|(name, _)| AddressStoreContract {
                     name: name.to_string(),
                     start_block: None,
+                    has_events: true,
                 })
                 .collect(),
         );
@@ -1021,8 +1117,19 @@ mod tests {
             .map(|(name, start_block)| AddressStoreContract {
                 name: name.to_string(),
                 start_block: *start_block,
+                has_events: true,
             })
             .collect()
+    }
+
+    /// A contract the chain indexes no events for — registered and persisted
+    /// like any other, never fetched.
+    fn no_events_contract(name: &str) -> AddressStoreContract {
+        AddressStoreContract {
+            name: name.to_string(),
+            start_block: None,
+            has_events: false,
+        }
     }
 
     fn reg(address: &str, contract_name: &str, registration_block: i64) -> AddressRegistration {
@@ -1131,9 +1238,33 @@ mod tests {
     #[test]
     fn registering_for_a_contract_the_chain_doesnt_index_is_an_error() {
         let store = store();
+        assert!(store.register_batch(vec![reg(A, "Unknown", 10)]).is_err());
+        assert!(store.seed_batch(vec![reg(A, "Unknown", 10)]).is_err());
+    }
+
+    #[test]
+    fn a_batch_with_an_unknown_name_applies_none_of_itself() {
+        let store = store();
         assert!(store
-            .register_batch(vec![reg(A, "Unknown", 10)], false)
+            .register_batch(vec![reg(A, "C", 10), reg(B, "Unknown", 20)])
             .is_err());
+        // The valid registration ahead of the bad one must not have landed —
+        // a caller that survives the error would otherwise see a store holding
+        // an address it was never told about.
+        assert_eq!((store.size(), store.pending_entries().len()), (0, 0));
+    }
+
+    #[test]
+    fn only_a_contract_with_events_is_fetchable() {
+        let store = AddressStore::new_evm(
+            false,
+            vec![contracts(&[("C", None)]).remove(0), no_events_contract("D")],
+        );
+        let verdicts = store.register_seed(vec![reg(A, "C", 10), reg(B, "D", 20)]);
+        assert_eq!(
+            verdicts.iter().map(|v| v.fetchable).collect::<Vec<_>>(),
+            vec![true, false]
+        );
     }
 
     #[test]
@@ -1157,30 +1288,57 @@ mod tests {
         );
     }
 
+    fn drained(
+        store: &AddressStore,
+        to_block: i64,
+        checkpoints: &[i64],
+    ) -> Vec<(String, i64, u32)> {
+        store
+            .drain_for_write(to_block, checkpoints.to_vec())
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.address, e.registration_block, e.checkpoint_idx))
+            .collect()
+    }
+
     #[test]
     fn unwritten_entries_drain_up_to_the_written_block() {
         let store = store();
         store.register_seed(vec![reg(A, "C", 100)]);
         store
-            .register_batch(vec![reg(B, "C", 200), reg(C, "C", 400)], true)
+            .register_batch(vec![reg(B, "C", 200), reg(C, "C", 400)])
             .unwrap();
 
-        let taken = store.take_unwritten_entries(300);
         assert_eq!(
             (
                 // The seeded address is already stored, so it never drains.
-                taken
-                    .iter()
-                    .map(|e| (e.address.as_str(), e.registration_block))
-                    .collect::<Vec<_>>(),
-                store.take_unwritten_entries(300).len(),
-                store
-                    .take_unwritten_entries(400)
-                    .iter()
-                    .map(|e| e.address.clone())
-                    .collect::<Vec<_>>(),
+                drained(&store, 300, &[100, 200]),
+                drained(&store, 300, &[100, 200]),
+                drained(&store, 400, &[400]),
             ),
-            (vec![(B, 200)], 0, vec![C.to_string()])
+            (
+                vec![(B.to_string(), 200, 1)],
+                vec![],
+                vec![(C.to_string(), 400, 0)]
+            )
+        );
+    }
+
+    #[test]
+    fn draining_without_a_checkpoint_errors_and_keeps_the_queue() {
+        let store = store();
+        store
+            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 200)])
+            .unwrap();
+
+        // Block 200 has no checkpoint: the batch never processed the event that
+        // registered B, so the row would be unreachable by a rollback.
+        assert!(store.drain_for_write(300, vec![100]).is_err());
+        // Nothing was consumed, so a retry with the right checkpoints still
+        // sees both — the failed drain didn't silently swallow A.
+        assert_eq!(
+            drained(&store, 300, &[100, 200]),
+            vec![(A.to_string(), 100, 0), (B.to_string(), 200, 1)]
         );
     }
 
@@ -1188,19 +1346,15 @@ mod tests {
     fn rollback_drops_pending_writes_of_the_addresses_it_kills() {
         let store = store();
         store
-            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 400)], true)
+            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 400)])
             .unwrap();
         store.rollback(200);
         // Re-registering after the rollback makes the address pending again.
-        store.register_batch(vec![reg(B, "C", 500)], true).unwrap();
+        store.register_batch(vec![reg(B, "C", 500)]).unwrap();
 
         assert_eq!(
-            store
-                .take_unwritten_entries(1000)
-                .iter()
-                .map(|e| (e.address.as_str(), e.registration_block))
-                .collect::<Vec<_>>(),
-            vec![(A, 100), (B, 500)]
+            drained(&store, 1000, &[100, 500]),
+            vec![(A.to_string(), 100, 0), (B.to_string(), 500, 1)]
         );
     }
 
