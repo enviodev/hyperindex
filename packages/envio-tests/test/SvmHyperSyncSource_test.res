@@ -99,7 +99,7 @@ let capturedRegistrationInputs: array<array<SvmHyperSyncClient.Registration.inpu
 let addressStore = AddressStore.make(
   ~ecosystem=Ecosystem.Svm,
   ~shouldChecksum=false,
-  ~contracts=[{name: "TokenMetadata", startBlock: None}],
+  ~contracts=[{name: "TokenMetadata", startBlock: None, dependsOnAddresses: true}],
 )
 
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
@@ -161,7 +161,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
 // The chain's address index, with the Metaplex program registered for the
 // TokenMetadata program name.
 let programSet = {
-  let _ = addressStore->AddressStore.registerBatch([
+  let _ = addressStore->AddressStore.seedBatch([
     {
       address: metaplexProgramId->Address.unsafeFromString,
       contractName: "TokenMetadata",

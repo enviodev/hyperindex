@@ -852,9 +852,10 @@ mod tests {
             vec![crate::address_store::AddressStoreContract {
                 name: "Owned".to_string(),
                 start_block: None,
+                depends_on_addresses: true,
             }],
         );
-        address_store.register_batch(vec![crate::address_store::AddressRegistration {
+        address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "Owned".to_string(),
             registration_block: 100,
@@ -1066,9 +1067,10 @@ mod tests {
             vec![crate::address_store::AddressStoreContract {
                 name: "C".to_string(),
                 start_block: None,
+                depends_on_addresses: true,
             }],
         );
-        address_store.register_batch(vec![crate::address_store::AddressRegistration {
+        address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "C".to_string(),
             registration_block: 100,

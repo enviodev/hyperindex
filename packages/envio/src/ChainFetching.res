@@ -24,25 +24,15 @@ let runContractRegistersOrThrow = async (
     ~ecosystem=config.ecosystem.name,
   )
 
-  let itemsWithDcs = []
+  let registrations: array<AddressStore.registration> = []
 
   let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
     let eventItem = item->Internal.castUnsafeEventItem
-    let {blockNumber} = eventItem
-
-    let dc: Internal.indexingAddress = {
+    registrations->Array.push({
       address: contractAddress,
       contractName,
-      registrationBlock: blockNumber,
-    }
-
-    switch item->Internal.getItemDcs {
-    | None => {
-        item->Internal.setItemDcs([dc])
-        itemsWithDcs->Array.push(item)
-      }
-    | Some(dcs) => dcs->Array.push(dc)
-    }
+      registrationBlock: eventItem.blockNumber,
+    })
   }
 
   let promises = []
@@ -101,7 +91,7 @@ let runContractRegistersOrThrow = async (
     let _ = await Promise.all(promises)
   }
 
-  itemsWithDcs
+  registrations
 }
 
 let rec onQueryResponse = async (
@@ -226,13 +216,13 @@ let rec onQueryResponse = async (
 
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
-      let proceed = (~newItemsWithDcs) =>
+      let proceed = (~newRegistrations) =>
         if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
             ~chainId,
             ~newItems,
-            ~newItemsWithDcs,
+            ~newRegistrations,
             ~knownHeight,
             ~latestFetchedBlock={
               FetchState.blockNumber: latestFetchedBlockNumber,
@@ -248,7 +238,7 @@ let rec onQueryResponse = async (
         }
 
       switch itemsWithContractRegister {
-      | [] => proceed(~newItemsWithDcs=[])
+      | [] => proceed(~newRegistrations=[])
       | _ =>
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
@@ -257,7 +247,7 @@ let rec onQueryResponse = async (
           ~blockStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-        | newItemsWithDcs => proceed(~newItemsWithDcs)
+        | newRegistrations => proceed(~newRegistrations)
         }
       }
     }
@@ -267,7 +257,7 @@ and applyQueryResponse = (
   state: IndexerState.t,
   ~chainId,
   ~newItems,
-  ~newItemsWithDcs,
+  ~newRegistrations,
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
@@ -281,7 +271,7 @@ and applyQueryResponse = (
     ~query,
     ~latestFetchedBlock,
     ~newItems,
-    ~newItemsWithDcs,
+    ~newRegistrations,
     ~knownHeight,
     ~transactionStore,
     ~blockStore,

@@ -753,8 +753,9 @@ mod tests {
         let store = AddressStore::new_svm(vec![crate::address_store::AddressStoreContract {
             name: "Owned".to_string(),
             start_block: None,
+            depends_on_addresses: true,
         }]);
-        store.register_batch(vec![crate::address_store::AddressRegistration {
+        store.register_seed(vec![crate::address_store::AddressRegistration {
             address: PROG_A.to_string(),
             contract_name: "Owned".to_string(),
             registration_block: 70,

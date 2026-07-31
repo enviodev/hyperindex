@@ -69,6 +69,12 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
+let drainAddressesForWrite: (
+  t,
+  ~toBlockInclusive: int,
+  ~checkpointBlockNumbers: array<int>,
+) => array<AddressStore.drainedAddress>
+let hasAddressesToWrite: t => bool
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
@@ -110,7 +116,7 @@ let handleQueryResult: (
   t,
   ~query: FetchState.query,
   ~newItems: array<Internal.item>,
-  ~newItemsWithDcs: array<Internal.item>,
+  ~newRegistrations: array<AddressStore.registration>,
   ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,

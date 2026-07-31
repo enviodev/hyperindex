@@ -369,7 +369,7 @@ describe("IndexerState", () => {
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])
         cs->ChainState.handleQueryResult(
           ~query=concurrentQuery,
-          ~newItemsWithDcs=[],
+          ~newRegistrations=[],
           ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
           ~newItems=[
             Internal.Event({
