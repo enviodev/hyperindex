@@ -1707,15 +1707,10 @@ let registerDynamicContracts = (
       if !(registeringContractNames->Array.includes(registration.contractName)) {
         registeringContractNames->Array.push(registration.contractName)->ignore
       }
-    | Added({fetchable: false}) =>
-      // The address is still stored and persisted, so a future config change
-      // that adds events for this contract picks it up on restart.
-      warnAddressRegistration(
-        ~chainId=fetchState.chainId,
-        ~contractAddress=registration.address,
-        ~params={"contractName": registration.contractName},
-        `Persisting contract registration without fetching: Contract doesn't have any events to fetch. It'll be picked up on restart if you add events for the contract.`,
-      )
+    // Nothing on this chain is fetched by address for the contract, so there's
+    // no partition to build. The address is still stored and persisted, so a
+    // config that later adds address-dependent events picks it up on restart.
+    | Added({fetchable: false}) => ()
     | Conflict(_) | Duplicate(_) | Invalid =>
       verdict->warnRejectedRegistration(
         ~chainId=fetchState.chainId,

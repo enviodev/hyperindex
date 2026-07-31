@@ -684,7 +684,7 @@ mod tests {
         let store = AddressStore::new_fuel(vec![crate::address_store::AddressStoreContract {
             name: "Owned".to_string(),
             start_block: None,
-            has_events: true,
+            depends_on_addresses: true,
         }]);
         store.register_seed(vec![crate::address_store::AddressRegistration {
             address: ADDR_1.to_string(),

@@ -46,7 +46,7 @@ let decodeLogs = async (
         ~contracts=eventRegistrations->Array.map((reg): AddressStore.contract => {
           name: reg.contractName,
           startBlock: None,
-          hasEvents: true,
+          dependsOnAddresses: true,
         }),
       )
       let addressSet = switch ownedBy {
