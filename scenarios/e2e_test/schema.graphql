@@ -40,3 +40,12 @@ type TransferChOnly @storage(clickhouse: true) {
   from: String!
   value: BigInt!
 }
+
+# NUMERIC[] columns are created as TEXT[] when Hasura is enabled, so Hasura
+# returns the elements as strings rather than numbers that lose precision.
+# https://github.com/enviodev/hyperindex/issues/788
+type NumericArrays @storage(postgres: true) {
+  id: ID!
+  bigInts: [BigInt!]!
+  bigDecimals: [BigDecimal!]!
+}
