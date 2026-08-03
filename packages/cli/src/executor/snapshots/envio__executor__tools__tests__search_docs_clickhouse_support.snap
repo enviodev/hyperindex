@@ -2,7 +2,7 @@
 source: packages/cli/src/executor/tools.rs
 expression: text
 ---
-Found 4 result(s):
+Found 5 result(s):
 
 1. **What's New in HyperIndex V3**
    URL: https://docs.envio.dev/docs/HyperIndex/whats-new-in-v3
@@ -11,14 +11,19 @@ Found 4 result(s):
 
 2. **Configuration Schema Reference**
    URL: https://docs.envio.dev/docs/HyperIndex/config-schema-reference
-   ...writes to. Postgres is enabled by default; enable ClickHouse by setting clickhouse: true. When both backends are enabled, route each entity explicitly via the @storage directive in schema.graphql: ty...
+   ...data to. Defaults to Postgres when omitted. Set clickhouse: true to additionally sync the indexed data to ClickHouse. Mark a backend with default: true to store entities that don't have an @storage directi...
 
 3. **Configuration File (config.yaml)**
    URL: https://docs.envio.dev/docs/HyperIndex/configuration-file
    Matching sections: Stored in both Postgres and ClickHouse, Stored only in ClickHouse
    ...ption configures an RPC data source per chain. It supports multiple URLs with explicit roles via the for field: - sync – use this RPC for historical sync. - realtime – use this RPC for low-latency hea...
 
-4. **Envio Cloud Features**
+4. **Entities Schema (schema.graphql)**
+   URL: https://docs.envio.dev/docs/HyperIndex/schema
+   Matching sections: Queryable over GraphQL and mirrored into ClickHouse for analytics, Per-Entity ClickHouse Tuning
+   ...: Queryable over GraphQL and mirrored into ClickHouse for analytics type Transfer @storage(postgres: true, clickhouse: true) { id: ID! amount: BigInt! } Since v3.2 you can mark a backend as `def...
+
+5. **Envio Cloud Features**
    URL: https://docs.envio.dev/docs/HyperIndex/hosted-service-features
    ...Deployment Location Choice Coming Soon! Full support for cross-region deployments is in active development. If you require a deployment to be based in the USA please contact us through our support chann...
 
