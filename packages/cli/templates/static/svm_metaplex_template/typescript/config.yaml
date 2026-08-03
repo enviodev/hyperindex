@@ -6,10 +6,10 @@ chains:
   - # Adjust just before first run: query the current height with
     #   curl -s https://solana-mainnet-history.hypersync.xyz/height
     # and set this to ~30k slots below it for a quick backfill (~30s).
-    start_block: 417920000
+    start_block: 422000000
     experimental:
-      hypersync_config:
-        url: https://solana-mainnet-history.hypersync.xyz
+      # hypersync_config is omitted: the endpoint defaults to the public
+      # Solana mainnet HyperSync endpoint.
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s

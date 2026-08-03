@@ -264,8 +264,15 @@
       "type": "object",
       "properties": {
         "hypersync_config": {
-          "description": "HyperSync Config for fetching historical instructions on this chain.",
-          "$ref": "#/$defs/HypersyncConfig"
+          "description": "HyperSync Config for fetching historical instructions on this chain. Defaults to the public Solana mainnet HyperSync endpoint.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HypersyncConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "programs": {
           "description": "Solana programs to index on this chain.",
@@ -277,7 +284,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "hypersync_config",
         "programs"
       ]
     },
@@ -285,7 +291,7 @@
       "type": "object",
       "properties": {
         "url": {
-          "description": "URL of the HyperSync endpoint (default: the public Solana HyperSync endpoint at https://solana-mainnet-history.hypersync.xyz)",
+          "description": "URL of the HyperSync endpoint. Defaults to the public Solana mainnet HyperSync endpoint when the hypersync_config block is omitted.",
           "type": "string"
         }
       },

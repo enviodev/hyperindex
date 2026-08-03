@@ -948,10 +948,12 @@ impl SystemConfig {
                 for network in &svm_config.chains {
                     let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
-                        hypersync_endpoint_url: network
-                            .experimental
-                            .as_ref()
-                            .map(|e| e.hypersync_config.url.clone()),
+                        hypersync_endpoint_url: network.experimental.as_ref().map(|e| {
+                            e.hypersync_config.as_ref().map_or_else(
+                                || hypersync_endpoints::SOLANA_MAINNET_HYPERSYNC_URL.to_string(),
+                                |h| h.url.clone(),
+                            )
+                        }),
                     };
 
                     let programs = network
@@ -3847,6 +3849,22 @@ type Foo {
                     hypersync_endpoint_url: Some(url),
                     ..
                 } if url == "https://solana-mainnet-history.hypersync.xyz"
+            ));
+        }
+
+        #[test]
+        fn omitted_hypersync_config_resolves_to_default_solana_endpoint() {
+            let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+            let project_paths =
+                ParsedProjectPaths::new(&test_dir, "configs/svm-default-endpoint-config.yaml")
+                    .expect("paths");
+            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
+            assert!(matches!(
+                &config.get_chains()[0].sync_source,
+                DataSource::Svm {
+                    hypersync_endpoint_url: Some(url),
+                    ..
+                } if url == crate::config_parsing::hypersync_endpoints::SOLANA_MAINNET_HYPERSYNC_URL
             ));
         }
     }
