@@ -38,7 +38,7 @@ use config::SvmClientConfig;
 use query::SvmQuery;
 use types::QueryResponse;
 
-/// Move the response's transactions and token balances into a
+/// Move the response's transactions and token-side account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
 /// only the config-selected fields are materialised at batch prep; many
 /// instructions in one transaction collapse to a single stored row, and token
@@ -46,11 +46,21 @@ use types::QueryResponse;
 /// materialisation.
 fn build_svm_store(
     transactions: Vec<simple::Transaction>,
-    token_balances: Vec<simple::TokenBalance>,
+    account_activity: Vec<simple::AccountActivity>,
 ) -> TransactionStore {
     let store = TransactionStore::new_svm();
-    store.insert_svm_txs(transactions);
-    store.insert_svm_token_balances(token_balances);
+    store.insert_svm_txs(
+        transactions
+            .into_iter()
+            .filter_map(types::SvmTxRow::from_simple)
+            .collect(),
+    );
+    store.insert_svm_token_balances(
+        account_activity
+            .into_iter()
+            .filter_map(types::SvmTokenBalanceRow::from_activity)
+            .collect(),
+    );
     store
 }
 
@@ -128,36 +138,38 @@ impl SvmHypersyncClient {
         {
             Vec::new()
         } else {
-            resp.instructions
+            resp.instruction_calls
                 .iter()
                 .map(|ix| {
-                    self.schemas.get(&ix.program_id).and_then(|schema| {
-                        borsh_decoder::decode_with_schema(
-                            schema,
-                            ix.accounts.clone(),
-                            ix.data.clone(),
-                        )
-                    })
+                    ix.executing_account
+                        .as_ref()
+                        .and_then(|program| self.schemas.get(&program.to_string()))
+                        .and_then(|schema| borsh_decoder::decode_with_schema(schema, ix))
                 })
                 .collect()
         };
 
-        // Retain raw transactions + token balances in Rust; ReScript builds
-        // items from instructions and the store materialises the parent
-        // transaction (selected fields only) at batch prep.
+        // Retain raw transactions + token-side account activity in Rust;
+        // ReScript builds items from instructions and the store materialises
+        // the parent transaction (selected fields only) at batch prep.
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
-            std::mem::take(&mut resp.token_balances),
+            std::mem::take(&mut resp.account_activity),
         );
 
         // Take the raw blocks out before the response conversion consumes them,
-        // build the lean per-slot header from a borrow, then move the owned raw
-        // blocks into the store — avoiding a full raw-`Block` clone per block
-        // (mirrors the EVM source's borrow-then-move header pattern).
-        let raw_blocks = std::mem::take(&mut resp.blocks);
-        let block_headers: Vec<types::Block> = raw_blocks
+        // convert to owned rows once, build the lean per-slot header from a
+        // borrow, then move the owned rows into the store — avoiding a full
+        // per-block clone (mirrors the EVM source's borrow-then-move pattern).
+        let block_rows: Vec<types::SvmBlockRow> = std::mem::take(&mut resp.blocks)
+            .into_iter()
+            .map(types::SvmBlockRow::try_from)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("mapping solana block rows")
+            .map_err(map_err)?;
+        let block_headers: Vec<types::Block> = block_rows
             .iter()
-            .map(types::Block::from_raw)
+            .map(types::Block::from_row)
             .collect::<anyhow::Result<Vec<_>>>()
             .context("mapping solana block headers")
             .map_err(map_err)?;
@@ -165,7 +177,7 @@ impl SvmHypersyncClient {
         // slot/time/hash decode from the store like any other field, so every
         // response block needs a store entry.
         let block_store = BlockStore::new_svm();
-        block_store.insert_svm_blocks(raw_blocks);
+        block_store.insert_svm_blocks(block_rows);
 
         let mut out = QueryResponse::try_from(resp)
             .context("convert solana response")
@@ -189,14 +201,16 @@ mod tests {
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
-    /// Live test against `solana.hypersync.xyz`. Run with:
-    ///     cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
+    /// Live test against `solana-mainnet-history.hypersync.xyz` (queries need
+    /// a bearer token). Run with:
+    ///     ENVIO_API_TOKEN=... cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
         let client = SvmHypersyncClient::new(
             SvmClientConfig {
-                url: "https://solana.hypersync.xyz".into(),
+                url: "https://solana-mainnet-history.hypersync.xyz".into(),
+                api_token: std::env::var("ENVIO_API_TOKEN").ok(),
                 ..Default::default()
             },
             "hyperindex-test".into(),
@@ -210,8 +224,9 @@ mod tests {
         let q = SvmQuery {
             from_slot: from,
             to_slot: Some(height),
-            instructions: Some(vec![InstructionSelection {
-                program_id: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
+            instruction_calls: Some(vec![InstructionSelection {
+                executing_account: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
+                tx_success: Some(true),
                 ..Default::default()
             }]),
             max_num_instructions: Some(200),
@@ -231,9 +246,10 @@ mod tests {
             "expected at least one Token Metadata instruction"
         );
         for ix in resp.data.instructions.iter().take(3) {
-            assert_eq!(ix.program_id, TOKEN_METADATA_PROGRAM);
+            assert_eq!(ix.executing_account, TOKEN_METADATA_PROGRAM);
             assert!(ix.data.starts_with("0x"));
             assert!(ix.data.len() > 2, "data should not be empty hex");
+            assert!(ix.tx_success, "tx_success filter must hold");
         }
     }
 }

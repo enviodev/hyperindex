@@ -12,7 +12,6 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use hypersync_client::simple_types;
-use hypersync_client_solana::simple_types as solana_simple;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -29,7 +28,7 @@ use crate::field_table::{
     hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
     AnyCol, Table,
 };
-use crate::svm_hypersync_source::types::bigint_u64;
+use crate::svm_hypersync_source::types::{bigint_u64, SvmTokenBalanceRow, SvmTxRow};
 
 /// Transaction field codes shared with ReScript by ordinal value. The order is
 /// the contract: it mirrors `Evm.res` `transactionFields`, and the ordinal is
@@ -266,7 +265,7 @@ fn decode_evm_columns(
 /// Build one SVM field's column from a response's transactions. `None` for the
 /// key-derived `transactionIndex` and for `tokenBalances`, which lives in the
 /// companion duplicate-key table.
-fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<AnyCol> {
+fn svm_tx_col(field: SvmTxField, txs: &[SvmTxRow]) -> Option<AnyCol> {
     use SvmTxField::*;
     match field {
         TransactionIndex => None,
@@ -574,7 +573,7 @@ impl TransactionStore {
 
     /// Merge one response's SVM transactions into the table, keyed by
     /// (slot, transactionIndex). Not exposed to JS.
-    pub(crate) fn insert_svm_txs(&self, txs: Vec<solana_simple::Transaction>) {
+    pub(crate) fn insert_svm_txs(&self, txs: Vec<SvmTxRow>) {
         if txs.is_empty() {
             return;
         }
@@ -586,17 +585,16 @@ impl TransactionStore {
         self.inner.lock().unwrap().txs.merge_batch(keys, cols);
     }
 
-    /// Merge one response's SVM token balances into the companion table, keyed
-    /// by (slot, transactionIndex, account). Rows missing either are dropped;
-    /// the SVM query forces `account` into the field selection whenever token
-    /// balances are requested, so a real response row always carries one. Not
-    /// exposed to JS.
-    pub(crate) fn insert_svm_token_balances(&self, mut rows: Vec<solana_simple::TokenBalance>) {
-        rows.retain(|r| r.transaction_index.is_some() && r.account.is_some());
+    /// Merge one response's SVM token balances (token-side account_activity
+    /// rows) into the companion table, keyed by (slot, transactionIndex,
+    /// account). Rows are pre-validated at conversion (see
+    /// `SvmTokenBalanceRow::from_activity`), so every row carries the full
+    /// key. Not exposed to JS.
+    pub(crate) fn insert_svm_token_balances(&self, rows: Vec<SvmTokenBalanceRow>) {
         if rows.is_empty() {
             return;
         }
-        let str_col = |f: fn(&solana_simple::TokenBalance) -> Option<&str>| -> Option<AnyCol> {
+        let str_col = |f: fn(&SvmTokenBalanceRow) -> Option<&str>| -> Option<AnyCol> {
             crate::field_table::var_from(&rows, |r| f(r).map(str::as_bytes))
         };
         let cols = vec![
@@ -607,13 +605,7 @@ impl TransactionStore {
         ];
         let keys = rows
             .into_iter()
-            .map(|r| {
-                (
-                    r.slot,
-                    r.transaction_index.unwrap(),
-                    r.account.unwrap().into_boxed_str(),
-                )
-            })
+            .map(|r| (r.slot, r.transaction_index, r.account.into_boxed_str()))
             .collect();
         self.inner
             .lock()
@@ -650,8 +642,8 @@ mod tests {
         }
     }
 
-    fn raw_svm_tx(slot: u64, index: u32) -> solana_simple::Transaction {
-        solana_simple::Transaction {
+    fn raw_svm_tx(slot: u64, index: u32) -> SvmTxRow {
+        SvmTxRow {
             slot,
             transaction_index: index,
             ..Default::default()
@@ -799,10 +791,10 @@ mod tests {
     async fn token_balances_gather_by_key_range() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
-        let balance = |slot, index, account: &str, mint: &str| solana_simple::TokenBalance {
+        let balance = |slot, index, account: &str, mint: &str| SvmTokenBalanceRow {
             slot,
-            transaction_index: Some(index),
-            account: Some(account.to_string()),
+            transaction_index: index,
+            account: account.to_string(),
             mint: Some(mint.to_string()),
             ..Default::default()
         };

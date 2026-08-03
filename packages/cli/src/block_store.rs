@@ -10,7 +10,6 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use hypersync_client::simple_types;
-use hypersync_client_solana::simple_types as solana_simple;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -21,6 +20,7 @@ use crate::field_table::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
     i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Table,
 };
+use crate::svm_hypersync_source::types::SvmBlockRow;
 
 /// EVM block field codes shared with ReScript by ordinal value. The order is the
 /// contract: it mirrors `Evm.res` `blockFields`, and the ordinal is the bit
@@ -238,7 +238,7 @@ fn decode_evm_block_columns(
 
 /// Build one SVM field's column from a response's blocks; `None` for the
 /// key-derived `slot`.
-fn svm_block_col(field: SvmBlockField, blocks: &[solana_simple::Block]) -> Option<AnyCol> {
+fn svm_block_col(field: SvmBlockField, blocks: &[SvmBlockRow]) -> Option<AnyCol> {
     use SvmBlockField::*;
     match field {
         // The slot is the table key, not a column.
@@ -450,7 +450,7 @@ impl BlockStore {
 
     /// Merge one response's SVM blocks into the table, keyed by slot. Not
     /// exposed to JS.
-    pub(crate) fn insert_svm_blocks(&self, blocks: Vec<solana_simple::Block>) {
+    pub(crate) fn insert_svm_blocks(&self, blocks: Vec<SvmBlockRow>) {
         if blocks.is_empty() {
             return;
         }
@@ -489,8 +489,8 @@ mod tests {
         }
     }
 
-    fn raw_svm_block(slot: u64) -> solana_simple::Block {
-        solana_simple::Block {
+    fn raw_svm_block(slot: u64) -> SvmBlockRow {
+        SvmBlockRow {
             slot,
             blockhash: "hash".to_string(),
             block_time: Some(123),

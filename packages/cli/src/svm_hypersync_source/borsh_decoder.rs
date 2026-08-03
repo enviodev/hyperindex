@@ -18,7 +18,7 @@ use hypersync_client_solana::decode::{
     InstructionSchema as UpstreamIxSchema, NamedAccount as UpstreamAccount,
     NamedField as UpstreamNamedField, ProgramSchema as UpstreamSchema,
 };
-use hypersync_client_solana::simple_types::Instruction as UpstreamInstruction;
+use hypersync_client_solana::simple_types::InstructionCall;
 
 use crate::config_parsing::human_config::svm::{ArgComposite, ArgDef, ArgPrimitive, ArgType};
 
@@ -70,16 +70,9 @@ pub(crate) fn parse_program_schema(descriptor_json: &str) -> Result<UpstreamSche
 /// row should not kill the worker.
 pub(crate) fn decode_with_schema(
     schema: &UpstreamSchema,
-    accounts: Vec<String>,
-    data: Vec<u8>,
+    ix: &InstructionCall,
 ) -> Option<DecodedInstructionJson> {
-    let ix = UpstreamInstruction {
-        program_id: schema.program_id.clone(),
-        accounts,
-        data,
-        ..Default::default()
-    };
-    upstream_decode(schema, &ix).ok().map(Into::into)
+    upstream_decode(schema, ix).ok().map(Into::into)
 }
 
 /// JS-facing shape of `DecodedInstruction`. Args + named accounts are passed
