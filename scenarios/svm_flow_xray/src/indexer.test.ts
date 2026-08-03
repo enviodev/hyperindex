@@ -1,4 +1,4 @@
-// Live E2E test against solana.hypersync.xyz. Drives the SVM stack end-to-end:
+// Live E2E test against solana-mainnet-history.hypersync.xyz. Drives the SVM stack end-to-end:
 // SvmHyperSyncSource -> EventRouter -> indexer.onInstruction dispatch ->
 // entity writes. The slot window is pinned in config.test.yaml.
 process.env.ENVIO_CONFIG = "config.test.yaml";
@@ -6,8 +6,8 @@ process.env.ENVIO_CONFIG = "config.test.yaml";
 import { describe, it, expect } from "vitest";
 import { createTestIndexer } from "envio";
 
-const START_SLOT = 420_650_000;
-const END_SLOT = 420_650_008;
+const START_SLOT = 422_000_003;
+const END_SLOT = 422_000_011;
 
 describe("Flow X-Ray indexer (live)", () => {
   it(

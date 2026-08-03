@@ -748,7 +748,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -770,7 +770,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -793,7 +793,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: shared
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -801,7 +801,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: SHARED
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -822,7 +822,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -847,7 +847,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -874,7 +874,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -899,7 +899,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -925,7 +925,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -952,7 +952,7 @@ chains:
   - start_block: 0
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: not_a_pubkey

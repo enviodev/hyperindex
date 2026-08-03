@@ -15,7 +15,7 @@ chains:
     start_block: 422100000
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         # --- IDL-decoded protocols ---
         - name: Jupiter

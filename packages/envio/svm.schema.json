@@ -285,7 +285,7 @@
       "type": "object",
       "properties": {
         "url": {
-          "description": "URL of the HyperSync endpoint (default: the public Solana HyperSync endpoint at https://solana.hypersync.xyz)",
+          "description": "URL of the HyperSync endpoint (default: the public Solana HyperSync endpoint at https://solana-mainnet-history.hypersync.xyz)",
           "type": "string"
         }
       },

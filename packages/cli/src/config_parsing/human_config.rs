@@ -978,7 +978,7 @@ pub mod svm {
     pub struct HypersyncConfig {
         #[schemars(
             description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
-                           endpoint at https://solana.hypersync.xyz)"
+                           endpoint at https://solana-mainnet-history.hypersync.xyz)"
         )]
         pub url: String,
     }
@@ -1908,7 +1908,7 @@ chains:
   - start_block: 200000000
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -1932,7 +1932,7 @@ chains:
             let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
                 experimental.hypersync_config.url.as_str(),
-                "https://solana.hypersync.xyz"
+                "https://solana-mainnet-history.hypersync.xyz"
             );
             let programs = &experimental.programs;
             assert_eq!(programs.len(), 1);
@@ -1990,7 +1990,7 @@ chains:
   - start_block: 1
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: P
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s

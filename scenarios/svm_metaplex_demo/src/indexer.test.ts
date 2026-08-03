@@ -1,18 +1,18 @@
-// Live E2E test against `solana.hypersync.xyz`. Drives the SVM stack
+// Live E2E test against `solana-mainnet-history.hypersync.xyz`. Drives the SVM stack
 // end-to-end: SvmHyperSyncSource → EventRouter → `indexer.onInstruction`
 // dispatch → entity writes. `config.yaml` interpolates `ENVIO_METAPLEX_END_BLOCK`
 // into `end_block` to pin a finite window here; the live demo leaves it unset
 // for continuous tailing.
 //
 // If this test starts failing for "no instructions returned", first verify
-// the window is still served by HyperSync:
-//   curl -s -X POST https://solana.hypersync.xyz/query/arrow \
-//     -H 'content-type: application/json' \
-//     -d '{"from_slot":417950000,"to_slot":417950500,"instructions":[{"program_id":["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]}]}' \
+// the window is still served by HyperSync (queries need a bearer token):
+//   curl -s -X POST https://solana-mainnet-history.hypersync.xyz/query/arrow \
+//     -H 'content-type: application/json' -H "Authorization: Bearer $ENVIO_API_TOKEN" \
+//     -d '{"from_slot":422000000,"to_slot":422000500,"instruction_calls":[{"executing_account":["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]}]}' \
 //   | wc -c
 // A non-trivial byte count means the window is still indexed.
-const START_SLOT = 417_950_000;
-const END_SLOT = 417_950_500;
+const START_SLOT = 422_000_000;
+const END_SLOT = 422_000_500;
 
 // Must be set before importing `envio`: config is loaded and interpolated on use.
 process.env.ENVIO_METAPLEX_END_BLOCK = String(END_SLOT);
@@ -46,7 +46,7 @@ describe("SVM Metaplex indexer (live)", () => {
       // archived window's contents change — the *shape* of the result
       // (real Metaplex activity, both instruction kinds firing, counter
       // consistency) is what we're locking in.
-      // Slot 417,950,000 landed in May 2026; any sane blockTime in the window
+      // Slot 422,000,000 landed in June 2026; any sane blockTime in the window
       // is comfortably above this floor, while a dropped join yields 0.
       const BLOCK_TIME_FLOOR = 1_700_000_000;
 

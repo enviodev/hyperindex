@@ -3846,7 +3846,7 @@ type Foo {
                 DataSource::Svm {
                     hypersync_endpoint_url: Some(url),
                     ..
-                } if url == "https://solana.hypersync.xyz"
+                } if url == "https://solana-mainnet-history.hypersync.xyz"
             ));
         }
     }
