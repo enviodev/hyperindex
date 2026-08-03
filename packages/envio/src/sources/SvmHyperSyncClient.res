@@ -41,8 +41,8 @@ module QueryTypes = {
     | @as("slot") Slot
     | @as("transaction_index") TransactionIndex
     | @as("instruction_address") InstructionAddress
-    | @as("program_id") ProgramId
-    | @as("accounts") Accounts
+    | @as("executing_account") ExecutingAccount
+    | @as("account_arguments") AccountArguments
     | @as("data") Data
     | @as("d1") D1
     | @as("d2") D2
@@ -59,7 +59,7 @@ module QueryTypes = {
     | @as("a8") A8
     | @as("a9") A9
     | @as("is_inner") IsInner
-    | @as("is_committed") IsCommitted
+    | @as("tx_success") TxSuccess
 
   type logField =
     | @as("slot") Slot
@@ -69,21 +69,25 @@ module QueryTypes = {
     | @as("kind") Kind
     | @as("message") Message
 
-  type tokenBalanceField =
+  // Columns of the unified account_activity table (the merged replacement for
+  // the removed balances/token_balances tables). Only the token-side columns
+  // the runtime consumes are listed.
+  type accountActivityField =
     | @as("slot") Slot
     | @as("transaction_index") TransactionIndex
     | @as("account") Account
     | @as("mint") Mint
-    | @as("owner") Owner
-    | @as("pre_amount") PreAmount
-    | @as("post_amount") PostAmount
+    | @as("pre_owner") PreOwner
+    | @as("post_owner") PostOwner
+    | @as("pre_token_balance") PreTokenBalance
+    | @as("post_token_balance") PostTokenBalance
 
   type fieldSelection = {
     block?: array<blockField>,
     transaction?: array<transactionField>,
-    instruction?: array<instructionField>,
+    instructionCall?: array<instructionField>,
     log?: array<logField>,
-    tokenBalance?: array<tokenBalanceField>,
+    accountActivity?: array<accountActivityField>,
   }
 
   /** Filter for selecting instructions. All non-empty fields are AND-ed: an
@@ -92,7 +96,7 @@ module QueryTypes = {
    Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
    Account filters (a0..a9) take base58 pubkey strings. */
   type instructionSelection = {
-    programId?: array<string>,
+    executingAccount?: array<string>,
     d1?: array<string>,
     d2?: array<string>,
     d4?: array<string>,
@@ -108,6 +112,9 @@ module QueryTypes = {
     a8?: array<string>,
     a9?: array<string>,
     isInner?: bool,
+    /// Tri-state filter on the parent transaction's success; absent matches
+    /// instructions of both successful and failed transactions.
+    txSuccess?: bool,
   }
 
   type transactionSelection = {
@@ -123,17 +130,16 @@ module QueryTypes = {
   type query = {
     fromSlot: int,
     toSlot?: int,
-    instructions?: array<instructionSelection>,
+    instructionCalls?: array<instructionSelection>,
     transactions?: array<transactionSelection>,
     logs?: array<logSelection>,
     includeAllBlocks?: bool,
-    includeTokenBalances?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
     maxNumTransactions?: int,
     maxNumInstructions?: int,
     maxNumLogs?: int,
-    maxNumTokenBalances?: int,
+    maxNumAccountActivity?: int,
   }
 }
 
@@ -154,7 +160,7 @@ module ResponseTypes = {
    `d1`..`d8` are the same byte prefix as `data` but truncated to N bytes
    (only `Some` when the instruction is at least that long), exposed for
    handler-dispatch convenience.
-   `accounts` is the full positional account list in base58. */
+   `accountArguments` is the full positional account list in base58. */
   type decodedInstruction = {
     name: string,
     argsJson: string,
@@ -166,15 +172,15 @@ module ResponseTypes = {
     slot: int,
     transactionIndex: int,
     instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
+    executingAccount: string,
+    accountArguments: array<string>,
     data: string,
     d1?: string,
     d2?: string,
     d4?: string,
     d8?: string,
     isInner: bool,
-    isCommitted: bool,
+    txSuccess: bool,
     decoded?: decodedInstruction,
   }
 

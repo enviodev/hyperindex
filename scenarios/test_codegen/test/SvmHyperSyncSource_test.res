@@ -84,12 +84,12 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
         slot,
         transactionIndex: 965,
         instructionAddress: [1],
-        programId: metaplexProgramId,
-        accounts: [],
+        executingAccount: metaplexProgramId,
+        accountArguments: [],
         data: "0x21",
         d1: "0x21",
         isInner: false,
-        isCommitted: true,
+        txSuccess: true,
       },
     ],
     logs: [],
@@ -98,7 +98,7 @@ let mockResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
 
 let capturedQueries: array<SvmHyperSyncClient.query> = []
 
-let mockClient: SvmHyperSyncClient.t = {
+let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   get: (~query) => {
     capturedQueries->Array.push(query)
@@ -106,29 +106,74 @@ let mockClient: SvmHyperSyncClient.t = {
     // mock returns empty pages (materialisation is covered by the Rust unit
     // tests). This test asserts the item shape and the query columns.
     Promise.resolve((
-      mockResponse,
+      response,
       TransactionStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
       BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
     ))
   },
 }
 
+let mockClient = makeMockClient()
+
+// Two instructions matching the same config, one from a successful transaction
+// and one from a failed transaction. The server-side `txSuccess: true` filter
+// makes the failed row unreachable in practice; the runtime still drops it as
+// defense-in-depth.
+let mixedTxSuccessResponse: SvmHyperSyncClient.ResponseTypes.queryResponse = {
+  nextSlot: slot + 1,
+  responseBytes: 0,
+  data: {
+    blocks: [
+      {
+        slot,
+        blockhash: blockHash,
+        blockTime,
+      },
+    ],
+    instructions: [
+      {
+        slot,
+        transactionIndex: 965,
+        instructionAddress: [1],
+        executingAccount: metaplexProgramId,
+        accountArguments: [],
+        data: "0x21",
+        d1: "0x21",
+        isInner: false,
+        txSuccess: true,
+      },
+      {
+        slot,
+        transactionIndex: 966,
+        instructionAddress: [2],
+        executingAccount: metaplexProgramId,
+        accountArguments: [],
+        data: "0x21",
+        d1: "0x21",
+        isInner: false,
+        txSuccess: false,
+      },
+    ],
+    logs: [],
+  },
+}
+
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = (~onEventRegistrations=[makeReg()]) => {
+let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
       {
         "SvmHypersyncClient": {
-          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => mockClient,
+          "fromConfig": (_: SvmHyperSyncClient.cfg, _: string) => client,
         },
       }->(Utils.magic: {..} => Core.addon),
     )
   let source = try SvmHyperSyncSource.make({
     chain,
-    endpointUrl: "https://solana.hypersync.xyz",
+    endpointUrl: "https://solana-mainnet-history.hypersync.xyz",
     apiToken: None,
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
@@ -193,7 +238,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           fromSlot: slot - 10,
           // Inclusive `toBlock` becomes exclusive `toSlot` on the wire (+1).
           toSlot: slot + 11,
-          instructions: [{programId: [metaplexProgramId], d1: ["0x21"]}],
+          instructionCalls: [{executingAccount: [metaplexProgramId], d1: ["0x21"], txSuccess: true}],
           maxNumInstructions: 5000,
           fields: {
             block: [Slot, Blockhash, BlockTime],
@@ -281,7 +326,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   // carry `account` alongside whatever columns opted the table in — matches
   // the Rust store's field_table.rs Table<(slot, txIndex, account)> key.
   Async.it(
-    "requests tokenBalance columns with account included, and skips the transaction table",
+    "requests accountActivity columns with account included, and skips the transaction table",
     async t => {
       let reg = makeReg(~eventConfig=makeEventConfig(~selectedTransactionFields=[TokenBalances]))
       let source = makeSource(~onEventRegistrations=[reg])
@@ -306,22 +351,61 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
 
       let query = capturedQueries->Array.getUnsafe(capturedQueries->Array.length - 1)
       let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = query.fields->Option.getUnsafe
-      let expectedTokenBalance: option<array<SvmHyperSyncClient.QueryTypes.tokenBalanceField>> = Some([
+      let expectedAccountActivity: option<
+        array<SvmHyperSyncClient.QueryTypes.accountActivityField>,
+      > = Some([
         Slot,
         TransactionIndex,
         Account,
         Mint,
-        Owner,
-        PreAmount,
-        PostAmount,
+        PreOwner,
+        PostOwner,
+        PreTokenBalance,
+        PostTokenBalance,
       ])
       t.expect({
-        "tokenBalance": fields.tokenBalance,
+        "accountActivity": fields.accountActivity,
         "transaction": fields.transaction,
       }).toEqual({
-        "tokenBalance": expectedTokenBalance,
+        "accountActivity": expectedAccountActivity,
         "transaction": None,
       })
     },
   )
+
+  // The failed-tx instruction (address [2], txSuccess: false) is dropped even
+  // if a server ever returns one despite the query's `txSuccess: true` filter.
+  Async.it("drops instructions whose parent transaction failed", async t => {
+    let source = makeSource(~client=makeMockClient(~response=mixedTxSuccessResponse))
+    let reg = makeReg()
+
+    let response = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressesByContractName=Dict.fromArray([
+        ("TokenMetadata", [metaplexProgramId->Address.unsafeFromString]),
+      ]),
+      ~contractNameByAddress,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~itemsTarget=5000,
+      ~selection={
+        onEventRegistrations: [reg],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
+
+    let deliveredInstructionAddresses =
+      response.parsedQueueItems->Array.filterMap(item =>
+        switch item {
+        | Internal.Event({payload}) =>
+          let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+          Some(instruction.instructionAddress)
+        | _ => None
+        }
+      )
+    t.expect(deliveredInstructionAddresses).toEqual([[1]])
+  })
 })

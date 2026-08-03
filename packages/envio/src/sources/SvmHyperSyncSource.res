@@ -47,7 +47,7 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
 
         (
           {
-            programId: [programIdString],
+            executingAccount: [programIdString],
             ?d1,
             ?d2,
             ?d4,
@@ -59,6 +59,10 @@ let buildInstructionSelections = (eventConfigs: array<Internal.svmInstructionEve
             a4: ?pick(4),
             a5: ?pick(5),
             isInner: ?cfg.isInner,
+            // Always exclude instructions of failed transactions server-side
+            // (their state changes were rolled back). No config opt-out until
+            // someone asks for failed transactions.
+            txSuccess: true,
           }: SvmHyperSyncClient.QueryTypes.instructionSelection
         )
       })
@@ -193,9 +197,9 @@ let toSvmInstruction = (
 ): Envio.svmInstruction => {
   programName,
   instructionName,
-  programId: instr.programId->SvmTypes.Pubkey.fromStringUnsafe,
+  programId: instr.executingAccount->SvmTypes.Pubkey.fromStringUnsafe,
   data: instr.data,
-  accounts: instr.accounts->SvmTypes.Pubkey.fromStringsUnsafe,
+  accounts: instr.accountArguments->SvmTypes.Pubkey.fromStringsUnsafe,
   instructionAddress: instr.instructionAddress,
   isInner: instr.isInner,
   d1: ?instr.d1,
@@ -392,14 +396,24 @@ let make = (
     // Under the server's default merge mode, requesting a table's columns is
     // what opts the matched result set into that join — a table with an empty
     // field list returns no rows (instructions and blocks are exempt), so each
-    // opted-into table needs its columns spelled out here.
+    // opted-into table needs its columns spelled out here. Token balances come
+    // from the token side of the unified account_activity table.
     let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
       block: blockQueryFields,
       transaction: ?(needsTransactions ? Some(txQueryFields) : None),
       log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
-      tokenBalance: ?(
+      accountActivity: ?(
         needsTokenBalances
-          ? Some([Slot, TransactionIndex, Account, Mint, Owner, PreAmount, PostAmount])
+          ? Some([
+              Slot,
+              TransactionIndex,
+              Account,
+              Mint,
+              PreOwner,
+              PostOwner,
+              PreTokenBalance,
+              PostTokenBalance,
+            ])
           : None
       ),
     }
@@ -408,7 +422,7 @@ let make = (
     let query: SvmHyperSyncClient.query = {
       fromSlot: fromBlock,
       toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
-      instructions: instructionSelections,
+      instructionCalls: instructionSelections,
       fields,
       maxNumInstructions: itemsTarget,
     }
@@ -470,13 +484,13 @@ let make = (
 
     let parsedQueueItems = []
     resp.data.instructions->Array.forEach(instr => {
-      let programId = instr.programId->SvmTypes.Pubkey.fromStringUnsafe
+      let programId = instr.executingAccount->SvmTypes.Pubkey.fromStringUnsafe
       let byteLengths =
         orderingByProgram
-        ->Utils.Dict.dangerouslyGetNonOption(instr.programId)
+        ->Utils.Dict.dangerouslyGetNonOption(instr.executingAccount)
         ->Option.getOr([])
 
-      let contractAddress = instr.programId->Address.unsafeFromString
+      let contractAddress = instr.executingAccount->Address.unsafeFromString
       let maybeConfig = probeRouter(
         eventRouter,
         programId,
@@ -488,6 +502,9 @@ let make = (
 
       switch maybeConfig {
       | None => ()
+      // Queries filter on `txSuccess: true`, so instructions of failed
+      // transactions never arrive; this guard is defense-in-depth only.
+      | Some(_) if !instr.txSuccess => ()
       | Some(onEventRegistration) =>
         let eventConfig =
           onEventRegistration.eventConfig->(
