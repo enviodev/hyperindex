@@ -4,12 +4,12 @@ use std::sync::Arc;
 use anyhow::Context;
 use napi_derive::napi;
 
-mod borsh_decoder;
 mod config;
+mod decode;
 mod query;
 pub(crate) mod types;
 
-/// Local hex helpers. Lives here so `decoder.rs` can pull them via
+/// Local hex helpers. Lives here so `decode.rs` can pull them via
 /// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary
 /// and without exposing a public hex parser at the napi surface.
 pub(crate) mod mod_helpers {
@@ -90,7 +90,7 @@ impl SvmHypersyncClient {
     ) -> napi::Result<SvmHypersyncClient> {
         let mut schemas = HashMap::new();
         for descriptor_json in cfg.program_schemas.clone().unwrap_or_default() {
-            let schema = borsh_decoder::parse_program_schema(&descriptor_json).map_err(map_err)?;
+            let schema = decode::parse_program_schema(&descriptor_json).map_err(map_err)?;
             schemas.insert(schema.program_id.clone(), schema);
         }
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
@@ -134,8 +134,7 @@ impl SvmHypersyncClient {
         // configured schemas — Borsh decoding happens here, in Rust, rather
         // than per-instruction over the napi boundary, mirroring how the EVM
         // client returns pre-decoded params. Skipped when no schemas exist.
-        let decoded: Vec<Option<borsh_decoder::DecodedInstructionJson>> = if self.schemas.is_empty()
-        {
+        let decoded: Vec<Option<decode::DecodedInstructionJson>> = if self.schemas.is_empty() {
             Vec::new()
         } else {
             resp.instruction_calls
@@ -144,7 +143,7 @@ impl SvmHypersyncClient {
                     ix.executing_account
                         .as_ref()
                         .and_then(|program| self.schemas.get(&program.to_string()))
-                        .and_then(|schema| borsh_decoder::decode_with_schema(schema, ix))
+                        .and_then(|schema| decode::decode_with_schema(schema, ix))
                 })
                 .collect()
         };
@@ -201,15 +200,16 @@ mod tests {
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
-    /// Live test against `solana-mainnet-history.hypersync.xyz` (queries need
-    /// a bearer token). Run with:
+    /// Live test against the public Solana mainnet endpoint (queries need a
+    /// bearer token). Run with:
     ///     ENVIO_API_TOKEN=... cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
         let client = SvmHypersyncClient::new(
             SvmClientConfig {
-                url: "https://solana-mainnet-history.hypersync.xyz".into(),
+                url: crate::config_parsing::hypersync_endpoints::SOLANA_MAINNET_HYPERSYNC_URL
+                    .into(),
                 api_token: std::env::var("ENVIO_API_TOKEN").ok(),
                 ..Default::default()
             },

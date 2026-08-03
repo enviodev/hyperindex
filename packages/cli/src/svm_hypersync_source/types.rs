@@ -3,7 +3,7 @@ use hypersync_client_solana::simple_types as simple;
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
-use super::borsh_decoder::DecodedInstructionJson;
+use super::decode::DecodedInstructionJson;
 
 /// Lean per-slot block header the response carries to ReScript, used for reorg
 /// detection and each item's slot/time. Selectable fields (height, parents) are
@@ -99,25 +99,35 @@ pub struct SvmTokenBalanceRow {
     pub slot: u64,
     pub transaction_index: u32,
     pub account: String,
-    pub mint: Option<String>,
+    pub mint: String,
     pub owner: Option<String>,
     pub pre_amount: Option<String>,
     pub post_amount: Option<String>,
 }
 
+/// The owner the public `tokenBalances` field reports: the post-transaction
+/// owner, falling back to the pre-transaction owner for a token account
+/// closed during the transaction (post_owner is null on a closed account).
+fn owner_at_transaction_end(
+    pre_owner: Option<simple::Address>,
+    post_owner: Option<simple::Address>,
+) -> Option<String> {
+    post_owner.or(pre_owner).map(|o| o.to_string())
+}
+
 impl SvmTokenBalanceRow {
     pub(crate) fn from_activity(a: simple::AccountActivity) -> Option<Self> {
-        // Only token-side rows carry a mint; a native-only row is not a token
-        // balance. `mint` is always selected by the query builder.
+        // Mint presence is the token-side discriminant of the unified
+        // account_activity row (only token rows carry one), so a native-only
+        // row drops out here without paying for the derived token_state
+        // column. `mint` is always selected by the query builder.
         let mint = a.mint?;
         Some(Self {
             slot: a.slot?,
             transaction_index: a.transaction_index?,
             account: a.account?.to_string(),
-            mint: Some(mint.to_string()),
-            // The public `owner` field is the post-transaction owner; fall
-            // back to pre_owner for accounts closed during the transaction.
-            owner: a.post_owner.or(a.pre_owner).map(|o| o.to_string()),
+            mint: mint.to_string(),
+            owner: owner_at_transaction_end(a.pre_owner, a.post_owner),
             pre_amount: a.pre_token_balance.map(|v| v.to_string()),
             post_amount: a.post_token_balance.map(|v| v.to_string()),
         })

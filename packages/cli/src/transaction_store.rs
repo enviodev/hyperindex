@@ -598,7 +598,7 @@ impl TransactionStore {
             crate::field_table::var_from(&rows, |r| f(r).map(str::as_bytes))
         };
         let cols = vec![
-            str_col(|r| r.mint.as_deref()),
+            str_col(|r| Some(r.mint.as_str())),
             str_col(|r| r.owner.as_deref()),
             str_col(|r| r.pre_amount.as_deref()),
             str_col(|r| r.post_amount.as_deref()),
@@ -795,7 +795,7 @@ mod tests {
             slot,
             transaction_index: index,
             account: account.to_string(),
-            mint: Some(mint.to_string()),
+            mint: mint.to_string(),
             ..Default::default()
         };
         // Two balances (distinct accounts) on (5,0); one on a transaction with
