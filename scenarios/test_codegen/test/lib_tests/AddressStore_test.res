@@ -105,11 +105,12 @@ describe("AddressStore", () => {
   })
 
   it("keeps a contract unrestricted when any registration has no start block", t => {
-    let reg = (~contractName, ~startBlock=?) =>
+    let reg = (~contractName, ~startBlock=?, ~isWildcard=false) =>
       (MockIndexer.evmOnEventRegistration(
         ~id=contractName,
         ~contractName,
         ~startBlock?,
+        ~isWildcard,
       ) :> Internal.onEventRegistration)
 
     t.expect({
@@ -117,15 +118,18 @@ describe("AddressStore", () => {
       // whichever order the registrations arrive in.
       "noneThenSome": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A"), reg(~contractName="A", ~startBlock=100)],
+        ~configContractNames=[],
       ),
       "someThenNone": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A", ~startBlock=100), reg(~contractName="A")],
+        ~configContractNames=[],
       ),
       "allRestricted": AddressStore.contractsOf(
         ~onEventRegistrations=[
           reg(~contractName="A", ~startBlock=100),
           reg(~contractName="A", ~startBlock=50),
         ],
+        ~configContractNames=[],
       ),
       // Contracts stay independent, in first-registration order.
       "perContract": AddressStore.contractsOf(
@@ -134,53 +138,129 @@ describe("AddressStore", () => {
           reg(~contractName="A"),
           reg(~contractName="B", ~startBlock=50),
         ],
+        ~configContractNames=[],
+      ),
+      // A contract only the config names is registrable but never fetched.
+      "configOnly": AddressStore.contractsOf(
+        ~onEventRegistrations=[reg(~contractName="A")],
+        ~configContractNames=["A", "NoEvents"],
+      ),
+      // A wildcard event is fetched without consulting addresses, so
+      // registering one changes nothing about what's queried.
+      "wildcardOnly": AddressStore.contractsOf(
+        ~onEventRegistrations=[reg(~contractName="A", ~isWildcard=true)],
+        ~configContractNames=["A"],
       ),
     }).toEqual({
-      "noneThenSome": [({name: "A", startBlock: None}: AddressStore.contract)],
-      "someThenNone": [({name: "A", startBlock: None}: AddressStore.contract)],
-      "allRestricted": [({name: "A", startBlock: Some(50)}: AddressStore.contract)],
+      "noneThenSome": [({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract)],
+      "someThenNone": [({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract)],
+      "allRestricted": [({name: "A", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract)],
       "perContract": [
-        ({name: "B", startBlock: Some(50)}: AddressStore.contract),
-        ({name: "A", startBlock: None}: AddressStore.contract),
+        ({name: "B", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
       ],
+      "configOnly": [
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "NoEvents", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
+      ],
+      "wildcardOnly": [({name: "A", startBlock: None, dependsOnAddresses: false}: AddressStore.contract)],
     })
   })
 
   it("gives a batch's additions their own set, ordered independently of arrival", t => {
-    let store = TestAddresses.makeStore(~onEventRegistrations)
+    let store = TestAddresses.makeStore(
+      ~onEventRegistrations,
+      ~configContractNames=["NoEvents"],
+    )
     let cursor = store->AddressStore.nextId
-    let verdicts = store->AddressStore.registerBatch([
-      {address: addr(3), contractName: "B", registrationBlock: 30},
-      {address: addr(4), contractName: "B", registrationBlock: 10},
-      // Same address again: a duplicate, not a second registration.
-      {address: addr(3), contractName: "B", registrationBlock: 30},
-      // A contract with no events: persisted, never fetched.
-      {address: addr(5), contractName: "NoEvents", registrationBlock: 40},
-    ])
+    let verdicts =
+      store->AddressStore.registerBatch(
+        [
+          {address: addr(3), contractName: "B", registrationBlock: 30},
+          {address: addr(4), contractName: "B", registrationBlock: 10},
+          // Same address again: a duplicate, not a second registration.
+          {address: addr(3), contractName: "B", registrationBlock: 30},
+          // A contract with no events: registered like any other, the fetch
+          // state is what decides nothing is queried for it.
+          {address: addr(5), contractName: "NoEvents", registrationBlock: 40},
+        ],
+      )
     let added = store->AddressStore.makeSet(~contractName="B", ~options={minId: cursor})
     t.expect({
       "verdicts": verdicts,
       "added": added->AddressSet.addresses,
-      // A no-events address is never fetched — it has no set — but it's still
-      // registered, so the chain reports and persists it.
-      "noEventsIsNotFetched": (store->AddressStore.makeSet(~contractName="NoEvents"))
-        ->AddressSet.size,
       "noEventsIsStillReported": store->AddressStore.contractAddresses("NoEvents"),
-      // No-events addresses still count towards what the chain tracks.
       "size": store->AddressStore.size,
     }).toEqual({
       "verdicts": [
-        AddressStore.Added({effectiveStartBlock: 30}),
-        Added({effectiveStartBlock: 10}),
+        AddressStore.Added({effectiveStartBlock: 30, fetchable: true}),
+        Added({effectiveStartBlock: 10, fetchable: true}),
         Duplicate({effectiveStartBlock: 30, existingEffectiveStartBlock: 30}),
-        NoEvents({effectiveStartBlock: 40}),
+        // Registered and persisted, but nothing on this chain fetches for it.
+        Added({effectiveStartBlock: 40, fetchable: false}),
       ],
       // Ordered by effectiveStartBlock, so addr(4) (10) precedes addr(3) (30).
       "added": [addr(4), addr(3)],
-      "noEventsIsNotFetched": 0,
       "noEventsIsStillReported": [addr(5)],
       "size": 3,
     })
+  })
+
+  it("throws for a contract the chain doesn't index", t => {
+    let store = TestAddresses.makeStore(~onEventRegistrations)
+    t.expect(
+      () =>
+        store->AddressStore.registerBatch(
+          [{address: addr(3), contractName: "Missing", registrationBlock: 7}],
+        ),
+    ).toThrow()
+  })
+
+  it("only hands over registrations the database hasn't seen", t => {
+    let store = TestAddresses.makeStore(
+      ~onEventRegistrations,
+      ~addresses=[contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1)],
+    )
+    let _ =
+      store->AddressStore.registerBatch([
+        {address: addr(1), contractName: "A", registrationBlock: 10},
+        {address: addr(2), contractName: "A", registrationBlock: 30},
+      ])
+
+    let drain = (~toBlockInclusive, ~checkpointBlockNumbers) =>
+      store
+      ->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
+      ->Array.map(dc => (dc.address, dc.checkpointIdx))
+
+    t.expect({
+      // The config address was never pending, and addr(2) is above the bound.
+      "upToBlock20": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
+      "drainedOnce": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
+      "rest": drain(~toBlockInclusive=30, ~checkpointBlockNumbers=[30]),
+      "nothingLeftPending": store->AddressStore.pendingEntries,
+    }).toEqual({
+      // The checkpoint index points back at the block numbers passed in.
+      "upToBlock20": [(addr(1), 1)],
+      "drainedOnce": [],
+      "rest": [(addr(2), 0)],
+      "nothingLeftPending": [],
+    })
+  })
+
+  it("refuses to drain a registration the batch has no checkpoint for", t => {
+    let store = TestAddresses.makeStore(~onEventRegistrations)
+    let _ =
+      store->AddressStore.registerBatch([
+        {address: addr(1), contractName: "A", registrationBlock: 10},
+      ])
+
+    t.expect(() => store->AddressStore.drainForWrite(20, [9])).toThrow()
+    t.expect(
+      // The failed drain consumed nothing, so the registration is still there
+      // to be written by a batch that does cover it.
+      store->AddressStore.pendingEntries->Array.map(ia => ia.address),
+      ~message="a failed drain leaves the queue intact",
+    ).toEqual([addr(1)])
   })
 
   it("rejects an address already held by another contract", t => {
@@ -189,9 +269,9 @@ describe("AddressStore", () => {
       ~addresses=[contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1)],
     )
     t.expect(
-      store->AddressStore.registerBatch([
-        {address: addr(0), contractName: "B", registrationBlock: 7},
-      ]),
+      store->AddressStore.registerBatch(
+        [{address: addr(0), contractName: "B", registrationBlock: 7}],
+      ),
     ).toEqual([AddressStore.Conflict({existingContractName: "A"})])
   })
 
@@ -209,7 +289,7 @@ describe("AddressStore", () => {
     let store = AddressStore.make(
       ~ecosystem=Evm,
       ~shouldChecksum=true,
-      ~contracts=AddressStore.contractsOf(~onEventRegistrations),
+      ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~configContractNames=[]),
     )
     let fetchState = FetchState.make(
       ~onEventRegistrations,

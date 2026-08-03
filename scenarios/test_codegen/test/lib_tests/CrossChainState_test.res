@@ -112,6 +112,7 @@ let makeFetchingChainState = (
   let addressStore = TestAddresses.makeStore(
     ~onEventRegistrations=normalSelection.onEventRegistrations,
     ~addresses=[{address, contractName: "MockContract", registrationBlock: -1}],
+    ~configContractNames=["MockContract"],
   )
   let fetchState: FetchState.t = {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -397,7 +398,7 @@ describe("CrossChainState fetch control", () => {
     first->ChainState.handleQueryResult(
       ~query=releasedQuery,
       ~newItems=[],
-      ~newItemsWithDcs=[],
+      ~newRegistrations=[],
       ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 0},
       ~knownHeight=1000,
       ~transactionStore=None,
@@ -444,6 +445,7 @@ describe("CrossChainState fetch control", () => {
       let addressStore1 = TestAddresses.makeStore(
         ~onEventRegistrations=normalSelection.onEventRegistrations,
         ~addresses=[{address: address1, contractName: "MockContract", registrationBlock: -1}],
+        ~configContractNames=["MockContract"],
       )
       let fetchState1: FetchState.t = {
         optimizedPartitions: FetchState.OptimizedPartitions.make(

@@ -10,7 +10,7 @@ let testApiToken =
 let addressStore = AddressStore.make(
   ~ecosystem=Ecosystem.Evm,
   ~shouldChecksum=true,
-  ~contracts=[{name: "ERC20", startBlock: None}],
+  ~contracts=[{name: "ERC20", startBlock: None, dependsOnAddresses: true}],
 )
 
 describe_skip("Test Hyperliquid broken transaction response", () => {

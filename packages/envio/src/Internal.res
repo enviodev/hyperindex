@@ -616,8 +616,6 @@ type indexingAddress = {
   registrationBlock: int,
 }
 
-type dcs = array<indexingAddress>
-
 // Duplicate the type from item to keep item properly unboxed. Runtime event
 // items carry the registration their source already resolved from the
 // ChainState-owned registration array.
@@ -697,11 +695,6 @@ let getItemChainId = item =>
   | Event({chainId})
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
-
-@get
-external getItemDcs: item => option<dcs> = "dcs"
-@set
-external setItemDcs: (item, dcs) => unit = "dcs"
 
 type eventOptions<'where> = {
   wildcard?: bool,

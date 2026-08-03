@@ -114,7 +114,8 @@ module EnvioAddresses = {
     id: string,
     @as("chain_id") chainId: ChainId.t,
     @as("registration_block") registrationBlock: int,
-    // -1 when the address was registered from a block handler (no log index)
+    // Vestigial: always written as -1 and never read back. The column stays so
+    // an existing schema doesn't need a migration.
     @as("registration_log_index") registrationLogIndex: int,
     @as("contract_name") contractName: string,
   }

@@ -996,7 +996,7 @@ describe("E2E rollback tests", () => {
           ->Address.toString}`,
         chainId: 1337->ChainId.fromInt,
         registrationBlock: 102,
-        registrationLogIndex: 2,
+        registrationLogIndex: -1,
         contractName: "SimpleNft",
       },
     ])
@@ -1090,7 +1090,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           ->Address.toString}`,
         chainId: 1337->ChainId.fromInt,
         registrationBlock: 102,
-        registrationLogIndex: 2,
+        registrationLogIndex: -1,
         contractName: "SimpleNft",
       },
     ])

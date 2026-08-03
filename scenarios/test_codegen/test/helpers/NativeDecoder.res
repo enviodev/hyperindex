@@ -46,12 +46,13 @@ let decodeLogs = async (
         ~contracts=eventRegistrations->Array.map((reg): AddressStore.contract => {
           name: reg.contractName,
           startBlock: None,
+          dependsOnAddresses: true,
         }),
       )
       let addressSet = switch ownedBy {
       | None => addressStore->AddressStore.emptySet
       | Some(contractName) =>
-        let _ = addressStore->AddressStore.registerBatch([
+        let _ = addressStore->AddressStore.seedBatch([
           {
             address: mockAddress->Address.unsafeFromString,
             contractName,
