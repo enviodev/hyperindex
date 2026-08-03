@@ -36,13 +36,17 @@ module QueryTypes = {
     | @as("version") Version
     | @as("loaded_addresses_writable") LoadedAddressesWritable
     | @as("loaded_addresses_readonly") LoadedAddressesReadonly
+    | @as("transaction_id") TransactionId
+    | @as("has_dropped_log_messages") HasDroppedLogMessages
 
   type instructionField =
     | @as("slot") Slot
     | @as("transaction_index") TransactionIndex
     | @as("instruction_address") InstructionAddress
     | @as("executing_account") ExecutingAccount
+    | @as("executing_account_index") ExecutingAccountIndex
     | @as("account_arguments") AccountArguments
+    | @as("account_index_arguments") AccountIndexArguments
     | @as("data") Data
     | @as("d1") D1
     | @as("d2") D2
@@ -60,6 +64,8 @@ module QueryTypes = {
     | @as("a9") A9
     | @as("is_inner") IsInner
     | @as("tx_success") TxSuccess
+    | @as("error") Error
+    | @as("compute_units_consumed") ComputeUnitsConsumed
 
   type logField =
     | @as("slot") Slot
@@ -70,17 +76,28 @@ module QueryTypes = {
     | @as("message") Message
 
   // Columns of the unified account_activity table (the merged replacement for
-  // the removed balances/token_balances tables). Only the token-side columns
-  // the runtime consumes are listed.
+  // the removed balances/token_balances tables).
   type accountActivityField =
     | @as("slot") Slot
     | @as("transaction_index") TransactionIndex
+    | @as("transaction_id") TransactionId
+    | @as("account_index") AccountIndex
     | @as("account") Account
+    | @as("pre_balance") PreBalance
+    | @as("post_balance") PostBalance
+    | @as("is_signer") IsSigner
+    | @as("is_writable") IsWritable
+    | @as("is_fee_payer") IsFeePayer
+    | @as("from_lookup_table") FromLookupTable
     | @as("mint") Mint
     | @as("pre_owner") PreOwner
     | @as("post_owner") PostOwner
+    | @as("token_decimals") TokenDecimals
     | @as("pre_token_balance") PreTokenBalance
     | @as("post_token_balance") PostTokenBalance
+    | @as("pre_program_id") PreProgramId
+    | @as("post_program_id") PostProgramId
+    | @as("token_state") TokenState
 
   type fieldSelection = {
     block?: array<blockField>,

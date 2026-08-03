@@ -174,7 +174,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
   let source = try SvmHyperSyncSource.make({
     chain,
     endpointUrl: "https://solana-mainnet-history.hypersync.xyz",
-    apiToken: None,
+    apiToken: Some("test-token"),
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
   }) catch {

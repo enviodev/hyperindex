@@ -289,6 +289,14 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
+  let apiToken = switch apiToken {
+  | Some(token) => token
+  | None =>
+    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
+  }
+
   // Definitions drive query/decode building; the registrations drive routing
   // (they carry `isWildcard` and become each decoded item's `onEventRegistration`).
   let eventConfigs =
@@ -299,15 +307,21 @@ let make = (
   // Built once at startup and handed to the client so `get` decodes matching
   // instructions in Rust rather than per-instruction over the napi boundary.
   let programSchemas = buildProgramSchemas(eventConfigs)
-  let client = SvmHyperSyncClient.make(
+  let client = switch SvmHyperSyncClient.make(
     ~url=endpointUrl,
-    ~apiToken?,
+    ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~programSchemas=?switch programSchemas {
     | [] => None
     | arr => Some(arr)
     },
-  )
+  ) {
+  | client => client
+  | exception exn =>
+    exn->ErrorHandling.mkLogAndRaise(
+      ~msg="Failed to instantiate the SVM HyperSync client, please double check your program schemas",
+    )
+  }
 
   let (eventRouter, programOrderings) = EventRouter.fromSvmEventConfigsOrThrow(
     onEventRegistrations,
@@ -377,6 +391,35 @@ let make = (
     fields
   }
 
+  // The query's selections and field selection depend only on the chain's
+  // event configs, so both are assembled once here rather than per fetch
+  // (mirroring the EVM source's memoized selection config).
+  let instructionSelections = buildInstructionSelections(eventConfigs)
+  // Under the server's default merge mode, requesting a table's columns is
+  // what opts the matched result set into that join: a table with an empty
+  // field list returns no rows (instructions and blocks are exempt), so each
+  // opted-into table needs its columns spelled out here. Token balances come
+  // from the token side of the unified account_activity table.
+  let queryFieldSelection: SvmHyperSyncClient.QueryTypes.fieldSelection = {
+    block: blockQueryFields,
+    transaction: ?(needsTransactions ? Some(txQueryFields) : None),
+    log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
+    accountActivity: ?(
+      needsTokenBalances
+        ? Some([
+            Slot,
+            TransactionIndex,
+            Account,
+            Mint,
+            PreOwner,
+            PostOwner,
+            PreTokenBalance,
+            PostTokenBalance,
+          ])
+        : None
+    ),
+  }
+
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -392,38 +435,13 @@ let make = (
     let totalTimeRef = Performance.now()
     let pageFetchRef = Performance.now()
 
-    let instructionSelections = buildInstructionSelections(eventConfigs)
-    // Under the server's default merge mode, requesting a table's columns is
-    // what opts the matched result set into that join — a table with an empty
-    // field list returns no rows (instructions and blocks are exempt), so each
-    // opted-into table needs its columns spelled out here. Token balances come
-    // from the token side of the unified account_activity table.
-    let fields: SvmHyperSyncClient.QueryTypes.fieldSelection = {
-      block: blockQueryFields,
-      transaction: ?(needsTransactions ? Some(txQueryFields) : None),
-      log: ?(needsLogs ? Some([Slot, TransactionIndex, InstructionAddress, Kind, Message]) : None),
-      accountActivity: ?(
-        needsTokenBalances
-          ? Some([
-              Slot,
-              TransactionIndex,
-              Account,
-              Mint,
-              PreOwner,
-              PostOwner,
-              PreTokenBalance,
-              PostTokenBalance,
-            ])
-          : None
-      ),
-    }
-    // `toBlock` is inclusive, but `toSlot` is exclusive on the wire — without
+    // `toBlock` is inclusive, but `toSlot` is exclusive on the wire; without
     // the +1 a bounded range stalls one slot short of its end.
     let query: SvmHyperSyncClient.query = {
       fromSlot: fromBlock,
       toSlot: ?(toBlock->Option.map(toBlock => toBlock + 1)),
       instructionCalls: instructionSelections,
-      fields,
+      fields: queryFieldSelection,
       maxNumInstructions: itemsTarget,
     }
 
