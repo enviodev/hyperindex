@@ -1026,16 +1026,32 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   rollbackTargetBlock: cs.rollbackTargetBlock,
 }
 
-// Snapshot the inputs a batch build needs from this chain.
+// Snapshot the inputs a batch build needs from this chain, including an
+// immutable copy of the scanned in-threshold block hashes so the batch never
+// reads the live store mid-build.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
-  fetchState: cs.fetchState,
-  progressBlockNumber: cs.committedProgressBlockNumber,
-  totalEventsProcessed: cs.numEventsProcessed,
-  sourceBlockNumber: cs.fetchState.knownHeight,
-  blockStore: cs.blockStore,
-  shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
-  maxReorgDepth: cs.maxReorgDepth,
-  chainConfig: cs.chainConfig,
+  let fromBlock = Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0)
+  let blockNumbers =
+    cs.blockStore->BlockStore.getHashedBlockNumbers(
+      ~fromBlock,
+      ~belowBlock=cs.fetchState.knownHeight + 1,
+    )
+  let hashByBlockNumber = Dict.make()
+  blockNumbers->Array.forEach(blockNumber => {
+    switch cs.blockStore->BlockStore.getHash(blockNumber) {
+    | Null.Value(hash) => hashByBlockNumber->Utils.Dict.setByInt(blockNumber, hash)
+    | Null.Null => ()
+    }
+  })
+  {
+    fetchState: cs.fetchState,
+    progressBlockNumber: cs.committedProgressBlockNumber,
+    totalEventsProcessed: cs.numEventsProcessed,
+    sourceBlockNumber: cs.fetchState.knownHeight,
+    scannedHashes: {blockNumbers, hashByBlockNumber},
+    shouldRollbackOnReorg: cs.shouldRollbackOnReorg,
+    chainConfig: cs.chainConfig,
+  }
 }
 
 // Whether the chain's post-batch fetch frontier is ready to cross into the reorg
@@ -1219,9 +1235,7 @@ let rollback = (
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
-    // A non-reorg chain's scanned hashes above the target are still valid, so
-    // keep them for reorg detection while the refetch repopulates the data.
-    cs.blockStore->BlockStore.rollback(newProgressBlockNumber, ~keepHashes=!isReorgChain)
+    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
@@ -1233,7 +1247,7 @@ let rollback = (
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber, ~keepHashes=false)
+      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

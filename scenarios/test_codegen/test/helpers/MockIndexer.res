@@ -8,6 +8,15 @@ let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
 
 let entityConfig = (name: string): Internal.entityConfig => config->entityConfigByName(name)
 
+// EVM block hashes are stored as the fixed 32-byte reorg comparison key; a
+// `fromJs` page zero-extends a shorter mock marker to that width, so a stored
+// hash reads back left-padded. Mirror that here for assertions that compare
+// against `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
+let evmBlockHash = hex => {
+  let digits = hex->String.slice(~start=2, ~end=hex->String.length)
+  "0x" ++ "0"->String.repeat(64 - digits->String.length) ++ digits
+}
+
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
 let defaultPersistenceRef = ref(None)

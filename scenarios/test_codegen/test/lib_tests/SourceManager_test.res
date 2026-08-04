@@ -89,7 +89,7 @@ describe("native request failures", () => {
   it("keeps timings and maps a wrapped HyperSync rate limit", t => {
     let exn = try {
       JsError.throwWithMessage(
-        `{"kind":"RequestFailed","message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
+        `ENVIO_NATIVE_FAILURE:{"message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
       )
     } catch {
     | exn => exn

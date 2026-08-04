@@ -3,7 +3,6 @@ type logsQueryPage = {
   blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
-  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   transactionStore: TransactionStore.t,
   blockStore: BlockStore.t,
 }

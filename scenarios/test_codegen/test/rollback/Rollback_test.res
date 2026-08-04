@@ -119,7 +119,7 @@ describe("E2E rollback tests", () => {
         },
         {
           id: firstHistoryCheckpointId->BigInt.add(1n),
-          blockHash: Js.Null.Value("0x0102"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0102")),
           blockNumber: 102,
           chainId,
           eventsProcessed: 1,
@@ -267,7 +267,7 @@ describe("E2E rollback tests", () => {
       [
         {
           id: firstHistoryCheckpointId->BigInt.add(3n),
-          blockHash: Js.Null.Value("0x0101"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
           eventsProcessed: 1,
@@ -727,7 +727,7 @@ describe("E2E rollback tests", () => {
           eventsProcessed: 0,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 102,
-          blockHash: Js.Null.Value("0x0102"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0102")),
         },
       ])
     },
@@ -803,7 +803,7 @@ describe("E2E rollback tests", () => {
         eventsProcessed: 0,
         chainId: 1337->ChainId.fromInt,
         blockNumber: 102,
-        blockHash: Js.Null.Value("0x102a"),
+        blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x102a")),
       },
     ])
   })
@@ -1234,28 +1234,28 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 1,
           chainId: 100->ChainId.fromInt,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x0103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         {
           id: 4n,
           eventsProcessed: 2,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x0103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         {
           id: 5n,
           eventsProcessed: 1,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 106,
-          blockHash: Js.Null.Value("0x0106"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
         },
         {
           id: 6n,
           eventsProcessed: 1,
           chainId: 100->ChainId.fromInt,
           blockNumber: 106,
-          blockHash: Js.Null.Value("0x0106"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
         },
         {
           id: 7n,
@@ -1271,7 +1271,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 0,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 109,
-          blockHash: Js.Null.Value("0x0109"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0109")),
         },
       ],
       [
@@ -1495,31 +1495,34 @@ This might be wrong after we start exposing a block hash for progress block.`,
           eventsProcessed: 1,
           chainId: 100->ChainId.fromInt,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x0103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         {
           id: 4n,
           eventsProcessed: 2,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 103,
-          blockHash: Js.Null.Value("0x0103"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
         },
         // Reorg checkpoint id was checkpoint id 5
         // for chain 1337. After rollback it was removed
-        // and replaced with chain id 100
+        // and replaced with chain id 100.
+        // Block 106's hash was dropped with the rest of the rolled-back data,
+        // and the refetch only re-observes head/seam blocks (111 and 105), so
+        // 106 carries no hash here.
         {
           id: 10n,
           eventsProcessed: 2,
           chainId: 100->ChainId.fromInt,
           blockNumber: 106,
-          blockHash: Js.Null.Value("0x0106"),
+          blockHash: Js.Null.Null,
         },
         {
           id: 11n,
           eventsProcessed: 0,
           chainId: 100->ChainId.fromInt,
           blockNumber: 111,
-          blockHash: Js.Null.Value("0x0111"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0111")),
         },
       ],
       [
@@ -1702,28 +1705,28 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x0103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           {
             id: 4n,
             eventsProcessed: 2,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x0103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           {
             id: 5n,
             eventsProcessed: 1,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 106,
-            blockHash: Js.Null.Value("0x0106"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
           },
           {
             id: 6n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
-            blockHash: Js.Null.Value("0x0106"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
           },
           {
             id: 7n,
@@ -1739,7 +1742,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 0,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 109,
-            blockHash: Js.Null.Value("0x0109"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0109")),
           },
         ],
         [
@@ -1910,31 +1913,34 @@ This might be wrong after we start exposing a block hash for progress block.`,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x0103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           {
             id: 4n,
             eventsProcessed: 2,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
-            blockHash: Js.Null.Value("0x0103"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
           },
           // Reorg checkpoint id was checkpoint id 5
           // for chain 1337. After rollback it was removed
-          // and replaced with chain id 100
+          // and replaced with chain id 100.
+          // Block 106's hash was dropped with the rest of the rolled-back data,
+          // and the refetch only re-observes head/seam blocks (111 and 105), so
+          // 106 carries no hash here.
           {
             id: 10n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
-            blockHash: Js.Null.Value("0x0106"),
+            blockHash: Js.Null.Null,
           },
           {
             id: 11n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
-            blockHash: Js.Null.Value("0x0111"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0111")),
           },
         ],
         [

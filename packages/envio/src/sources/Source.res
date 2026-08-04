@@ -21,39 +21,46 @@ type nativeRequestFailure = {
   requestStats: array<requestStat>,
 }
 
+// Prefix marking a napi error reason as a structured native-failure envelope.
+// Keep in sync with `request_stats.rs` `NATIVE_FAILURE_PREFIX`.
+let nativeFailurePrefix = "ENVIO_NATIVE_FAILURE:"
+
 let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   let originalMessage = switch exn->JsExn.anyToExnInternal {
   | JsExn(jsExn) => jsExn->JsExn.message
   | _ => None
   }
+  // Only a reason carrying our prefix is one of our envelopes; anything else
+  // keeps its original message and cause untouched.
   let decoded = switch originalMessage {
-  | Some(message) =>
-    switch message->JSON.parseOrThrow->JSON.Decode.object {
+  | Some(message) if message->String.startsWith(nativeFailurePrefix) =>
+    let payload =
+      message->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
+    switch payload->JSON.parseOrThrow->JSON.Decode.object {
     | exception _ => None
     | Some(obj) =>
-      switch (obj->Dict.get("kind"), obj->Dict.get("message")) {
-      | (Some(String("RequestFailed")), Some(String(message))) => {
-          let requestStats = switch obj->Dict.get("requestStats") {
-          | Some(Array(stats)) =>
-            stats->Array.filterMap(stat =>
-              switch stat->JSON.Decode.object {
-              | Some(obj) =>
-                switch (obj->Dict.get("method"), obj->Dict.get("seconds")) {
-                | (Some(String(method)), Some(Number(seconds))) => Some({method, seconds})
-                | _ => None
-                }
-              | None => None
+      switch obj->Dict.get("message") {
+      | Some(String(innerMessage)) =>
+        let requestStats = switch obj->Dict.get("requestStats") {
+        | Some(Array(stats)) =>
+          stats->Array.filterMap(stat =>
+            switch stat->JSON.Decode.object {
+            | Some(obj) =>
+              switch (obj->Dict.get("method"), obj->Dict.get("seconds")) {
+              | (Some(String(method)), Some(Number(seconds))) => Some({method, seconds})
+              | _ => None
               }
-            )
-          | _ => []
-          }
-          Some((message, requestStats))
+            | None => None
+            }
+          )
+        | _ => []
         }
+        Some((innerMessage, requestStats))
       | _ => None
       }
     | None => None
     }
-  | None => None
+  | _ => None
   }
   switch decoded {
   | Some((message, requestStats)) => {

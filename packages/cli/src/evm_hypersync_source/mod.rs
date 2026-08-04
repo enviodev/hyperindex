@@ -352,7 +352,6 @@ impl EvmHyperSyncClient {
                 .map_err(map_err)?,
             blocks,
             items,
-            rollback_guard,
         };
         Ok((event_items, transaction_store, block_store))
     }
@@ -440,7 +439,6 @@ pub struct EventItemsResponse {
     /// blocks items reference.
     pub blocks: Vec<BlockHeader>,
     pub items: Vec<EventItem>,
-    pub rollback_guard: Option<RollbackGuard>,
 }
 
 fn convert_response(
