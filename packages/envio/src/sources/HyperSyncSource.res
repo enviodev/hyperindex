@@ -185,18 +185,14 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
-    // Best-effort timestamp for the queried-range head: prefer the rollbackGuard
-    // (set at the head for unconfirmed blocks), otherwise the last item if it
+    // Best-effort timestamp for the queried-range head: the last item if it
     // happens to be in the range's last block. 0 is a tolerated placeholder
-    // when neither is available (FetchState already uses 0 in several spots).
-    let latestFetchedBlockTimestamp = switch pageUnsafe.rollbackGuard {
-    | Some({timestamp}) => timestamp
-    | None =>
-      switch pageUnsafe.items->Array.get(pageUnsafe.items->Array.length - 1) {
-      | Some(item) if item.blockNumber == heighestBlockQueried =>
-        getBlock(item.blockNumber).timestamp
-      | _ => 0
-      }
+    // otherwise (FetchState already uses 0 in several spots).
+    let latestFetchedBlockTimestamp = switch pageUnsafe.items->Array.get(
+      pageUnsafe.items->Array.length - 1,
+    ) {
+    | Some(item) if item.blockNumber == heighestBlockQueried => getBlock(item.blockNumber).timestamp
+    | _ => 0
     }
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince

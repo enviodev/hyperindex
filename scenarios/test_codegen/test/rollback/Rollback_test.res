@@ -1506,13 +1506,16 @@ This might be wrong after we start exposing a block hash for progress block.`,
         },
         // Reorg checkpoint id was checkpoint id 5
         // for chain 1337. After rollback it was removed
-        // and replaced with chain id 100
+        // and replaced with chain id 100.
+        // Block 106's hash was dropped with the rest of the rolled-back data,
+        // and the refetch only re-observes head/seam blocks (111 and 105), so
+        // 106 carries no hash here.
         {
           id: 10n,
           eventsProcessed: 2,
           chainId: 100,
           blockNumber: 106,
-          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
+          blockHash: Js.Null.Null,
         },
         {
           id: 11n,
@@ -1921,13 +1924,16 @@ This might be wrong after we start exposing a block hash for progress block.`,
           },
           // Reorg checkpoint id was checkpoint id 5
           // for chain 1337. After rollback it was removed
-          // and replaced with chain id 100
+          // and replaced with chain id 100.
+          // Block 106's hash was dropped with the rest of the rolled-back data,
+          // and the refetch only re-observes head/seam blocks (111 and 105), so
+          // 106 carries no hash here.
           {
             id: 10n,
             eventsProcessed: 2,
             chainId: 100,
             blockNumber: 106,
-            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
+            blockHash: Js.Null.Null,
           },
           {
             id: 11n,

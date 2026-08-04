@@ -118,8 +118,7 @@ external appendPage: (t, t) => unit = "appendPage"
 // Compare a validated response store against the persistent store in ascending
 // block order and stop at the first mismatch.
 @send
-external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> =
-  "latestValidBlockFromStore"
+external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> = "latestValidBlockFromStore"
 
 // Bulk-materialise blocks off the JS thread, one row per `blockNumbers[i]` key,
 // decoding only the fields set in that row's own `masks[i]`. Result is aligned
@@ -135,11 +134,10 @@ external materialize: (
 // hashes of blocks at or above `keepHashesFrom` for reorg detection.
 @send external prune: (t, int, ~keepHashesFrom: int) => unit = "prune"
 
-// Drop blocks above the given block (rolled back). With `~keepHashes` (a chain
-// rolled back alongside another chain's reorg) blocks above the target are
-// reduced to hash-only rows: their data is refetched, but the scanned hashes
-// stay valid for reorg detection.
-@send external rollback: (t, int, ~keepHashes: bool) => unit = "rollback"
+// Drop blocks above the given block (rolled back), hashes included. The
+// rolled-back range is refetched, so its stale hashes must not linger for
+// reorg detection.
+@send external rollback: (t, int) => unit = "rollback"
 
 // Hash of a stored block, if the store still holds it.
 @send external getHash: (t, int) => Null.t<string> = "getHash"

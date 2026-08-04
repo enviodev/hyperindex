@@ -169,16 +169,6 @@ module QueryTypes = {
   }
 }
 
-module ResponseTypes = {
-  type rollbackGuard = {
-    blockNumber: int,
-    timestamp: int,
-    hash: string,
-    firstBlockNumber: int,
-    firstParentHash: string,
-  }
-}
-
 type query = QueryTypes.query
 
 module Registration = {
@@ -297,7 +287,6 @@ module EventItems = {
     // One header per block number referenced by `items`.
     blocks: array<blockHeader>,
     items: array<item>,
-    rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
 }
 

@@ -215,7 +215,7 @@ let retryInconsistentResponse = async (
   let backoffMillis = retry === 0 ? 100 : Pervasives.min(1000 * retry, 60_000)
   let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
   logger->log({
-    "msg": `Source returned an internally inconsistent ${method} response. Retrying the complete request.`,
+    "msg": `Received a partial indicator of a possible reorg from the source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`,
     "retry": retry,
     "backOffMilliseconds": backoffMillis,
     "err": err->Utils.prettifyExn,
