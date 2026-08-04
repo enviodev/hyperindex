@@ -23,6 +23,9 @@ type fieldType =
   | UInt52
   | UInt64
   | Int32
+  // Resolved to Int32 or UInt64 storage from the config's `ChainId.mode`, so
+  // the internal tables can stay module-level constants.
+  | ChainId
   | Number
   | BigInt({precision?: int})
   | BigDecimal({config?: (int, int)}) // (precision, scale)
@@ -31,7 +34,6 @@ type fieldType =
   | Json
   | Date
   | Enum({config: enumConfig<enum>})
-  | Entity({name: string})
 
 type field = {
   fieldName: string,
@@ -139,11 +141,17 @@ let getPgFieldType = (
   ~isArray,
   ~isNumericArrayAsText,
   ~isNullable,
+  ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let columnType = switch fieldType {
   | String => (Postgres.Text :> string)
   | Boolean => (Postgres.Boolean :> string)
   | Int32 => (Postgres.Integer :> string)
+  | ChainId =>
+    switch chainIdMode {
+    | Int32 => (Postgres.Integer :> string)
+    | Int64 => (Postgres.BigInt :> string)
+    }
   | Uint32 => (Postgres.BigInt :> string)
   | UInt52 => (Postgres.BigInt :> string)
   | UInt64 => (Postgres.BigInt :> string)
@@ -168,7 +176,6 @@ let getPgFieldType = (
   | Date =>
     (isNullable ? Postgres.TimestampWithTimezoneNull : Postgres.TimestampWithTimezone :> string)
   | Enum({config}) => `"${pgSchema}".${config.name}`
-  | Entity(_) => (Postgres.Text :> string) // FIXME: Will it work correctly if id is not a text column?
   }
 
   // Workaround for Hasura bug https://github.com/enviodev/hyperindex/issues/788
@@ -192,14 +199,14 @@ type compositeIndexField = {
 type table = {
   tableName: string,
   fields: array<fieldOrDerived>,
-  compositeIndices: array<array<compositeIndexField>>,
+  compositeIndexes: array<array<compositeIndexField>>,
   description: option<string>,
 }
 
-let mkTable = (tableName, ~compositeIndices=[], ~fields, ~description=?) => {
+let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   tableName,
   fields,
-  compositeIndices,
+  compositeIndexes,
   description,
 }
 
@@ -247,6 +254,40 @@ let getDerivedFromFields = table =>
 
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
+
+exception NoIdField(string)
+
+// The `id` primary-key field. Its type drives both the id column and every
+// foreign key that references the entity, so id-typed SQL (delete-by-id,
+// history backfill) reads the column type and value schema from here.
+let getIdFieldOrThrow = (table): field =>
+  switch table->getFieldByName(idFieldName) {
+  | Some(Field(field)) => field
+  | _ => throw(NoIdField(table.tableName))
+  }
+
+let getIdPgFieldType = (table, ~pgSchema) =>
+  getPgFieldType(
+    ~fieldType=(table->getIdFieldOrThrow).fieldType,
+    ~pgSchema,
+    ~isArray=false,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+  )
+
+// Schema for a single id value, typed opaquely so id-generic code can serialize
+// ids regardless of the underlying scalar.
+let getIdSchema = (table): S.t<EntityId.t> =>
+  (table->getIdFieldOrThrow).fieldSchema->(Utils.magic: S.t<unknown> => S.t<EntityId.t>)
+
+// Serializes an array of ids to the JSON form the SQL layer binds. The array
+// schema is memoized per table so its serializer compiles once, not on every
+// (high-frequency) delete/history write.
+let idsArraySchema: table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
+  S.array(table->getIdSchema)
+)
+let encodeIdsToJson = (table, ids: array<EntityId.t>): JSON.t =>
+  ids->S.reverseConvertToJsonOrThrow(table->idsArraySchema)
 
 // TODO: Test whether it should be passed via args and match the column type
 
@@ -297,13 +338,12 @@ let makeRowsSchema = (table, ~rowFieldName) =>
   S.array(
     S.object(s => {
       let dict = Dict.make()
-      table.fields->Array.forEach(
-        field =>
-          switch field {
-          | Field(field) =>
-            dict->Dict.set(field->getApiFieldName, s.field(field->rowFieldName, field.fieldSchema))
-          | DerivedFrom(_) => ()
-          },
+      table.fields->Array.forEach(field =>
+        switch field {
+        | Field(field) =>
+          dict->Dict.set(field->getApiFieldName, s.field(field->rowFieldName, field.fieldSchema))
+        | DerivedFrom(_) => ()
+        }
       )
       dict
     })->(Utils.magic: S.t<dict<unknown>> => S.t<unknown>),
@@ -324,11 +364,11 @@ let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
 exception NonExistingTableField(string)
 
 /*
-Gets all composite indicies (whether they are single indices or not)
+Gets all composite indexes (whether they are single indexes or not)
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getUnfilteredCompositeIndicesUnsafe = (table): array<array<compositeIndexField>> => {
-  table.compositeIndices->Array.map(compositeIndex =>
+let getUnfilteredCompositeIndexesUnsafe = (table): array<array<compositeIndexField>> => {
+  table.compositeIndexes->Array.map(compositeIndex =>
     compositeIndex->Array.map(indexField => {
       let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
       | Some(field) => field->getPgFieldName
@@ -347,7 +387,7 @@ type sqlParams<'entity> = {
   hasArrayField: bool,
 }
 
-let toSqlParams = (table: table, ~schema, ~pgSchema) => {
+let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
@@ -410,6 +450,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
               ~isArray=true,
               ~isNullable=f.isNullable,
               ~isNumericArrayAsText=false,
+              ~chainIdMode,
             )
             switch f.fieldType {
             | Enum(_) => `${(Text: Postgres.columnType :> string)}[]::${pgFieldType}`
@@ -438,10 +479,10 @@ let toSqlParams = (table: table, ~schema, ~pgSchema) => {
 }
 
 /*
-Gets all single indicies
+Gets all single indexes
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getSingleIndices = (table): array<string> => {
+let getSingleIndexes = (table): array<string> => {
   let indexFields = table.fields->Array.filterMap(field =>
     switch field {
     | Field(field) if field.isIndex => Some(field->getPgDbFieldName)
@@ -450,8 +491,8 @@ let getSingleIndices = (table): array<string> => {
   )
 
   table
-  ->getUnfilteredCompositeIndicesUnsafe
-  //get all composite indices with only 1 field defined
+  ->getUnfilteredCompositeIndexesUnsafe
+  //get all composite indexes with only 1 field defined
   //this is still a single index
   ->Array.filterMap(cidx =>
     switch cidx {
@@ -467,11 +508,11 @@ let getSingleIndices = (table): array<string> => {
 }
 
 /*
-Gets all composite indicies
+Gets all composite indexes
 And maps the fields defined to their actual db name (some have _id suffix)
 */
-let getCompositeIndices = (table): array<array<compositeIndexField>> => {
+let getCompositeIndexes = (table): array<array<compositeIndexField>> => {
   table
-  ->getUnfilteredCompositeIndicesUnsafe
+  ->getUnfilteredCompositeIndexesUnsafe
   ->Array.filter(ind => ind->Array.length > 1)
 }

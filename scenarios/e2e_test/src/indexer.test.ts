@@ -17,6 +17,21 @@ describe("Indexer smoke test", () => {
         {
           "changes": [
             {
+              "NumericArrays": {
+                "sets": [
+                  {
+                    "bigDecimals": [
+                      "3.3",
+                      "123456789012345678.123456789",
+                    ],
+                    "bigInts": [
+                      9007199254740993n,
+                      1000000000000000000000000000n,
+                    ],
+                    "id": "1",
+                  },
+                ],
+              },
               "Transfer": {
                 "sets": [
                   {

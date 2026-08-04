@@ -2,26 +2,27 @@ open Vitest
 
 describe("Rpc.makeClient - headers", () => {
   Async.it("Sends configured custom headers with the request", async t => {
-    let mock = await MockRpcServer.makeRaw(
-      ~status=200,
-      ~body=`{"jsonrpc":"2.0","id":1,"result":null}`,
+    await MockRpcServer.withScenario(
+      ~name="ReScript REST client custom headers",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=JSON.parseOrThrow(`["0x1",false]`),
+          ~headers=Dict.fromArray([("authorization", "Bearer rest-token")]),
+          ~reply=RpcResult(JSON.Null),
+        ),
+      ],
+      async mock => {
+        let client = Rpc.makeClient(
+          mock.url,
+          ~headers=Dict.fromArray([("Authorization", "Bearer rest-token")]),
+        )
+        let result = await Rpc.GetBlockByNumber.route->Rest.fetch(
+          {"blockNumber": 1, "includeTransactions": false},
+          ~client,
+        )
+        t.expect(result).toEqual(None)
+      },
     )
-    let client = Rpc.makeClient(
-      mock.url,
-      ~headers=Dict.fromArray([("Authorization", "Bearer rest-token")]),
-    )
-
-    let _ = try await Rpc.GetBlockByNumber.route->Rest.fetch(
-      {"blockNumber": 1, "includeTransactions": false},
-      ~client,
-    ) catch {
-    | _ => None
-    }
-    mock.close()
-
-    // Node lowercases header names on the way in.
-    t.expect(
-      MockRpcServer.getHeader(mock.requestHeaders->Array.getUnsafe(0), "authorization"),
-    ).toEqual(Some("Bearer rest-token"))
   })
 })

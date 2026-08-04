@@ -18,5 +18,8 @@
     "module": "esmodule",
     "in-source": true
   },
-  "dependencies": ["envio"]
+  "dependencies": ["envio"],
+  "warnings": {
+    "error": "+a"
+  }
 }

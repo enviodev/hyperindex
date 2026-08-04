@@ -48,6 +48,13 @@ export type EffectCaller = <I, O>(
   input: I extends undefined ? undefined : I
 ) => Promise<O>;
 
+/** The chain an Effect was called on. Available only on chain-scoped effects
+ * (`crossChain: false`). */
+export type EffectChain = {
+  /** The chain id the effect handler was called on. */
+  readonly id: number;
+};
+
 /** Context passed to an Effect's handler function. */
 export type EffectContext = {
   /** Access the logger instance with the event as context. */
@@ -57,6 +64,9 @@ export type EffectContext = {
   /** Whether to cache this call's result. Defaults to the effect's `cache`
    * option; set to `false` to skip caching for this specific invocation. */
   cache: boolean;
+  /** The chain the effect was called on. Only available on effects created with
+   * `crossChain: false`; accessing it on a cross-chain effect throws. */
+  readonly chain: EffectChain;
 };
 
 /** Rate-limit window for an {@link Effect}. Strings resolve to common
@@ -82,6 +92,11 @@ export type EffectOptions<Input, Output> = {
   readonly rateLimit: RateLimit;
   /** Whether the effect should be cached. */
   readonly cache?: boolean;
+  /** Whether the effect's cache is shared across all chains. Defaults to
+   * `true`. Set to `false` to isolate the cache and rate limiting per chain and
+   * enable `context.chain.id` inside the handler. Changing this changes the
+   * effect's cache identity. */
+  readonly crossChain?: boolean;
 };
 
 /** Arguments passed to the handler function of an {@link Effect}. */
@@ -209,6 +224,10 @@ export function createEffect<
     readonly rateLimit: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
+    /** Whether the effect's cache is shared across all chains. Defaults to
+     * `true`. Set to `false` to isolate the cache and rate limiting per chain
+     * and enable `context.chain.id` inside the handler. */
+    readonly crossChain?: boolean;
   },
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;
@@ -566,14 +585,18 @@ export type SvmOnSlotContext<Config extends IndexerConfigTypes = GlobalConfig> =
   BaseHandlerContext<Config, SvmChainIds<Config>>
 >;
 
+/** The entity's `id` type. `ID!`/`String!` ids are `string`; `Int!` is `number`
+ * and `BigInt!` is `bigint`, so id-keyed operations accept the real scalar. */
+type EntityId<Entity> = Entity extends { readonly id: infer Id } ? Id : string;
+
 /** Entity operations available in handler contexts. */
 type EntityOperations<Entity> = {
-  readonly get: (id: string) => Promise<Entity | undefined>;
-  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
+  readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
   readonly getOrCreate: (entity: Entity) => Promise<Entity>;
   readonly set: (entity: Entity) => void;
-  readonly deleteUnsafe: (id: string) => void;
+  readonly deleteUnsafe: (id: EntityId<Entity>) => void;
 };
 
 /** Contract registration handle. */
@@ -1491,7 +1514,7 @@ type EntityChangeValue<Entity> = {
   /** Entities that were created or updated. */
   readonly sets?: readonly Entity[];
   /** IDs of entities that were deleted. */
-  readonly deleted?: readonly string[];
+  readonly deleted?: readonly EntityId<Entity>[];
 };
 
 /** A dynamic contract address registration. */
@@ -1509,9 +1532,9 @@ type ConfigEntities<Config extends IndexerConfigTypes = GlobalConfig> =
 /** Entity operations available on test indexer for direct entity manipulation. */
 type TestIndexerEntityOperations<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
-  readonly get: (id: string) => Promise<Entity | undefined>;
+  readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
   /** Get an entity by ID or throw if not found. */
-  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   /** Get all entities. */
   readonly getAll: () => Promise<Entity[]>;
   /** Set (create or update) an entity. */

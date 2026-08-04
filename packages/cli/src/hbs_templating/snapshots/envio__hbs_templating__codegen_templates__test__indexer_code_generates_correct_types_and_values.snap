@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3081
 expression: project_template.indexer_code
 ---
 /**
@@ -201,21 +200,25 @@ module Entities = {
   type id = string
 
   module EmptyEntity = {
-    type t = {id: id, emptyField: id, status: Enums.Status.t, optionalStatus: option<Enums.Status.t>, related_id: id, optionalRelated_id: option<id>, tags: array<string>, optionalTags: option<array<string>>}
+    type id = string
+    type t = {id: id, emptyField: id, status: Enums.Status.t, optionalStatus: option<Enums.Status.t>, related_id: string, optionalRelated_id: option<string>, tags: array<string>, optionalTags: option<array<string>>}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>, @as("status") status?: Envio.whereOperator<Enums.Status.t>, @as("optionalStatus") optionalStatus?: Envio.whereOperator<option<Enums.Status.t>>, @as("related_id") related?: Envio.whereOperator<id>, @as("optionalRelated_id") optionalRelated?: Envio.whereOperator<option<id>>, @as("tags") tags?: Envio.whereOperator<array<string>>, @as("optionalTags") optionalTags?: Envio.whereOperator<option<array<string>>>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>, @as("status") status?: Envio.whereOperator<Enums.Status.t>, @as("optionalStatus") optionalStatus?: Envio.whereOperator<option<Enums.Status.t>>, @as("related_id") related?: Envio.whereOperator<string>, @as("optionalRelated_id") optionalRelated?: Envio.whereOperator<option<string>>, @as("tags") tags?: Envio.whereOperator<array<string>>, @as("optionalTags") optionalTags?: Envio.whereOperator<option<array<string>>>}
   }
 
   module RelatedEntity = {
+    type id = string
     type t = {id: id, name: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("name") name?: Envio.whereOperator<string>}
   }
 
-  type rec name<'entity> =
-    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t>
-    | @as("RelatedEntity") RelatedEntity: name<RelatedEntity.t>
+  type rec name<'entity, 'id> =
+    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t, EmptyEntity.id>
+    | @as("RelatedEntity") RelatedEntity: name<RelatedEntity.t, RelatedEntity.id>
 }
+
+type chainId = [#1]
 
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
@@ -226,16 +229,22 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {
   deleteUnsafe: string => unit,
 }
 
+/** The chain the event being handled belongs to. */
+type handlerChain = {
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
+}
+
 type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
+  chain: handlerChain,
   \"EmptyEntity": handlerEntityOperations<Entities.EmptyEntity.t, Entities.EmptyEntity.getWhereFilter>,
   \"RelatedEntity": handlerEntityOperations<Entities.RelatedEntity.t, Entities.RelatedEntity.getWhereFilter>,
 }
-
-type chainId = [#1]
 
 type contractRegisterContract = { add: Address.t => unit }
 
@@ -433,6 +442,17 @@ type testIndexerEntityOperations<'entity> = {
   set: 'entity => unit,
 }
 
+type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+  /** Get an entity by ID. */
+  get: 'id => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
 /** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {
   /** Process blocks for the specified chains and return progress with changes. */
@@ -445,7 +465,7 @@ type testIndexer = {
   \"RelatedEntity": testIndexerEntityOperations<Entities.RelatedEntity.t>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

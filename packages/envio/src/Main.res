@@ -1,4 +1,22 @@
-type chainData = ChainState.chainData
+// The public console/state chain shape. Kept to exactly this field set for
+// backward compatibility with consumers like RACE — new metric fields stay off
+// the HTTP response.
+type chainData = {
+  chainId: ChainId.t,
+  poweredByHyperSync: bool,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  timestampCaughtUpToHeadOrEndblock: option<Date.t>,
+  numEventsProcessed: float,
+  latestFetchedBlockNumber: int,
+  // Need this for API backwards compatibility
+  @as("currentBlockHeight")
+  knownHeight: int,
+  numBatchesFetched: int,
+  startBlock: int,
+  endBlock: option<int>,
+  numAddresses: int,
+}
 @tag("status")
 type state =
   | @as("disabled") Disabled({})
@@ -12,8 +30,23 @@ type state =
       rollbackOnReorg: bool,
     })
 
+let toChainData = (m: Metrics.chainMetrics): chainData => {
+  chainId: m.chainId,
+  poweredByHyperSync: m.poweredByHyperSync,
+  firstEventBlockNumber: m.firstEventBlockNumber,
+  latestProcessedBlock: m.latestProcessedBlock,
+  timestampCaughtUpToHeadOrEndblock: m.timestampCaughtUpToHeadOrEndblock,
+  numEventsProcessed: m.numEventsProcessed,
+  latestFetchedBlockNumber: m.latestFetchedBlockNumber,
+  knownHeight: m.knownHeight,
+  numBatchesFetched: m.numBatchesFetched,
+  startBlock: m.startBlock,
+  endBlock: m.endBlock,
+  numAddresses: m.numAddresses,
+}
+
 let chainDataSchema = S.schema((s): chainData => {
-  chainId: s.matches(S.float),
+  chainId: s.matches(ChainId.schema),
   poweredByHyperSync: s.matches(S.bool),
   firstEventBlockNumber: s.matches(S.option(S.int)),
   latestProcessedBlock: s.matches(S.option(S.int)),
@@ -55,7 +88,7 @@ let getGlobalPersistence = () =>
 let setGlobalPersistence = (persistence: Persistence.t) =>
   EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
-let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
+let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> => {
   switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
@@ -74,7 +107,7 @@ let buildChainsObject = (~config: Config.t) => {
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
-    let chainIdStr = chainConfig.id->Int.toString
+    let chainIdStr = chainConfig.id->ChainId.toString
 
     chainIds->Array.push(chainConfig.id)->ignore
 
@@ -118,10 +151,7 @@ let buildChainsObject = (~config: Config.t) => {
           | Some(state) => state->IndexerState.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
-          // must have previously caught up to head or endBlock. Mirror the
-          // IndexerState.makeFromDbState path: updateSyncTimeOnRestart wipes
-          // the saved timestamps so a restart re-enters backfill.
-          | None if Env.updateSyncTimeOnRestart => false
+          // must have previously caught up to head or endBlock.
           | None =>
             config.chainMap
             ->ChainMap.values
@@ -150,8 +180,7 @@ let buildChainsObject = (~config: Config.t) => {
           get: () => {
             switch getIndexerState() {
             | Some(state) => {
-                let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainState = state->IndexerState.getChainState(~chain)
+                let chainState = state->IndexerState.getChainState(~chainId=chainConfig.id)
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
@@ -331,13 +360,7 @@ let getGlobalIndexer = (): 'indexer => {
 
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let raw =
-      rawOptions->(
-        Utils.magic: 'a => {
-          "name": string,
-          "where": unknown,
-        }
-      )
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown})
     HandlerRegister.registerOnBlock(
       ~name=raw["name"],
       ~where=raw["where"],
@@ -396,7 +419,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "description" => Config.load().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
         let (_, chainIds) = buildChainsObject(~config=Config.load())
-        chainIds->(Utils.magic: array<int> => unknown)
+        chainIds->(Utils.magic: array<ChainId.t> => unknown)
       }
     | "chains" => {
         let (chains, _) = buildChainsObject(~config=Config.load())
@@ -496,23 +519,19 @@ let startServer = (~getState, ~persistence: Persistence.t, ~isDevelopmentMode: b
     }
   })
 
-  let runtimeRegistry = PromClient.makeRegistry()
-  PromClient.collectDefaultMetrics({"register": runtimeRegistry})
+  Metrics.startRuntimeCollectors()
 
   app->get("/metrics", (_req, res) => {
-    res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
+    res->set("Content-Type", Metrics.contentType)
     let _ =
-      Metrics.collect(~state=getIndexerState())->Promise.thenResolve(metrics =>
-        res->endWithData(metrics)
+      res->endWithData(
+        Metrics.collect(~metrics=getIndexerState()->Option.map(IndexerState.toMetrics)),
       )
   })
 
   app->get("/metrics/runtime", (_req, res) => {
-    res->set("Content-Type", runtimeRegistry->PromClient.getContentType)
-    let _ =
-      runtimeRegistry
-      ->PromClient.metrics
-      ->Promise.thenResolve(metrics => res->endWithData(metrics))
+    res->set("Content-Type", Metrics.contentType)
+    let _ = res->endWithData(Metrics.collectRuntime())
   })
 
   let server = app->listen(Env.serverPort)
@@ -636,17 +655,13 @@ let start = async (
     (onErrorReject.contents->Option.getUnsafe)(FatalError(errHandler.exn->Utils.prettifyExn))
   }
   let envioVersion = Utils.EnvioPackage.value.version
-  Prometheus.Info.set(~version=envioVersion)
-  Prometheus.ProcessStartTimeSeconds.set()
-  Prometheus.RollbackEnabled.set(~enabled=config.shouldRollbackOnReorg)
 
   if !isTest {
     startServer(~persistence, ~isDevelopmentMode, ~getState=() =>
       switch getIndexerState() {
       | None => Initializing({})
       | Some(state) => {
-          let chains =
-            state->IndexerState.chainStates->Dict.valuesToArray->Array.map(ChainState.toChainData)
+          let chains = (state->IndexerState.toMetrics).chains->Array.map(toChainData)
           Active({
             envioVersion,
             chains,

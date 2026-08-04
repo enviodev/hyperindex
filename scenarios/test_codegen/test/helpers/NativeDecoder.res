@@ -1,17 +1,25 @@
+// The fixed address every crafted log is emitted from; register it for a
+// contract via `~ownedBy` to route logs to that contract's non-wildcard
+// registrations.
+let mockAddress = "0x000000000000000000000000000000000000abcd"
+
 // Decodes logs through the production path: feed crafted logs to a mock
-// eth_getLogs endpoint and let EvmRpcClient decode them with the shared
-// DecoderCore. Returns params per log (keyed by contract name), mirroring the
-// shape the old standalone decoder's decodeLogs returned.
+// eth_getLogs endpoint and let EvmRpcClient route+decode them with the shared
+// DecoderCore. Returns only the routed items, each carrying its registration
+// id and flat decoded params.
 let decodeLogs = async (
-  ~eventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
+  ~eventRegistrations: array<HyperSyncClient.Registration.input>,
   ~logs: array<(array<string>, string)>,
-): array<Nullable.t<dict<Internal.eventParams>>> => {
+  // Contract that owns `mockAddress`, if any. Without one the emitter is
+  // unregistered and only wildcard registrations route.
+  ~ownedBy: option<string>=?,
+): array<EvmRpcClient.rpcEventItem> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
   let logJsons = logs->Array.mapWithIndex(((topics, data), i) =>
     JSON.Object(
       Dict.fromArray([
-        ("address", JSON.String("0x000000000000000000000000000000000000abcd")),
+        ("address", JSON.String(mockAddress)),
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
@@ -23,28 +31,54 @@ let decodeLogs = async (
       ]),
     )
   )
-  let mock = await MockRpcServer.make(~getResult=method =>
-    switch method {
-    | "eth_getLogs" => JSON.Array(logJsons)
-    | _ => JSON.Null
-    }
+  await MockRpcServer.withScenario(
+    ~name="native decoder logs",
+    ~calls=[
+      MockRpcServer.expectCall(
+        ~method="eth_getLogs",
+        ~reply=RpcResult(JSON.Array(logJsons)),
+      ),
+    ],
+    async mock => {
+      let addressStore = AddressStore.make(
+        ~ecosystem=Ecosystem.Evm,
+        ~shouldChecksum=false,
+        ~contracts=eventRegistrations->Array.map((reg): AddressStore.contract => {
+          name: reg.contractName,
+          startBlock: None,
+          dependsOnAddresses: true,
+        }),
+      )
+      let addressSet = switch ownedBy {
+      | None => addressStore->AddressStore.emptySet
+      | Some(contractName) =>
+        let _ = addressStore->AddressStore.seedBatch([
+          {
+            address: mockAddress->Address.unsafeFromString,
+            contractName,
+            registrationBlock: -1,
+          },
+        ])
+        addressStore->AddressStore.makeSet(~contractName)
+      }
+      let client = EvmRpcClient.make(
+        ~url=mock.url,
+        ~checksumAddresses=false,
+        ~syncConfig=EvmChain.getSyncConfig({}),
+        ~eventRegistrations,
+        ~addressStore,
+      )
+      let {items} = await client.getNextPage(
+        {
+          fromBlock: 0,
+          toBlockCeiling: 0,
+          partitionId: "0",
+          registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
+          clientFilteredContracts: None,
+        },
+        addressSet,
+      )
+      items
+    },
   )
-  let client = EvmRpcClient.make(
-    ~url=mock.url,
-    ~checksumAddresses=false,
-    ~syncConfig=EvmChain.getSyncConfig({}),
-    ~allEventParams=eventParams,
-  )
-  let {items} = try await client.getNextPage({
-    fromBlock: 0,
-    toBlockCeiling: 0,
-    logSelections: [{topics: []}],
-    partitionId: "0",
-  }) catch {
-  | exn =>
-    mock.close()
-    throw(exn)
-  }
-  mock.close()
-  items->Array.map(item => item.params)
 }

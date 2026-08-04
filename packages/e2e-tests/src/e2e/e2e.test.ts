@@ -10,7 +10,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { ChildProcess } from "child_process";
+import { ChildProcess, execFile } from "child_process";
+import { promisify } from "util";
 import { config } from "../config.js";
 import {
   startBackground,
@@ -41,7 +42,27 @@ interface MetricsResult {
   stderr: string;
 }
 
-describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
+// `envio dev` brings up Postgres and Hasura through Docker, and
+// ensureClickHouse() starts a container, so without a Docker daemon there is
+// nothing to test against. Skipping keeps a local `pnpm test` usable on a
+// machine without Docker; in CI the services are always provisioned, so an
+// unreachable daemon means a broken pipeline and must fail loudly instead.
+const dockerAvailable = await (async () => {
+  try {
+    await promisify(execFile)("docker", ["info"], { timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+if (!dockerAvailable && process.env.CI) {
+  throw new Error(
+    "Docker is unavailable, so the e2e suite cannot run. Refusing to skip it in CI."
+  );
+}
+
+describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
   let metricsWhileRunning: MetricsResult | null = null;
@@ -599,6 +620,55 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ],
       }
     `);
+  });
+
+  it("Hasura serves numeric arrays as strings", async () => {
+    // NUMERIC[] columns are created as TEXT[] when Hasura is enabled, because
+    // Hasura otherwise returns the elements as numbers and drops precision on
+    // large values. https://github.com/enviodev/hyperindex/issues/788
+    const result = await graphql.query<{
+      NumericArrays: Array<{ bigInts: string[]; bigDecimals: string[] }>;
+    }>(`{ NumericArrays { bigInts bigDecimals } }`);
+
+    expect(result).toEqual({
+      data: {
+        NumericArrays: [
+          {
+            bigInts: ["9007199254740993", "1000000000000000000000000000"],
+            bigDecimals: ["3.3", "123456789012345678.123456789"],
+          },
+        ],
+      },
+    });
+  });
+
+  // Overwrites events_processed, so it has to follow the tests that read it.
+  it("_meta and chain_metadata serve events processed as a number", async () => {
+    // Above int32 max, so a column type regression surfaces as an overflow.
+    await runPgSql(
+      `UPDATE public.envio_chains SET events_processed = 2147487821 WHERE id = 1`
+    );
+
+    // Both views cast to float4, which Hasura returns as a number rather than
+    // stringifying it under HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES. float4
+    // carries ~7 digits, so the round trip loses the tail of the value.
+    const meta = await graphql.query<{
+      _meta: Array<{ chainId: number; eventsProcessed: number }>;
+    }>(`{ _meta { chainId eventsProcessed } }`);
+    const chainMetadata = await graphql.query<{
+      chain_metadata: Array<{ chain_id: number; num_events_processed: number }>;
+    }>(`{ chain_metadata { chain_id num_events_processed } }`);
+
+    expect({ meta, chainMetadata }).toEqual({
+      meta: {
+        data: { _meta: [{ chainId: 1, eventsProcessed: 2147487700 }] },
+      },
+      chainMetadata: {
+        data: {
+          chain_metadata: [{ chain_id: 1, num_events_processed: 2147487700 }],
+        },
+      },
+    });
   });
 
   it("should resume with DB state on second start", async () => {

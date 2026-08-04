@@ -1,65 +1,3 @@
-exception MissingRequiredTopic0
-let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]): result<
-  Internal.topicSelection,
-  exn,
-> =>
-  if topic0->Utils.Array.isEmpty {
-    Error(MissingRequiredTopic0)
-  } else {
-    {
-      Internal.topic0,
-      topic1,
-      topic2,
-      topic3,
-    }->Ok
-  }
-
-let hasFilters = ({topic1, topic2, topic3}: Internal.topicSelection) => {
-  [topic1, topic2, topic3]->Array.find(topic => !Utils.Array.isEmpty(topic))->Option.isSome
-}
-
-/**
-For a group of topic selections, if multiple only use topic0, then they can be compressed into one
-selection combining the topic0s
-*/
-let compressTopicSelections = (topicSelections: array<Internal.topicSelection>) => {
-  let topic0sOfSelectionsWithoutFilters = []
-
-  let selectionsWithFilters = []
-
-  topicSelections->Array.forEach(selection => {
-    if selection->hasFilters {
-      selectionsWithFilters->Array.push(selection)->ignore
-    } else {
-      selection.topic0->Array.forEach(topic0 => {
-        topic0sOfSelectionsWithoutFilters->Array.push(topic0)->ignore
-      })
-    }
-  })
-
-  switch topic0sOfSelectionsWithoutFilters {
-  | [] => selectionsWithFilters
-  | topic0 =>
-    let selectionWithoutFilters: Internal.topicSelection = {
-      topic0,
-      topic1: [],
-      topic2: [],
-      topic3: [],
-    }
-    Array.concat([selectionWithoutFilters], selectionsWithFilters)
-  }
-}
-
-type t = {
-  addresses: array<Address.t>,
-  topicSelections: array<Internal.topicSelection>,
-}
-
-let make = (~addresses, ~topicSelections) => {
-  let topicSelections = compressTopicSelections(topicSelections)
-  {addresses, topicSelections}
-}
-
 // Expand a resolved topic selection into concrete topic values for a query:
 // `ContractAddresses` markers become the given partition addresses encoded as
 // topics; `Values` pass through.
@@ -85,7 +23,8 @@ type parsedWhere = {
   filterByAddresses: bool,
   // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
   // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
-  // Consumed by the codegen of the event's `clientAddressFilter`.
+  // Applied natively by every source while routing; carried on the registration
+  // for the simulate source, which has no native query boundary.
   addressFilterParamGroups: array<array<string>>,
 }
 
@@ -146,7 +85,7 @@ let extractStartBlock = (
 // getter — the enclosing chainObj is a plain JS object.
 let makeChainArg = (
   ~contractName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~getAddresses: unit => array<Address.t>,
 ) => {
   let contractObj = Utils.Object.createNullObject()
@@ -186,7 +125,7 @@ let parseWhereOrThrow = {
     ~sighash,
     ~params: array<string>,
     ~contractName: string,
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~onEventBlockFilterSchema: S.t<option<unknown>>,
     ~topic1=noopGetter,
     ~topic2=noopGetter,

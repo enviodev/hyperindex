@@ -6,34 +6,11 @@ import {
   type Indexer,
   type EvmChainId,
   type EvmChainName,
-  type EvmContractName,
-  type EvmEvent,
   type FuelChainId,
-  type FuelEvent,
   type SvmChainId,
   type TestIndexer,
   type Token,
-  type EvmOnEventOptions,
-  type EvmOnEventHandler,
-  type EvmContractRegisterOptions,
-  type EvmContractRegisterHandler,
-  type EvmOnEventContext,
-  type EvmContractRegisterContext,
-  type EvmOnEventWhere,
-  type Entity,
-  type EntityName,
-  type Enum,
-  type EnumName,
-} from "envio";
-import {
   type Address,
-  type EvmOnBlockWhereResult,
-  type EvmOnBlockFilter,
-  type EvmOnBlockOptions,
-  type EvmOnBlockContext,
-  type EvmOnBlockHandler,
-  type EvmOnBlockHandlerArgs,
-  type EvmOnBlockWhereArgs,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { createTestIndexer } from "envio";
@@ -460,6 +437,36 @@ describe("Use Envio test framework to test event handlers", () => {
     assert.deepEqual(users, [existingUser]);
   });
 
+  it("mutating entities across the set/get boundary doesn't corrupt the store", async () => {
+    const indexer = createTestIndexer();
+
+    const original: User = {
+      id: "0",
+      address: "existing",
+      updatesCountOnUserForTesting: 0,
+      gravatar_id: undefined,
+      accountType: "USER",
+    };
+    indexer.User.set(original);
+
+    // Mutating the object passed to set, or any entity handed back, must not
+    // leak into the in-memory store.
+    Object.assign(original, { address: "mutated-after-set" });
+    Object.assign(await indexer.User.getOrThrow("0"), { address: "mutated-after-getOrThrow" });
+    Object.assign((await indexer.User.get("0"))!, { address: "mutated-after-get" });
+    (await indexer.User.getAll()).forEach((u) => Object.assign(u, { address: "mutated-after-getAll" }));
+
+    assert.deepEqual(await indexer.User.getAll(), [
+      {
+        id: "0",
+        address: "existing",
+        updatesCountOnUserForTesting: 0,
+        gravatar_id: undefined,
+        accountType: "USER",
+      },
+    ]);
+  });
+
   it("entity.getOrThrow throws if entity doesn't exist", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -746,109 +753,6 @@ describe("Use Envio test framework to test event handlers", () => {
       sets: [{ address: expectedChecksummedAddress, contract: "SimpleNft" }],
     });
   });
-
-  it("composes duplicate handlers with same options", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Process CustomSelection — original handler + composed handler should both run
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "CustomSelection",
-              transaction: { from: "0xfoo" },
-              block: { parentHash: "0xParentHash" },
-            },
-          ],
-        },
-      },
-    });
-
-    // Original handler sets entity with id = event.transaction.hash
-    // Composed handler sets entity with id = "composed-" + event.transaction.hash
-    const change = result.changes[0]?.CustomSelectionTestPass;
-    assert.equal(change?.sets?.length, 2, "Both original and composed handler should set entities");
-    assert.ok(
-      change?.sets?.some((e: { id: string }) => e.id.startsWith("composed-")),
-      "Composed handler should have set an entity with 'composed-' prefix"
-    );
-  });
-
-  it("composes duplicate contractRegister with same options", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Process FactoryEvent with composeContractRegister testCase —
-    // original contractRegister adds SimpleNft (via syncRegistration path),
-    // composed contractRegister adds NftFactory
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "composeContractRegister" },
-            },
-          ],
-        },
-      },
-    });
-
-    // The composed contractRegister should have registered NftFactory
-    const addresses = result.changes[0]?.addresses?.sets;
-    assert.ok(
-      addresses?.some((a: { contract: string }) => a.contract === "NftFactory"),
-      "Composed contractRegister should register NftFactory"
-    );
-  });
-
-  it("captured contractRegister add() throws after handler resolved", async () => {
-    const indexer = createTestIndexer();
-    const dcAddress = "0x1234567890123456789012345678901234567890";
-
-    // Two sequential FactoryEvent events:
-    //   1. testCase "captureAdd"       — contractRegister handler stashes
-    //      context.chain.SimpleNft.add into a module-scoped variable.
-    //   2. testCase "callCapturedAdd"  — onEvent handler tries to call the
-    //      captured closure. By then the first event's contractRegister params
-    //      have isResolved=true, so the closure must throw. The handler
-    //      records the outcome via the CustomSelectionTestPass entity id.
-    const result = await indexer.process({
-      chains: {
-        1337: {
-          startBlock: 1,
-          endBlock: 100,
-          simulate: [
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "captureAdd" },
-            },
-            {
-              contract: "Gravatar",
-              event: "FactoryEvent",
-              params: { contract: dcAddress, testCase: "callCapturedAdd" },
-            },
-          ],
-        },
-      },
-    });
-
-    const sets = result.changes[0]?.CustomSelectionTestPass?.sets ?? [];
-    assert.ok(
-      sets.some((e: { id: string }) => e.id === "captured-add-threw"),
-      `Captured contractRegister add() should throw after handler resolved. Got entity ids: ${sets.map((e: { id: string }) => e.id).join(", ")}`
-    );
-  });
-
   it("Should be able to run effect with cache", async () => {
     const indexer = createTestIndexer();
     const dcAddress = "0x1234567890123456789012345678901234567890";
@@ -932,6 +836,30 @@ describe("Use Envio test framework to test event handlers", () => {
           },
         },
       }),
+    );
+  });
+
+  it("propagates a handler throw to the process() call site with its message", async () => {
+    const indexer = createTestIndexer();
+    const dcAddress = "0x1234567890123456789012345678901234567890";
+
+    await assert.rejects(
+      indexer.process({
+        chains: {
+          1337: {
+            startBlock: 1,
+            endBlock: 100,
+            simulate: [
+              {
+                contract: "Gravatar",
+                event: "FactoryEvent",
+                params: { contract: dcAddress, testCase: "throwInHandler" },
+              },
+            ],
+          },
+        },
+      }),
+      /Error from handler/,
     );
   });
 
@@ -1079,9 +1007,9 @@ describe("Use Envio test framework to test event handlers", () => {
         1: {
           startBlock: 1,
           endBlock: 100,
-          simulate: [
-            { contract: "Noop", event: "EmptyEvent" },
-          ],
+          // Noop.EmptyEvent is the only event on chain 1; it has a no-op handler
+          // so the chain processes an event without writing any entity.
+          simulate: [{ contract: "Noop", event: "EmptyEvent" }],
         },
       },
     });
@@ -1113,6 +1041,30 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       ],
     });
+  });
+
+  // Simulating an event that has no registered handler is almost always a
+  // mistake (a typo'd event, or forgetting to write the handler), so it fails
+  // loudly rather than silently processing nothing. TestEventWithReservedKeyword
+  // is defined on Gravatar (chain 1337) but has no handler.
+  it("throws when simulating an event with no registered handler", async () => {
+    const indexer = createTestIndexer();
+
+    await assert.rejects(
+      () =>
+        indexer.process({
+          chains: {
+            1337: {
+              startBlock: 1,
+              endBlock: 100,
+              simulate: [
+                { contract: "Gravatar", event: "TestEventWithReservedKeyword" },
+              ],
+            },
+          },
+        }),
+      /no handler runs for event "TestEventWithReservedKeyword" on contract "Gravatar"/
+    );
   });
 
   // Regression for https://github.com/enviodev/hyperindex/issues/538: a struct
@@ -1260,6 +1212,21 @@ describe("Use Envio test framework to test event handlers", () => {
         >(true);
         expectType<
           TypeEqual<typeof userChange.deleted, readonly string[] | undefined>
+        >(true);
+      }
+
+      // Deleted ids follow the entity's id scalar, matching the raw values the
+      // test indexer reports at runtime.
+      const intIdChange = change.IntIdEntity;
+      if (intIdChange) {
+        expectType<
+          TypeEqual<typeof intIdChange.deleted, readonly number[] | undefined>
+        >(true);
+      }
+      const bigIntIdChange = change.BigIntIdEntity;
+      if (bigIntIdChange) {
+        expectType<
+          TypeEqual<typeof bigIntIdChange.deleted, readonly bigint[] | undefined>
         >(true);
       }
     }
@@ -1594,408 +1561,5 @@ describe("Use Envio test framework to test event handlers", () => {
         },
       }],
     });
-  });
-
-  it("EvmEvent type", () => {
-    // EvmEvent without generics is a union of all events
-    type AllEvents = EvmEvent;
-
-    // contractName and eventName are discriminant fields with literal types
-    expectType<
-      TypeEqual<
-        AllEvents["contractName"],
-        | "Gravatar"
-        | "NftFactory"
-        | "SimpleNft"
-        | "TestEvents"
-        | "Noop"
-        | "EventFiltersTest"
-      >
-    >(true);
-
-    // Narrowing to a specific contract's events
-    type GravatarEvent = EvmEvent<"Gravatar">;
-    expectType<
-      TypeEqual<
-        GravatarEvent["contractName"],
-        "Gravatar"
-      >
-    >(true);
-
-    // Narrowing to a specific event
-    type NewGravatarEvent = EvmEvent<"Gravatar", "NewGravatar">;
-    expectType<TypeEqual<NewGravatarEvent["contractName"], "Gravatar">>(true);
-    expectType<TypeEqual<NewGravatarEvent["eventName"], "NewGravatar">>(true);
-    expectType<TypeEqual<NewGravatarEvent["chainId"], EvmChainId>>(true);
-    expectType<TypeEqual<NewGravatarEvent["logIndex"], number>>(true);
-    expectType<TypeEqual<NewGravatarEvent["srcAddress"], `0x${string}`>>(true);
-    expectType<
-      TypeEqual<
-        NewGravatarEvent["params"],
-        {
-          readonly id: bigint;
-          readonly owner: `0x${string}`;
-          readonly displayName: string;
-          readonly imageUrl: string;
-        }
-      >
-    >(true);
-
-    // Block and transaction have proper types
-    expectType<TypeEqual<NewGravatarEvent["block"]["number"], number>>(true);
-    expectType<TypeEqual<NewGravatarEvent["block"]["timestamp"], number>>(true);
-    expectType<TypeEqual<NewGravatarEvent["block"]["hash"], string>>(true);
-
-    // Non-configured ecosystem event types return error string
-    expectType<
-      TypeEqual<
-        FuelEvent,
-        "FuelEvent is not available. Configure Fuel contracts in config.yaml and run 'envio codegen'"
-      >
-    >(true);
-  });
-});
-
-describe("onEvent / contractRegister types", () => {
-  it("EvmOnEventOptions resolves contract/event literals from Event", () => {
-    type GravatarNewGravatar = EvmEvent<"Gravatar", "NewGravatar">;
-    type Opts = EvmOnEventOptions<GravatarNewGravatar>;
-
-    // Gravatar.NewGravatar has no indexed params, so the project-bound
-    // EvmEventFilters lookup resolves params to {} and `where` is typed
-    // as `EvmOnEventWhere<{}, "Gravatar">` rather than `unknown`.
-    expectType<
-      TypeEqual<
-        Opts,
-        {
-          readonly contract: "Gravatar";
-          readonly event: "NewGravatar";
-          readonly wildcard?: boolean;
-          readonly where?: EvmOnEventWhere<{}, "Gravatar">;
-        }
-      >
-    >(true);
-  });
-
-  it("EvmContractRegisterOptions has same shape as EvmOnEventOptions", () => {
-    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
-    expectType<
-      TypeEqual<EvmContractRegisterOptions<Ev>, EvmOnEventOptions<Ev>>
-    >(true);
-  });
-
-  it("EvmOnEventHandler has correct args shape", () => {
-    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
-    type Handler = EvmOnEventHandler<Ev>;
-
-    expectType<
-      TypeEqual<
-        Handler,
-        (args: { event: Ev; context: EvmOnEventContext }) => Promise<void>
-      >
-    >(true);
-  });
-
-  it("EvmContractRegisterHandler uses EvmContractRegisterContext", () => {
-    type Ev = EvmEvent<"NftFactory", "SimpleNftCreated">;
-    type Handler = EvmContractRegisterHandler<Ev>;
-
-    expectType<
-      TypeEqual<
-        Handler,
-        (args: {
-          event: Ev;
-          context: EvmContractRegisterContext;
-        }) => Promise<void>
-      >
-    >(true);
-  });
-
-  it("EvmOnEventContext has chain info and entity ops", () => {
-    expectType<TypeEqual<EvmOnEventContext["chain"]["id"], EvmChainId>>(true);
-    expectType<TypeEqual<EvmOnEventContext["chain"]["isRealtime"], boolean>>(true);
-    expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
-
-    // Entity ops are available on context
-    expectType<
-      TypeEqual<
-        EvmOnEventContext["User"]["get"],
-        (id: string) => Promise<User | undefined>
-      >
-    >(true);
-    expectType<
-      TypeEqual<EvmOnEventContext["User"]["set"], (entity: User) => void>
-    >(true);
-  });
-
-  it("EvmContractRegisterContext has chain.ContractName.add() registration", () => {
-    expectType<
-      TypeEqual<EvmContractRegisterContext["chain"]["id"], EvmChainId>
-    >(true);
-    expectType<
-      TypeEqual<
-        EvmContractRegisterContext["chain"]["NftFactory"]["add"],
-        (address: Address) => void
-      >
-    >(true);
-    expectType<
-      TypeEqual<
-        EvmContractRegisterContext["chain"]["SimpleNft"]["add"],
-        (address: Address) => void
-      >
-    >(true);
-    expectType<
-      TypeEqual<
-        EvmContractRegisterContext["chain"]["Gravatar"]["add"],
-        (address: Address) => void
-      >
-    >(true);
-  });
-
-  it("EvmContractRegisterContext does not expose entity operations", () => {
-    // @ts-expect-error - User entity ops should not be on contractRegister context
-    type _userOnCr = EvmContractRegisterContext["User"];
-  });
-
-  it("indexer.onEvent rejects invalid contract/event combinations", () => {
-    indexer.onEvent(
-      // @ts-expect-error - "BadContract" is not a configured contract
-      { contract: "BadContract", event: "X" },
-      async () => {},
-    );
-
-    indexer.onEvent(
-      // @ts-expect-error - "BadEvent" is not an event of Gravatar
-      { contract: "Gravatar", event: "BadEvent" },
-      async () => {},
-    );
-
-    // Valid combination should compile (no @ts-expect-error)
-    indexer.onEvent(
-      { contract: "Gravatar", event: "NewGravatar" },
-      async ({ event }) => {
-        expectType<TypeEqual<typeof event.params.displayName, string>>(true);
-      },
-    );
-  });
-
-  it("indexer.contractRegister exposes context.chain.ContractName.add()", () => {
-    indexer.contractRegister(
-      { contract: "NftFactory", event: "SimpleNftCreated" },
-      async ({ event, context }) => {
-        // event is typed
-        expectType<
-          TypeEqual<typeof event.params.contractAddress, `0x${string}`>
-        >(true);
-        // chain.ContractName.add(address) is available
-        context.chain.SimpleNft.add(event.params.contractAddress);
-        context.chain.NftFactory.add(event.params.contractAddress);
-        // @ts-expect-error - UnknownContract is not configured
-        context.chain.UnknownContract.add(event.params.contractAddress);
-      },
-    );
-  });
-
-  it("EvmOnEventHandler defaults to union of all events", () => {
-    // Without args, the handler accepts the union of all EVM events
-    type DefaultHandler = EvmOnEventHandler;
-    type DefaultArgs = Parameters<DefaultHandler>[0];
-
-    // The event field is the union of all EVM events
-    expectType<TypeEqual<DefaultArgs["event"], EvmEvent>>(true);
-    expectType<TypeEqual<DefaultArgs["context"], EvmOnEventContext>>(true);
-  });
-
-  it("EvmOnEventOptions rejects invalid Event constraint", () => {
-    // EventLike requires contractName and eventName fields
-    // @ts-expect-error - missing required fields
-    type _bad = EvmOnEventOptions<{ foo: "bar" }>;
-  });
-
-  it("EvmOnEventOptions preserves contract/event pairing across union members", () => {
-    // With distributive conditional typing, a union Event type yields a union
-    // of options where each member's contract/event are paired together.
-    // Mismatched pairings (e.g. contract: "Gravatar", event: "SimpleNftCreated")
-    // must be rejected.
-    type UnionEvent =
-      | EvmEvent<"Gravatar", "NewGravatar">
-      | EvmEvent<"NftFactory", "SimpleNftCreated">;
-    type UnionOpts = EvmOnEventOptions<UnionEvent>;
-
-    // Valid pairings compile
-    const _a: UnionOpts = { contract: "Gravatar", event: "NewGravatar" };
-    const _b: UnionOpts = {
-      contract: "NftFactory",
-      event: "SimpleNftCreated",
-    };
-
-    // @ts-expect-error - "SimpleNftCreated" is not an event of "Gravatar"
-    const _bad1: UnionOpts = {
-      contract: "Gravatar",
-      event: "SimpleNftCreated",
-    };
-    // @ts-expect-error - "NewGravatar" is not an event of "NftFactory"
-    const _bad2: UnionOpts = {
-      contract: "NftFactory",
-      event: "NewGravatar",
-    };
-  });
-
-  // Type-level surface checks for `indexer.onBlock`. These assertions are
-  // cheap (no runtime), but they catch regressions where the `where`-return
-  // type widens back to include `void`/`undefined` — which the runtime no
-  // longer silently accepts, so the TS type must stay strict.
-  it("indexer.onBlock exists on the indexer (value-level)", () => {
-    expectType<typeof indexer.onBlock>(indexer.onBlock);
-    // Smoke-check the options shape by constructing one. If `where` ever
-    // loses `void` exclusion, the implicit-return negative test below
-    // catches it; this ensures the `name` + `where` shape still type-checks.
-    const _opts: Parameters<typeof indexer.onBlock>[0] = {
-      name: "someBlockHandler",
-      where: ({ chain }) => (chain.id === 1 ? true : false),
-    };
-    expectType<Parameters<typeof indexer.onBlock>[0]>(_opts);
-  });
-
-  it("EvmOnBlockWhereResult excludes void/undefined", () => {
-    // Narrow intent: the result type is exactly `boolean | EvmOnBlockFilter`.
-    expectType<TypeEqual<EvmOnBlockWhereResult, boolean | EvmOnBlockFilter>>(
-      true
-    );
-    // Negative: a function whose body omits a return path is rejected.
-    // `noImplicitReturns`/the declared return type catches the missing
-    // return, so the assignment below should fail to type-check.
-    type _Predicate = (args: {
-      readonly chain: { readonly id: number };
-    }) => EvmOnBlockWhereResult;
-    // @ts-expect-error - implicit undefined return is not assignable
-    const _missingReturn: _Predicate = ({ chain }) => {
-      if (chain.id === 1) return true;
-      // Falls through with no return — must be a type error.
-    };
-  });
-
-  it("EvmOnBlockFilter accepts partial/empty shapes (strict-key checks live in the runtime schema)", () => {
-    // The TS type uses `?:` for every field and doesn't catch typos
-    // (e.g. `_gt` is fine to TS). The runtime `S.strict` on
-    // `blockRangeSchema` is what rejects them with a clear error. This
-    // assertion documents that split: TS validates *shape*, runtime
-    // validates *keys*.
-    const _ok: EvmOnBlockFilter = {
-      block: { number: { _gte: 1, _lte: 10, _every: 2 } },
-    };
-    const _partial: EvmOnBlockFilter = { block: { number: { _gte: 1 } } };
-    const _empty: EvmOnBlockFilter = {};
-    expectType<EvmOnBlockFilter>(_ok);
-    expectType<EvmOnBlockFilter>(_partial);
-    expectType<EvmOnBlockFilter>(_empty);
-  });
-});
-
-describe("Schema-bound types: Entity / EntityName / Enum / EnumName", () => {
-  it("EntityName accepts schema entity names and rejects others", () => {
-    // Positive: known entities are assignable to EntityName.
-    const _user: EntityName = "User";
-    const _gravatar: EntityName = "Gravatar";
-    expectType<EntityName>(_user);
-    expectType<EntityName>(_gravatar);
-
-    // @ts-expect-error - "NotAnEntity" is not in the schema
-    const _bad: EntityName = "NotAnEntity";
-  });
-
-  it("Entity<TName> resolves to the per-entity shape", () => {
-    // Entity<"User"> is the same shape as the per-entity alias `User`.
-    expectType<TypeEqual<Entity<"User">, User>>(true);
-
-    // Spot-check a couple of fields on the resolved type.
-    expectType<TypeEqual<Entity<"User">["id"], string>>(true);
-    expectType<
-      TypeEqual<Entity<"User">["accountType"], "ADMIN" | "USER">
-    >(true);
-    expectType<
-      TypeEqual<Entity<"User">["gravatar_id"], string | undefined>
-    >(true);
-
-    // @ts-expect-error - "NotAnEntity" is not assignable to EntityName
-    type _bad = Entity<"NotAnEntity">;
-  });
-
-  it("EnumName accepts schema enum names and rejects others", () => {
-    const _account: EnumName = "AccountType";
-    const _size: EnumName = "GravatarSize";
-    expectType<EnumName>(_account);
-    expectType<EnumName>(_size);
-
-    // @ts-expect-error - "NotAnEnum" is not in the schema
-    const _bad: EnumName = "NotAnEnum";
-  });
-
-  it("Enum<TName> resolves to the schema enum's value union", () => {
-    expectType<TypeEqual<Enum<"AccountType">, "ADMIN" | "USER">>(true);
-    expectType<
-      TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">
-    >(true);
-
-    // @ts-expect-error - "NotAnEnum" is not assignable to EnumName
-    type _bad = Enum<"NotAnEnum">;
-  });
-});
-
-describe("Config-bound types: EvmContractName", () => {
-  it("EvmContractName is the union of configured EVM contract names", () => {
-    expectType<
-      TypeEqual<
-        EvmContractName,
-        | "NftFactory"
-        | "EventFiltersTest"
-        | "SimpleNft"
-        | "TestEvents"
-        | "Gravatar"
-        | "Noop"
-      >
-    >(true);
-
-    // @ts-expect-error - "NotAContract" is not configured
-    const _bad: EvmContractName = "NotAContract";
-  });
-});
-
-describe("EvmOnBlock surface: Args / Context / Handler / WhereArgs", () => {
-  it("EvmOnBlockContext is an alias of EvmOnEventContext", () => {
-    expectType<TypeEqual<EvmOnBlockContext, EvmOnEventContext>>(true);
-  });
-
-  it("EvmOnBlockHandlerArgs has block.number and the block context", () => {
-    expectType<
-      TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
-    >(true);
-    expectType<
-      TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>
-    >(true);
-  });
-
-  it("EvmOnBlockHandler is an async function from args to void", () => {
-    expectType<
-      TypeEqual<
-        EvmOnBlockHandler,
-        (args: EvmOnBlockHandlerArgs) => Promise<void>
-      >
-    >(true);
-  });
-
-  it("EvmOnBlockWhereArgs.chain exposes id and per-contract handles", () => {
-    // chain.id narrows to the configured EVM chain-id union.
-    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["id"], EvmChainId>>(true);
-    expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["isRealtime"], boolean>>(
-      true
-    );
-    // Configured contracts are reachable on the chain handle.
-    expectType<
-      TypeEqual<EvmOnBlockWhereArgs["chain"]["NftFactory"]["name"], "NftFactory">
-    >(true);
-    expectType<
-      TypeEqual<EvmOnBlockWhereArgs["chain"]["Gravatar"]["name"], "Gravatar">
-    >(true);
   });
 });

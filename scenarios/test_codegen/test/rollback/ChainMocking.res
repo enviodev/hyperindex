@@ -37,6 +37,7 @@ module Crypto = {
 module Make = () => {
   type log = {
     item: Internal.item,
+    onEventRegistration: Internal.evmOnEventRegistration,
     srcAddress: Address.t,
     transactionHash: string,
   }
@@ -53,7 +54,7 @@ module Make = () => {
   }
 
   type composedEventConstructor = (
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,
@@ -176,12 +177,12 @@ module Make = () => {
       let log = Internal.Event({
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
-        chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
+        chainId: self.chainConfig.id,
         blockNumber,
         logIndex,
         transactionIndex,
       })
-      {item: log, srcAddress, transactionHash}
+      {item: log, onEventRegistration, srcAddress, transactionHash}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -232,7 +233,9 @@ module Make = () => {
             prev ||
             (addresses->arrayHas(l.srcAddress) &&
               eventKeys->arrayHas(
-                getEventKey((l.item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig),
+                getEventKey(
+                  l.onEventRegistration.eventConfig,
+                ),
               ))
           },
         )
@@ -265,7 +268,7 @@ module Make = () => {
     }
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
-      let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])
+      let addresses = query.addresses->AddressSet.filterByContracts([c.name])->AddressSet.addresses
       {
         addresses,
         eventKeys: c.events->Array.map(eventConfig => {

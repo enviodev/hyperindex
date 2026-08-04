@@ -26,12 +26,26 @@ let approvalLog = (
 describe("Renamed event decoding (issue #1285)", () => {
   Async.it("decodes a renamed event under its real on-chain signature", async t => {
     let decoded = await NativeDecoder.decodeLogs(
-      ~eventParams=[
+      ~eventRegistrations=[
         {
+          index: 5,
           sighash: onChainSighash,
           topicCount: 1,
           eventName: "ApprovalRenamed",
           contractName: "TestContract",
+          isWildcard: false,
+          dependsOnAddresses: true,
+          startBlock: None,
+          topicSelections: [
+            {
+              topic0: [onChainSighash],
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: [],
           params: [
             {name: "owner", abiType: "address", indexed: false},
             {name: "value", abiType: "uint256", indexed: false},
@@ -39,17 +53,15 @@ describe("Renamed event decoding (issue #1285)", () => {
         },
       ],
       ~logs=[approvalLog],
+      ~ownedBy="TestContract",
     )
-    let paramsByContractName = decoded[0]->Option.getUnsafe->Nullable.toOption
+    let item = decoded[0]->Option.getUnsafe
 
     t
-    .expect(paramsByContractName)
-    .toEqual(
-      Some(
-        {"TestContract": {"owner": owner, "value": value}}->(
-          Utils.magic: {..} => dict<Internal.eventParams>
-        ),
-      ),
-    )
+    .expect((item.onEventRegistrationIndex, item.params))
+    .toEqual((
+      5,
+      {"owner": owner, "value": value}->(Utils.magic: {..} => Internal.eventParams),
+    ))
   })
 })

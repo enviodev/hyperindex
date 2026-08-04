@@ -43,7 +43,7 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
 let getKnownRawBlockWithBackoff = async (
   ~client,
   ~sourceName,
-  ~chain,
+  ~chainId,
   ~blockNumber,
   ~backoffMsOnFailure,
   ~recordRequest: (~method: string, ~seconds: float) => unit,
@@ -60,7 +60,7 @@ let getKnownRawBlockWithBackoff = async (
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chainId,
         "type": "EXPONENTIAL_BACKOFF",
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
@@ -96,11 +96,6 @@ let getErrorMessage = (exn: exn): option<string> =>
     }
   | _ => None
   }
-
-type logSelection = {
-  addresses: option<array<Address.t>>,
-  topicQuery: Rpc.GetLogs.topicQuery,
-}
 
 // `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
 // payload describing the retry decision:
@@ -160,122 +155,6 @@ let parseGetNextPageRetryError = (exn: exn): option<(
     }
   | _ => None
   }
-
-type selectionConfig = {
-  getLogSelectionsOrThrow: (
-    ~addressesByContractName: dict<array<Address.t>>,
-  ) => array<logSelection>,
-}
-
-let getSelectionConfig = (selection: FetchState.selection) => {
-  let evmOnEventRegistrations =
-    selection.onEventRegistrations->(
-      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-    )
-
-  if evmOnEventRegistrations->Utils.Array.isEmpty {
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
-        }),
-      ),
-    )
-  }
-
-  // eth_getLogs takes one address list and one topic selection per request, so
-  // fan out to one request per selection. Each address-bound event is grouped by
-  // its contract and later scoped to that contract's own addresses — pooling all
-  // contracts' addresses would let one contract's query fetch a sibling's logs,
-  // which route back by address and bypass the sibling's filter (routing never
-  // re-applies it). Pure-wildcard events carry no address constraint, so they're
-  // pooled and resolved once.
-  let noAddressTopicSelections = []
-  let byContract = Dict.make()
-  let wildcardByContract = Dict.make()
-  let contractNames = Utils.Set.make()
-
-  evmOnEventRegistrations->Array.forEach(reg => {
-    let contractName = reg.eventConfig.contractName
-    let {isWildcard, dependsOnAddresses, resolvedWhere} = reg
-    if dependsOnAddresses {
-      contractNames->Utils.Set.add(contractName)->ignore
-      (isWildcard ? wildcardByContract : byContract)->Utils.Dict.pushMany(
-        contractName,
-        resolvedWhere.topicSelections,
-      )
-    } else {
-      noAddressTopicSelections
-      ->Array.pushMany(
-        resolvedWhere.topicSelections->LogSelection.materializeTopicSelections(~addresses=[]),
-      )
-      ->ignore
-    }
-  })
-
-  // `compressTopicSelections` folds the filter-less events into a single topic0
-  // OR-set, keeping the common case at one request.
-  let toLogSelections = (~addresses, topicSelections): array<logSelection> =>
-    topicSelections
-    ->LogSelection.compressTopicSelections
-    ->Array.map(topicSelection => {
-      addresses,
-      topicQuery: topicSelection->Rpc.GetLogs.mapTopicQuery,
-    })
-
-  // Address-independent, so resolve once (the wildcard partition reuses this).
-  let noAddressLogSelections = toLogSelections(~addresses=None, noAddressTopicSelections)
-
-  let getLogSelectionsOrThrow = if contractNames->Utils.Set.size === 0 {
-    (~addressesByContractName as _) => noAddressLogSelections
-  } else {
-    (~addressesByContractName): array<logSelection> => {
-      let logSelections = noAddressLogSelections->Array.copy
-      contractNames->Utils.Set.forEach(contractName => {
-        switch addressesByContractName->Utils.Dict.dangerouslyGetNonOption(contractName) {
-        | None
-        | Some([]) => ()
-        | Some(addresses) =>
-          // Non-wildcard filters, scoped to this contract's addresses.
-          switch byContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(topicSelections) =>
-            logSelections
-            ->Array.pushMany(
-              toLogSelections(
-                ~addresses=Some(addresses),
-                topicSelections->LogSelection.materializeTopicSelections(~addresses),
-              ),
-            )
-            ->ignore
-          | None => ()
-          }
-
-          // Wildcard-by-address filters fold the address into the topics,
-          // so they still match any address.
-          switch wildcardByContract->Utils.Dict.dangerouslyGetNonOption(contractName) {
-          | Some(topicSelections) =>
-            logSelections
-            ->Array.pushMany(
-              toLogSelections(
-                ~addresses=None,
-                topicSelections->LogSelection.materializeTopicSelections(~addresses),
-              ),
-            )
-            ->ignore
-          | None => ()
-          }
-        }
-      })
-      logSelections
-    }
-  }
-
-  {
-    getLogSelectionsOrThrow: getLogSelectionsOrThrow,
-  }
-}
-
-let memoGetSelectionConfig = () => Utils.WeakMap.memoize(getSelectionConfig)
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
@@ -734,10 +613,12 @@ type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
-  chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmOnEventRegistration>,
-  allEventParams: array<HyperSyncClient.Decoder.eventParamsInput>,
+  chainId: ChainId.t,
+  // The chain's registrations, indexed by their sequential `index`.
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
   lowercaseAddresses: bool,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
   ws?: string,
   headers?: dict<string>,
 }
@@ -747,33 +628,31 @@ let make = (
     sourceFor,
     syncConfig,
     url,
-    chain,
-    eventRouter,
-    allEventParams,
+    chainId,
+    onEventRegistrations,
     lowercaseAddresses,
+    addressStore,
     ?ws,
     ?headers,
   }: options,
 ): t => {
-  let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
 
-  let getSelectionConfig = memoGetSelectionConfig()
-
   let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~allEventParams,
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
+    ~addressStore,
   )
 
   // Requests are made from shared, memoized loaders, so they can't be
@@ -814,7 +693,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
@@ -831,7 +710,7 @@ let make = (
         getKnownRawBlockWithBackoff(
           ~client,
           ~sourceName=name,
-          ~chain,
+          ~chainId,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~recordRequest,
@@ -843,7 +722,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
@@ -874,7 +753,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "receiptLoader: fetching transaction receipt - `getTransactionReceipt` rpc call",
@@ -920,8 +799,7 @@ let make = (
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress,
+    ~addressSet,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -944,27 +822,26 @@ let make = (
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
-    let {getLogSelectionsOrThrow} = getSelectionConfig(selection)
-    let logSelections = getLogSelectionsOrThrow(~addressesByContractName)
-
-    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage({
-      fromBlock,
-      toBlockCeiling: toBlock,
-      logSelections: logSelections->Array.map(({
-        addresses,
-        topicQuery,
-      }): EvmRpcClient.logSelectionInput => {
-        ?addresses,
-        topics: topicQuery->Array.map(filter =>
-          switch filter {
-          | Rpc.GetLogs.Null => Nullable.null
-          | Single(topic) => Nullable.make([topic])
-          | Multiple(topics) => Nullable.make(topics)
-          }
+    if selection.onEventRegistrations->Utils.Array.isEmpty {
+      throw(
+        Source.GetItemsError(
+          UnsupportedSelection({
+            message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
+          }),
         ),
-      }),
-      partitionId,
-    }) catch {
+      )
+    }
+
+    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage(
+      {
+        fromBlock,
+        toBlockCeiling: toBlock,
+        partitionId,
+        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        clientFilteredContracts: selection.clientFilteredContracts,
+      },
+      addressSet,
+    ) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {
       | Some((attemptedToBlock, retry, requestStats)) =>
@@ -997,93 +874,73 @@ let make = (
     ->Promise.thenResolve(parseBlockInfo)
 
     let parsedQueueItems = await items
-    ->Array.filterMap(({log, params: maybeDecodedEvent}: EvmRpcClient.rpcEventItem) => {
-      let topic0 = log.topics[0]->Option.getOr("0x0")
-      let routedAddress = if lowercaseAddresses {
-        log.address->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        log.address->Address.Evm.fromAddressOrThrow
-      }
+    ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
+      // `log.address` comes back already normalized to the client's casing.
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationIndex)
+      let eventConfig =
+        onEventRegistration.eventConfig->(
+          Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+        )
 
-      switch eventRouter->EventRouter.get(
-        ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
-        ~contractNameByAddress,
-        ~contractAddress=routedAddress,
-      ) {
-      | None => None
-      | Some(onEventRegistration) =>
-        let eventConfig =
-          onEventRegistration.eventConfig->(
-            Utils.magic: Internal.eventConfig => Internal.evmEventConfig
-          )
-        switch maybeDecodedEvent
-        ->Nullable.toOption
-        ->Option.flatMap(Dict.get(_, eventConfig.contractName)) {
-        | Some(decoded) =>
-          Some(
-            (
-              async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
-                  log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
-                      Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
-                    ),
-                  ),
-                )) catch {
-                | TransactionDataNotFound({message}) =>
-                  let backoffMillis = switch retry {
-                  | 0 => 100
-                  | _ => 500 * retry
-                  }
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingItems({
-                        exn: %raw(`null`),
-                        attemptedToBlock: toBlock,
-                        retry: WithBackoff({
-                          message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                          backoffMillis,
-                        }),
-                      }),
-                    ),
-                  )
-                | exn =>
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber: log.blockNumber,
-                        logIndex: log.logIndex,
-                      }),
-                    ),
-                  )
-                }
-
-                Internal.Event({
-                  onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-                  blockNumber: block->getBlockNumber,
-                  chain,
+      (
+        async () => {
+          let (block, transaction) = try await Promise.all2((
+            log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
+            log->getEventTransactionOrThrow(
+              ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+              ),
+            ),
+          )) catch {
+          | TransactionDataNotFound({message}) =>
+            let backoffMillis = switch retry {
+            | 0 => 100
+            | _ => 500 * retry
+            }
+            throw(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: toBlock,
+                  retry: WithBackoff({
+                    message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                    backoffMillis,
+                  }),
+                }),
+              ),
+            )
+          | exn =>
+            throw(
+              Source.GetItemsError(
+                FailedGettingFieldSelection({
+                  message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                  exn,
+                  blockNumber: log.blockNumber,
                   logIndex: log.logIndex,
-                  transactionIndex: log.transactionIndex,
-                  payload: {
-                    contractName: eventConfig.contractName,
-                    eventName: eventConfig.name,
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded,
-                    block,
-                    transaction,
-                    srcAddress: routedAddress,
-                    logIndex: log.logIndex,
-                  }->Evm.fromPayload,
-                })
-              }
-            )(),
-          )
-        | None => None
+                }),
+              ),
+            )
+          }
+
+          Internal.Event({
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+            blockNumber: block->getBlockNumber,
+            chainId,
+            logIndex: log.logIndex,
+            transactionIndex: log.transactionIndex,
+            payload: {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              chainId: chainId,
+              params: decoded,
+              block,
+              transaction,
+              srcAddress: log.address,
+              logIndex: log.logIndex,
+            }->Evm.fromPayload,
+          })
         }
-      }
+      )()
     })
     ->Promise.all
 
@@ -1166,13 +1023,13 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId=chainId, ~onHeight)
     )
 
   {
     name,
     sourceFor,
-    chain,
+    chainId,
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,

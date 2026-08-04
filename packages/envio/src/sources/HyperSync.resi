@@ -32,9 +32,10 @@ module GetLogs: {
     ~client: HyperSyncClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~logSelections: array<LogSelection.t>,
-    ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-    ~maxNumLogs: int,
+    ~maxNumLogs: option<int>,
+    ~registrationIndexes: array<int>,
+    ~addressSet: AddressSet.t,
+    ~clientFilteredContracts: option<array<string>>,
   ) => promise<logsQueryPage>
 }
 
@@ -42,7 +43,7 @@ let queryBlockData: (
   ~client: HyperSyncClient.t,
   ~blockNumber: int,
   ~sourceName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~logger: Pino.t,
 ) => promise<(
   queryResponse<option<ReorgDetection.blockDataWithTimestamp>>,
@@ -53,7 +54,7 @@ let queryBlockDataMulti: (
   ~client: HyperSyncClient.t,
   ~blockNumbers: array<int>,
   ~sourceName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~logger: Pino.t,
 ) => promise<(
   queryResponse<array<ReorgDetection.blockDataWithTimestamp>>,

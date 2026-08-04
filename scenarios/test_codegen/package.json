@@ -32,7 +32,8 @@
     "typescript": "6.0.3",
     "ts-expect": "1.3.0",
     "viem": "2.54.0",
-    "envio": "file:../../packages/envio"
+    "envio": "file:../../packages/envio",
+    "envio-tests": "file:../../packages/envio-tests"
   },
   "engines": {
     "node": ">=22.0.0"

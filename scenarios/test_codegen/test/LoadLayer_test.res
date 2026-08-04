@@ -10,7 +10,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -38,7 +38,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -73,7 +73,7 @@ describe("LoadLayer", () => {
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -103,7 +103,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -148,7 +148,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -184,13 +184,13 @@ describe("LoadLayer", () => {
       )
 
       let indexerState = MockIndexer.InMemoryStore.make(
-        ~entities=[(MockIndexer.entityConfig(User), [user1])],
+        ~entities=[(MockIndexer.entityConfig("User"), [user1])],
       )
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -234,7 +234,7 @@ describe("LoadLayer", () => {
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -250,7 +250,7 @@ describe("LoadLayer", () => {
       await Promise.resolve()
 
       indexerState->MockIndexer.InMemoryStore.setEntity(
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         user1,
       )
 
@@ -284,14 +284,14 @@ describe("LoadLayer", () => {
       )
 
       let indexerState = MockIndexer.InMemoryStore.make(
-        ~entities=[(MockIndexer.entityConfig(User), [user1])],
+        ~entities=[(MockIndexer.entityConfig("User"), [user1])],
       )
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -335,7 +335,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -349,7 +349,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -381,7 +381,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -419,7 +419,7 @@ describe("LoadLayer", () => {
     }
 
     let indexerState = MockIndexer.InMemoryStore.make(
-      ~entities=[(MockIndexer.entityConfig(User), [user1])],
+      ~entities=[(MockIndexer.entityConfig("User"), [user1])],
     )
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -427,7 +427,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -455,7 +455,7 @@ describe("LoadLayer", () => {
   })
 
   Async.it(
-    "Distributes db rows of the merged query to the matching filter indices",
+    "Distributes db rows of the merged query to the matching filter indexes",
     async t => {
       let user = (id, address): Indexer.Entities.User.t => {
         id,
@@ -469,7 +469,7 @@ describe("LoadLayer", () => {
 
       let storageMock = MockIndexer.Storage.make(
         [#loadOrThrow],
-        ~dbEntities=[(MockIndexer.entityConfig(User), [user1, user2, user("3", "0x3")])],
+        ~dbEntities=[(MockIndexer.entityConfig("User"), [user1, user2, user("3", "0x3")])],
       )
       let loadManager = LoadManager.make()
       let indexerState = MockIndexer.InMemoryStore.make()
@@ -479,7 +479,7 @@ describe("LoadLayer", () => {
         LoadLayer.loadByFilter(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
           ~indexerState,
           ~item,
           ~ecosystem=MockIndexer.config.ecosystem,
@@ -520,7 +520,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -560,7 +560,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -614,7 +614,7 @@ describe("LoadLayer", () => {
     }
 
     let indexerState = MockIndexer.InMemoryStore.make(
-      ~entities=[(MockIndexer.entityConfig(User), [user1, user2])],
+      ~entities=[(MockIndexer.entityConfig("User"), [user1, user2])],
     )
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -622,7 +622,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -637,7 +637,7 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -678,7 +678,7 @@ describe("LoadLayer", () => {
     ).toEqual(2)
 
     indexerState->MockIndexer.InMemoryStore.setEntity(
-      ~entityConfig=MockIndexer.entityConfig(User),
+      ~entityConfig=MockIndexer.entityConfig("User"),
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
@@ -714,7 +714,7 @@ describe("LoadLayer", () => {
         LoadLayer.loadByFilter(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
           ~indexerState,
           ~item,
           ~ecosystem=MockIndexer.config.ecosystem,
@@ -737,7 +737,7 @@ describe("LoadLayer", () => {
       t.expect(storageMock.loadOrThrowCalls).toEqual(loadEntitiesByFieldSingleDbCall)
 
       indexerState->MockIndexer.InMemoryStore.setEntity(
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
         user1,
       )
 
@@ -790,6 +790,7 @@ describe("LoadLayer effect cache", () => {
             cacheKey: "test",
             checkpointId: 0n,
           },
+          ~scope=Internal.CrossChain,
           ~indexerState,
           ~shouldGroup=true,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -804,4 +805,212 @@ describe("LoadLayer effect cache", () => {
       t.expect((callCount.contents, first, second)).toEqual((1, None, None))
     },
   )
+})
+
+describe("LoadLayer effect scope isolation", () => {
+  let makeCaller = (~effect, ~loadManager, ~persistence, ~indexerState) => (~scope, ~input) =>
+    LoadLayer.loadEffect(
+      ~loadManager,
+      ~persistence,
+      ~effect,
+      ~effectArgs={
+        input: input->(Utils.magic: string => Internal.effectInput),
+        context: {"cache": false}->(Utils.magic: {..} => Internal.effectContext),
+        cacheKey: input,
+        checkpointId: 0n,
+      },
+      ~scope,
+      ~indexerState,
+      ~shouldGroup=true,
+      ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
+      ~ecosystem=MockIndexer.config.ecosystem,
+    )->(Utils.magic: promise<Internal.effectOutput> => promise<string>)
+
+  Async.it(
+    "Deduplicates the same input within a chain but re-runs it across chains",
+    async t => {
+      let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+      let loadManager = LoadManager.make()
+      let indexerState = MockIndexer.InMemoryStore.make()
+
+      let callCount = ref(0)
+      let effect =
+        Envio.createEffect(
+          {
+            name: "chainScopedDedup",
+            input: S.string,
+            output: S.string,
+            rateLimit: Disable,
+            crossChain: false,
+            cache: false,
+          },
+          async ({input}) => {
+            callCount := callCount.contents + 1
+            input ++ "-out"
+          },
+        )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+      let call = makeCaller(
+        ~effect,
+        ~loadManager,
+        ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+        ~indexerState,
+      )
+
+      // Two concurrent calls, same input, same chain -> handler runs once.
+      let chain1 = await Promise.all([call(~scope=Chain(1->ChainId.fromInt), ~input="a"), call(~scope=Chain(1->ChainId.fromInt), ~input="a")])
+      // Same input on a different chain -> handler runs again (isolated cache).
+      let chain2 = await call(~scope=Chain(2->ChainId.fromInt), ~input="a")
+      // Repeat on chain 1 -> served from the warm in-memory cache, no new run.
+      let chain1Again = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
+
+      t.expect((callCount.contents, chain1, chain2, chain1Again)).toEqual((
+        2,
+        ["a-out", "a-out"],
+        "a-out",
+        "a-out",
+      ))
+    },
+  )
+
+  Async.it("Shares one cache across chains for a cross-chain effect", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
+
+    let callCount = ref(0)
+    let effect =
+      Envio.createEffect(
+        {
+          name: "crossChainShared",
+          input: S.string,
+          output: S.string,
+          rateLimit: Disable,
+          cache: false,
+        },
+        async ({input}) => {
+          callCount := callCount.contents + 1
+          input ++ "-out"
+        },
+      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let call = makeCaller(
+      ~effect,
+      ~loadManager,
+      ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+      ~indexerState,
+    )
+
+    // A cross-chain effect always resolves to the CrossChain scope, so calls
+    // from any chain hit the same cache and the handler runs once.
+    let first = await Promise.all([call(~scope=CrossChain, ~input="a"), call(~scope=CrossChain, ~input="a")])
+    let again = await call(~scope=CrossChain, ~input="a")
+
+    t.expect((callCount.contents, first, again)).toEqual((1, ["a-out", "a-out"], "a-out"))
+  })
+
+  Async.it("Rate limits each chain independently for a chain-scoped effect", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
+
+    let callCount = ref(0)
+    let effect =
+      Envio.createEffect(
+        {
+          name: "chainScopedRateLimit",
+          input: S.string,
+          output: S.string,
+          rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+          crossChain: false,
+          cache: false,
+        },
+        async ({input}) => {
+          callCount := callCount.contents + 1
+          input ++ "-out"
+        },
+      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let call = makeCaller(
+      ~effect,
+      ~loadManager,
+      ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+      ~indexerState,
+    )
+
+    let order = []
+    let track = (p, label) =>
+      p->Promise.thenResolve(v => {
+        order->Array.push(label)->ignore
+        v
+      })
+
+    // chain 1 exhausts its single-call window with "a", queuing "b" until the
+    // window resets. chain 2 has its own independent window, so "a" resolves
+    // right away instead of waiting behind chain 1.
+    let a1 = track(call(~scope=Chain(1->ChainId.fromInt), ~input="a"), "chain1-a")
+    let b1 = track(call(~scope=Chain(1->ChainId.fromInt), ~input="b"), "chain1-b")
+    let a2 = track(call(~scope=Chain(2->ChainId.fromInt), ~input="a"), "chain2-a")
+
+    let _ = await Promise.all([a1, b1, a2])
+
+    // chain 2's immediate call resolves ahead of chain 1's queued "b" because
+    // its window wasn't consumed by chain 1; all three handlers ultimately ran.
+    let chain2Index = order->Array.indexOf("chain2-a")
+    let queuedChain1Index = order->Array.indexOf("chain1-b")
+    t.expect((
+      callCount.contents,
+      chain2Index >= 0 && chain2Index < queuedChain1Index,
+    )).toEqual((3, true))
+  })
+
+  Async.it("Keeps the rate-limit budget across a rollback reset", async t => {
+    let storageMock = MockIndexer.Storage.make([#loadOrThrow])
+    let loadManager = LoadManager.make()
+    let indexerState = MockIndexer.InMemoryStore.make()
+
+    let callCount = ref(0)
+    let effect =
+      Envio.createEffect(
+        {
+          name: "rollbackRateLimit",
+          input: S.string,
+          output: S.string,
+          rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+          crossChain: false,
+          cache: false,
+        },
+        async ({input}) => {
+          callCount := callCount.contents + 1
+          input ++ "-out"
+        },
+      )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
+
+    let call = makeCaller(
+      ~effect,
+      ~loadManager,
+      ~persistence=storageMock->MockIndexer.Storage.toPersistence,
+      ~indexerState,
+    )
+
+    // Consume chain 1's single-call-per-window budget.
+    let _ = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
+
+    // A reorg wipes the effect in-mem tables (IndexerState.beginRollbackDiff).
+    indexerState->IndexerState.beginRollbackDiff(
+      ~targetCheckpointId=0n,
+      ~diffCheckpointId=0n,
+      ~progressBlockNumberByChainId=Dict.make(),
+    )
+
+    // The window hasn't elapsed, so the budget must still be spent: the next
+    // call is queued (not run) rather than getting a fresh budget from the reset.
+    let pending = call(~scope=Chain(1->ChainId.fromInt), ~input="b")
+    await Utils.delay(0)
+    await Utils.delay(0)
+    let countWhileQueued = callCount.contents
+    let _ = await pending
+
+    t.expect((countWhileQueued, callCount.contents)).toEqual((1, 2))
+  })
 })

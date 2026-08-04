@@ -1,5 +1,7 @@
+mod address_store;
 mod block_store;
 mod cli_args;
+mod client_filtered_contracts;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
 mod commands;
@@ -18,6 +20,7 @@ mod hbs_templating;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;
+mod registration_start_block;
 pub mod scripts;
 mod service_health;
 mod svm_hypersync_source;

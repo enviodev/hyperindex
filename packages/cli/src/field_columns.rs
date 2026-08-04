@@ -117,6 +117,28 @@ pub struct Columns {
     pub columns: Vec<(&'static str, Column)>,
 }
 
+/// Reading materialised columns back out, for the store tests across this crate.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::{Column, Columns};
+
+    pub(crate) fn column<'a>(cols: &'a Columns, name: &str) -> Option<&'a Column> {
+        cols.columns
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, c)| c)
+    }
+
+    /// The string column `name`, one entry per materialised row (`None` where
+    /// the store had no row, or the row no value).
+    pub(crate) fn str_column(cols: &Columns, name: &str) -> Vec<Option<String>> {
+        match column(cols, name) {
+            Some(Column::Str(values)) => values.clone(),
+            _ => panic!("expected a {name} string column"),
+        }
+    }
+}
+
 impl ToNapiValue for Columns {
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         let mut arr = std::ptr::null_mut();

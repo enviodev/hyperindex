@@ -179,7 +179,7 @@ type svmBlockField =
 let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
 let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 
-// Static sets of nullable field names — used by RpcSource and HyperSyncSource to wrap schemas with S.nullable
+// Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
     [
@@ -301,7 +301,7 @@ type genericEvent<'params, 'block, 'transaction> = {
   contractName: string,
   eventName: string,
   params: 'params,
-  chainId: int,
+  chainId: ChainId.t,
   srcAddress: Address.t,
   logIndex: int,
   transaction: 'transaction,
@@ -330,6 +330,14 @@ type eventPayload
 @get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
 @set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
 
+// The log's emitting address (EVM/Fuel; the program id carries it for SVM).
+@get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
+
+// The decoded params, read by name for the address-valued ones a `where`
+// filters on. Only those names are ever looked up, so the address type is
+// accurate at every use site.
+@get external getPayloadAddressParams: eventPayload => dict<Address.t> = "params"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -353,15 +361,15 @@ type genericHandlerArgs<'event, 'context> = {
 type genericHandler<'args> = 'args => promise<unit>
 
 type entityHandlerContext<'entity> = {
-  get: string => promise<option<'entity>>,
-  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  get: EntityId.t => promise<option<'entity>>,
+  getOrThrow: (EntityId.t, ~message: string=?) => promise<'entity>,
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
-  deleteUnsafe: string => unit,
+  deleteUnsafe: EntityId.t => unit,
 }
 
 type chainInfo = {
-  id: int,
+  id: ChainId.t,
   // True once every chain has caught up to head/endBlock and entered real-time
   // indexing mode. False while any chain is still backfilling.
   isRealtime: bool,
@@ -555,6 +563,11 @@ type svmInstructionEventConfig = {
 // must stay directly constructable), and the evm→base cast in sources is sound
 // by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
+  // Chain-scoped sequential index — the registration's position in the
+  // chain's onEventRegistrations array, assigned when registration finishes
+  // (-1 until then). Native-routed items reference their registration by this
+  // index across the napi boundary; sources resolve it before creating an item.
+  index: int,
   eventConfig: eventConfig,
   handler: option<handler>,
   contractRegister: option<contractRegister>,
@@ -564,11 +577,15 @@ type onEventRegistration = {
   // Usually always false for wildcard events, but might be true for a wildcard
   // event with a dynamic event filter by addresses.
   dependsOnAddresses: bool,
-  // Precompiled predicate for events that filter an indexed address param by
-  // registered addresses (see `EventConfigBuilder.buildAddressFilter`); drops a
-  // decoded event whose param-address isn't registered at/before the log's
-  // block. Absent otherwise.
-  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
+  // Indexed address params this event filters on, in disjunctive normal form
+  // (OR of AND-groups), from `where: {params: {to: chain.C.addresses}}`. Every
+  // source applies this natively while routing; it's carried here for the
+  // simulate source, which has no native query boundary. Absent otherwise.
+  //
+  // Keep it optional: with every field required, ReScript compiles a
+  // `{...registration, ...}` spread into an explicit field-by-field copy, which
+  // drops the ecosystem-only fields an `evmOnEventRegistration` carries.
+  addressFilterParamGroups?: array<array<string>>,
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
@@ -599,14 +616,13 @@ type indexingAddress = {
   registrationBlock: int,
 }
 
-type dcs = array<indexingAddress>
-
-// Duplicate the type from item
-// to make item properly unboxed
+// Duplicate the type from item to keep item properly unboxed. Runtime event
+// items carry the registration their source already resolved from the
+// ChainState-owned registration array.
 type eventItem = private {
   kind: [#0],
   onEventRegistration: onEventRegistration,
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
   // Within-block transaction index — the key into the per-chain transaction
@@ -619,7 +635,7 @@ type eventItem = private {
 // `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
 // pulling in `InternalTable`'s dependency on `Config`.
 type rawEvent = {
-  chain_id: int,
+  chain_id: ChainId.t,
   event_id: bigint,
   event_name: string,
   contract_name: string,
@@ -647,7 +663,7 @@ type onBlockRegistration = {
   // we want to use the order they are defined for sorting
   index: int,
   name: string,
-  chainId: int,
+  chainId: ChainId.t,
   startBlock: option<int>,
   endBlock: option<int>,
   interval: int,
@@ -659,7 +675,7 @@ type item =
   | @as(0)
   Event({
       onEventRegistration: onEventRegistration,
-      chain: ChainMap.Chain.t,
+      chainId: ChainId.t,
       blockNumber: int,
       logIndex: int,
       transactionIndex: int,
@@ -676,14 +692,9 @@ external getItemLogIndex: item => int = "logIndex"
 
 let getItemChainId = item =>
   switch item {
-  | Event({chain}) => chain->ChainMap.Chain.toChainId
+  | Event({chainId})
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
-
-@get
-external getItemDcs: item => option<dcs> = "dcs"
-@set
-external setItemDcs: (item, dcs) => unit = "dcs"
 
 type eventOptions<'where> = {
   wildcard?: bool,
@@ -711,11 +722,20 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+// Raw ClickHouse expressions/field names from the entity's
+// @storage(clickhouse: {...}) directive, applied to the history table DDL.
+type clickhouseTableOptions = {
+  partitionBy?: string,
+  orderBy?: array<string>,
+  ttl?: string,
+}
+
 // Per-entity storage resolved at parse time against the global storage
 // config. Downstream PG/CH consumers just check the matching boolean.
 type entityStorage = {
   postgres: bool,
   clickhouse: bool,
+  clickhouseOptions?: clickhouseTableOptions,
 }
 
 type genericEntityConfig<'entity> = {
@@ -743,33 +763,110 @@ type effectCacheItem = {id: string, output: effectOutput}
 type effectCacheStorageMeta = {
   itemSchema: S.t<effectCacheItem>,
   outputSchema: S.t<effectOutput>,
-  table: Table.table,
 }
-type rateLimitState = {
+type rateLimitOptions = {
   callsPerDuration: int,
   durationMs: int,
-  mutable availableCalls: int,
-  mutable windowStartTime: float,
-  mutable queueCount: int,
-  mutable nextWindowPromise: option<promise<unit>>,
 }
 type effect = {
   name: string,
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,
+  // When true (the default) a single cache is shared across every chain and the
+  // handler must not read context.chain. When false the cache is isolated per
+  // chain and context.chain.id is available.
+  crossChain: bool,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
-  // The number of functions that are currently running.
-  mutable activeCallsCount: int,
-  mutable prevCallStartTimerRef: Performance.timeRef,
-  rateLimit: option<rateLimitState>,
+  rateLimit: option<rateLimitOptions>,
 }
+
+// Whether some piece of data (currently an effect cache; entities in a future
+// version) is shared across every chain or isolated to a single chain. Unboxed:
+// `CrossChain` is the string "crossChain" and `Chain(id)` is the raw chain id,
+// discriminated by runtime type.
+@unboxed
+type chainScope =
+  | @as("crossChain") CrossChain
+  | Chain(ChainId.t)
+
 let cacheTablePrefix = "envio_effect_"
+
+// The single reversible mapping between an effect's (name, scope) and its
+// canonical Postgres cache-table name and .envio/cache file path. Everything
+// that needs a cache address goes through here instead of slicing prefixes.
+//   CrossChain  ->  envio_effect_<name>        <name>.tsv
+//   Chain(1->ChainId.fromInt)    ->  envio_1_effect_<name>      1/<name>.tsv
+//   Chain(137->ChainId.fromInt)  ->  envio_137_effect_<name>    137/<name>.tsv
+module EffectCache = {
+  let toTableName = (~effectName, ~scope) =>
+    switch scope {
+    | CrossChain => cacheTablePrefix ++ effectName
+    | Chain(chainId) => `envio_${chainId->ChainId.toString}_effect_${effectName}`
+    }
+
+  // "crossChain" or the decimal chain id. Used as the `scope` Prometheus label.
+  let scopeToString = scope =>
+    switch scope {
+    | CrossChain => "crossChain"
+    | Chain(chainId) => chainId->ChainId.toString
+    }
+
+  // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —
+  // the schema's parser follows parseFloat semantics and accepts both.
+  let parseChainId = str =>
+    switch try Some(str->ChainId.normalizeOrThrow) catch {
+    | _ => None
+    } {
+    | Some(chainId) if chainId->ChainId.toString === str => Some(chainId)
+    | _ => None
+    }
+
+  let chainScopedRe = /^envio_([0-9]+)_effect_(.+)$/
+  let crossChainRe = /^envio_effect_(.+)$/
+
+  // Inverse of toTableName. Returns None for any table name that isn't a cache
+  // table. Chain-scoped is tried first: the `_effect_` separator keeps effect
+  // names that themselves start with digits unambiguous.
+  let fromTableName = (tableName): option<(string, chainScope)> =>
+    switch RegExp.exec(chainScopedRe, tableName) {
+    | Some(result) =>
+      switch (
+        RegExp.Result.matches(result)->Array.get(0),
+        RegExp.Result.matches(result)->Array.get(1),
+      ) {
+      | (Some(Some(chainIdStr)), Some(Some(effectName))) =>
+        switch parseChainId(chainIdStr) {
+        | Some(chainId) => Some((effectName, Chain(chainId)))
+        | None => None
+        }
+      | _ => None
+      }
+    | None =>
+      switch RegExp.exec(crossChainRe, tableName) {
+      | Some(result) =>
+        switch RegExp.Result.matches(result)->Array.get(0) {
+        | Some(Some(effectName)) => Some((effectName, CrossChain))
+        | _ => None
+        }
+      | None => None
+      }
+    }
+
+  // Relative posix path within .envio/cache. Chain-scoped caches live one
+  // directory level deep, named by chain id.
+  let toCachePath = (~effectName, ~scope) =>
+    switch scope {
+    | CrossChain => effectName ++ ".tsv"
+    | Chain(chainId) => `${chainId->ChainId.toString}/${effectName}.tsv`
+    }
+}
+
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
-let makeCacheTable = (~effectName) => {
+let makeCacheTable = (~effectName, ~scope) => {
   Table.mkTable(
-    cacheTablePrefix ++ effectName,
+    EffectCache.toTableName(~effectName, ~scope),
     ~fields=[
       Table.mkField("id", String, ~fieldSchema=S.string, ~isPrimaryKey=true),
       Table.mkField("output", Json, ~fieldSchema=cacheOutputSchema, ~isNullable=true),
@@ -791,7 +888,7 @@ type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,
   @as("chain_id")
-  chainId: int,
+  chainId: ChainId.t,
   @as("block_number")
   blockNumber: int,
   @as("block_hash")

@@ -5,6 +5,7 @@ import {
   S,
   type Logger,
   type EffectCaller,
+  type EffectChain,
   TestHelpers,
 } from "envio";
 import {
@@ -153,7 +154,8 @@ indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ eve
   S.assertOrThrow(event.block, blockSchema)!;
   deepEqual(context.chain.id, event.chainId);
 
-  // Type checking for custom field selection is done in CustomSelection.test.ts
+  // Type checking for custom field selection lives in
+  // packages/envio-tests/test/TypeScriptApiTypes_test.res
 
   // Test chain field accessibility in TypeScript
   expectType<
@@ -558,8 +560,8 @@ const testEffectWithCache = createEffect(
   async ({ context, input }) => {
     deepEqual(
       Object.keys(context),
-      ["effect", "cache"],
-      "Logger is on prototype and not included in Object.keys",
+      ["effect", "cache", "chain"],
+      "log is a prototype getter (not an own key); chain is an own enumerable property",
     );
     deepEqual(context.cache, true);
     expectType<
@@ -569,6 +571,7 @@ const testEffectWithCache = createEffect(
           readonly log: Logger;
           readonly effect: EffectCaller;
           cache: boolean;
+          readonly chain: EffectChain;
         }
       >
     >(true);
@@ -832,6 +835,10 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
       fail("Should have thrown");
     }
 
+    case "throwInHandler": {
+      throw new Error("Error from handler");
+    }
+
     // Reproduction for https://github.com/enviodev/hyperindex/issues/1199:
     // getWhere on a linkedEntity field (db column name `<field>_id`) must
     // resolve the field schema in the in-memory TestIndexer. Production
@@ -884,60 +891,6 @@ indexer.onEvent({ contract: "EventFiltersTest", event: "FilterTestEvent", where:
   }
 });
 
-// Duplicate handler registration tests
-
-// Same options (no options) → should compose without error.
-// The composed handler sets an additional entity to prove it ran.
-indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ event, context }) => {
-  context.CustomSelectionTestPass.set({
-    id: "composed-" + event.transaction.hash,
-  });
-});
-
-// Same options → composed contractRegister registers an additional contract
-indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "composeContractRegister") {
-    context.chain.NftFactory.add(event.params.contract);
-  }
-});
-
-// Capture the inner add() closure in one contractRegister invocation, then try
-// to invoke the captured closure from a later onEvent handler (after the first
-// handler has resolved and params.isResolved === true). The call must throw —
-// this guards against the captured-add bypass where
-// `const add = context.chain.X.add` survives past handler resolution.
-// We signal success via the CustomSelectionTestPass entity so the test can
-// observe the outcome across the createTestIndexer worker boundary.
-let _capturedCrAdd: ((address: `0x${string}`) => void) | null = null;
-indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "captureAdd") {
-    _capturedCrAdd = context.chain.SimpleNft.add;
-  }
-});
-indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
-  if (event.params.testCase === "callCapturedAdd" && _capturedCrAdd) {
-    const outcome = (() => {
-      try {
-        _capturedCrAdd!("0x1234567890123456789012345678901234567890");
-        return "captured-add-did-not-throw";
-      } catch {
-        return "captured-add-threw";
-      }
-    })();
-    context.CustomSelectionTestPass.set({
-      id: outcome,
-    });
-  }
-});
-
-// Different options → should throw
-export let mismatchedHandlerOptionsError: Error | undefined;
-try {
-  indexer.onEvent({ contract: "Gravatar", event: "CustomSelection", wildcard: true }, async () => {});
-} catch (e) {
-  mismatchedHandlerOptionsError = e as Error;
-}
-
 // Handler for testing simulate block/logIndex behavior
 indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, context }) => {
   context.SimulateTestEvent.set({
@@ -947,6 +900,16 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
     timestamp: event.block.timestamp,
   });
 });
+
+// No-op handler so Noop.EmptyEvent can be processed and simulated without
+// writing any entity — used by the multichain ordering test. Pinned to chain 1:
+// Noop is also configured on chain 137 (with an address), and registering it
+// there would add an extra fetch partition that the rollback/reorg tests (which
+// expect a single partition per chain) don't account for.
+indexer.onEvent(
+  { contract: "Noop", event: "EmptyEvent", where: ({ chain }) => chain.id === 1 },
+  async () => {},
+);
 
 // Regression test for https://github.com/enviodev/hyperindex/issues/538:
 // the `contactDetails` param is a Solidity struct (`ContactDetails { name, email }`),
@@ -1004,69 +967,3 @@ indexer.onBlock(
   { name: "test_onblock_skip_all", where: () => false },
   async () => {},
 );
-
-// Type-level regression guards for `where.block` on EVM. Declared as an
-// unreached function so `tsc --noEmit` checks the types without runtime
-// re-registering events. The `@ts-expect-error` assertions catch the
-// class of bug where `EvmOnEventWhere` might get wired through the wrong
-// filter shape (e.g. Fuel's `block.height`) — a regression would flip
-// the directive from "expected" to "unused", failing the build.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function _typeCheckEvmWhereBlockShape() {
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: { block: { number: { _gte: 1 } } },
-    },
-    async () => {},
-  );
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: {
-        block: {
-          // @ts-expect-error EVM keys block by `number`, not `height`.
-          height: { _gte: 1 },
-        },
-      },
-    },
-    async () => {},
-  );
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: {
-        block: {
-          number: {
-            // @ts-expect-error Only `_gte` is supported on event filters.
-            _lte: 1,
-          },
-        },
-      },
-    },
-    async () => {},
-  );
-  indexer.onEvent(
-    {
-      contract: "EventFiltersTest",
-      event: "Transfer",
-      wildcard: true,
-      where: {
-        block: {
-          number: {
-            // @ts-expect-error Only `_gte` is supported on event filters.
-            _every: 100,
-          },
-        },
-      },
-    },
-    async () => {},
-  );
-}
-

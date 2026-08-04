@@ -23,13 +23,25 @@ let getActiveSource: t => Source.t
 
 type requestStatSample = {
   sourceName: string,
-  chainId: int,
+  chainId: ChainId.t,
   method: string,
   count: int,
   seconds: float,
 }
 
 let getRequestStatSamples: t => array<requestStatSample>
+
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  height: int,
+}
+
+let getSourceHeightSamples: t => array<sourceHeightSample>
+
+let idleSeconds: t => float
+let waitingForNewBlockSeconds: t => float
+let queryingSeconds: t => float
 
 let inFlightCount: t => int
 

@@ -1,6 +1,6 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
-    entity_parsing::{Entity, GraphQLEnum, Schema},
+    entity_parsing::{ClickHouseEntityStorage, Entity, GqlScalar, GraphQLEnum, Schema},
     env_interpolation::interpolate_config_variables,
     human_config::{
         self,
@@ -104,6 +104,155 @@ impl EnvState {
     }
 }
 
+#[derive(Debug)]
+struct ResolvedConfigFile {
+    path: PathBuf,
+    raw: String,
+}
+
+/// Supplies the inputs surrounding config.yaml without coupling the parser to
+/// a filesystem project. Production uses `FilesystemConfigSource`; the NAPI
+/// string entry point uses `MemoryConfigSource`.
+trait ConfigSource {
+    fn project_paths(&self) -> &ParsedProjectPaths;
+    fn is_rescript(&self) -> bool;
+    fn env_var(&mut self, name: &str) -> Option<String>;
+    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema>;
+    fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
+    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
+}
+
+struct FilesystemConfigSource<'a> {
+    project_paths: &'a ParsedProjectPaths,
+    env: EnvState,
+}
+
+impl<'a> FilesystemConfigSource<'a> {
+    fn new(project_paths: &'a ParsedProjectPaths) -> Self {
+        Self {
+            project_paths,
+            env: EnvState::new(&project_paths.project_root),
+        }
+    }
+}
+
+impl ConfigSource for FilesystemConfigSource<'_> {
+    fn project_paths(&self) -> &ParsedProjectPaths {
+        self.project_paths
+    }
+
+    fn is_rescript(&self) -> bool {
+        self.project_paths
+            .project_root
+            .join("rescript.json")
+            .exists()
+    }
+
+    fn env_var(&mut self, name: &str) -> Option<String> {
+        self.env.var(name)
+    }
+
+    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema> {
+        Schema::parse_from_file(self.project_paths, configured_path)
+            .context("Parsing schema file for config")
+    }
+
+    fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
+        let resolved_path =
+            path_utils::get_config_path_relative_to_root(self.project_paths, PathBuf::from(path))
+                .context("Failed to resolve file relative to config")?;
+        let raw = fs::read_to_string(&resolved_path)
+            .with_context(|| format!("Failed to read file at \"{path}\""))?;
+        Ok(ResolvedConfigFile {
+            path: resolved_path,
+            raw,
+        })
+    }
+
+    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
+        let resolved_path = self.project_paths.project_root.join(path);
+        let raw = fs::read_to_string(&resolved_path)
+            .with_context(|| format!("Failed to read file at \"{path}\""))?;
+        Ok(ResolvedConfigFile {
+            path: resolved_path,
+            raw,
+        })
+    }
+}
+
+struct MemoryConfigSource<'a> {
+    project_paths: ParsedProjectPaths,
+    schema: Option<&'a str>,
+    env: &'a HashMap<String, String>,
+    files: &'a HashMap<String, String>,
+    is_rescript: bool,
+}
+
+impl<'a> MemoryConfigSource<'a> {
+    fn new(
+        schema: Option<&'a str>,
+        env: &'a HashMap<String, String>,
+        files: &'a HashMap<String, String>,
+        is_rescript: bool,
+    ) -> Self {
+        Self {
+            project_paths: ParsedProjectPaths::default(),
+            schema,
+            env,
+            files,
+            is_rescript,
+        }
+    }
+
+    fn read_virtual_file(&self, path: &str) -> Result<ResolvedConfigFile> {
+        let normalized = path_utils::normalize_path(PathBuf::from(path));
+        let raw = self
+            .files
+            .get(path)
+            .or_else(|| {
+                self.files.iter().find_map(|(candidate, raw)| {
+                    (path_utils::normalize_path(PathBuf::from(candidate)) == normalized)
+                        .then_some(raw)
+                })
+            })
+            .cloned()
+            .ok_or_else(|| anyhow!("Virtual config file \"{path}\" was not provided"))?;
+        Ok(ResolvedConfigFile {
+            path: normalized,
+            raw,
+        })
+    }
+}
+
+impl ConfigSource for MemoryConfigSource<'_> {
+    fn project_paths(&self) -> &ParsedProjectPaths {
+        &self.project_paths
+    }
+
+    fn is_rescript(&self) -> bool {
+        self.is_rescript
+    }
+
+    fn env_var(&mut self, name: &str) -> Option<String> {
+        self.env.get(name).cloned()
+    }
+
+    fn load_schema(&self, _configured_path: &Option<String>) -> Result<Schema> {
+        match self.schema.map(str::trim) {
+            None | Some("") => Ok(Schema::empty()),
+            Some(schema) => Schema::from_string(schema),
+        }
+    }
+
+    fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
+        self.read_virtual_file(path)
+    }
+
+    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
+        self.read_virtual_file(path)
+    }
+}
+
 //Validates version name (3 digits separated by period ".")
 //Returns false if there are any additional chars as this should imply
 //it is a dev release version or an unstable release
@@ -150,12 +299,49 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     Ok(format!("file:{}", pkg.to_string_lossy()))
 }
 
+/// Widest scalar the internal chain-id columns need. Derived once from the
+/// maximum active chain id and carried through the public config, so a resume
+/// against a schema built for the other mode is rejected rather than silently
+/// truncating ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChainIdMode {
+    Int32,
+    Int64,
+}
+
+/// Chain ids cross the Rust → JSON → JS boundary as plain numbers, so an id
+/// above `Number.MAX_SAFE_INTEGER` can't round-trip losslessly.
+pub const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
+
+impl ChainIdMode {
+    /// Skipped chains count: codegen emits a `chainId` case for every chain in
+    /// config.yaml regardless of `skip`, so a skipped wide id still has to be
+    /// representable. Including them also keeps the mode — and therefore the
+    /// physical column types — stable when a chain is skipped and unskipped.
+    fn resolve(chains: &ChainMap) -> Result<Self> {
+        let max_id = chains.values().map(|chain| chain.id).max().unwrap_or(0);
+        if max_id > MAX_SAFE_CHAIN_ID {
+            return Err(anyhow!(
+                "Chain id {max_id} is above the maximum supported chain id \
+                 {MAX_SAFE_CHAIN_ID} (Number.MAX_SAFE_INTEGER)."
+            ));
+        }
+        Ok(if max_id <= i32::MAX as u64 {
+            Self::Int32
+        } else {
+            Self::Int64
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: ChainMap,
+    pub chain_id_mode: ChainIdMode,
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
@@ -231,6 +417,11 @@ impl Storage {
     }
 }
 
+/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
+/// above this (or with no precision) it falls back to `String`. Kept in sync
+/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
+
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
@@ -272,6 +463,76 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
+    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
+    // ceiling) as a String, which sorts lexicographically — wrong for anything
+    // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
+    // ClickHouse.res.
+    //
+    // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
+    // without it the sorting key is `id`, with it the listed fields replace `id`
+    // (see `makeCreateHistoryTableQuery`). Unlike the parse-time
+    // `validate_clickhouse_order_by_fields`, the schema is available here, so a
+    // relation in the sorting key can be resolved to the id it actually stores.
+    let bigint_stored_as_string =
+        |precision: Option<u32>| !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
+    for entity in &entities {
+        let uses_clickhouse = if entity.has_storage_directive() {
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+        } else {
+            clickhouse_default
+        };
+        if !uses_clickhouse {
+            continue;
+        }
+
+        let order_by = match entity.clickhouse.as_ref() {
+            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
+            _ => None,
+        };
+
+        match order_by {
+            Some(order_by_fields) => {
+                for field_name in order_by_fields {
+                    // Existence, nullability and array-ness are already rejected
+                    // at parse time; a miss here just means nothing to resolve.
+                    let Some(field) = entity.get_field(field_name) else {
+                        continue;
+                    };
+                    let stored =
+                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
+                    if let GqlScalar::BigInt(precision) = stored {
+                        if bigint_stored_as_string(precision) {
+                            return Err(anyhow!(
+                                "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
+                                 `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
+                                 String (sorted lexicographically, not numerically) unless a \
+                                 precision is set. Add `@config(precision: N)` with \
+                                 N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores \
+                                 so it sorts as a numeric Decimal.",
+                                entity.name
+                            ));
+                        }
+                    }
+                }
+            }
+            // No custom orderBy, so `id` is the sorting key.
+            None => {
+                if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
+                    if bigint_stored_as_string(precision) {
+                        return Err(anyhow!(
+                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse stores as a \
+                             String (sorted lexicographically, not numerically) unless a precision is set. \
+                             Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with \
+                             N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric Decimal, \
+                             or set `@storage(clickhouse: {{orderBy: [...]}})` to sort by other fields.",
+                            entity.name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     let unsupported: Vec<(&str, &'static str)> = entities
         .iter()
         .flat_map(|e| {
@@ -279,7 +540,8 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
             if e.postgres == Some(true) && storage.postgres.is_none() {
                 out.push((e.name.as_str(), "postgres"));
             }
-            if e.clickhouse == Some(true) && storage.clickhouse.is_none() {
+            if e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
+            {
                 out.push((e.name.as_str(), "clickhouse"));
             }
             out
@@ -303,6 +565,65 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
          \n\
          Fixes:\n  \
          - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+    ))
+}
+
+/// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
+/// emitted: a `@storage` directive is taken literally, otherwise the entity
+/// follows the backends marked `default` in config.yaml.
+fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
+    if entity.has_storage_directive() {
+        entity.postgres == Some(true)
+    } else {
+        storage.postgres.is_some_and(|b| b.entity_default)
+    }
+}
+
+/// A `@derivedFrom` relationship is served by joining the two entities in
+/// Postgres, and it is backed by an index on the referenced entity's table. If
+/// that entity isn't in Postgres there is no table to join or index, so catch
+/// it here rather than letting table creation (or the end-of-backfill index
+/// pass) fail on an entity it can't resolve.
+pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = Vec::new();
+    for entity in entities {
+        if !is_stored_in_postgres(entity, storage) {
+            continue;
+        }
+        for field in &entity.fields {
+            let Some(derived) = field.get_derived_from_field() else {
+                continue;
+            };
+            let target = &derived.derived_from_entity;
+            let is_target_in_postgres = schema
+                .entities
+                .get(target)
+                .is_some_and(|e| is_stored_in_postgres(e, storage));
+            if !is_target_in_postgres {
+                invalid.push(format!(
+                    "  - `{}`.`{}` derives from `{}`, which is not stored in postgres.",
+                    entity.name, field.name, target
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    let listed = invalid.join("\n");
+    Err(anyhow!(
+        "Schema validation failed:\n\
+         \n\
+         @derivedFrom relationships between entities that don't share the postgres storage:\n\
+         {listed}\n\
+         \n\
+         Fixes:\n  \
+         - Add postgres to the @storage directive of the referenced entities, or\n  \
+         - Remove the @derivedFrom fields listed above."
     ))
 }
 
@@ -475,10 +796,11 @@ pub fn validate_clickhouse_nullable_arrays(
     for entity in &entities {
         // A storage directive's omitted backend resolves to false at runtime
         // (Config.res `Option.getOr(false)`), so a directive routes to
-        // ClickHouse only when it sets `clickhouse: true`. Without a directive
-        // the entity follows the backend's `default`.
+        // ClickHouse only when it enables the backend (boolean `true` or the
+        // table options object form). Without a directive the entity follows
+        // the backend's `default`.
         let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse == Some(true)
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
         } else {
             clickhouse.entity_default
         };
@@ -613,50 +935,51 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
+        let source = FilesystemConfigSource::new(project_paths);
+        Self::from_human_config_with_source(human_config, schema, &source)
+    }
+
+    fn from_human_config_with_source(
+        human_config: HumanConfig,
+        schema: Schema,
+        source: &dyn ConfigSource,
+    ) -> Result<Self> {
         let mut chains: ChainMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
+        validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
-        let final_project_paths = project_paths.clone();
-
-        let is_rescript = final_project_paths
-            .project_root
-            .join("rescript.json")
-            .exists();
+        let final_project_paths = source.project_paths().clone();
+        let is_rescript = source.is_rescript();
 
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
-                let has_rpc_sync_src = evm_config.chains.iter().any(|n| {
-                    let default_for = default_rpc_for(n);
-                    let is_sync = |source_for: &Option<For>| {
-                        matches!(source_for.as_ref().unwrap_or(&default_for), For::Sync)
-                    };
-                    match &n.rpc {
-                        Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
-                        Some(RpcSelection::List(rpcs)) => {
-                            rpcs.iter().any(|r| is_sync(&r.source_for))
-                        }
-                        Some(RpcSelection::Url(_)) => default_for == For::Sync,
-                        None => false,
-                    }
-                });
+                let has_rpc_sync_src = evm_config.chains.iter().any(evm_chain_has_rpc_sync_src);
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
                     for g_contract in global_contracts {
+                        let contract_has_rpc_sync_src = evm_config.chains.iter().any(|chain| {
+                            evm_chain_has_rpc_sync_src(chain)
+                                && chain.contracts.as_ref().is_some_and(|contracts| {
+                                    contracts
+                                        .iter()
+                                        .any(|contract| contract.name == g_contract.name)
+                                })
+                        });
                         let (events, evm_abi) = Event::from_evm_events_config(
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
-                            &final_project_paths,
-                            has_rpc_sync_src,
+                            source,
+                            contract_has_rpc_sync_src,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -678,6 +1001,7 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
+                    let network_has_rpc_sync_src = evm_chain_has_rpc_sync_src(network);
                     for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
@@ -685,8 +1009,8 @@ impl SystemConfig {
                                 let (events, evm_abi) = Event::from_evm_events_config(
                                     l_contract.events,
                                     &l_contract.abi_file_path,
-                                    &final_project_paths,
-                                    has_rpc_sync_src,
+                                    source,
+                                    network_has_rpc_sync_src,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -776,6 +1100,8 @@ impl SystemConfig {
                     has_rpc_sync_src,
                 )?;
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -784,6 +1110,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
@@ -807,7 +1134,7 @@ impl SystemConfig {
                         let (events, fuel_abi) = Event::from_fuel_events_config(
                             &g_contract.config.events,
                             &g_contract.config.abi_file_path,
-                            &final_project_paths,
+                            source,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -835,7 +1162,7 @@ impl SystemConfig {
                                 let (events, fuel_abi) = Event::from_fuel_events_config(
                                     &l_contract.events,
                                     &l_contract.abi_file_path,
-                                    &final_project_paths,
+                                    source,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -922,6 +1249,8 @@ impl SystemConfig {
                         .context("Failed inserting chain at chains map")?;
                 }
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -930,6 +1259,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
@@ -964,7 +1294,7 @@ impl SystemConfig {
                     let mut chain_contracts = Vec::new();
                     for program in programs {
                         let svm_abi =
-                            resolve_program_schema(program, project_paths).with_context(|| {
+                            resolve_program_schema(program, source).with_context(|| {
                                 format!(
                                     "Resolving Borsh schema for program '{}' ({})",
                                     program.name, program.program_id
@@ -1065,6 +1395,8 @@ impl SystemConfig {
                 // keep it off for now.
                 let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1074,6 +1406,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
@@ -1101,9 +1434,30 @@ impl SystemConfig {
                 project_paths.project_root.display(),
             ))?;
 
-        let mut env_state = EnvState::new(&project_paths.project_root);
+        let mut source = FilesystemConfigSource::new(project_paths);
+        Self::parse_yaml_with_source(human_config_string, &mut source)
+    }
+
+    /// Parse config YAML without reading project state. The supplied environment
+    /// is authoritative, an absent/blank schema means `Schema::empty()`, and
+    /// ABI/IDL paths resolve against the in-memory `files` map.
+    pub(crate) fn parse_yaml(
+        yaml: &str,
+        schema: Option<&str>,
+        env: &HashMap<String, String>,
+        files: &HashMap<String, String>,
+        is_rescript: bool,
+    ) -> Result<Self> {
+        let mut source = MemoryConfigSource::new(schema, env, files, is_rescript);
+        Self::parse_yaml_with_source(yaml.to_string(), &mut source)
+    }
+
+    fn parse_yaml_with_source(
+        human_config_string: String,
+        source: &mut dyn ConfigSource,
+    ) -> Result<Self> {
         let human_config_string =
-            interpolate_config_variables(human_config_string, |name| env_state.var(name))?;
+            interpolate_config_variables(human_config_string, |name| source.env_var(name))?;
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
@@ -1124,7 +1478,7 @@ impl SystemConfig {
             None => Ecosystem::Evm,
         };
 
-        match ecosystem {
+        let human_config = match ecosystem {
             Ecosystem::Evm => {
                 let evm_config: EvmConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
@@ -1132,9 +1486,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &evm_config.base.schema)
-                    .context("Parsing schema file for config")?;
-                Self::from_human_config(HumanConfig::Evm(evm_config), schema, project_paths)
+                HumanConfig::Evm(evm_config)
             }
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
@@ -1143,9 +1495,7 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &fuel_config.base.schema)
-                    .context("Parsing schema file for config")?;
-                Self::from_human_config(HumanConfig::Fuel(fuel_config), schema, project_paths)
+                HumanConfig::Fuel(fuel_config)
             }
             Ecosystem::Svm => {
                 let svm_config: human_config::svm::HumanConfig =
@@ -1154,11 +1504,12 @@ impl SystemConfig {
                          {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
-                let schema = Schema::parse_from_file(project_paths, &svm_config.base.schema)
-                    .context("Parsing schema file for config")?;
-                Self::from_human_config(HumanConfig::Svm(svm_config), schema, project_paths)
+                HumanConfig::Svm(svm_config)
             }
-        }
+        };
+
+        let schema = source.load_schema(&human_config.get_base_config().schema)?;
+        Self::from_human_config_with_source(human_config, schema, source)
     }
 }
 
@@ -1207,6 +1558,19 @@ fn default_rpc_for(chain: &EvmChain) -> For {
         For::Fallback
     } else {
         For::Sync
+    }
+}
+
+fn evm_chain_has_rpc_sync_src(chain: &EvmChain) -> bool {
+    let default_for = default_rpc_for(chain);
+    let is_sync =
+        |source_for: &Option<For>| matches!(source_for.as_ref().unwrap_or(&default_for), For::Sync);
+
+    match &chain.rpc {
+        Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
+        Some(RpcSelection::List(rpcs)) => rpcs.iter().any(|rpc| is_sync(&rpc.source_for)),
+        Some(RpcSelection::Url(_)) => default_for == For::Sync,
+        None => false,
     }
 }
 
@@ -1384,19 +1748,18 @@ impl EvmAbi {
             .collect()
     }
 
-    pub fn from_file(
+    fn from_source(
         abi_file_path: &Option<String>,
-        project_paths: &ParsedProjectPaths,
+        source: &dyn ConfigSource,
     ) -> Result<Option<Self>> {
         match &abi_file_path {
             None => Ok(None),
             Some(abi_file_path) => {
-                let relative_path_buf = PathBuf::from(abi_file_path);
-                let path =
-                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
-                        .context("Failed to get path to ABI relative to the root of the project")?;
-                let mut raw = fs::read_to_string(&path)
-                    .context(format!("Failed to read ABI file at \"{}\"", abi_file_path))?;
+                let resolved = source
+                    .read_config_relative_file(abi_file_path)
+                    .context("Failed to get ABI relative to the config")?;
+                let path = resolved.path;
+                let mut raw = resolved.raw;
 
                 // Abi files generated by the hardhat plugin can contain a nested abi field. This code to support that.
                 let typed = match serde_json::from_str::<AbiOrNestedAbi>(&raw).context(format!(
@@ -1447,7 +1810,7 @@ fn bundled_program_schemas() -> Vec<BundledProgramRow> {
 
 fn resolve_program_schema(
     program: &human_config::svm::Program,
-    project_paths: &ParsedProjectPaths,
+    source: &dyn ConfigSource,
 ) -> Result<SvmAbi> {
     let any_instruction_carries_schema = program
         .instructions
@@ -1462,11 +1825,11 @@ fn resolve_program_schema(
                 program.name
             ));
         }
-        let abs = project_paths.project_root.join(idl_path);
-        let body = fs::read_to_string(&abs)
-            .with_context(|| format!("reading IDL at '{}'", abs.display()))?;
-        let schema = schema_from_anchor_idl_json(&body)
-            .with_context(|| format!("parsing IDL at '{}'", abs.display()))?;
+        let resolved = source
+            .read_project_relative_file(idl_path)
+            .with_context(|| format!("reading IDL at '{idl_path}'"))?;
+        let schema = schema_from_anchor_idl_json(&resolved.raw)
+            .with_context(|| format!("parsing IDL at '{}'", resolved.path.display()))?;
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
             instructions: schema.instructions,
@@ -1741,11 +2104,74 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
-        // TODO: Validatate that all event names are unique
         validate_names_valid_rescript(
             &events.iter().map(|e| e.name.clone()).collect(),
             "event".to_string(),
         )?;
+
+        // Codegen keys the generated event modules by name and routing looks
+        // events up by name, so two events on one contract can't share a name.
+        // Overloads (same name, different signature) are the usual cause — point
+        // at the `name` alias as the fix; a byte-identical copy just needs
+        // removing.
+        let mut seen_by_name: HashMap<&str, &Event> = HashMap::new();
+        for event in &events {
+            if let Some(existing) = seen_by_name.insert(&event.name, event) {
+                if existing.sighash == event.sighash {
+                    return Err(anyhow!(
+                        "Contract {name} defines the event \"{}\" more than once. \
+                         Please remove the duplicate.",
+                        event.name,
+                    ));
+                }
+                return Err(anyhow!(
+                    "Contract {name} has two events named \"{}\". Give one of them a \
+                     unique name with the \"name\" field so the generated code and \
+                     the indexer's routing can tell them apart.",
+                    event.name,
+                ));
+            }
+        }
+
+        // Two events on one contract that share a dispatch key are
+        // indistinguishable at routing time — one log/instruction would decode
+        // to both — so reject them here. The key mirrors the runtime `eventId`:
+        // sighash plus indexed-topic count for EVM, the discriminator for SVM
+        // (already program-scoped, since these are one program's instructions),
+        // the sighash for Fuel (a `LogData` logId or a fixed `mint`/`burn`/…).
+        // Names are unique by the check above, so a collision here is always
+        // between two differently-named events.
+        let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
+        for event in &events {
+            let dispatch_key = match &event.kind {
+                EventKind::Params(params) => {
+                    let indexed_count = params.iter().filter(|p| p.indexed).count();
+                    Some(format!("{}_{}", event.sighash, indexed_count))
+                }
+                // The router decodes the discriminator to bytes before matching,
+                // so `0x0f` and `0x0F` collide — lowercase before keying.
+                EventKind::Svm(svm) => Some(
+                    svm.discriminator
+                        .as_ref()
+                        .map(|d| d.to_lowercase())
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
+                EventKind::Fuel(_) => Some(event.sighash.clone()),
+            };
+            if let Some(dispatch_key) = dispatch_key {
+                if let Some(existing) =
+                    seen_by_dispatch_key.insert(dispatch_key, event.name.clone())
+                {
+                    return Err(anyhow!(
+                        "Contract {name} has two events the indexer can't tell apart: \
+                         \"{existing}\" and \"{}\". They match the same on-chain data, so \
+                         the indexer can't decide which one a log belongs to. Please remove \
+                         one of them.",
+                        event.name,
+                    ));
+                }
+            }
+        }
 
         Ok(Self {
             name,
@@ -1935,12 +2361,12 @@ impl Event {
                     let events = abi
                         .typed
                         .event(event_string)
-                        .context(format!("Failed retrieving event {} from abi", event_string))?;
+                        .ok_or_else(|| anyhow!("Event {} not found in ABI file", event_string))?;
                     // Return the first event with that name (events can be overloaded)
                     events
                         .first()
                         .cloned()
-                        .ok_or_else(|| anyhow!("Event {} not found in abi", event_string))
+                        .ok_or_else(|| anyhow!("Event {} not found in ABI file", event_string))
                 }
                 None => Err(anyhow!("No abi file provided for event {}", event_string)),
             }
@@ -1968,13 +2394,13 @@ impl Event {
             .collect()
     }
 
-    pub fn from_evm_events_config(
+    fn from_evm_events_config(
         events_config: Vec<EvmEventConfig>,
         abi_file_path: &Option<String>,
-        project_paths: &ParsedProjectPaths,
+        source: &dyn ConfigSource,
         has_rpc_sync_src: bool,
     ) -> Result<(Vec<Self>, EvmAbi)> {
-        let abi_from_file = EvmAbi::from_file(abi_file_path, project_paths)?;
+        let abi_from_file = EvmAbi::from_source(abi_file_path, source)?;
 
         let mut events = vec![];
         let mut events_abi = JsonAbi::new();
@@ -2032,19 +2458,17 @@ impl Event {
         ))
     }
 
-    pub fn from_fuel_events_config(
+    fn from_fuel_events_config(
         events_config: &[FuelEventConfig],
         abi_file_path: &str,
-        project_paths: &ParsedProjectPaths,
+        source: &dyn ConfigSource,
     ) -> Result<(Vec<Self>, FuelAbi)> {
         use human_config::fuel::EventType;
 
-        let abi_path: PathBuf = path_utils::get_config_path_relative_to_root(
-            project_paths,
-            PathBuf::from(&abi_file_path),
-        )
-        .context("Failed to get path to ABI relative to the root of the project")?;
-        let fuel_abi = FuelAbi::parse(abi_path, abi_file_path.to_string())
+        let resolved = source
+            .read_config_relative_file(abi_file_path)
+            .context("Failed to get ABI relative to the config")?;
+        let fuel_abi = FuelAbi::parse_raw(resolved.path, abi_file_path.to_string(), resolved.raw)
             .context("Failed to parse ABI".to_string())?;
 
         let mut events = vec![];
@@ -2466,128 +2890,57 @@ impl FieldSelection {
 
 #[cfg(test)]
 mod test {
-    use std::path::PathBuf;
+    use std::{collections::HashMap, path::PathBuf};
 
     use super::SystemConfig;
-    use crate::{
-        config_parsing::{
-            human_config::evm::HumanConfig as EvmConfig,
-            system_config::{DataSource, Event, MainEvmDataSource},
-        },
-        project_paths::ParsedProjectPaths,
-    };
-    use alloy_json_abi::Event as AlloyEvent;
-    use handlebars::Handlebars;
+    use crate::{config_parsing::system_config::Event, project_paths::ParsedProjectPaths};
     use pretty_assertions::assert_eq;
-    use serde_json::json;
 
     #[test]
-    fn renders_nested_f32() {
-        let hbs = Handlebars::new();
-
-        let rendered_backoff_multiplicative = hbs
-            .render_template(
-                "{{backoff_multiplicative}}",
-                &json!({"backoff_multiplicative": 0.8}),
-            )
-            .unwrap();
-        assert_eq!(&rendered_backoff_multiplicative, "0.8");
-    }
-
-    // 20-byte hex addresses must round-trip verbatim through the full
-    // YAML → SystemConfig → public JSON pipeline. The ERC20 silent-skip
-    // bug came from an editor f64-truncating the address on disk; this
-    // locks the indexer-side path so we never reintroduce the corruption.
-    #[test]
-    fn parses_unquoted_hex_address_through_full_pipeline() {
+    fn in_memory_yaml_matches_filesystem_public_config() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_paths = ParsedProjectPaths::new(&test_dir, "configs/unquoted-hex-address.yaml")
-            .expect("Failed creating parsed_paths");
+            .expect("project paths");
+        let filesystem =
+            SystemConfig::parse_from_project_files(&project_paths).expect("filesystem config");
 
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
+        let yaml = std::fs::read_to_string(&project_paths.config).expect("config YAML");
+        let schema =
+            std::fs::read_to_string(PathBuf::from(&test_dir).join("schemas/schema.graphql"))
+                .expect("schema");
+        let abi = std::fs::read_to_string(PathBuf::from(&test_dir).join("abis/Contract1.json"))
+            .expect("ABI");
+        let files = HashMap::from([("../abis/Contract1.json".to_string(), abi)]);
+        let memory = SystemConfig::parse_yaml(&yaml, Some(&schema), &HashMap::new(), &files, false)
+            .expect("in-memory config");
 
-        let chains = config.get_chains();
-        let chain = chains
-            .iter()
-            .find(|c| c.id == 1)
-            .expect("chain id 1 missing");
-        let contract = chain
-            .contracts
-            .iter()
-            .find(|c| c.name == "Contract1")
-            .expect("Contract1 missing");
         assert_eq!(
-            contract.addresses,
-            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()],
-            "address must round-trip verbatim through SystemConfig"
-        );
-
-        let public_json = config
-            .to_public_config_json(false)
-            .expect("Failed serializing public config");
-        assert!(
-            public_json.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
-            "public config JSON missing original address. Got:\n{public_json}"
-        );
-
-        // Mirror NAPI's two serde_json round-trips that hand the config
-        // to the JS runtime.
-        use crate::executor::public_config_value;
-        let value = public_config_value(&config, false).expect("public_config_value");
-        let wire = serde_json::to_string(&value).expect("to_string");
-        assert!(
-            wire.contains("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"),
-            "NAPI wire JSON missing original address. Got:\n{wire}"
+            filesystem.to_public_config_json(false).unwrap(),
+            memory.to_public_config_json(false).unwrap(),
         );
     }
 
     #[test]
-    fn skip_chain_excluded_from_public_config_json() {
+    fn in_memory_fuel_abi_matches_filesystem_public_config() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/skip-one-chain.yaml")
-            .expect("Failed creating parsed_paths");
+        let project_paths =
+            ParsedProjectPaths::new(&test_dir, "configs/fuel-config.yaml").expect("project paths");
+        let filesystem =
+            SystemConfig::parse_from_project_files(&project_paths).expect("filesystem config");
 
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
-
-        assert_eq!(config.get_chains().len(), 2, "both chains should be parsed");
-
-        let public_json = config
-            .to_public_config_json(false)
-            .expect("Failed serializing public config");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&public_json).expect("Failed parsing public config JSON");
-        let chains = parsed["evm"]["chains"]
-            .as_object()
-            .expect("evm.chains should be an object");
+        let yaml = std::fs::read_to_string(&project_paths.config).expect("config YAML");
+        let schema =
+            std::fs::read_to_string(PathBuf::from(&test_dir).join("configs/schema.graphql"))
+                .expect("schema");
+        let abi = std::fs::read_to_string(PathBuf::from(&test_dir).join("abis/greeter-abi.json"))
+            .expect("Fuel ABI");
+        let files = HashMap::from([("../abis/greeter-abi.json".to_string(), abi)]);
+        let memory = SystemConfig::parse_yaml(&yaml, Some(&schema), &HashMap::new(), &files, false)
+            .expect("in-memory config");
 
         assert_eq!(
-            chains.len(),
-            1,
-            "only the active chain should be in public config"
-        );
-        assert!(
-            !public_json.contains("\"id\":137"),
-            "skipped chain 137 should not appear in public config JSON"
-        );
-    }
-
-    #[test]
-    fn skip_all_chains_returns_error() {
-        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_paths = ParsedProjectPaths::new(&test_dir, "configs/skip-all-chains.yaml")
-            .expect("Failed creating parsed_paths");
-
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
-
-        let err = config
-            .to_public_config_json(false)
-            .expect_err("should error when all chains are skipped");
-        assert!(
-            err.to_string().contains("All chains are skipped"),
-            "unexpected error message: {err}"
+            filesystem.to_public_config_json(false).unwrap(),
+            memory.to_public_config_json(false).unwrap(),
         );
     }
 
@@ -2680,134 +3033,6 @@ mod test {
     }
 
     #[test]
-    fn test_get_nested_contract_abi() {
-        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_root = test_dir.as_str();
-        let config_dir = "configs/nested-abi.yaml";
-        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
-            .expect("Failed creating parsed_paths");
-
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
-
-        let contract_name = "Contract3".to_string();
-
-        let contract_abi = match &config
-            .get_contract(&contract_name)
-            .expect("Failed getting contract")
-            .abi
-        {
-            super::Abi::Evm(abi) => abi.typed.clone(),
-            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
-            super::Abi::Svm(_) => panic!("Svm abi should not be parsed"),
-        };
-
-        let expected_abi_string = r#"
-                [
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "NewGravatar",
-                    "type": "event"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "UpdatedGravatar",
-                    "type": "event"
-                }
-                ]
-    "#;
-
-        let expected_abi: alloy_json_abi::JsonAbi =
-            serde_json::from_str(expected_abi_string).unwrap();
-
-        assert_eq!(expected_abi, contract_abi);
-    }
-
-    #[test]
-    fn parse_event_sig_with_event_prefix() {
-        let event_string = "event MyEvent(uint256 myArg)".to_string();
-
-        let expected_event = AlloyEvent::parse("event MyEvent(uint256 myArg)").unwrap();
-        let parsed_event = Event::get_abi_event(&event_string, &None).unwrap();
-
-        assert_eq!(parsed_event.name, expected_event.name);
-        assert_eq!(parsed_event.anonymous, expected_event.anonymous);
-        assert_eq!(parsed_event.inputs.len(), expected_event.inputs.len());
-    }
-
-    #[test]
-    fn parse_event_sig_without_event_prefix() {
-        let event_string = ("MyEvent(uint256 myArg)").to_string();
-
-        let expected_event = AlloyEvent::parse("event MyEvent(uint256 myArg)").unwrap();
-        let parsed_event = Event::get_abi_event(&event_string, &None).unwrap();
-
-        assert_eq!(parsed_event.name, expected_event.name);
-        assert_eq!(parsed_event.anonymous, expected_event.anonymous);
-        assert_eq!(parsed_event.inputs.len(), expected_event.inputs.len());
-    }
-
-    #[test]
-    fn parse_event_sig_invalid_type_fails_on_param_conversion() {
-        // Note: alloy's Event::parse is more permissive and accepts "uint69" even though
-        // it's not a valid Solidity type. The error occurs when we try to convert the
-        // EventParam to our abi_compat::EventParam using DynSolType::parse.
-        let event_string = ("MyEvent(uint69 myArg)").to_string();
-        let alloy_event = Event::get_abi_event(&event_string, &None).expect("Should parse");
-
-        // The error occurs when trying to convert to our EventParam
-        let result = Event::convert_event_params(&alloy_event);
-        assert!(
-            result.is_err(),
-            "Expected error when parsing invalid type 'uint69'"
-        );
-    }
-
-    #[test]
     fn normalize_event_signature_handles_formatting_issues() {
         // Trailing semicolon
         assert_eq!(
@@ -2838,46 +3063,6 @@ mod test {
         assert_eq!(
             Event::normalize_event_signature("  Foo(uint128, uint16)  "),
             "Foo(uint128, uint16)"
-        );
-    }
-
-    #[test]
-    fn parse_event_sig_with_trailing_semicolon() {
-        // Issue #959: trailing semicolons should be stripped
-        let event_string =
-            "AddShopItems((uint128, uint16, uint16, uint16, uint16, bool)[] shopItems, uint256 indexed globalEventId);";
-        let parsed = Event::get_abi_event(event_string, &None).unwrap();
-        assert_eq!(parsed.name, "AddShopItems");
-        assert_eq!(parsed.inputs.len(), 2);
-    }
-
-    #[test]
-    fn parse_event_sig_with_space_before_comma() {
-        // Issue #959: spaces before commas should be normalized
-        let event_string =
-            "AddShopItems((uint128 ,uint16,uint16 ,uint16,uint16,bool)[] shopItems, uint256 indexed globalEventId)";
-        let parsed = Event::get_abi_event(event_string, &None).unwrap();
-        assert_eq!(parsed.name, "AddShopItems");
-        assert_eq!(parsed.inputs.len(), 2);
-    }
-
-    #[test]
-    fn parse_event_sig_with_all_formatting_issues() {
-        // Issue #959: combination of trailing semicolon and inconsistent spacing
-        let event_string =
-            "AddShopItems((uint128 ,uint16,uint16 ,uint16,uint16,bool)[] shopItems, uint256 indexed globalEventId);";
-        let parsed = Event::get_abi_event(event_string, &None).unwrap();
-        assert_eq!(parsed.name, "AddShopItems");
-        assert_eq!(parsed.inputs.len(), 2);
-
-        // Should produce the same sighash as the well-formatted version
-        let well_formatted =
-            "AddShopItems((uint128, uint16, uint16, uint16, uint16, bool)[] shopItems, uint256 indexed globalEventId)";
-        let expected = Event::get_abi_event(well_formatted, &None).unwrap();
-        assert_eq!(
-            parsed.selector().to_string(),
-            expected.selector().to_string(),
-            "Sighash should match regardless of formatting"
         );
     }
 
@@ -2920,17 +3105,6 @@ mod test {
     }
 
     #[test]
-    fn fails_to_parse_event_name_without_abi() {
-        let event_string = ("MyEvent").to_string();
-        assert_eq!(
-            Event::get_abi_event(&event_string, &None)
-                .unwrap_err()
-                .to_string(),
-            "No abi file provided for event MyEvent"
-        );
-    }
-
-    #[test]
     fn test_parse_url() {
         let valid_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
         let valid_url_2 = "http://api.example.org:8080";
@@ -2952,55 +3126,6 @@ mod test {
         assert_eq!(
             super::parse_url("https://somechain.hypersync.xyz//"),
             Some("https://somechain.hypersync.xyz".to_string())
-        );
-    }
-
-    #[test]
-    fn deserializes_contract_config_with_multiple_sync_sources() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/invalid-multiple-sync-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: EvmConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        // Both hypersync and rpc config should be present
-        assert!(cfg.chains[0].rpc.is_some());
-        assert!(cfg.chains[0].hypersync_config.is_some());
-
-        let error = DataSource::from_evm_network_config(cfg.chains[0].clone()).unwrap_err();
-
-        assert_eq!(error.to_string(), "Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file");
-    }
-
-    #[test]
-    fn test_hypersync_url_trailing_slash_trimming() {
-        use crate::config_parsing::human_config::evm::{Chain as EvmChain, HypersyncConfig};
-
-        let network = EvmChain {
-            id: 1,
-            skip: None,
-            hypersync_config: Some(HypersyncConfig {
-                url: "https://somechain.hypersync.xyz//".to_string(),
-            }),
-            rpc: None,
-            start_block: 0,
-            end_block: None,
-            max_reorg_depth: None,
-            block_lag: None,
-            contracts: None,
-        };
-
-        let sync_source = DataSource::from_evm_network_config(network).unwrap();
-
-        assert_eq!(
-            sync_source,
-            DataSource::Evm {
-                main: MainEvmDataSource::HyperSync {
-                    hypersync_endpoint_url: "https://somechain.hypersync.xyz".to_string(),
-                },
-                rpcs: vec![],
-            }
         );
     }
 
@@ -3195,62 +3320,15 @@ mod test {
                 clickhouse: backend(false, ColumnNameFormat::Original),
             }
         );
-
-        // ClickHouse without Postgres -> user-friendly error
-        let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: enabled(false),
-            clickhouse: enabled(true),
-        }))
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("ClickHouse is not supported as a single storage yet"),
-            "Unexpected error: {err}"
-        );
-
-        // ClickHouse enabled with Postgres omitted -> same error; user must
-        // opt in to Postgres explicitly rather than relying on the default.
-        let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: None,
-            clickhouse: options(Some(true)),
-        }))
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("ClickHouse is not supported as a single storage yet"),
-            "Unexpected error: {err}"
-        );
-
-        // All storages disabled -> user-friendly error
-        let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: enabled(false),
-            clickhouse: enabled(false),
-        }))
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("At least one storage backend must be enabled"),
-            "Unexpected error: {err}"
-        );
-
-        // postgres explicitly false with clickhouse omitted -> same error
-        let err = super::Storage::resolve(Some(&StorageConfig {
-            postgres: enabled(false),
-            clickhouse: None,
-        }))
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("At least one storage backend must be enabled"),
-            "Unexpected error: {err}"
-        );
     }
 
     // --- validate_entity_storage: per-entity storage routing checks ---
 
     mod entity_storage_validation {
-        use super::super::{validate_entity_storage, Storage};
-        use crate::config_parsing::entity_parsing::{Entity, Schema};
+        use super::super::{validate_entity_storage, validate_relationship_storage, Storage};
+        use crate::config_parsing::entity_parsing::{
+            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Field, FieldType, Schema,
+        };
         use crate::config_parsing::human_config::ColumnNameFormat;
 
         // Bypass `Schema::new` validation: only storage routing matters here.
@@ -3269,7 +3347,7 @@ mod test {
                 multi_field_indexes: Vec::new(),
                 description: None,
                 postgres,
-                clickhouse,
+                clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
             }
         }
 
@@ -3307,23 +3385,6 @@ mod test {
         }
 
         #[test]
-        fn single_storage_entity_targets_disabled_backend_e1() {
-            // Global: postgres only. Entity wants clickhouse → E1.
-            let schema = make_schema(vec![entity("Snapshot", Some(true), Some(true))]);
-            let err = validate_entity_storage(&postgres_only(), &schema).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Schema validation failed:\n\
-                 \n\
-                 Entities using storages not enabled in config.yaml:\n  \
-                 - `Snapshot` uses `clickhouse`, but `clickhouse` is not enabled.\n\
-                 \n\
-                 Fixes:\n  \
-                 - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
-            );
-        }
-
-        #[test]
         fn multi_storage_all_annotated_ok() {
             let schema = make_schema(vec![
                 entity("Transfer", Some(true), None),
@@ -3343,46 +3404,77 @@ mod test {
             assert!(validate_entity_storage(&multi(false, true), &schema).is_ok());
         }
 
+        // The table options object form opts the entity into ClickHouse, so
+        // it must be rejected when ClickHouse isn't enabled globally.
         #[test]
-        fn no_default_storage_and_missing_directives_e2() {
+        fn clickhouse_table_options_require_enabled_backend() {
+            let schema = make_schema(vec![Entity {
+                clickhouse: Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
+                    partition_by: Some("toYYYYMM(timestamp)".to_string()),
+                    ..ClickHouseTableOptions::default()
+                })),
+                ..entity("Transfer", Some(true), None)
+            }]);
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_err());
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        // A @derivedFrom is served by joining the two entities in Postgres and
+        // backed by an index on the referenced table, so both sides have to be
+        // there.
+        fn derived_from(name: &str, target: &str, field: &str) -> Field {
+            Field {
+                name: name.to_string(),
+                field_type: FieldType::DerivedFromField {
+                    entity_name: target.to_string(),
+                    derived_from_field: field.to_string(),
+                },
+                description: None,
+            }
+        }
+
+        #[test]
+        fn derived_from_within_postgres_ok() {
             let schema = make_schema(vec![
-                entity("Transfer", None, None),
-                entity("Approval", None, None),
-                entity("DailySnapshot", None, Some(true)),
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", Some(true), None),
             ]);
-            let err = validate_entity_storage(&multi(false, false), &schema).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Schema validation failed:\n\
-                 \n\
-                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n  \
-                 - Approval\n  \
-                 - Transfer\n\
-                 \n\
-                 Fixes:\n  \
-                 - Set `default: true` on a backend under `storage:` in config.yaml to include these entities automatically. Example:\n      \
-                 storage:\n        \
-                 postgres:\n          \
-                 default: true\n  \
-                 - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
-                 type Approval @storage(postgres: true) { ... }"
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn derived_from_clickhouse_only_entity_rejected() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            let err = validate_relationship_storage(&multi(false, false), &schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(
+                    "`Trader`.`orders` derives from `Order`, which is not stored in postgres."
+                ),
+                "unexpected error: {err}"
             );
         }
 
-        // Insertion order is Zebra→Apple→Mango; the error must still list
-        // them alphabetically regardless of HashMap iteration order.
         #[test]
-        fn entities_listed_alphabetically_in_error() {
+        fn derived_from_ignored_when_owner_is_not_in_postgres() {
             let schema = make_schema(vec![
-                entity("Zebra", None, None),
-                entity("Apple", None, None),
-                entity("Mango", None, None),
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", None, Some(true))
+                },
+                entity("Order", None, Some(true)),
             ]);
-            let err = validate_entity_storage(&multi(false, false), &schema).unwrap_err();
-            assert!(
-                err.to_string().contains("- Apple\n  - Mango\n  - Zebra"),
-                "Entities not listed alphabetically. Got:\n{err}"
-            );
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
         }
     }
 
@@ -3418,135 +3510,6 @@ type Token {
             );
         }
 
-        #[test]
-        fn snake_case_collision_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Token {
-  id: ID!
-  tokenId: BigInt!
-  token_id: BigInt!
-}"#,
-            )
-            .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Schema validation failed:\n\
-                 \n\
-                 Multiple entity fields map to the same database column:\n  \
-                 - `Token`: fields `tokenId`, `token_id` all map to the \"token_id\" column.\n\
-                 \n\
-                 Fixes:\n  \
-                 - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
-                 Note that entity reference fields get an `_id` suffix, and `column_name_format: \
-                 snake_case` converts field names to snake_case."
-            );
-        }
-
-        // Entity references collide in the original format too: a `token`
-        // reference and a literal `token_id` scalar produce the same column.
-        #[test]
-        fn original_format_reference_collision_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Token {
-  id: ID!
-}
-
-type Transfer {
-  id: ID!
-  token: Token!
-  token_id: BigInt!
-}"#,
-            )
-            .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
-                .unwrap_err();
-            assert!(
-                err.to_string().contains(
-                    "- `Transfer`: fields `token`, `token_id` all map to the \"token_id\" column."
-                ),
-                "Unexpected error: {err}"
-            );
-        }
-
-        // Snake-casing a camelCase field can shadow the internal columns the
-        // indexer adds to entity history tables.
-        #[test]
-        fn snake_case_reserved_envio_prefix_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Token {
-  id: ID!
-  envioChange: BigInt!
-}"#,
-            )
-            .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Schema validation failed:\n\
-                 \n\
-                 Entity fields that would create database columns with the reserved `envio_` prefix:\n  \
-                 - `Token.envioChange` maps to the \"envio_change\" column.\n\
-                 \n\
-                 Fixes:\n  \
-                 - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
-                 are reserved for internal indexer columns (eg `envio_change` in entity history \
-                 tables)."
-            );
-        }
-
-        #[test]
-        fn original_format_reserved_envio_prefix_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Token {
-  id: ID!
-  envio_checkpoint_id: BigInt!
-}"#,
-            )
-            .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::Original), &schema)
-                .unwrap_err();
-            assert!(
-                err.to_string().contains(
-                    "- `Token.envio_checkpoint_id` maps to the \"envio_checkpoint_id\" column."
-                ),
-                "Unexpected error: {err}"
-            );
-        }
-
-        // Postgres silently truncates identifiers to 63 characters, and
-        // snake_case makes names longer than the field the user wrote.
-        #[test]
-        fn column_name_longer_than_pg_limit_rejected() {
-            let long_field = "a".repeat(30) + &"B".repeat(1) + &"b".repeat(31) + "Cc";
-            let schema = Schema::from_string(&format!(
-                r#"
-type Token {{
-  id: ID!
-  {long_field}: BigInt!
-}}"#,
-            ))
-            .unwrap();
-            // 64 characters as written: rejected for Postgres in both
-            // formats (snake_case only makes it longer).
-            assert_eq!(long_field.len(), 64);
-            assert!(
-                validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_err()
-            );
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
-            assert!(
-                err.to_string().contains("longer than 63"),
-                "Unexpected error: {err}"
-            );
-        }
-
         // ClickHouse has no 63-character identifier limit, so a name that
         // only becomes too long under ClickHouse's snake_case is accepted
         // as long as the Postgres column stays within the limit.
@@ -3579,33 +3542,6 @@ type Token {{
             );
         }
 
-        // Entity references get an `_id` suffix on the column, so a `token`
-        // reference collides with a scalar `tokenId` field.
-        #[test]
-        fn snake_case_entity_reference_collision_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Token {
-  id: ID!
-}
-
-type Transfer {
-  id: ID!
-  token: Token!
-  tokenId: BigInt!
-}"#,
-            )
-            .unwrap();
-            let err = validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema)
-                .unwrap_err();
-            assert!(
-                err.to_string().contains(
-                    "- `Transfer`: fields `token`, `tokenId` all map to the \"token_id\" column."
-                ),
-                "Unexpected error: {err}"
-            );
-        }
-
         // The same schema is valid with the default naming, where the
         // reference column is `token_id` but the scalar stays `tokenId`.
         #[test]
@@ -3626,31 +3562,6 @@ type Transfer {
             assert!(
                 validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok()
             );
-        }
-
-        // The check also applies when only ClickHouse opts into snake_case
-        #[test]
-        fn clickhouse_only_snake_case_collision_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Token {
-  id: ID!
-  tokenId: BigInt!
-  token_id: BigInt!
-}"#,
-            )
-            .unwrap();
-            let storage = Storage {
-                postgres: Some(super::super::StorageBackend {
-                    entity_default: true,
-                    column_name_format: ColumnNameFormat::Original,
-                }),
-                clickhouse: Some(super::super::StorageBackend {
-                    entity_default: false,
-                    column_name_format: ColumnNameFormat::SnakeCase,
-                }),
-            };
-            assert!(validate_db_column_names(&storage, &schema).is_err());
         }
     }
 
@@ -3673,32 +3584,6 @@ type Token {
                 postgres: backend(postgres_default),
                 clickhouse: backend(clickhouse_default),
             }
-        }
-
-        #[test]
-        fn nullable_array_on_clickhouse_entity_rejected() {
-            let schema = Schema::from_string(
-                r#"
-type Foo @storage(postgres: true, clickhouse: true) {
-  id: ID!
-  tags: [String!]
-}"#,
-            )
-            .unwrap();
-            let err =
-                validate_clickhouse_nullable_arrays(&multi(false, false), &schema).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Schema validation failed:\n\
-                 \n\
-                 Nullable array fields are not supported by ClickHouse storage:\n  \
-                 - `Foo.tags` has type `[String!]`\n\
-                 \n\
-                 Fixes:\n  \
-                 - Make the field required and explicitly set an empty array instead of null. For \
-                 example, change the type from `[String!]` to `[String!]!` in schema.graphql, and \
-                 assign `[]` instead of `null`/`undefined` in your handlers."
-            );
         }
 
         #[test]

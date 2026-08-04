@@ -236,58 +236,30 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
 
 // ============== Build topic filter getters ==============
 
-let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => {
-  // Handle array/tuple types - these get keccak256'd
-  if abiType->String.endsWith("]") || abiType->String.startsWith("(") {
-    TopicFilter.castToHexUnsafe->(Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-  } else {
-    switch abiType {
-    | "address" =>
-      // Lowercase before encoding so mixed-case (checksummed) user input
-      // still matches the lowercase hex topics returned by sources.
-
-      (
-        (value: string) =>
-          value->String.toLowerCase->Address.unsafeFromString->TopicFilter.fromAddress
-      )->(Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-
-    | "bool" =>
-      TopicFilter.fromBool->(Utils.magic: (bool => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | "string" =>
-      TopicFilter.fromDynamicString->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | "bytes" =>
-      TopicFilter.fromDynamicBytes->(
-        Utils.magic: (string => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("uint") =>
-      TopicFilter.fromBigInt->(Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t)
-    | t if t->String.startsWith("int") =>
-      TopicFilter.fromSignedBigInt->(
-        Utils.magic: (bigint => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | t if t->String.startsWith("bytes") =>
-      TopicFilter.castToHexUnsafe->(
-        Utils.magic: ('a => EvmTypes.Hex.t) => unknown => EvmTypes.Hex.t
-      )
-
-    | other => JsError.throwWithMessage(`Unsupported topic filter ABI type: ${other}`)
-    }
-  }
-}
+let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => value =>
+  Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
 let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)
+  let isTuple = p.abiType->String.startsWith("(")
   (eventFilter: dict<JSON.t>) =>
     eventFilter
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
-    ->Option.mapOr([], topicFilters =>
-      topicFilters->(Utils.magic: JSON.t => unknown)->normalizeOrThrow->Array.map(encoder)
-    )
+    ->Option.mapOr([], topicFilters => {
+      let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+      // A tuple filter value is itself an array, so a directly-passed tuple is
+      // indistinguishable from an OR-list by shape alone. A single tuple is
+      // the common case, so try it first; when the value doesn't ABI-encode as
+      // one tuple it must be an OR-list of tuples.
+      if isTuple {
+        switch encoder(raw) {
+        | encoded => [encoded]
+        | exception _ => raw->normalizeOrThrow->Array.map(encoder)
+        }
+      } else {
+        raw->normalizeOrThrow->Array.map(encoder)
+      }
+    })
 }
 
 // ============== Field selection ==============
@@ -319,61 +291,6 @@ let resolveFieldSelection = (
     ),
   )
 }
-
-// ============== Client-side address filter ==============
-
-let compileAddressFilter: string => (
-  Internal.eventPayload,
-  int,
-  dict<Internal.indexingContract>,
-) => bool = %raw(`function (body) {
-  return new Function("event", "blockNumber", "indexingAddresses", body);
-}`)
-
-// Body of the client-side address filter. Two analogous registered-at-or-before
-// checks, ANDed: (1) for non-wildcard events, the log's srcAddress must itself be
-// registered (ownership is resolved structurally by partition, but the temporal
-// `effectiveStartBlock` gate lives here now); (2) a DNF of address-filtered param
-// names (OR of AND-groups) for events that filter an indexed address param. The
-// DNF is fixed here, so it's unrolled into one boolean expression — no per-event
-// closure, loop, or array. `None` only for wildcard events without a param
-// filter. Exposed for snapshotting.
-// `srcAddressExpr` is the JS expression for the event's owning address: EVM and
-// Fuel events expose `event.srcAddress`; SVM instructions expose `event.programId`.
-let buildAddressFilterBody = (
-  groups: array<array<string>>,
-  ~isWildcard: bool,
-  ~srcAddressExpr: string="event.srcAddress",
-): option<string> => {
-  let paramLeaf = name =>
-    `(ic = indexingAddresses[p[${JSON.stringify(
-        JSON.String(name),
-      )}]]) !== undefined && ic.effectiveStartBlock <= blockNumber`
-  let paramDnf = switch groups {
-  | [] => None
-  | _ =>
-    Some(
-      groups
-      ->Array.map(group => "(" ++ group->Array.map(paramLeaf)->Array.join(" && ") ++ ")")
-      ->Array.join(" || "),
-    )
-  }
-  let srcLeaf = `(ic = indexingAddresses[${srcAddressExpr}]) !== undefined && ic.effectiveStartBlock <= blockNumber`
-  switch (isWildcard, paramDnf) {
-  | (true, None) => None
-  | (true, Some(dnf)) => Some("var p = event.params, ic; return " ++ dnf ++ ";")
-  | (false, None) => Some("var ic; return " ++ srcLeaf ++ ";")
-  | (false, Some(dnf)) =>
-    Some("var p = event.params, ic; return " ++ srcLeaf ++ " && (" ++ dnf ++ ");")
-  }
-}
-
-let buildAddressFilter = (
-  groups: array<array<string>>,
-  ~isWildcard: bool,
-  ~srcAddressExpr: string="event.srcAddress",
-): option<(Internal.eventPayload, int, dict<Internal.indexingContract>) => bool> =>
-  buildAddressFilterBody(groups, ~isWildcard, ~srcAddressExpr)->Option.map(compileAddressFilter)
 
 // ============== Build complete EVM event config ==============
 
@@ -425,7 +342,7 @@ let buildEvmOnEventRegistration = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~where: option<JSON.t>,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
@@ -452,13 +369,14 @@ let buildEvmOnEventRegistration = (
   }
 
   {
+    index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
     handler,
     contractRegister,
     resolvedWhere,
     filterByAddresses,
-    clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups, ~isWildcard),
+    addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
   }
@@ -536,13 +454,13 @@ let buildSvmOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.svmOnEventRegistration => {
+  index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,
   isWildcard,
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  clientAddressFilter: ?buildAddressFilter([], ~isWildcard, ~srcAddressExpr="event.programId"),
   startBlock,
 }
 
@@ -613,12 +531,12 @@ let buildFuelOnEventRegistration = (
   ~contractRegister: option<Internal.contractRegister>,
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
+  index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
   handler,
   contractRegister,
   isWildcard,
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
   startBlock,
 }

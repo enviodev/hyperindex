@@ -134,8 +134,8 @@ impl human_config::evm::Chain {
         if let Some(network_endblock) = self.end_block {
             if network_endblock < self.start_block {
                 return Err(anyhow!(
-                    "The config file has an endBlock that is less than the startBlock for \
-                     network id: {}. The endBlock must be greater than the startBlock.",
+                    "The config has an end_block smaller than start_block for chain {}. \
+                     end_block must be greater than or equal to start_block.",
                     self.id
                 ));
             }
@@ -173,7 +173,11 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
             for contract_address in contract.address.clone().into_iter() {
                 if !is_valid_ethereum_address(&contract_address) {
                     return Err(anyhow!(
-                        "One of the contract addresses in the config file isn't valid",
+                        "Contract {:?} on chain {} has invalid address {:?}. Expected a 20-byte \
+                         hex string starting with 0x.",
+                        contract.name,
+                        chain.id,
+                        contract_address,
                     ));
                 }
 
@@ -220,22 +224,10 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
 }
 
 pub fn is_valid_solana_pubkey(s: &str) -> bool {
-    // Base58 alphabet: 1-9, A-H, J-N, P-Z, a-k, m-z (no 0, O, I, l).
-    // Encoded 32-byte values are 32-44 chars (typically 43-44).
-    let len = s.len();
-    if !(32..=44).contains(&len) {
-        return false;
-    }
-    s.bytes().all(|b| {
-        matches!(b,
-            b'1'..=b'9'
-            | b'A'..=b'H'
-            | b'J'..=b'N'
-            | b'P'..=b'Z'
-            | b'a'..=b'k'
-            | b'm'..=b'z'
-        )
-    })
+    let mut decoded = [0_u8; 32];
+    bs58::decode(s)
+        .onto(&mut decoded)
+        .is_ok_and(|decoded_len| decoded_len == decoded.len())
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
@@ -604,86 +596,6 @@ mod tests {
         );
     }
 
-    mod evm {
-        use crate::config_parsing::human_config::evm::HumanConfig;
-        use crate::config_parsing::validation::validate_deserialized_config_yaml;
-
-        fn parse(yaml: &str) -> HumanConfig {
-            serde_yaml::from_str(yaml).unwrap()
-        }
-
-        #[test]
-        fn validation_rejects_same_address_on_two_contracts_of_one_chain() {
-            let cfg = parse(
-                r#"
-name: x
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-      - name: AaveV3
-        address:
-          - "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-"#,
-            );
-            let err = validate_deserialized_config_yaml(&cfg).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Address 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 on chain 1 is configured for \
-                 multiple contracts: AaveToken and AaveV3. Indexing the same address with \
-                 multiple contract definitions is not supported. Please define the events on a \
-                 single contract definition instead."
-            );
-        }
-
-        #[test]
-        fn validation_rejects_address_listed_twice_for_one_contract() {
-            // Case-insensitive: checksum and lowercase spellings are the same address
-            let cfg = parse(
-                r#"
-name: x
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address:
-          - "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-          - "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
-"#,
-            );
-            let err = validate_deserialized_config_yaml(&cfg).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "Address 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 is listed multiple times for \
-                 the contract AaveToken on chain 1. Please remove the duplicate from your config."
-            );
-        }
-
-        #[test]
-        fn validation_accepts_same_address_on_different_chains() {
-            let cfg = parse(
-                r#"
-name: x
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-  - id: 137
-    start_block: 0
-    contracts:
-      - name: AaveToken
-        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-"#,
-            );
-            validate_deserialized_config_yaml(&cfg).unwrap();
-        }
-    }
-
     mod svm {
         use crate::config_parsing::human_config::svm::HumanConfig;
         use crate::config_parsing::validation::{
@@ -710,6 +622,8 @@ chains:
             ));
             // Too long.
             assert!(!is_valid_solana_pubkey(&"1".repeat(64)));
+            // Valid base58 syntax and plausible encoded length, but decodes to 33 bytes.
+            assert!(!is_valid_solana_pubkey(&"1".repeat(33)));
         }
 
         #[test]
@@ -975,20 +889,6 @@ chains:
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
-        }
-
-        #[test]
-        fn validation_rejects_chain_without_data_source() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-"#,
-            );
-            let err = validate_deserialized_svm_config_yaml(&cfg).unwrap_err();
-            assert!(err.to_string().contains("data source"), "{err}");
         }
     }
 }

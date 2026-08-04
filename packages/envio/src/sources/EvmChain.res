@@ -39,62 +39,40 @@ let getSyncConfig = (
   }
 }
 
-let collectEventParams = (onEventRegistrations: array<Internal.evmOnEventRegistration>): array<
-  HyperSyncClient.Decoder.eventParamsInput,
-> => {
-  let result = []
-  onEventRegistrations->Array.forEach(reg => {
-    let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-    result
-    ->Array.push({
-      HyperSyncClient.Decoder.sighash: event.sighash,
-      topicCount: event.topicCount,
-      eventName: event.name,
-      contractName: event.contractName,
-      params: event.paramsMetadata,
-    })
-    ->ignore
-  })
-  result
-}
-
 let makeSources = (
-  ~chain,
+  ~chainId,
   ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
   ~hyperSync,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
+  ~addressStore,
 ) => {
-  let eventRouter = onEventRegistrations->EventRouter.fromEvmEventModsOrThrow(~chain)
-
-  let allEventParams = collectEventParams(onEventRegistrations)
-
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
-      HyperSyncSource.make({
-        chain,
+      EvmHyperSyncSource.make({
+        chainId,
         endpointUrl,
-        allEventParams,
-        eventRouter,
+        onEventRegistrations,
         apiToken: Env.envioApiToken,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
         logLevel: Env.hypersyncLogLevel,
+        addressStore,
       }),
     ]
   | _ => []
   }
   rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
-      chain,
+      chainId,
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
-      eventRouter,
-      allEventParams,
+      onEventRegistrations,
       lowercaseAddresses,
+      addressStore,
       ?ws,
       ?headers,
     })

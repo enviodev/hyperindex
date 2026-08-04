@@ -1,18 +1,16 @@
 open Vitest
 
-// Spread into query literals so the cross-chain scheduler fields
-// (chainId/progress) don't have to be repeated; every other field is
-// overridden at the call site.
+// Spread into query literals so the common fields don't have to be repeated;
+// every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
   partitionId: "0",
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  estResponseSize: 0.,
-  chainId: 0,
-  progress: 0.,
+  itemsTarget: Some(0),
+  itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addressesByContractName: Dict.make(),
+  addresses: TestAddresses.setOf([]),
 }
 
 type executeQueryMock = {
@@ -118,19 +116,19 @@ describe("SourceManager creation", () => {
   })
 
   it("Fails to create without primary sources", t => {
-    t.expect(
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(~isRealtime=false, ~sources=[])
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
-    t.expect(
+     "Invalid configuration, no data-source for historical sync provided")
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(
           ~isRealtime=false,
           ~sources=[MockIndexer.Source.make([], ~sourceFor=Fallback).source],
         )
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
+     "Invalid configuration, no data-source for historical sync provided")
   })
 })
 
@@ -178,17 +176,17 @@ describe("SourceManager.getSourceRole", () => {
 
 describe("SourceManager source priority with Live sources", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
-    ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 5000.,
+    itemsTarget: Some(5000),
+    itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it(
@@ -375,13 +373,16 @@ describe("SourceManager fetchNext", () => {
   // dispatch by computing the action from the chain's own fetch state.
   let fetchNext = (
     sourceManager,
-    ~fetchState,
+    ~fetchState: FetchState.t,
     ~executeQuery,
     ~waitForNewBlock,
     ~onNewBlock,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery
+    let action = fetchState->FetchState.getNextQuery(
+      ~chainTargetBlock=fetchState.knownHeight,
+      ~chainTargetItems=50_000.,
+    )
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -403,15 +404,11 @@ describe("SourceManager fetchNext", () => {
     ~latestFetchedBlockNumber,
     ~numContracts=2,
   ): FetchState.partition => {
-    let addressesByContractName = Dict.make()
     let addresses = []
-
     for i in 0 to numContracts - 1 {
       let address = Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getOrThrow
       addresses->Array.push(address)
     }
-
-    addressesByContractName->Dict.set("MockContract", addresses)
 
     {
       id: partitionIndex->Int.toString,
@@ -420,14 +417,14 @@ describe("SourceManager fetchNext", () => {
         blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
-      addressesByContractName,
+      addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
-      prevQueryRange: 0,
-      prevRangeSize: 0,
-      prevPrevQueryRange: 0,
-      latestBlockRangeUpdateBlock: 0,
+      sourceRangeCapacity: 0,
+      eventDensity: None,
+      prevSourceRangeCapacity: 0,
+      latestSourceRangeCapacityUpdateBlock: 0,
     }
   }
 
@@ -451,6 +448,7 @@ describe("SourceManager fetchNext", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=partitions->Array.length,
       ~dynamicContracts=Utils.Set.make(),
+      ~clientFilteredContracts=Utils.Set.make(),
     )
 
     {
@@ -461,12 +459,12 @@ describe("SourceManager fetchNext", () => {
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       maxOnBlockBufferSize: targetBufferSize,
-      chainId: 0,
-      contractConfigs: Dict.make(),
+      chainId: 0->ChainId.fromInt,
       blockLag: 0,
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
+      clientFilterAddressThreshold: None,
     }
   }
 
@@ -486,17 +484,18 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      estResponseSize: 5000.,
+      itemsTarget: None,
+      itemsEst: 5000,
       fetchedBlock: None,
     }
-    // Chunking on (prevQueryRange set) so the tail wants two chunks per round.
+    // Chunking on (sourceRangeCapacity set) so the tail wants two chunks per round.
     let withPending = count => {
       let p = {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
-        prevQueryRange: 10,
-        prevRangeSize: 0,
-        prevPrevQueryRange: 10,
+        sourceRangeCapacity: 10,
+        eventDensity: None,
+        prevSourceRangeCapacity: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
     }
@@ -508,9 +507,13 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery,
-      // 9 pending: the two-chunk tail is trimmed down to the one remaining slot.
-      "oneSlotLeft": withPending(9)->FetchState.getNextQuery->newQueryCount,
+      "atCap": withPending(10)->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=0.),
+      // 9 pending (45_000 already reserved): plenty of fresh chainTargetItems
+      // headroom above that, so the two-chunk tail is trimmed down to the one
+      // remaining slot by the chunk cap, not by budget.
+      "oneSlotLeft": withPending(9)
+      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=100_000.)
+      ->newQueryCount,
     }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
   })
 
@@ -541,34 +544,37 @@ describe("SourceManager fetchNext", () => {
         ~message="This is automatically ordered in the current implementation, but not having it ordered won't be a problem as well",
       ).toEqual([
         {
-          ...defaultQuery,
           partitionId: "2",
-          estResponseSize: 20_000. /. 3.,
+          itemsTarget: Some(16_667),
+          itemsEst: 16_667,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition2.addressesByContractName,
+          addresses: partition2.addresses,
         },
         {
-          ...defaultQuery,
           partitionId: "0",
-          estResponseSize: 20_000. /. 3.,
+          // Starts at block 5 vs partition "2"'s block 2, so it covers less of
+          // the range to the target and gets a smaller probe.
+          itemsTarget: Some(11_111),
+          itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition0.addressesByContractName,
+          addresses: partition0.addresses,
         },
         {
-          ...defaultQuery,
           partitionId: "1",
-          estResponseSize: 20_000. /. 3.,
+          // Starts furthest ahead (block 6), so it gets the smallest probe.
+          itemsTarget: Some(9_259),
+          itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition1.addressesByContractName,
+          addresses: partition1.addresses,
         },
       ])
 
@@ -1425,17 +1431,17 @@ describe("SourceManager wait for new blocks", () => {
 })
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
-    ...defaultQuery,
     partitionId: "0",
-    estResponseSize: 5000.,
+    itemsTarget: Some(5000),
+    itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it("Successfully executes the query", async t => {
