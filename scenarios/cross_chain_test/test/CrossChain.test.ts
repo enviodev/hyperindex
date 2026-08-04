@@ -81,7 +81,42 @@ describe("per-chain entities", () => {
 
     assert.throws(
       () => indexer.Counter.get("total"),
-      /Entity `Counter` with id `total` exists on multiple chains \(1, 137\) — use getAll\(\) and filter by chainId/,
+      /Entity `Counter` with id `total` exists on multiple chains \(1, 137\) — use getWhere\(\{chainId: \{_eq: \.\.\.\}\}\) to pick one/,
+    );
+  });
+
+  it("resolves the ambiguity with getWhere on chainId", async () => {
+    const { indexer, result } = processBothChains();
+    await result;
+
+    assert.deepEqual(
+      await indexer.Counter.getWhere({ chainId: { _eq: 137 } }),
+      [{ id: "total", count: 10n, chainId: 137 }],
+    );
+  });
+
+  it("filters a per-chain entity by an ordinary field too", async () => {
+    const { indexer, result } = processBothChains();
+    await result;
+
+    assert.deepEqual(
+      await indexer.Counter.getWhere({ count: { _gte: 10n } }),
+      [{ id: "total", count: 10n, chainId: 137 }],
+    );
+  });
+
+  it("has no chainId to filter on for a @crossChain entity", async () => {
+    const { indexer, result } = processBothChains();
+    await result;
+
+    assert.deepEqual(
+      await indexer.GlobalCounter.getWhere({ id: { _eq: "total" } }),
+      [{ id: "total", count: 13n }],
+    );
+    assert.throws(
+      // @ts-expect-error a cross-chain entity has no chainId field
+      () => indexer.GlobalCounter.getWhere({ chainId: { _eq: 1 } }),
+      /Invalid field "chainId" in context.GlobalCounter.getWhere\(\)/,
     );
   });
 

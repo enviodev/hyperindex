@@ -896,7 +896,10 @@ impl SystemConfig {
     pub fn to_view_json(&self) -> Result<String> {
         let view = ConfigView {
             version: system_config::VERSION,
-            storage: (&self.storage).into(),
+            storage: ViewStorageConfig {
+                postgres: self.storage.postgres.is_some(),
+                clickhouse: self.storage.clickhouse.is_some(),
+            },
         };
         Ok(serde_json::to_string_pretty(&view)?)
     }
@@ -906,5 +909,15 @@ impl SystemConfig {
 #[serde(rename_all = "camelCase")]
 struct ConfigView<'a> {
     version: &'a str,
-    storage: StorageConfig,
+    storage: ViewStorageConfig,
+}
+
+// `envio config view` reports which backends are enabled, nothing more. Kept
+// separate from the internal config's `StorageConfig` so a field the runtime
+// needs doesn't silently become part of this command's output.
+#[derive(Serialize)]
+struct ViewStorageConfig {
+    postgres: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse: bool,
 }

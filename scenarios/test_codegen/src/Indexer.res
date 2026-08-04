@@ -2019,22 +2019,26 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
+type testIndexerEntityOperations<'entity, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }
 
-type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: 'id => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
@@ -2049,30 +2053,30 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"A": testIndexerEntityOperations<Entities.A.t>,
-  \"B": testIndexerEntityOperations<Entities.B.t>,
-  \"BigIntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id>,
-  \"C": testIndexerEntityOperations<Entities.C.t>,
-  \"CustomSelectionTestPass": testIndexerEntityOperations<Entities.CustomSelectionTestPass.t>,
-  \"D": testIndexerEntityOperations<Entities.D.t>,
-  \"EntityWith63LenghtName______________________________________one": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t>,
-  \"EntityWith63LenghtName______________________________________two": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t>,
-  \"EntityWithAllNonArrayTypes": testIndexerEntityOperations<Entities.EntityWithAllNonArrayTypes.t>,
-  \"EntityWithAllTypes": testIndexerEntityOperations<Entities.EntityWithAllTypes.t>,
-  \"EntityWithBigDecimal": testIndexerEntityOperations<Entities.EntityWithBigDecimal.t>,
-  \"EntityWithRestrictedReScriptField": testIndexerEntityOperations<Entities.EntityWithRestrictedReScriptField.t>,
-  \"EntityWithTimestamp": testIndexerEntityOperations<Entities.EntityWithTimestamp.t>,
-  \"Gravatar": testIndexerEntityOperations<Entities.Gravatar.t>,
-  \"IntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.IntIdEntity.t, Entities.IntIdEntity.id>,
-  \"NftCollection": testIndexerEntityOperations<Entities.NftCollection.t>,
-  \"PostgresNumericPrecisionEntityTester": testIndexerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t>,
-  \"SimpleEntity": testIndexerEntityOperations<Entities.SimpleEntity.t>,
-  \"SimulateTestEvent": testIndexerEntityOperations<Entities.SimulateTestEvent.t>,
-  \"Token": testIndexerEntityOperations<Entities.Token.t>,
-  \"User": testIndexerEntityOperations<Entities.User.t>,
+  \"A": testIndexerEntityOperations<Entities.A.t, Entities.A.getWhereFilter>,
+  \"B": testIndexerEntityOperations<Entities.B.t, Entities.B.getWhereFilter>,
+  \"BigIntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id, Entities.BigIntIdEntity.getWhereFilter>,
+  \"C": testIndexerEntityOperations<Entities.C.t, Entities.C.getWhereFilter>,
+  \"CustomSelectionTestPass": testIndexerEntityOperations<Entities.CustomSelectionTestPass.t, Entities.CustomSelectionTestPass.getWhereFilter>,
+  \"D": testIndexerEntityOperations<Entities.D.t, Entities.D.getWhereFilter>,
+  \"EntityWith63LenghtName______________________________________one": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t, Entities.EntityWith63LenghtName______________________________________one.getWhereFilter>,
+  \"EntityWith63LenghtName______________________________________two": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t, Entities.EntityWith63LenghtName______________________________________two.getWhereFilter>,
+  \"EntityWithAllNonArrayTypes": testIndexerEntityOperations<Entities.EntityWithAllNonArrayTypes.t, Entities.EntityWithAllNonArrayTypes.getWhereFilter>,
+  \"EntityWithAllTypes": testIndexerEntityOperations<Entities.EntityWithAllTypes.t, Entities.EntityWithAllTypes.getWhereFilter>,
+  \"EntityWithBigDecimal": testIndexerEntityOperations<Entities.EntityWithBigDecimal.t, Entities.EntityWithBigDecimal.getWhereFilter>,
+  \"EntityWithRestrictedReScriptField": testIndexerEntityOperations<Entities.EntityWithRestrictedReScriptField.t, Entities.EntityWithRestrictedReScriptField.getWhereFilter>,
+  \"EntityWithTimestamp": testIndexerEntityOperations<Entities.EntityWithTimestamp.t, Entities.EntityWithTimestamp.getWhereFilter>,
+  \"Gravatar": testIndexerEntityOperations<Entities.Gravatar.t, Entities.Gravatar.getWhereFilter>,
+  \"IntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.IntIdEntity.t, Entities.IntIdEntity.id, Entities.IntIdEntity.getWhereFilter>,
+  \"NftCollection": testIndexerEntityOperations<Entities.NftCollection.t, Entities.NftCollection.getWhereFilter>,
+  \"PostgresNumericPrecisionEntityTester": testIndexerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t, Entities.PostgresNumericPrecisionEntityTester.getWhereFilter>,
+  \"SimpleEntity": testIndexerEntityOperations<Entities.SimpleEntity.t, Entities.SimpleEntity.getWhereFilter>,
+  \"SimulateTestEvent": testIndexerEntityOperations<Entities.SimulateTestEvent.t, Entities.SimulateTestEvent.getWhereFilter>,
+  \"Token": testIndexerEntityOperations<Entities.Token.t, Entities.Token.getWhereFilter>,
+  \"User": testIndexerEntityOperations<Entities.User.t, Entities.User.getWhereFilter>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

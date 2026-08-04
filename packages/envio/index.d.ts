@@ -1556,6 +1556,10 @@ type TestIndexerEntityOperations<Entity> = {
   readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   /** Get all entities. */
   readonly getAll: () => Promise<Entity[]>;
+  /** Get the entities matching a filter. For a per-chain entity the filter
+   * accepts `chainId`, which is how an id present on several chains is
+   * narrowed to one. */
+  readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
   /** Set (create or update) an entity. */
   readonly set: (entity: Entity) => void;
 };

@@ -443,7 +443,7 @@ let getEntityFromState = (
         )
         ->Array.join(", ")
       JsError.throwWithMessage(
-        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) — use getAll() and filter by ${field.fieldName}.`,
+        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) — use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
       )
     }
   }
@@ -523,9 +523,43 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
   }
 }
 
+// The same filter syntax as `context.X.getWhere` in a handler, matched against
+// the store instead of a database. A per-chain entity's rows carry their chain
+// id, so `{chainId: {_eq: 1}}` is what narrows an id that exists on several
+// chains.
+let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
+  dict<dict<unknown>> => promise<array<Internal.entity>>
+) => {
+  filter => {
+    if state.processInProgress {
+      JsError.throwWithMessage(
+        `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
+      )
+    }
+    let filters =
+      filter->EntityFilter.parseGetWhereOrThrow(
+        ~entityName=entityConfig.name,
+        ~table=entityConfig.table,
+      )
+    let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
+    // parseGetWhereOrThrow expands an operator group into alternatives whose
+    // matches are disjoint, so the union needs no dedup.
+    Promise.resolve(
+      entityDict
+      ->Dict.valuesToArray
+      ->Array.filter(entity => {
+        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+        filters->Array.some(filter => filter->EntityFilter.matches(~entity=entityAsDict))
+      })
+      ->Array.map(copyEntity),
+    )
+  }
+}
+
 type entityOperations = {
   get: string => promise<option<Internal.entity>>,
   getAll: unit => promise<array<Internal.entity>>,
+  getWhere: dict<dict<unknown>> => promise<array<Internal.entity>>,
   getOrThrow: (string, ~message: string=?) => promise<Internal.entity>,
   set: Internal.entity => unit,
 }
@@ -700,6 +734,7 @@ let createTestIndexer = (): t<'processConfig> => {
         {
           get: makeEntityGet(~state, ~entityConfig),
           getAll: makeEntityGetAll(~state, ~entityConfig),
+          getWhere: makeEntityGetWhere(~state, ~entityConfig),
           getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
           set: makeEntitySet(~state, ~entityConfig),
         },

@@ -53,8 +53,8 @@ Per-chain entities reserve the `chainId` column name (`chain_id` under
 
 Outside a handler there is no chain in context, so the test indexer's
 chain-agnostic operations take one: `indexer.Counter.set({ id, count, chainId })`,
-and `indexer.Counter.get(id)` throws if the id exists on more than one chain (use
-`indexer.Counter.getAll()` and filter by `chainId` instead).
+and `indexer.Counter.get(id)` throws if the id exists on more than one chain —
+narrow it with `indexer.Counter.getWhere({ chainId: { _eq: 1 } })`.
 
 ## Entity ID Namespacing
 

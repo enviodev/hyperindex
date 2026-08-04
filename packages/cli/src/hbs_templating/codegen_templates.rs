@@ -1891,22 +1891,26 @@ type contractRegisterContext = {{
         // because `getTestIndexerEntityOperations` returns it for every entity,
         // resolving the id through the name GADT.
         let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
+type testIndexerEntityOperations<'entity, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }
 
-type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: 'id => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
@@ -1921,7 +1925,11 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
             .filter(|entity| !entity.cross_chain)
             .map(|entity| {
                 let name = &entity.name.capitalized;
-                format!("\ntype testIndexerRow{name} = {{...Entities.{name}.t, chainId: int}}\n")
+                format!(
+                    "\ntype testIndexerRow{name} = {{...Entities.{name}.t, chainId: int}}\ntype \
+                     testIndexerGetWhereFilter{name} = {{...Entities.{name}.getWhereFilter, \
+                     @as(\"chainId\") chainId?: Envio.whereOperator<int>}}\n"
+                )
             })
             .collect::<Vec<_>>()
             .join("");
@@ -1930,17 +1938,23 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
             .iter()
             .map(|entity| {
                 let name = &entity.name.capitalized;
-                let row = if entity.cross_chain {
-                    format!("Entities.{name}.t")
+                let (row, filter) = if entity.cross_chain {
+                    (
+                        format!("Entities.{name}.t"),
+                        format!("Entities.{name}.getWhereFilter"),
+                    )
                 } else {
-                    format!("testIndexerRow{name}")
+                    (
+                        format!("testIndexerRow{name}"),
+                        format!("testIndexerGetWhereFilter{name}"),
+                    )
                 };
                 if entity_id_type(entity).0 {
-                    format!("  \\\"{name}\": testIndexerEntityOperations<{row}>,")
+                    format!("  \\\"{name}\": testIndexerEntityOperations<{row}, {filter}>,")
                 } else {
                     format!(
                         "  \\\"{name}\": testIndexerEntityOperationsWithCustomId<{row}, \
-                         Entities.{name}.id>,",
+                         Entities.{name}.id, {filter}>,",
                     )
                 }
             })
@@ -1977,7 +1991,7 @@ type testIndexer = {{
         // The GADT name value compiles to a string at runtime via @as decorators,
         // so @get_index can use Entities.name directly as a dictionary key
         if !entities.is_empty() {
-            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = """#;
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = """#;
 
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
@@ -3546,10 +3560,11 @@ type Vault {
             // Numeric ids use the custom-id operation variants...
             "handlerEntityOperationsWithCustomId<Entities.Chain.t, Entities.Chain.id, \
              Entities.Chain.getWhereFilter>",
-            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.t, Entities.BigThing.id>",
+            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.t, Entities.BigThing.id, \
+             Entities.BigThing.getWhereFilter>",
             // ...while string ids stay on the plain, id-argument-free variants.
             "handlerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
-            "testIndexerEntityOperations<Entities.Vault.t>",
+            "testIndexerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
         ];
         for expected in expectations {
             assert!(
@@ -3598,8 +3613,12 @@ type GlobalCounter @crossChain {
 
         let expectations = [
             "type testIndexerRowCounter = {...Entities.Counter.t, chainId: int}",
-            "\"Counter\": testIndexerEntityOperations<testIndexerRowCounter>,",
-            "\"GlobalCounter\": testIndexerEntityOperations<Entities.GlobalCounter.t>,",
+            "type testIndexerGetWhereFilterCounter = {...Entities.Counter.getWhereFilter, \
+             @as(\"chainId\") chainId?: Envio.whereOperator<int>}",
+            "\"Counter\": testIndexerEntityOperations<testIndexerRowCounter, \
+             testIndexerGetWhereFilterCounter>,",
+            "\"GlobalCounter\": testIndexerEntityOperations<Entities.GlobalCounter.t, \
+             Entities.GlobalCounter.getWhereFilter>,",
         ];
         for expected in expectations {
             assert!(
@@ -3608,6 +3627,7 @@ type GlobalCounter @crossChain {
             );
         }
         assert!(!indexer_code.contains("testIndexerRowGlobalCounter"));
+        assert!(!indexer_code.contains("testIndexerGetWhereFilterGlobalCounter"));
     }
 
     #[test]
