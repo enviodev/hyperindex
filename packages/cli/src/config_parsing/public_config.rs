@@ -48,6 +48,9 @@ pub(crate) struct PublicConfigJson<'a> {
     raw_events: bool,
     #[serde(skip_serializing_if = "is_default_chain_id_mode")]
     chain_id_mode: ChainIdMode,
+    // Always emitted, together with each entity's resolved `crossChain`, so
+    // the runtime never has to re-derive one from the other.
+    default_cross_chain: bool,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
@@ -65,6 +68,20 @@ struct StorageConfig {
     postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    // How each backend spells appended internal columns (currently only the
+    // per-chain chain-id column). Omitted when the backend is disabled or
+    // keeps the default `original` format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_column_name_format: Option<ColumnNameFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_column_name_format: Option<ColumnNameFormat>,
+}
+
+fn non_default_format(backend: Option<system_config::StorageBackend>) -> Option<ColumnNameFormat> {
+    match backend?.column_name_format {
+        ColumnNameFormat::Original => None,
+        format => Some(format),
+    }
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -72,6 +89,8 @@ impl From<&system_config::Storage> for StorageConfig {
         Self {
             postgres: s.postgres.is_some(),
             clickhouse: s.clickhouse.is_some(),
+            postgres_column_name_format: non_default_format(s.postgres),
+            clickhouse_column_name_format: non_default_format(s.clickhouse),
         }
     }
 }
@@ -80,6 +99,9 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // Resolved against the config's `defaultCrossChain`, so the runtime reads
+    // one boolean per entity instead of combining a flag and a directive.
+    cross_chain: bool,
     // Mirrors the user's `@storage(...)` directive verbatim: only the args
     // they wrote are emitted. Without a directive the entity gets the
     // backends marked `default` in config.yaml — stamped here, except when
@@ -835,6 +857,10 @@ impl SystemConfig {
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    cross_chain: system_config::entity_is_cross_chain(
+                        entity,
+                        cfg.default_cross_chain,
+                    ),
                     storage,
                     properties,
                     derived_fields,
@@ -855,6 +881,7 @@ impl SystemConfig {
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
             chain_id_mode: cfg.chain_id_mode,
+            default_cross_chain: cfg.default_cross_chain,
             storage: (&cfg.storage).into(),
             evm,
             fuel,

@@ -31,6 +31,10 @@ type t = {
   // then smoothed with an EMA on every batch (see applyBatchProgress). None
   // until the chain has processed at least one event.
   mutable chainDensity: option<float>,
+  // In-memory tables for the entities whose rows belong to a single chain.
+  // Empty in the default cross-chain mode, where every entity's table lives on
+  // the indexer instead.
+  mutable entities: EntityTables.t,
   mutable reorgDetection: ReorgDetection.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
@@ -96,11 +100,13 @@ let make = (
   ~chainDensity=None,
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~reorgThresholdReadyTolerance=100,
+  ~perChainEntities: array<Internal.entityConfig>=[],
   ~logger: Pino.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
   {
     logger,
+    entities: EntityTables.make(perChainEntities),
     onEventRegistrations,
     fetchState,
     addressStore,
@@ -318,6 +324,7 @@ let makeInternal = (
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
+    ~perChainEntities=config.allEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
     ~transactionStore=TransactionStore.make(
@@ -408,6 +415,11 @@ let makeFromDbState = (
 // --- Read accessors. ---
 
 let logger = (cs: t) => cs.logger
+let entities = (cs: t) => cs.entities
+
+// Rollback discards every uncommitted change, so this chain's partition is
+// rebuilt from scratch alongside the indexer's cross-chain one.
+let resetEntities = (cs: t, ~perChainEntities) => cs.entities = EntityTables.make(perChainEntities)
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let reorgDetection = (cs: t) => cs.reorgDetection

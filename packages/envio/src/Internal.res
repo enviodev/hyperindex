@@ -744,6 +744,10 @@ type genericEntityConfig<'entity> = {
   schema: S.t<'entity>,
   table: Table.table,
   storage: entityStorage,
+  // Resolved by the CLI against the config's `defaultCrossChain` and the
+  // entity's `@crossChain`. When false the table carries a chain-id column in
+  // its primary key and every row belongs to exactly one chain.
+  crossChain: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
@@ -773,10 +777,11 @@ type effect = {
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,
-  // When true (the default) a single cache is shared across every chain and the
-  // handler must not read context.chain. When false the cache is isolated per
-  // chain and context.chain.id is available.
-  crossChain: bool,
+  // When true a single cache is shared across every chain and the handler must
+  // not read context.chain. When false the cache is isolated per chain and
+  // context.chain.id is available. None means the effect didn't say, and the
+  // config's `defaultCrossChain` decides.
+  crossChain: option<bool>,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
   rateLimit: option<rateLimitOptions>,
@@ -791,6 +796,27 @@ type chainScope =
   | @as("crossChain") CrossChain
   | Chain(ChainId.t)
 
+// "crossChain" or the decimal chain id.
+let chainScopeToString = scope =>
+  switch scope {
+  | CrossChain => "crossChain"
+  | Chain(chainId) => chainId->ChainId.toString
+  }
+
+let chainScopeChainId = scope =>
+  switch scope {
+  | CrossChain => None
+  | Chain(chainId) => Some(chainId)
+  }
+
+// A copy of the entity carrying the chain-id column a per-chain entity's row
+// needs. Never mutates the handler's object, which stays in the in-memory table.
+let stampChainId = (entity: entity, ~fieldName, ~chainId: ChainId.t): entity =>
+  Utils.Dict.merge(
+    entity->(Utils.magic: entity => dict<unknown>),
+    Dict.fromArray([(fieldName, chainId->(Utils.magic: ChainId.t => unknown))]),
+  )->(Utils.magic: dict<unknown> => entity)
+
 let cacheTablePrefix = "envio_effect_"
 
 // The single reversible mapping between an effect's (name, scope) and its
@@ -804,13 +830,6 @@ module EffectCache = {
     switch scope {
     | CrossChain => cacheTablePrefix ++ effectName
     | Chain(chainId) => `envio_${chainId->ChainId.toString}_effect_${effectName}`
-    }
-
-  // "crossChain" or the decimal chain id. Used as the `scope` Prometheus label.
-  let scopeToString = scope =>
-    switch scope {
-    | CrossChain => "crossChain"
-    | Chain(chainId) => chainId->ChainId.toString
     }
 
   // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —

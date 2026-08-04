@@ -93,11 +93,11 @@ const getTokenMetadata = createEffect(
 | `output` | `S.Schema` | — |
 | `cache` | `boolean` | `false` |
 | `rateLimit` | `false \| { calls, per }` | required |
-| `crossChain` | `boolean` | `true` |
+| `crossChain` | `boolean` | `true` (`false` under `disable_default_cross_chain`) |
 
 ## crossChain (per-chain caching)
 
-`crossChain` decides whether an input is cached and rate-limited once globally or once per chain. Default `true`.
+`crossChain` decides whether an input is cached and rate-limited once globally or once per chain. Default `true`, or `false` when config.yaml sets `disable_default_cross_chain: true` — see the `indexer-multichain` skill.
 
 - **`crossChain: true` (default):** one shared cache. Use for chain-agnostic calls — the result is the same whatever chain asked (token metadata, a price by symbol).
 - **`crossChain: false`:** a separate cache and rate-limit budget per chain, and `context.chain.id` becomes available in the handler. Use when the result depends on the chain — an on-chain read, a per-chain RPC. The same input is fetched once per chain instead of once globally.

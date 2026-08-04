@@ -108,8 +108,8 @@ impl Schema {
         .context("Failed creating a relative path to schema")?;
 
         let schema_string = std::fs::read_to_string(&schema_path).context(format!(
-            "Failed to read schema file at {}. Please ensure that the schema file is \
-             placed correctly in the directory.",
+            "Failed to read schema file at {}. Please ensure that the schema file is placed \
+             correctly in the directory.",
             schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
@@ -179,8 +179,8 @@ impl Schema {
             .collect::<Vec<_>>();
         if !duplicate_names.is_empty() {
             Err(anyhow!(
-                "Schema contains the following enums and entities with the same name, all \
-                 type definitions must be unique in the schema: {}",
+                "Schema contains the following enums and entities with the same name, all type \
+                 definitions must be unique in the schema: {}",
                 duplicate_names.join(", ")
             ))
         } else {
@@ -305,10 +305,11 @@ impl Schema {
                                                     != Self::id_scalar_kind(&entity_id_scalar)
                                                 {
                                                     Err(anyhow!(
-                                                        "Derived field '{derived_from_field}' on entity \
-                                                         '{name}' is a {scalar}, but it is matched against \
-                                                         the id of '{0}', which is a {entity_id_scalar}. \
-                                                         Give it the same type as '{0}'.id, or make it an \
+                                                        "Derived field '{derived_from_field}' on \
+                                                         entity '{name}' is a {scalar}, but it is \
+                                                         matched against the id of '{0}', which \
+                                                         is a {entity_id_scalar}. Give it the \
+                                                         same type as '{0}'.id, or make it an \
                                                          Object relationship with Entity '{0}'.",
                                                         entity.name
                                                     ))?
@@ -394,10 +395,10 @@ impl GraphQLEnum {
 
         if !invalid_names.is_empty() {
             Err(anyhow!(
-                "Schema contains the enum names and/or values that does not match the \
-                 following pattern: It must start with a letter. It can only contain letters, \
-                 numbers, and underscores (no spaces). It must have a maximum length of 63 \
-                 characters. Invalid names: '{}'",
+                "Schema contains the enum names and/or values that does not match the following \
+                 pattern: It must start with a letter. It can only contain letters, numbers, and \
+                 underscores (no spaces). It must have a maximum length of 63 characters. Invalid \
+                 names: '{}'",
                 invalid_names.join(", ")
             ))
         } else {
@@ -454,6 +455,9 @@ pub struct Entity {
     pub description: Option<String>,
     pub postgres: Option<bool>,
     pub clickhouse: Option<ClickHouseEntityStorage>,
+    // `@crossChain` on the entity. Only meaningful when the config sets
+    // `disable_default_cross_chain: true`; otherwise codegen rejects it.
+    pub cross_chain: bool,
 }
 
 impl Entity {
@@ -464,6 +468,7 @@ impl Entity {
         description: Option<String>,
         postgres: Option<bool>,
         clickhouse: Option<ClickHouseEntityStorage>,
+        cross_chain: bool,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -560,6 +565,7 @@ impl Entity {
             description,
             postgres,
             clickhouse,
+            cross_chain,
         })
     }
 
@@ -593,29 +599,40 @@ impl Entity {
                                     Value::List(parts) => {
                                         if parts.len() != 2 {
                                             return Err(anyhow!(
-                                                "Index field with direction must be a list of exactly 2 elements: \
-                                                 [\"fieldName\", \"ASC\" or \"DESC\"]. Got {} elements.",
+                                                "Index field with direction must be a list of \
+                                                 exactly 2 elements: [\"fieldName\", \"ASC\" or \
+                                                 \"DESC\"]. Got {} elements.",
                                                 parts.len()
                                             ));
                                         }
                                         let field_name = match &parts[0] {
                                             Value::String(name) => name.clone(),
-                                            _ => return Err(anyhow!(
-                                                "First element of index field must be a string field name"
-                                            )),
+                                            _ => {
+                                                return Err(anyhow!(
+                                                    "First element of index field must be a \
+                                                     string field name"
+                                                ))
+                                            }
                                         };
                                         let direction = match &parts[1] {
-                                            Value::String(dir) => match dir.to_uppercase().as_str() {
+                                            Value::String(dir) => match dir.to_uppercase().as_str()
+                                            {
                                                 "ASC" => IndexFieldDirection::Asc,
                                                 "DESC" => IndexFieldDirection::Desc,
-                                                _ => return Err(anyhow!(
-                                                    "Index direction must be \"ASC\" or \"DESC\", got \"{}\"",
-                                                    dir
-                                                )),
+                                                _ => {
+                                                    return Err(anyhow!(
+                                                        "Index direction must be \"ASC\" or \
+                                                         \"DESC\", got \"{}\"",
+                                                        dir
+                                                    ))
+                                                }
                                             },
-                                            _ => return Err(anyhow!(
-                                                "Second element of index field must be a string direction (\"ASC\" or \"DESC\")"
-                                            )),
+                                            _ => {
+                                                return Err(anyhow!(
+                                                    "Second element of index field must be a \
+                                                     string direction (\"ASC\" or \"DESC\")"
+                                                ))
+                                            }
                                         };
                                         Ok(IndexField::new(field_name, direction))
                                     }
@@ -654,6 +671,7 @@ impl Entity {
             .context(format!("Failed parsing fields on entity {name}"))?;
 
         let (postgres, clickhouse) = parse_storage_directive(obj)?;
+        let cross_chain = parse_cross_chain_directive(obj)?;
 
         Self::new(
             name,
@@ -662,6 +680,7 @@ impl Entity {
             obj.description.clone(),
             postgres,
             clickhouse,
+            cross_chain,
         )
         .context(format!("Failed constructing entity {name}"))
     }
@@ -775,10 +794,42 @@ impl Entity {
     }
 }
 
-const STORAGE_DIRECTIVE_HINT: &str = "Expected args from {postgres, clickhouse}: `postgres` \
-     takes a boolean, `clickhouse` takes a boolean or a table options object, e.g. \
-     @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \
-     \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).";
+const STORAGE_DIRECTIVE_HINT: &str =
+    "Expected args from {postgres, clickhouse}: `postgres` takes a boolean, `clickhouse` takes a \
+     boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or \
+     @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \
+     \"timestamp + INTERVAL 2 YEAR\"}).";
+
+/// Parse the optional `@crossChain` directive on an entity. It takes no
+/// arguments — whether it is legal at all depends on the config's
+/// `disable_default_cross_chain`, which is checked in `system_config.rs`.
+fn parse_cross_chain_directive(obj: &ObjectType<String>) -> anyhow::Result<bool> {
+    let directives: Vec<&Directive<'_, String>> = obj
+        .directives
+        .iter()
+        .filter(|directive| directive.name == "crossChain")
+        .collect();
+
+    match directives.len() {
+        0 => Ok(false),
+        1 => {
+            let directive = directives[0];
+            if let Some((arg_name, _)) = directive.arguments.first() {
+                return Err(anyhow!(
+                    "Invalid @crossChain directive on `{}`. It takes no arguments, but got `{}`.",
+                    obj.name,
+                    arg_name
+                ));
+            }
+            Ok(true)
+        }
+        _ => Err(anyhow!(
+            "Invalid @crossChain directive on `{}`. Only one @crossChain directive is allowed per \
+             entity.",
+            obj.name
+        )),
+    }
+}
 
 /// Parse the optional `@storage` directive on an entity. Returns the
 /// `(postgres, clickhouse)` values as the user wrote them; `None` for an
@@ -801,8 +852,8 @@ fn parse_storage_directive(
 
     if storage_directives.len() > 1 {
         return Err(anyhow!(
-            "Invalid @storage directive on `{}`. Only one @storage directive \
-             is allowed per entity. {STORAGE_DIRECTIVE_HINT}",
+            "Invalid @storage directive on `{}`. Only one @storage directive is allowed per \
+             entity. {STORAGE_DIRECTIVE_HINT}",
             obj.name
         ));
     }
@@ -817,8 +868,8 @@ fn parse_storage_directive(
             "clickhouse" => clickhouse.is_some(),
             other => {
                 return Err(anyhow!(
-                    "Invalid @storage directive on `{}`. Unknown argument \
-                     `{}`. {STORAGE_DIRECTIVE_HINT}",
+                    "Invalid @storage directive on `{}`. Unknown argument `{}`. \
+                     {STORAGE_DIRECTIVE_HINT}",
                     obj.name,
                     other
                 ));
@@ -826,8 +877,8 @@ fn parse_storage_directive(
         };
         if is_duplicate {
             return Err(anyhow!(
-                "Invalid @storage directive on `{}`. Argument `{}` is \
-                 specified more than once. {STORAGE_DIRECTIVE_HINT}",
+                "Invalid @storage directive on `{}`. Argument `{}` is specified more than once. \
+                 {STORAGE_DIRECTIVE_HINT}",
                 obj.name,
                 arg_name
             ));
@@ -836,8 +887,8 @@ fn parse_storage_directive(
             ("postgres", Value::Boolean(b)) => postgres = Some(*b),
             ("postgres", _) => {
                 return Err(anyhow!(
-                    "Invalid @storage directive on `{}`. Argument `postgres` \
-                     must be a boolean. {STORAGE_DIRECTIVE_HINT}",
+                    "Invalid @storage directive on `{}`. Argument `postgres` must be a boolean. \
+                     {STORAGE_DIRECTIVE_HINT}",
                     obj.name
                 ));
             }
@@ -857,9 +908,8 @@ fn parse_storage_directive(
             }
             ("clickhouse", _) => {
                 return Err(anyhow!(
-                    "Invalid @storage directive on `{}`. Argument \
-                     `clickhouse` must be a boolean or a table options \
-                     object. {STORAGE_DIRECTIVE_HINT}",
+                    "Invalid @storage directive on `{}`. Argument `clickhouse` must be a boolean \
+                     or a table options object. {STORAGE_DIRECTIVE_HINT}",
                     obj.name
                 ));
             }
@@ -873,8 +923,8 @@ fn parse_storage_directive(
             .is_some_and(ClickHouseEntityStorage::is_enabled);
     if !enables_anything {
         return Err(anyhow!(
-            "@storage on `{}` enables no storage. At least one of {{postgres, \
-             clickhouse}} must be true.",
+            "@storage on `{}` enables no storage. At least one of {{postgres, clickhouse}} must \
+             be true.",
             obj.name
         ));
     }
@@ -908,16 +958,16 @@ fn parse_clickhouse_table_options(
                             Value::String(field_name) => Ok(field_name.trim().to_string()),
                             _ => Err(anyhow!(
                                 "Invalid @storage directive on `{entity_name}`. \
-                                 `clickhouse.orderBy` must be a list of entity field names, \
-                                 e.g. clickhouse: {{orderBy: [\"timestamp\"]}}."
+                                 `clickhouse.orderBy` must be a list of entity field names, e.g. \
+                                 clickhouse: {{orderBy: [\"timestamp\"]}}."
                             )),
                         })
                         .collect::<anyhow::Result<Vec<String>>>()?,
                     _ => {
                         return Err(anyhow!(
-                            "Invalid @storage directive on `{entity_name}`. \
-                             `clickhouse.orderBy` must be a non-empty list of entity field \
-                             names, e.g. clickhouse: {{orderBy: [\"timestamp\"]}}."
+                            "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` \
+                             must be a non-empty list of entity field names, e.g. clickhouse: \
+                             {{orderBy: [\"timestamp\"]}}."
                         ));
                     }
                 };
@@ -925,9 +975,9 @@ fn parse_clickhouse_table_options(
             }
             other => {
                 return Err(anyhow!(
-                    "Invalid @storage directive on `{entity_name}`. Unknown `clickhouse` \
-                     option `{other}`. Expected options from {{partitionBy, orderBy, ttl}}, \
-                     e.g. clickhouse: {{partitionBy: \"toYYYYMM(timestamp)\", orderBy: \
+                    "Invalid @storage directive on `{entity_name}`. Unknown `clickhouse` option \
+                     `{other}`. Expected options from {{partitionBy, orderBy, ttl}}, e.g. \
+                     clickhouse: {{partitionBy: \"toYYYYMM(timestamp)\", orderBy: \
                      [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}}."
                 ));
             }
@@ -950,15 +1000,15 @@ fn validate_clickhouse_order_by_fields(
     for field_name in order_by {
         if !seen.insert(field_name) {
             return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` lists \
-                 field `{field_name}` more than once."
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` lists field \
+                 `{field_name}` more than once."
             ));
         }
         if field_name == "id" {
             return Err(anyhow!(
                 "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` must not \
-                 list `id`: it's already the default sorting key. List only the additional \
-                 fields to sort by."
+                 list `id`: it's already the default sorting key. List only the additional fields \
+                 to sort by."
             ));
         }
         let field = fields
@@ -967,29 +1017,29 @@ fn validate_clickhouse_order_by_fields(
             .ok_or_else(|| {
                 anyhow!(
                     "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` \
-                 references field `{field_name}` which doesn't exist on the entity. Use the \
-                 field names as written in the schema."
+                     references field `{field_name}` which doesn't exist on the entity. Use the \
+                     field names as written in the schema."
                 )
             })?;
         if field.field_type.is_derived_from() {
             return Err(anyhow!(
                 "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is a @derivedFrom field, which has no column in the \
-                 ClickHouse table."
+                 `{field_name}` is a @derivedFrom field, which has no column in the ClickHouse \
+                 table."
             ));
         }
         if field.field_type.is_optional() {
             return Err(anyhow!(
                 "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is nullable, and ClickHouse doesn't allow nullable columns \
-                 in the sorting key. Make the field non-nullable to sort by it."
+                 `{field_name}` is nullable, and ClickHouse doesn't allow nullable columns in the \
+                 sorting key. Make the field non-nullable to sort by it."
             ));
         }
         if field.field_type.to_user_defined_field_type().is_array() {
             return Err(anyhow!(
                 "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is an array, and ClickHouse doesn't allow array columns in \
-                 the sorting key."
+                 `{field_name}` is an array, and ClickHouse doesn't allow array columns in the \
+                 sorting key."
             ));
         }
         if matches!(
@@ -1071,8 +1121,8 @@ impl Field {
             && (indexed_count > 0 || derived_from_count > 0)
         {
             return Err(anyhow!(
-                "The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove \
-                 the @index or @derivedFrom directive from field {}",
+                "The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the \
+                 @index or @derivedFrom directive from field {}",
                 field.name
             ));
         }
@@ -1090,8 +1140,8 @@ impl Field {
                 match &field_arg.1 {
                     Value::String(val) => Some(val.clone()),
                     _ => Err(anyhow!(
-                        "'field' argument in @derivedFrom directive on field {} needs to \
-                         contain a string",
+                        "'field' argument in @derivedFrom directive on field {} needs to contain \
+                         a string",
                         field.name
                     ))?,
                 }
@@ -1116,16 +1166,16 @@ impl Field {
                     // Process precision for BigInt
                     if config_directive.arguments.len() != 1 {
                         return Err(anyhow!(
-                            "The config directive on a BigInt should only take a single \
-                             integer argument called 'precision'. Field '{}'",
+                            "The config directive on a BigInt should only take a single integer \
+                             argument called 'precision'. Field '{}'",
                             field.name
                         ));
                     }
                     let (arg_name, arg_value) = config_directive.arguments.first().unwrap();
                     if arg_name != "precision" {
                         return Err(anyhow!(
-                            "The config directive on a BigInt should only have a \
-                             'precision' parameter. Unknown parameter '{}'. Field '{}'",
+                            "The config directive on a BigInt should only have a 'precision' \
+                             parameter. Unknown parameter '{}'. Field '{}'",
                             arg_name,
                             field.name
                         ));
@@ -1167,9 +1217,8 @@ impl Field {
 
                     if !unknown_params.is_empty() {
                         return Err(anyhow!(
-                            "The config directive on a BigDecimal should only have \
-                             'precision' and 'scale' parameters. Unknown parameter(s) '{}'. Field \
-                             '{}'",
+                            "The config directive on a BigDecimal should only have 'precision' \
+                             and 'scale' parameters. Unknown parameter(s) '{}'. Field '{}'",
                             unknown_params.join(", "),
                             field.name
                         ));
@@ -1177,8 +1226,8 @@ impl Field {
 
                     if precision.is_none() || scale.is_none() {
                         return Err(anyhow!(
-                            "The config directive on a BigDecimal must have both \
-                             'precision' and 'scale' parameters. Field '{}'",
+                            "The config directive on a BigDecimal must have both 'precision' and \
+                             'scale' parameters. Field '{}'",
                             field.name
                         ));
                     }
@@ -1188,8 +1237,8 @@ impl Field {
                 }
                 _ => {
                     return Err(anyhow!(
-                        "The config directive is only applicable to BigInt and BigDecimal \
-                         scalar types. Field '{}'",
+                        "The config directive is only applicable to BigInt and BigDecimal scalar \
+                         types. Field '{}'",
                         field.name
                     ));
                 }
@@ -1436,9 +1485,9 @@ impl MultiFieldIndex {
             if let Some(field) = fields.iter().find(|f| f.name == single_field_index) {
                 if field.field_type.has_indexed_directive() {
                     return Err(anyhow!(
-                        "The field '{}' is marked as an index. Please either remove the \
-                         @index directive on the field, or the @index(fields: [\"{}\"]) directive \
-                         on the entity",
+                        "The field '{}' is marked as an index. Please either remove the @index \
+                         directive on the field, or the @index(fields: [\"{}\"]) directive on the \
+                         entity",
                         field.name,
                         field.name
                     ));

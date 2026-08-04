@@ -42,7 +42,10 @@ impl Primitive {
             Self::Number => "Number".to_string(),
             Self::Enum(enum_name) => {
                 let capitalized_enum_name = enum_name.capitalize();
-                format!("Enum({{config: Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})")
+                format!(
+                    "Enum({{config: \
+                     Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})"
+                )
             }
         }
     }

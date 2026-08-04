@@ -259,7 +259,8 @@ mod tests {
         );
         assert_eq!(
             parsed.to_ts_type_string(),
-            "{ readonly funder: Address; readonly 1: bigint; readonly 2: boolean; readonly recipient: Address }"
+            "{ readonly funder: Address; readonly 1: bigint; readonly 2: boolean; readonly \
+             recipient: Address }"
         );
     }
 

@@ -64,8 +64,13 @@ module Gate = {
 }
 
 module InMemoryStore = {
-  let setEntity = (indexerState, ~entityConfig: Internal.entityConfig, entity) => {
-    let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
+  let setEntity = (
+    indexerState,
+    ~entityConfig: Internal.entityConfig,
+    ~scope=Internal.CrossChain,
+    entity,
+  ) => {
+    let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
     let entity = entity->(Utils.magic: 'a => Internal.entity)
     inMemTable->InMemoryTable.Entity.set(
       ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
@@ -262,6 +267,7 @@ module Storage = {
         pruneStaleEntityHistory: async (
           ~entityName as _,
           ~entityIndex as _,
+          ~chainIdColumn as _,
           ~safeCheckpointId as _,
         ) => (),
         getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>

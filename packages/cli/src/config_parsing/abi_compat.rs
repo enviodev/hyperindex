@@ -694,7 +694,8 @@ mod tests {
         // alloy's signature parser, so codegen failed when no `abi_file_path`
         // was provided. The fallback parser in `parse_event_signature_to_alloy`
         // accepts these and propagates the field names.
-        let sig = "event ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
+        let sig = "event ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, \
+                   uint16 c, uint16 d, uint8 e) playerBoostInfo)";
         let event = parse_event(sig).expect("custom event signature with named tuple should parse");
         let tuple_field = event
             .inputs

@@ -11,9 +11,12 @@ expression: json
   "rollbackOnReorg": false,
   "saveFullHistory": true,
   "rawEvents": true,
+  "defaultCrossChain": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true
+    "clickhouse": true,
+    "postgresColumnNameFormat": "snake_case",
+    "clickhouseColumnNameFormat": "snake_case"
   },
   "evm": {
     "chains": {
@@ -120,6 +123,7 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "crossChain": true,
       "storage": {
         "postgres": true,
         "clickhouse": true
@@ -170,6 +174,7 @@ expression: json
     },
     {
       "name": "RelatedEntity",
+      "crossChain": true,
       "storage": {
         "postgres": true,
         "clickhouse": true
@@ -187,6 +192,7 @@ expression: json
     },
     {
       "name": "UnannotatedEntity",
+      "crossChain": true,
       "storage": {
         "clickhouse": true
       },

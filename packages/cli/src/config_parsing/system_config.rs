@@ -90,7 +90,7 @@ impl EnvState {
                                 dotenv::Error::Io(_, _) => (),
                                 _ => println!(
                                     "Warning: Failed loading .env file with unexpected error: \
-                                         {err}"
+                                     {err}"
                                 ),
                             };
                             self.maybe_dotenv = Some(EnvMap::new());
@@ -281,7 +281,8 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     let pkg_dir = envio_package_dir.ok_or_else(|| {
         anyhow!(
             "envio version is not a release ({VERSION}) and no envio_package_dir was supplied. \
-             Run via the NAPI host (which resolves it from import.meta.url) or pass an explicit path."
+             Run via the NAPI host (which resolves it from import.meta.url) or pass an explicit \
+             path."
         )
     })?;
 
@@ -323,8 +324,8 @@ impl ChainIdMode {
         let max_id = chains.values().map(|chain| chain.id).max().unwrap_or(0);
         if max_id > MAX_SAFE_CHAIN_ID {
             return Err(anyhow!(
-                "Chain id {max_id} is above the maximum supported chain id \
-                 {MAX_SAFE_CHAIN_ID} (Number.MAX_SAFE_INTEGER)."
+                "Chain id {max_id} is above the maximum supported chain id {MAX_SAFE_CHAIN_ID} \
+                 (Number.MAX_SAFE_INTEGER)."
             ));
         }
         Ok(if max_id <= i32::MAX as u64 {
@@ -345,6 +346,9 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
+    // False when `disable_default_cross_chain: true` — entities and effect
+    // caches are then per-chain unless they opt back in.
+    pub default_cross_chain: bool,
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
@@ -391,9 +395,8 @@ impl Storage {
         }
         if !postgres_enabled && !clickhouse_enabled {
             return Err(anyhow!(
-                "At least one storage backend must be enabled. Please set `postgres: true` \
-                 in the `storage` config (or omit the `storage` section entirely to use the \
-                 default)."
+                "At least one storage backend must be enabled. Please set `postgres: true` in the \
+                 `storage` config (or omit the `storage` section entirely to use the default)."
             ));
         }
         Ok(Self {
@@ -447,19 +450,15 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 .collect::<Vec<_>>()
                 .join("\n");
             return Err(anyhow!(
-                "Schema validation failed:\n\
-                 \n\
-                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n\
-                 {listed}\n\
-                 \n\
-                 Fixes:\n  \
-                 - Set `default: true` on a backend under `storage:` in config.yaml to include these entities automatically. Example:\n      \
-                 storage:\n        \
-                 postgres:\n          \
-                 default: true\n  \
-                 - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
-                 type {example} @storage(postgres: true) {{ ... }}"
-            ));
+                    "Schema validation failed:\n\nEntities with no storage backend (no @storage \
+                     directive, and no backend is marked `default: true` in \
+                     config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend \
+                     under `storage:` in config.yaml to include these entities automatically. \
+                     Example:\n      storage:\n        postgres:\n          default: true\n  - Or \
+                     add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
+                     entities listed above. Example:\n      type {example} @storage(postgres: \
+                     true) {{ ... }}"
+                ));
         }
     }
 
@@ -506,9 +505,9 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                                 "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
                                  `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
                                  String (sorted lexicographically, not numerically) unless a \
-                                 precision is set. Add `@config(precision: N)` with \
-                                 N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores \
-                                 so it sorts as a numeric Decimal.",
+                                 precision is set. Add `@config(precision: N)` with N <= \
+                                 {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores so it \
+                                 sorts as a numeric Decimal.",
                                 entity.name
                             ));
                         }
@@ -520,11 +519,13 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
                     if bigint_stored_as_string(precision) {
                         return Err(anyhow!(
-                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse stores as a \
-                             String (sorted lexicographically, not numerically) unless a precision is set. \
-                             Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with \
-                             N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric Decimal, \
-                             or set `@storage(clickhouse: {{orderBy: [...]}})` to sort by other fields.",
+                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse \
+                             stores as a String (sorted lexicographically, not numerically) \
+                             unless a precision is set. Since `id` is ClickHouse's sorting key, \
+                             add `@config(precision: N)` with N <= \
+                             {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric \
+                             Decimal, or set `@storage(clickhouse: {{orderBy: [...]}})` to sort \
+                             by other fields.",
                             entity.name
                         ));
                     }
@@ -558,13 +559,9 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         .collect::<Vec<_>>()
         .join("\n");
     Err(anyhow!(
-        "Schema validation failed:\n\
-         \n\
-         Entities using storages not enabled in config.yaml:\n\
-         {listed}\n\
-         \n\
-         Fixes:\n  \
-         - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+        "Schema validation failed:\n\nEntities using storages not enabled in \
+         config.yaml:\n{listed}\n\nFixes:\n  - Remove the unsupported storage from @storage on \
+         these entities, or enable it under `storage:` in config.yaml."
     ))
 }
 
@@ -616,14 +613,10 @@ pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyh
     }
     let listed = invalid.join("\n");
     Err(anyhow!(
-        "Schema validation failed:\n\
-         \n\
-         @derivedFrom relationships between entities that don't share the postgres storage:\n\
-         {listed}\n\
-         \n\
-         Fixes:\n  \
-         - Add postgres to the @storage directive of the referenced entities, or\n  \
-         - Remove the @derivedFrom fields listed above."
+        "Schema validation failed:\n\n@derivedFrom relationships between entities that don't \
+         share the postgres storage:\n{listed}\n\nFixes:\n  - Add postgres to the @storage \
+         directive of the referenced entities, or\n  - Remove the @derivedFrom fields listed \
+         above."
     ))
 }
 
@@ -722,60 +715,137 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
 
     if !empty.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entity fields that would create an empty database column name:\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Rename the listed fields in schema.graphql.",
+            "Schema validation failed:\n\nEntity fields that would create an empty database \
+             column name:\n{}\n\nFixes:\n  - Rename the listed fields in schema.graphql.",
             empty.join("\n")
         ));
     }
     if !reserved.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entity fields that would create database columns with the reserved `envio_` prefix:\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
-             are reserved for internal indexer columns (eg `envio_change` in entity history \
-             tables).",
+            "Schema validation failed:\n\nEntity fields that would create database columns with \
+             the reserved `envio_` prefix:\n{}\n\nFixes:\n  - Rename the listed fields in \
+             schema.graphql. Column names starting with `envio_` are reserved for internal \
+             indexer columns (eg `envio_change` in entity history tables).",
             reserved.join("\n")
         ));
     }
     if !too_long.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entity fields that would create database column names longer than {MAX_PG_IDENTIFIER_LENGTH} \
-             characters (Postgres truncates longer identifiers, which can cause collisions and \
-             broken GraphQL field mappings):\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Shorten the listed fields in schema.graphql so the resulting column names fit \
-             within {MAX_PG_IDENTIFIER_LENGTH} characters.",
+            "Schema validation failed:\n\nEntity fields that would create database column names \
+             longer than {MAX_PG_IDENTIFIER_LENGTH} characters (Postgres truncates longer \
+             identifiers, which can cause collisions and broken GraphQL field \
+             mappings):\n{}\n\nFixes:\n  - Shorten the listed fields in schema.graphql so the \
+             resulting column names fit within {MAX_PG_IDENTIFIER_LENGTH} characters.",
             too_long.join("\n")
         ));
     }
     if !collisions.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Multiple entity fields map to the same database column:\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
-             Note that entity reference fields get an `_id` suffix, and `column_name_format: \
-             snake_case` converts field names to snake_case.",
+            "Schema validation failed:\n\nMultiple entity fields map to the same database \
+             column:\n{}\n\nFixes:\n  - Rename the conflicting fields in schema.graphql so they \
+             map to distinct columns. Note that entity reference fields get an `_id` suffix, and \
+             `column_name_format: snake_case` converts field names to snake_case.",
             collisions.join("\n")
         ));
     }
     Ok(())
+}
+
+/// The chain-id column appended to per-chain entity tables, spelled for the
+/// backend's configured `column_name_format`.
+pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
+    match format {
+        human_config::ColumnNameFormat::Original => "chainId",
+        human_config::ColumnNameFormat::SnakeCase => "chain_id",
+    }
+}
+
+/// Whether an entity's rows are shared across chains. With the default
+/// cross-chain mode every entity is; otherwise only those carrying
+/// `@crossChain`.
+pub fn entity_is_cross_chain(entity: &Entity, default_cross_chain: bool) -> bool {
+    default_cross_chain || entity.cross_chain
+}
+
+/// `@crossChain` only means something when entities are per-chain by default.
+/// Left silently accepted it would read as "this entity is special" while
+/// changing nothing, so reject it instead of ignoring it.
+pub fn validate_cross_chain_directives(
+    default_cross_chain: bool,
+    schema: &Schema,
+) -> anyhow::Result<()> {
+    if !default_cross_chain {
+        return Ok(());
+    }
+    let mut annotated: Vec<&str> = schema
+        .entities
+        .values()
+        .filter(|entity| entity.cross_chain)
+        .map(|entity| entity.name.as_str())
+        .collect();
+    annotated.sort_unstable();
+
+    let Some(first) = annotated.first() else {
+        return Ok(());
+    };
+    Err(anyhow!(
+        "@crossChain on `{first}` has no effect because entities are cross-chain by default. Set \
+         `disable_default_cross_chain: true` in config.yaml to make entities per-chain, or remove \
+         the directive."
+    ))
+}
+
+/// Per-chain entities get a chain-id column appended to their table, so no
+/// schema field may claim that column name. Cross-chain entities keep the name
+/// free.
+pub fn validate_chain_id_column_names(
+    storage: &Storage,
+    schema: &Schema,
+    default_cross_chain: bool,
+) -> anyhow::Result<()> {
+    let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
+    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
+        if !formats.contains(&backend.column_name_format) {
+            formats.push(backend.column_name_format);
+        }
+    }
+
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut offending: Vec<String> = vec![];
+    for entity in &entities {
+        if entity_is_cross_chain(entity, default_cross_chain) {
+            continue;
+        }
+        for format in &formats {
+            let reserved = chain_id_column_name(*format);
+            for gql_field in entity.get_fields() {
+                if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
+                    if pg_field.db_column_name(*format) == reserved {
+                        let line = format!(
+                            "  - `{}.{}` maps to the \"{reserved}\" column.",
+                            entity.name, pg_field.field_name
+                        );
+                        if !offending.contains(&line) {
+                            offending.push(line);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if offending.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nEntity fields that collide with the chain-id column added \
+         to per-chain entities:\n{}\n\nFixes:\n  - Rename the listed fields in schema.graphql.\n  \
+         - Or add `@crossChain` to the entity so its rows are shared across chains and no \
+         chain-id column is added.",
+        offending.join("\n")
+    ))
 }
 
 // ClickHouse has no `Nullable(Array(T))` type, so a nullable array column on a
@@ -822,15 +892,10 @@ pub fn validate_clickhouse_nullable_arrays(
     }
 
     Err(anyhow!(
-        "Schema validation failed:\n\
-         \n\
-         Nullable array fields are not supported by ClickHouse storage:\n\
-         {}\n\
-         \n\
-         Fixes:\n  \
-         - Make the field required and explicitly set an empty array instead of null. For \
-         example, change the type from `[String!]` to `[String!]!` in schema.graphql, and \
-         assign `[]` instead of `null`/`undefined` in your handlers.",
+        "Schema validation failed:\n\nNullable array fields are not supported by ClickHouse \
+         storage:\n{}\n\nFixes:\n  - Make the field required and explicitly set an empty array \
+         instead of null. For example, change the type from `[String!]` to `[String!]!` in \
+         schema.graphql, and assign `[]` instead of `null`/`undefined` in your handlers.",
         offending.join("\n")
     ))
 }
@@ -948,10 +1013,13 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
+        let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
         validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
+        validate_cross_chain_directives(default_cross_chain, &schema)?;
+        validate_chain_id_column_names(&storage, &schema, default_cross_chain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
@@ -1114,6 +1182,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
+                    default_cross_chain,
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
@@ -1263,6 +1332,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
+                    default_cross_chain,
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
@@ -1408,6 +1478,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
+                    default_cross_chain,
                     schema,
                     field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
@@ -1424,9 +1495,9 @@ impl SystemConfig {
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
-                "Failed to resolve config path {0} (--config {1} resolved relative to \
-                 --directory {2}). Make sure the file exists. Note that --config and \
-                 ENVIO_CONFIG are interpreted relative to --directory.",
+                "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
+                 {2}). Make sure the file exists. Note that --config and ENVIO_CONFIG are \
+                 interpreted relative to --directory.",
                 project_paths.config.to_str().unwrap_or("{unknown}"),
                 project_paths.config_relative_to_root().display(),
                 project_paths.project_root.display(),
@@ -1459,8 +1530,8 @@ impl SystemConfig {
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
-                "Failed to deserialize config. The config.yaml file is either not a valid \
-                 yaml or the \"ecosystem\" field is not a string.",
+                "Failed to deserialize config. The config.yaml file is either not a valid yaml or \
+                 the \"ecosystem\" field is not a string.",
             )?;
 
         let ecosystem = match config_discriminant.ecosystem.as_deref() {
@@ -1480,8 +1551,7 @@ impl SystemConfig {
             Ecosystem::Evm => {
                 let evm_config: EvmConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information \
-                         {}",
+                        "Failed to deserialize config. Visit the docs for more information {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
                 HumanConfig::Evm(evm_config)
@@ -1489,8 +1559,7 @@ impl SystemConfig {
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information \
-                         {}",
+                        "Failed to deserialize config. Visit the docs for more information {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
                 HumanConfig::Fuel(fuel_config)
@@ -1498,8 +1567,7 @@ impl SystemConfig {
             Ecosystem::Svm => {
                 let svm_config: human_config::svm::HumanConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information \
-                         {}",
+                        "Failed to deserialize config. Visit the docs for more information {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
                 HumanConfig::Svm(svm_config)
@@ -1818,8 +1886,8 @@ fn resolve_program_schema(
     if let Some(idl_path) = program.idl.as_deref() {
         if any_instruction_carries_schema {
             return Err(anyhow!(
-                "Program '{}': `idl` is mutually exclusive with per-instruction \
-                 `accounts`/`args` overrides. Use one or the other.",
+                "Program '{}': `idl` is mutually exclusive with per-instruction `accounts`/`args` \
+                 overrides. Use one or the other.",
                 program.name
             ));
         }
@@ -1880,8 +1948,8 @@ fn resolve_instruction_layout(
     }
     if instr.accounts.is_some() != instr.args.is_some() {
         return Err(anyhow!(
-            "Instruction '{}': `accounts` and `args` must be provided together \
-             (or both omitted to fall back to a bundled/IDL schema).",
+            "Instruction '{}': `accounts` and `args` must be provided together (or both omitted \
+             to fall back to a bundled/IDL schema).",
             instr.name
         ));
     }
@@ -2117,15 +2185,15 @@ impl Contract {
             if let Some(existing) = seen_by_name.insert(&event.name, event) {
                 if existing.sighash == event.sighash {
                     return Err(anyhow!(
-                        "Contract {name} defines the event \"{}\" more than once. \
-                         Please remove the duplicate.",
+                        "Contract {name} defines the event \"{}\" more than once. Please remove \
+                         the duplicate.",
                         event.name,
                     ));
                 }
                 return Err(anyhow!(
-                    "Contract {name} has two events named \"{}\". Give one of them a \
-                     unique name with the \"name\" field so the generated code and \
-                     the indexer's routing can tell them apart.",
+                    "Contract {name} has two events named \"{}\". Give one of them a unique name \
+                     with the \"name\" field so the generated code and the indexer's routing can \
+                     tell them apart.",
                     event.name,
                 ));
             }
@@ -2162,9 +2230,9 @@ impl Contract {
                 {
                     return Err(anyhow!(
                         "Contract {name} has two events the indexer can't tell apart: \
-                         \"{existing}\" and \"{}\". They match the same on-chain data, so \
-                         the indexer can't decide which one a log belongs to. Please remove \
-                         one of them.",
+                         \"{existing}\" and \"{}\". They match the same on-chain data, so the \
+                         indexer can't decide which one a log belongs to. Please remove one of \
+                         them.",
                         event.name,
                     ));
                 }
@@ -2338,8 +2406,8 @@ impl Event {
         let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
             crate::config_parsing::abi_compat::parse_event_signature_to_alloy(sig).map_err(|err| {
                 anyhow!(
-                    "Unable to parse event signature {} due to the following error: {}. \
-                     Please refer to our docs on how to correctly define a human readable ABI.",
+                    "Unable to parse event signature {} due to the following error: {}. Please \
+                     refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
                 )
@@ -2942,6 +3010,79 @@ mod test {
         );
     }
 
+    mod cross_chain {
+        use super::SystemConfig;
+        use pretty_assertions::assert_eq;
+        use std::collections::HashMap;
+
+        fn parse(disable_default_cross_chain: bool, schema: &str) -> anyhow::Result<SystemConfig> {
+            let mut yaml = String::from("name: cross-chain\n");
+            if disable_default_cross_chain {
+                yaml.push_str("disable_default_cross_chain: true\n");
+            }
+            yaml.push_str("chains:\n  - id: 1\n    start_block: 0\n    contracts: []\n");
+            SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+        }
+
+        fn resolved(config: &SystemConfig, entity: &str) -> bool {
+            super::super::entity_is_cross_chain(
+                config.schema.entities.get(entity).expect("entity"),
+                config.default_cross_chain,
+            )
+        }
+
+        const SCHEMA: &str = "type Counter { id: ID! count: Int! }";
+        const SCHEMA_ANNOTATED: &str =
+            "type Counter { id: ID! count: Int! }\ntype Global @crossChain { id: ID! }";
+
+        #[test]
+        fn default_mode_makes_every_entity_cross_chain() {
+            let config = parse(false, SCHEMA).expect("config");
+            assert_eq!(
+                (config.default_cross_chain, resolved(&config, "Counter")),
+                (true, true)
+            );
+        }
+
+        #[test]
+        fn disabled_default_makes_entities_per_chain_unless_annotated() {
+            let config = parse(true, SCHEMA_ANNOTATED).expect("config");
+            assert_eq!(
+                (
+                    config.default_cross_chain,
+                    resolved(&config, "Counter"),
+                    resolved(&config, "Global"),
+                ),
+                (false, false, true)
+            );
+        }
+
+        #[test]
+        fn cross_chain_directive_rejected_in_default_mode() {
+            assert_eq!(
+                parse(false, SCHEMA_ANNOTATED).unwrap_err().to_string(),
+                "@crossChain on `Global` has no effect because entities are cross-chain by \
+                 default. Set `disable_default_cross_chain: true` in config.yaml to make entities \
+                 per-chain, or remove the directive."
+            );
+        }
+
+        #[test]
+        fn chain_id_field_collides_only_on_per_chain_entities() {
+            let schema = "type Counter { id: ID! chainId: Int! }";
+            assert_eq!(
+                parse(true, schema).unwrap_err().to_string(),
+                "Schema validation failed:\n\nEntity fields that collide with the chain-id column \
+                 added to per-chain entities:\n  - `Counter.chainId` maps to the \"chainId\" \
+                 column.\n\nFixes:\n  - Rename the listed fields in schema.graphql.\n  - Or add \
+                 `@crossChain` to the entity so its rows are shared across chains and no chain-id \
+                 column is added."
+            );
+            assert!(parse(false, schema).is_ok());
+            assert!(parse(true, "type Counter @crossChain { id: ID! chainId: Int! }").is_ok());
+        }
+    }
+
     #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
@@ -3070,10 +3211,12 @@ mod test {
         // A custom event signature whose tuple components are named must not
         // require an ABI file. Selector should match the canonical tuple-only
         // signature (component names stripped per ABI spec).
-        let event_string = "ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
+        let event_string = "ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, \
+                            uint16 c, uint16 d, uint8 e) playerBoostInfo)";
         let parsed = Event::get_abi_event(event_string, &None).unwrap();
 
-        let canonical = "ConsumeBoostVial(address from, uint256 playerId, (uint40,uint24,uint16,uint16,uint8) playerBoostInfo)";
+        let canonical = "ConsumeBoostVial(address from, uint256 playerId, \
+                         (uint40,uint24,uint16,uint16,uint8) playerBoostInfo)";
         let canonical_parsed = Event::get_abi_event(canonical, &None).unwrap();
 
         // Selector is computed from the canonical (unnamed) signature so the
@@ -3346,6 +3489,7 @@ mod test {
                 description: None,
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
+                cross_chain: false,
             }
         }
 
@@ -3456,7 +3600,9 @@ mod test {
                 .unwrap_err()
                 .to_string();
             assert!(
-                err.contains("`Trader`.`orders` derives from `Order`, which is not stored in postgres."),
+                err.contains(
+                    "`Trader`.`orders` derives from `Order`, which is not stored in postgres."
+                ),
                 "unexpected error: {err}"
             );
         }

@@ -82,24 +82,43 @@ type safeReorgBlocks = {
 // - Rollbacks will not cross the safe checkpoint id, so rows older than the anchor can never be referenced again.
 // - If nothing changed in reorg threshold (after the safe checkpoint), the current state for that id can be reconstructed from the
 //   origin table; we do not need a pre-safe anchor for it.
-let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema) => {
+// A per-chain entity's rows are only comparable within a chain, so every id
+// correlation in the history SQL widens to (id, chain id).
+let makeKeyColumns = (~chainIdColumn: option<string>) =>
+  switch chainIdColumn {
+  | Some(column) => ["id", `"${column}"`]
+  | None => ["id"]
+  }
+
+let makeKeyMatch = (~chainIdColumn, ~left, ~right) =>
+  makeKeyColumns(~chainIdColumn)
+  ->Array.map(column => `${left}.${column} = ${right}.${column}`)
+  ->Array.joinUnsafe(" AND ")
+
+let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  let keyColumns = makeKeyColumns(~chainIdColumn)
+  let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
 
   `WITH anchors AS (
-  SELECT t.id, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
+  SELECT ${anchorKeys}, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
   FROM ${historyTableRef} t WHERE t.${checkpointIdFieldName} <= $1
-  GROUP BY t.id
+  GROUP BY ${anchorKeys}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
-WHERE d.id = a.id
+WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
   AND (
     d.${checkpointIdFieldName} < a.keep_checkpoint_id
     OR (
       d.${checkpointIdFieldName} = a.keep_checkpoint_id AND
       NOT EXISTS (
         SELECT 1 FROM ${historyTableRef} ps 
-        WHERE ps.id = d.id AND ps.${checkpointIdFieldName} > $1
+        WHERE ${makeKeyMatch(
+      ~chainIdColumn,
+      ~left="ps",
+      ~right="d",
+    )} AND ps.${checkpointIdFieldName} > $1
       ) 
     )
   );`
@@ -110,26 +129,40 @@ let pruneStaleEntityHistory = (
   ~entityName,
   ~entityIndex,
   ~pgSchema,
+  ~chainIdColumn,
   ~safeCheckpointId,
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema),
+    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
     [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }
 
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0
-let makeBackfillHistoryQuery = (~pgSchema, ~entityName, ~entityIndex, ~idPgType) => {
+// The ids belong to a single chain (the flush group's scope), so the chain is
+// pinned with a literal rather than unnested alongside them.
+let makeBackfillHistoryQuery = (
+  ~pgSchema,
+  ~entityName,
+  ~entityIndex,
+  ~idPgType,
+  ~chainIdColumn,
+  ~chainId: option<ChainId.t>,
+) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  let chainFilter = switch (chainIdColumn, chainId) {
+  | (Some(column), Some(chainId)) => ` AND e."${column}" = ${chainId->ChainId.toString}`
+  | _ => ""
+  }
   `WITH target_ids AS (
   SELECT UNNEST($1::${idPgType}[]) AS id
 ),
 missing_history AS (
   SELECT e.*
   FROM "${pgSchema}"."${entityName}" e
-  JOIN target_ids t ON e.id = t.id
-  LEFT JOIN ${historyTableRef} h ON h.id = e.id
+  JOIN target_ids t ON e.id = t.id${chainFilter}
+  LEFT JOIN ${historyTableRef} h ON ${makeKeyMatch(~chainIdColumn, ~left="h", ~right="e")}
   WHERE h.id IS NULL
 )
 INSERT INTO ${historyTableRef}
@@ -142,12 +175,20 @@ let backfillHistory = (
   ~pgSchema,
   ~table: Table.table,
   ~entityIndex,
+  ~chainId: option<ChainId.t>,
   ~ids: array<EntityId.t>,
 ) => {
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
   sql
   ->Postgres.preparedUnsafe(
-    makeBackfillHistoryQuery(~entityName=table.tableName, ~entityIndex, ~pgSchema, ~idPgType),
+    makeBackfillHistoryQuery(
+      ~entityName=table.tableName,
+      ~entityIndex,
+      ~pgSchema,
+      ~idPgType,
+      ~chainIdColumn=table->Table.getChainIdField->Option.map(Table.getPgDbFieldName),
+      ~chainId,
+    ),
     [table->Table.encodeIdsToJson(ids)]->(Utils.magic: array<JSON.t> => unknown),
   )
   ->Utils.Promise.ignoreValue

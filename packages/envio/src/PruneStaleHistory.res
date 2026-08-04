@@ -103,6 +103,7 @@ let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpointId) 
     switch await persistence.storage.pruneStaleEntityHistory(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
+      ~chainIdColumn=entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName),
       ~safeCheckpointId,
     ) {
     | () =>

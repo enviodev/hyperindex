@@ -49,6 +49,13 @@
         }
       ]
     },
+    "disable_default_cross_chain": {
+      "description": "By default a single entity row and effect cache is shared by every chain the indexer runs, so the same entity id on two chains resolves to one row. Set this to true to make entities and effect caches per-chain instead: entity tables get a composite (id, chain id) primary key and effects get a cache per chain. Sharing then becomes explicit — add `@crossChain` to an entity in schema.graphql or `crossChain: true` to an effect. (default: false)",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"
