@@ -1366,12 +1366,6 @@ let make = (
         "indexes": invalidIndexNames,
       })
     }
-    Logging.info({
-      "storage": storageName,
-      "msg": `Found ${catalog
-        ->IndexCatalog.size
-        ->Int.toString} existing indexes in the indexer schema.`,
-    })
   }
 
   let isInitialized = async () => {
