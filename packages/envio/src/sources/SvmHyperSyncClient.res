@@ -167,7 +167,7 @@ module ResponseTypes = {
     d4?: string,
     d8?: string,
     isInner: bool,
-    // True when the parent transaction succeeded (renamed from isCommitted).
+    // True when the parent transaction succeeded.
     txSuccess: bool,
   }
 

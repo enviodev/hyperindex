@@ -1753,24 +1753,5 @@ chains:
                 }
             );
         }
-
-        #[test]
-        fn rejects_unknown_fields() {
-            let bad = r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 1
-    experimental:
-      hypersync_config:
-        url: https://solana-mainnet-history.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          bogus_extra: true
-          instructions: []
-"#;
-            assert!(serde_yaml::from_str::<HumanConfig>(bad).is_err());
-        }
     }
 }

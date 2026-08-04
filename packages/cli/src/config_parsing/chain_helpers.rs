@@ -385,9 +385,6 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
-    SophonTestnet = 531050104,
-
     StatusSepolia = 1660990954,
 
     #[subenum(HypersyncChain)]
@@ -560,7 +557,6 @@ impl Network {
             | Network::Sepolia
             | Network::ShimmerEvm
             | Network::Sophon
-            | Network::SophonTestnet
             | Network::XLayer
             | Network::XLayerTestnet
             | Network::Zeta
