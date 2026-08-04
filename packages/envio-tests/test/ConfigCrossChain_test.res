@@ -180,6 +180,64 @@ describe("Per-chain rollback and delete SQL", () => {
   })
 })
 
+// The appended column is spelled by the backend's `column_name_format`, while
+// the entity object and the getWhere filter keep using `chainId`. The two names
+// are used in different places, so pin both.
+describe("Per-chain entities under snake_case columns", () => {
+  let snakeConfig =
+    InternalTestIndexer.fromUserApi(
+      ~configYaml=configYaml(~disableDefaultCrossChain=true) ++
+      `storage:
+  postgres:
+    column_name_format: snake_case
+`,
+      ~schema,
+    ).config
+  let snakeCounter = snakeConfig->entityConfig("Counter")
+
+  it("Keeps the API field name but writes the snake_case column", t => {
+    let field = snakeCounter.table->Table.getChainIdField->Option.getOrThrow
+    t.expect((field.fieldName, field->Table.getPgDbFieldName)).toEqual(("chainId", "chain_id"))
+  })
+
+  it("Uses the column name in the DDL and the row-level predicates", t => {
+    t.expect((
+      PgStorage.makeCreateTableQuery(
+        snakeCounter.table,
+        ~pgSchema="public",
+        ~isNumericArrayAsText=false,
+      ),
+      PgStorage.makeChainIdCondition(
+        ~table=snakeCounter.table,
+        ~chainId=Some(137->ChainId.fromInt),
+      ),
+      PgStorage.makeGetRollbackRemovedIdsQuery(
+        ~entityConfig=snakeCounter,
+        ~pgSchema="public",
+      )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
+    )).toEqual((
+      `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
+      ` AND "chain_id" = 137`,
+      true,
+    ))
+  })
+
+  it("Keys the row schema and the getWhere filter by the API name", t => {
+    let locations = switch (PgStorage.getRowSchema(snakeCounter)->S.classify: S.tagged) {
+    | Object({items}) => items->Array.map(item => item.location)
+    | _ => []
+    }
+    // The stamped entity is keyed by `chainId`; only the SQL layer renames it.
+    t.expect((
+      locations,
+      snakeCounter.table
+      ->Table.queryFields
+      ->Dict.get("chainId")
+      ->Option.map(f => f.pgDbFieldName),
+    )).toEqual((["id", "count", "chainId"], Some("chain_id")))
+  })
+})
+
 describe("Per-chain ClickHouse view", () => {
   it("Dedups the current state per (id, chain id)", t => {
     t.expect((
@@ -190,6 +248,86 @@ describe("Per-chain ClickHouse view", () => {
         "LIMIT 1 BY `id`\n",
       ),
     )).toEqual((true, true))
+  })
+})
+
+// The ClickHouse sink caches a compiled serializer per (entity, scope) because
+// a DELETE row carries no entity to stamp — the chain id is baked into the
+// schema instead. A cache keyed only by entity would serve chain 1's schema to
+// chain 137.
+type capturedInsert = {table: string, values: array<JSON.t>}
+
+describe("Per-chain ClickHouse writes", () => {
+  let insertAndCapture = async (~changes, ~entityConfig, ~scope, ~cache) => {
+    let captured = []
+    let client =
+      {
+        "insert": params => {
+          captured
+          ->Array.push({
+            table: params["table"],
+            values: params["values"]->(Utils.magic: unknown => array<JSON.t>),
+          }: capturedInsert)
+          ->ignore
+          Promise.resolve()
+        },
+      }->(Utils.magic: {..} => ClickHouse.client)
+    await ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~scope, ~database="db")
+    captured
+  }
+
+  let set = (~id, ~count): Change.t<Internal.entity> =>
+    Set({
+      entityId: id->EntityId.unsafeOfString,
+      checkpointId: 1n,
+      entity: {"id": id, "count": count}->(Utils.magic: {..} => Internal.entity),
+    })
+
+  let delete = (~id): Change.t<Internal.entity> =>
+    Delete({entityId: id->EntityId.unsafeOfString, checkpointId: 2n})
+
+  Async.it("Stamps set rows and tags delete rows with the flush group's chain", async t => {
+    let cache = Dict.make()
+    let chain1 = await insertAndCapture(
+      ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
+      ~entityConfig=counter,
+      ~scope=Chain(1->ChainId.fromInt),
+      ~cache,
+    )
+    // Same cache, different scope: a per-entity cache would reuse chain 1's
+    // schema and tag the delete row with chain 1.
+    let chain137 = await insertAndCapture(
+      ~changes=[set(~id="a", ~count=2n), delete(~id="b")],
+      ~entityConfig=counter,
+      ~scope=Chain(137->ChainId.fromInt),
+      ~cache,
+    )
+
+    let chainIds = captured =>
+      captured
+      ->Array.flatMap(c => c.values)
+      ->Array.map(v =>
+        v->(Utils.magic: JSON.t => {"chainId": option<int>})->(o => o["chainId"])
+      )
+
+    t.expect((chain1->chainIds, chain137->chainIds)).toEqual((
+      [Some(1), Some(1)],
+      [Some(137), Some(137)],
+    ))
+  })
+
+  Async.it("Leaves a cross-chain entity's rows without a chain id", async t => {
+    let captured = await insertAndCapture(
+      ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
+      ~entityConfig=globalCounter,
+      ~scope=CrossChain,
+      ~cache=Dict.make(),
+    )
+    t.expect(
+      captured
+      ->Array.flatMap(c => c.values)
+      ->Array.map(v => v->(Utils.magic: JSON.t => {"chainId": option<int>})->(o => o["chainId"])),
+    ).toEqual([None, None])
   })
 })
 

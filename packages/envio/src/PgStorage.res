@@ -151,14 +151,6 @@ let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =
     schema
   }
 
-// A copy of the entity carrying the scope's chain id. Never mutates the
-// handler's object, which stays in the in-memory table.
-let stampChainId = (entity: Internal.entity, ~fieldName, ~chainId: ChainId.t): Internal.entity =>
-  Utils.Dict.merge(
-    entity->(Utils.magic: Internal.entity => dict<unknown>),
-    Dict.fromArray([(fieldName, chainId->(Utils.magic: ChainId.t => unknown))]),
-  )->(Utils.magic: dict<unknown> => Internal.entity)
-
 let entityHistoryCache = Utils.WeakMap.make()
 let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
   'entity,
@@ -1032,7 +1024,7 @@ let rec writeBatch = async (
           | Change.Set(set) =>
             Change.Set({
               ...set,
-              entity: set.entity->stampChainId(~fieldName=field.fieldName, ~chainId),
+              entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
             })
           | Delete(_) => change
           }
