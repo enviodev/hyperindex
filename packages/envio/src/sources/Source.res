@@ -10,7 +10,7 @@ type blockRangeFetchStats = {
 // A single backend request a source method actually made (cache/dedup hits
 // aren't requests), with the time it took. SourceManager aggregates these
 // per (source, method) into the envio_source_request_* metrics.
-type requestStat = {method: string, seconds: float}
+type requestStat = RequestStat.t = {method: string, seconds: float}
 
 // Native clients wrap a failure of a multi-request operation in a structured
 // payload, so the source can still return timings when SourceManager retries
@@ -122,7 +122,7 @@ type sourceFor = Sync | Fallback | Realtime
 type t = {
   name: string,
   sourceFor: sourceFor,
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
@@ -131,8 +131,10 @@ type t = {
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~addressesByContractName: dict<array<Address.t>>,
-    ~contractNameByAddress: dict<string>,
+    // The partition's slice of the chain's address index. The source hands it
+    // straight to its Rust client, which builds the query's address filter from
+    // it and gates every returned item against the chain-wide store.
+    ~addressSet: AddressSet.t,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
@@ -140,8 +142,10 @@ type t = {
     // source should ask its backend for, from the query's own estResponseSize.
     // A HyperSync-backed source enforces it server-side, so a wrong estimate
     // truncates the response instead of overshooting the shared buffer. Sources
-    // without an equivalent lever (RPC, Fuel, Simulate) ignore it.
-    ~itemsTarget: int,
+    // without an equivalent lever (RPC, Fuel, Simulate) ignore it. None means no
+    // cap: bounded chunk queries fetch their whole range even if denser than
+    // expected, so client-side-filtered items can't truncate the range short.
+    ~itemsTarget: option<int>,
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
@@ -150,8 +154,4 @@ type t = {
   // may point at an orphaned chain (e.g. the RPC block cache). For an
   // inconsistent response the target is the block before the retried range.
   onReorg?: (~rollbackTargetBlock: int) => unit,
-  // Present only on the simulate source: the items a test fed in. The chain
-  // tracks which of these never reach a handler so the run can report dead
-  // simulate inputs on completion.
-  simulateItems?: array<Internal.item>,
 }

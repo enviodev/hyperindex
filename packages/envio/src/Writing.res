@@ -61,11 +61,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
       }
       let shouldInitialize = effectCacheRecord.count === 0
       effectCacheRecord.count = effectCacheRecord.count + items->Array.length - invalidationsCount
-      Prometheus.EffectCacheCount.set(
-        ~count=effectCacheRecord.count,
-        ~effectName,
-        ~scope=scope->Internal.EffectCache.scopeToString,
-      )
+      inMemTable->EffectState.commitCacheCount(~count=effectCacheRecord.count)
       acc
       ->Array.push(
         (
@@ -155,6 +151,8 @@ let runOneWrite = async (state: IndexerState.t) => {
         ~updatedEntities,
         ~updatedEffectsCache,
         ~chainMetaData,
+        ~onWrite=(~storage, ~timeSeconds) =>
+          state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
       ),
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))
@@ -239,7 +237,7 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
 
 // Blocks until the store holds fewer than keepLatestChangesLimit changes,
 // freeing committed changes first and awaiting commits as a last resort.
-let rec awaitCapacity = async (state: IndexerState.t) => {
+let rec awaitCapacityLoop = async (state: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
   if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= keepLatestChangesLimit {
@@ -261,10 +259,20 @@ let rec awaitCapacity = async (state: IndexerState.t) => {
     ) {
       state->schedule
       await state->waitForCommit
-      await state->awaitCapacity
+      await state->awaitCapacityLoop
     }
   }
 }
+
+// Only the over-limit path is a real stall. Timing every call would charge each
+// batch the microtask hop of awaiting an already-resolved promise, which reads
+// as storage backpressure that isn't there.
+let awaitCapacity = async (state: IndexerState.t) =>
+  if state->getChangesCount >= keepLatestChangesLimit {
+    let timeRef = Performance.now()
+    await state->awaitCapacityLoop
+    state->IndexerState.recordStalledOnStorageWrite(~seconds=timeRef->Performance.secondsSince)
+  }
 
 // Awaits until everything processed is persisted. On a failed write we stop
 // draining (onError already surfaced it) rather than throw.

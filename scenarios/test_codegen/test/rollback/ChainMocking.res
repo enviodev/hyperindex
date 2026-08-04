@@ -54,7 +54,7 @@ module Make = () => {
   }
 
   type composedEventConstructor = (
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,
@@ -177,7 +177,7 @@ module Make = () => {
       let log = Internal.Event({
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
-        chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
+        chainId: self.chainConfig.id,
         blockNumber,
         logIndex,
         transactionIndex,
@@ -273,7 +273,7 @@ module Make = () => {
     }
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
-      let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])
+      let addresses = query.addresses->AddressSet.filterByContracts([c.name])->AddressSet.addresses
       {
         addresses,
         eventKeys: c.events->Array.map(eventConfig => {

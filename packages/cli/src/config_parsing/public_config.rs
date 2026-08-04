@@ -1,10 +1,10 @@
 use super::{
-    entity_parsing::IndexFieldDirection,
+    entity_parsing::{self, IndexFieldDirection},
     field_types,
     human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
-        self, field_type_to_arg_type, named_field_to_arg_def, Abi, Ecosystem, EventKind,
-        FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
+        self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
+        EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
     },
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
@@ -18,6 +18,13 @@ fn is_true(v: &bool) -> bool {
 
 fn is_false(v: &bool) -> bool {
     !v
+}
+
+// Int32 is what every config predating the field implies, so omitting it keeps
+// the JSON — and therefore the persisted envio_info fingerprint — byte-identical
+// for small-id projects.
+fn is_default_chain_id_mode(v: &ChainIdMode) -> bool {
+    matches!(v, ChainIdMode::Int32)
 }
 
 #[derive(Serialize, Debug)]
@@ -39,6 +46,8 @@ pub(crate) struct PublicConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    #[serde(skip_serializing_if = "is_default_chain_id_mode")]
+    chain_id_mode: ChainIdMode,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
@@ -82,8 +91,11 @@ struct EntityJson {
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    composite_indices: Vec<Vec<CompositeIndexJson>>,
+    // The JSON key is frozen: this config is persisted to `envio_info` and
+    // diffed against the running config on resume, so renaming it would make
+    // every deployed indexer with a composite index demand a reset.
+    #[serde(rename = "compositeIndices", skip_serializing_if = "Vec::is_empty")]
+    composite_indexes: Vec<Vec<CompositeIndexJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
 }
@@ -93,7 +105,42 @@ struct EntityStorageJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     postgres: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    clickhouse: Option<bool>,
+    clickhouse: Option<EntityClickHouseStorageJson>,
+}
+
+// Mirrors the two forms of the directive's `clickhouse` arg: a boolean or a
+// table options object (implying the backend is enabled).
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum EntityClickHouseStorageJson {
+    Enabled(bool),
+    Options(EntityClickHouseOptionsJson),
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EntityClickHouseOptionsJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    partition_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_by: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<String>,
+}
+
+impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJson {
+    fn from(storage: &entity_parsing::ClickHouseEntityStorage) -> Self {
+        match storage {
+            entity_parsing::ClickHouseEntityStorage::Enabled(enabled) => Self::Enabled(*enabled),
+            entity_parsing::ClickHouseEntityStorage::Options(options) => {
+                Self::Options(EntityClickHouseOptionsJson {
+                    partition_by: options.partition_by.clone(),
+                    order_by: options.order_by.clone(),
+                    ttl: options.ttl.clone(),
+                })
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -693,9 +740,6 @@ impl SystemConfig {
                                 Primitive::Enum(name) => {
                                     ("enum".into(), Some(name.clone()), None, None, None)
                                 }
-                                Primitive::Entity(name) => {
-                                    ("entity".into(), None, Some(name.clone()), None, None)
-                                }
                             };
                         let db_name_for =
                             |backend: Option<system_config::StorageBackend>| match backend
@@ -744,8 +788,8 @@ impl SystemConfig {
                     })
                     .collect();
 
-                let composite_indices = entity
-                    .get_composite_indices()
+                let composite_indexes = entity
+                    .get_composite_indexes()
                     .into_iter()
                     .map(|fields| {
                         fields
@@ -764,7 +808,7 @@ impl SystemConfig {
                 let storage = if entity.has_storage_directive() {
                     Some(EntityStorageJson {
                         postgres: entity.postgres,
-                        clickhouse: entity.clickhouse,
+                        clickhouse: entity.clickhouse.as_ref().map(Into::into),
                     })
                 } else {
                     let postgres_default = cfg.storage.postgres.is_some_and(|b| b.entity_default);
@@ -783,7 +827,8 @@ impl SystemConfig {
                         // directive and a config-level default doesn't diff.
                         Some(EntityStorageJson {
                             postgres: postgres_default.then_some(true),
-                            clickhouse: clickhouse_default.then_some(true),
+                            clickhouse: clickhouse_default
+                                .then_some(EntityClickHouseStorageJson::Enabled(true)),
                         })
                     }
                 };
@@ -793,7 +838,7 @@ impl SystemConfig {
                     storage,
                     properties,
                     derived_fields,
-                    composite_indices,
+                    composite_indexes,
                     description: entity.description.clone(),
                 })
             })
@@ -809,6 +854,7 @@ impl SystemConfig {
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
+            chain_id_mode: cfg.chain_id_mode,
             storage: (&cfg.storage).into(),
             evm,
             fuel,

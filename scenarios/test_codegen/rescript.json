@@ -20,7 +20,8 @@
   },
   "dependencies": [
     "rescript-schema",
-    "envio"
+    "envio",
+    "envio-tests"
   ],
   "compiler-flags": ["-open RescriptSchema"],
   "warnings": {

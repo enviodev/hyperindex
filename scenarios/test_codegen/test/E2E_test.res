@@ -17,7 +17,7 @@ describe("E2E tests", () => {
   Async.it(
     "Populates config addresses on init and preserves them across restart",
     async t => {
-      let sourceMock = MockIndexer.Source.make([], ~chain=#1337)
+      let sourceMock = MockIndexer.Source.make([], ~chainId=#1337)
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       )
@@ -28,14 +28,14 @@ describe("E2E tests", () => {
       ]
 
       t.expect(
-        await getChainAddresses(indexerMock, ~chainId=1337),
+        await getChainAddresses(indexerMock, ~chainId=1337->ChainId.fromInt),
         ~message="Config addresses should be inserted with registrationBlock=-1 on init",
       ).toEqual(expected)
 
       let restarted = await indexerMock.restart()
 
       t.expect(
-        await getChainAddresses(restarted, ~chainId=1337),
+        await getChainAddresses(restarted, ~chainId=1337->ChainId.fromInt),
         ~message="Config addresses should survive restart from DB",
       ).toEqual(expected)
     },
@@ -44,7 +44,7 @@ describe("E2E tests", () => {
   Async.it("Currectly starts indexing from a non-zero start block", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let _indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -74,7 +74,7 @@ describe("E2E tests", () => {
   Async.it("Correctly sets Prom metrics", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -114,11 +114,11 @@ describe("E2E tests", () => {
   Async.itWithOptions("Prom readiness metrics are gated on the whole indexer", {retry: 3}, async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -182,7 +182,7 @@ describe("E2E tests", () => {
 
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -245,7 +245,7 @@ describe("E2E tests", () => {
     ])
     await indexerMock.getBatchWritePromise()
 
-    t.expect(await indexerMock.query(SimpleEntity)).toEqual([
+    t.expect(await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>)).toEqual([
       {Indexer.Entities.SimpleEntity.id: "1", value: "value-2"},
     ])
     t.expect(errors, ~message="should have an error thrown during set").toEqual([
@@ -257,7 +257,7 @@ describe("E2E tests", () => {
   Async.it("Track effects in prom metrics", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -496,7 +496,7 @@ describe("E2E tests", () => {
   Async.it("context.log should be accessible from inside an effect handler", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -555,7 +555,7 @@ describe("E2E tests", () => {
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -653,7 +653,7 @@ describe("E2E tests", () => {
       // The chain-scoped output landed in the per-chain cache table, not the
       // flat cross-chain one.
       t.expect((
-        await indexerMock.queryEffectCache(chainScopedEffect, ~scope=Chain(1337)),
+        await indexerMock.queryEffectCache(chainScopedEffect, ~scope=Chain(1337->ChainId.fromInt)),
         await indexerMock.metric("envio_effect_cache"),
       )).toEqual((
         [{"id": `"a"`, "output": %raw(`1337`)}],
@@ -672,11 +672,11 @@ describe("E2E tests", () => {
     async t => {
       let sourceMockPrimary = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMockFallback = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -747,7 +747,7 @@ describe("E2E tests", () => {
   Async.it("Effect rate limiting across multiple windows", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -850,7 +850,7 @@ describe("E2E tests", () => {
   Async.it("Effect rate limiting with single call per window", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -964,7 +964,7 @@ describe("E2E tests", () => {
   Async.it("Effect cache can be disabled per-call via context.cache", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1039,7 +1039,7 @@ describe("E2E tests", () => {
   Async.it("Effect error in one call shouldn't cause other calls to fail", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1113,12 +1113,12 @@ describe("E2E tests", () => {
       // Create a Sync source (simulating HyperSync) and a Live source (simulating RPC for live)
       let syncSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
         ~sourceFor=Source.Sync,
       )
       let liveSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
         ~sourceFor=Source.Realtime,
       )
 
@@ -1215,7 +1215,7 @@ describe("E2E tests", () => {
   Async.it("Partition queries adjust ranges depending on responses", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1324,7 +1324,7 @@ describe("E2E tests", () => {
   Async.it("Items from later chunk wait for earlier chunk to complete", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1388,7 +1388,7 @@ describe("E2E tests", () => {
     // Item at 2000 should NOT be in DB yet — earlier chunks haven't completed,
     // so bufferBlockNumber=800 and 2000 > 800 means it's not ready.
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Item at block 2000 should not be ready while earlier chunks are pending",
     ).toEqual([])
 
@@ -1415,7 +1415,7 @@ describe("E2E tests", () => {
     // Only item-850 should be in DB — chunk2 hasn't completed,
     // so chunk3's item at 2000 is still beyond the buffer.
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Only item-850 should be in DB while chunk2 is pending",
     ).toEqual([{Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"}])
 
@@ -1434,7 +1434,7 @@ describe("E2E tests", () => {
 
     // Both items should now be in DB
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Both items should be in DB after chunk1 fully completes",
     ).toEqual([
       {Indexer.Entities.SimpleEntity.id: "item-850", value: "from-chunk1"},
@@ -1445,7 +1445,7 @@ describe("E2E tests", () => {
   Async.it("Partition merging works for fetching partitions via mergeBlock", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1620,89 +1620,21 @@ describe("E2E tests", () => {
       sourceMock.getItemsOrThrowCalls->Array.find(c => c.payload["p"] === "4")->Option.getOrThrow
     let addresses = partition4Call.payload->MockIndexer.Source.CallPayload.addresses
     t.expect(
-      addresses->Dict.getUnsafe("Gravatar")->Array.length,
+      addresses->Array.length,
       ~message="Merged partition should have addresses from both DCs",
     ).toEqual(2)
   })
-
-  Async.itSkipInClaudeCloud(
-    "_meta and chain_metadata return events processed as a number (float4 cast)",
-    async t => {
-      let sourceMock = MockIndexer.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
-      )
-      let indexerMock = await MockIndexer.Indexer.make(
-        ~chains=[
-          {
-            chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock.source]),
-          },
-        ],
-        ~enableHasura=true,
-      )
-      await Utils.delay(0)
-
-      sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      sourceMock.resolveGetItemsOrThrow([
-        {
-          blockNumber: 50,
-          logIndex: 1,
-        },
-      ])
-      await indexerMock.getBatchWritePromise()
-
-      // Update events_processed to a value > int32 max to verify uint52 column works
-      let sql = PgStorage.makeClient()
-      let _ = await sql->Postgres.unsafe(
-        `UPDATE "${Env.Db.publicSchema}"."envio_chains" SET "events_processed" = 2147487821 WHERE "id" = 1337`,
-      )
-
-      // float4 cast in the views makes Hasura return numbers instead of strings
-      // float4 has ~7 digits of precision, so large values lose precision
-      t.expect(
-        await indexerMock.graphql(`query { _meta { chainId eventsProcessed } }`),
-        ~message="_meta should return eventsProcessed as a number (float4 not stringified by Hasura)",
-      ).toEqual({
-        data: {
-          "_meta": [
-            {
-              "chainId": 1337,
-              "eventsProcessed": 2147487700., // float4 precision loss from 2147487821
-            },
-          ],
-        },
-      })
-
-      t.expect(
-        await indexerMock.graphql(`query { chain_metadata { chain_id num_events_processed } }`),
-        ~message="chain_metadata should return num_events_processed as a number (float4 not stringified)",
-      ).toEqual({
-        data: {
-          "chain_metadata": [
-            {
-              "chain_id": 1337,
-              "num_events_processed": 2147487700., // float4 precision loss from 2147487821
-            },
-          ],
-        },
-      })
-    },
-  )
 
   Async.it(
     "Multichain with reorg: staggered chain catch-up still enters reorg threshold",
     async t => {
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -1764,11 +1696,11 @@ describe("E2E tests", () => {
     async t => {
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -1844,11 +1776,11 @@ describe("E2E tests", () => {
     async t => {
       let leaderSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let followerSource = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[

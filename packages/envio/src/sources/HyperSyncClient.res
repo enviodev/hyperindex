@@ -206,6 +206,10 @@ module Registration = {
     contractName: string,
     isWildcard: bool,
     dependsOnAddresses: bool,
+    // Earliest block this registration accepts; `None` is unrestricted. The
+    // address store's start block is contract-wide, so it can't hold one
+    // registration back when a sibling declares no start block.
+    startBlock: option<int>,
     params: array<Internal.paramMeta>,
     topicSelections: array<topicSelectionInput>,
     // Capitalized field names matching the Rust BlockField/TransactionField
@@ -221,8 +225,8 @@ module Registration = {
     }
 
   let fromOnEventRegistrations = (
-      onEventRegistrations: array<Internal.evmOnEventRegistration>,
-    ): array<input> => {
+    onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  ): array<input> => {
     onEventRegistrations->Array.map(reg => {
       let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
       {
@@ -233,10 +237,9 @@ module Registration = {
         contractName: event.contractName,
         isWildcard: reg.isWildcard,
         dependsOnAddresses: reg.dependsOnAddresses,
+        startBlock: reg.startBlock,
         params: event.paramsMetadata,
-        topicSelections: reg.resolvedWhere.topicSelections->Array.map((
-          ts
-        ): topicSelectionInput => {
+        topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
           topic0: ts.topic0->EvmTypes.Hex.toStrings,
           topic1: ts.topic1->toTopicFilterInput,
           topic2: ts.topic2->toTopicFilterInput,
@@ -256,16 +259,20 @@ module Registration = {
 }
 
 module EventItems = {
-  // The whole per-query input: block range, the partition's registration
-  // selection (by id), and its current addresses. Log selections, field
-  // selection, and the routing index are derived on the Rust side.
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by id). Log selections, field selection,
+  // and the routing index are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    maxNumLogs: int,
+    // Absent means no server-side cap on the number of logs returned.
+    maxNumLogs?: int,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Contract names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means
+    // every address-dependent contract is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   type item = {
@@ -294,7 +301,9 @@ module EventItems = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One header per block number referenced by `items`.
+    // One header per returned block number, including blocks no item
+    // references — reorg detection reads them all. The block store keeps only
+    // the ones items reference.
     blocks: array<blockHeader>,
     items: array<item>,
     rollbackGuard: option<ResponseTypes.rollbackGuard>,
@@ -306,25 +315,27 @@ type t = {
   // aggregate response store crosses the boundary.
   getBlockHashes: (
     ~blockNumbers: array<int>,
-  ) => promise<(BlockStore.t, array<Source.requestStat>)>,
+  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
   getEventItems: (
     ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 
 @send
 external classNew: (
-  Core.evmHypersyncClientCtor,
+  Core.evmHyperSyncClientCtor,
   cfg,
   string,
   array<Registration.input>,
+  AddressStore.t,
 ) => t = "new"
 
-let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations) =>
-  Core.getAddon().evmHypersyncClient->classNew(cfg, userAgent, eventRegistrations)
+let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
+  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -350,6 +361,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
   ~logLevel=#info,
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -369,5 +381,6 @@ let make = (
     },
     ~userAgent=`hyperindex/${envioVersion}`,
     ~eventRegistrations,
+    ~addressStore,
   )
 }

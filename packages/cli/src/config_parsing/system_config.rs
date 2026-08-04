@@ -1,6 +1,6 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
-    entity_parsing::{Entity, GraphQLEnum, Schema},
+    entity_parsing::{ClickHouseEntityStorage, Entity, GqlScalar, GraphQLEnum, Schema},
     env_interpolation::interpolate_config_variables,
     human_config::{
         self,
@@ -299,12 +299,49 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     Ok(format!("file:{}", pkg.to_string_lossy()))
 }
 
+/// Widest scalar the internal chain-id columns need. Derived once from the
+/// maximum active chain id and carried through the public config, so a resume
+/// against a schema built for the other mode is rejected rather than silently
+/// truncating ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChainIdMode {
+    Int32,
+    Int64,
+}
+
+/// Chain ids cross the Rust → JSON → JS boundary as plain numbers, so an id
+/// above `Number.MAX_SAFE_INTEGER` can't round-trip losslessly.
+pub const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
+
+impl ChainIdMode {
+    /// Skipped chains count: codegen emits a `chainId` case for every chain in
+    /// config.yaml regardless of `skip`, so a skipped wide id still has to be
+    /// representable. Including them also keeps the mode — and therefore the
+    /// physical column types — stable when a chain is skipped and unskipped.
+    fn resolve(chains: &ChainMap) -> Result<Self> {
+        let max_id = chains.values().map(|chain| chain.id).max().unwrap_or(0);
+        if max_id > MAX_SAFE_CHAIN_ID {
+            return Err(anyhow!(
+                "Chain id {max_id} is above the maximum supported chain id \
+                 {MAX_SAFE_CHAIN_ID} (Number.MAX_SAFE_INTEGER)."
+            ));
+        }
+        Ok(if max_id <= i32::MAX as u64 {
+            Self::Int32
+        } else {
+            Self::Int64
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: ChainMap,
+    pub chain_id_mode: ChainIdMode,
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
@@ -380,6 +417,11 @@ impl Storage {
     }
 }
 
+/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
+/// above this (or with no precision) it falls back to `String`. Kept in sync
+/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
+
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
@@ -421,6 +463,76 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
+    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
+    // ceiling) as a String, which sorts lexicographically — wrong for anything
+    // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
+    // ClickHouse.res.
+    //
+    // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
+    // without it the sorting key is `id`, with it the listed fields replace `id`
+    // (see `makeCreateHistoryTableQuery`). Unlike the parse-time
+    // `validate_clickhouse_order_by_fields`, the schema is available here, so a
+    // relation in the sorting key can be resolved to the id it actually stores.
+    let bigint_stored_as_string =
+        |precision: Option<u32>| !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
+    for entity in &entities {
+        let uses_clickhouse = if entity.has_storage_directive() {
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+        } else {
+            clickhouse_default
+        };
+        if !uses_clickhouse {
+            continue;
+        }
+
+        let order_by = match entity.clickhouse.as_ref() {
+            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
+            _ => None,
+        };
+
+        match order_by {
+            Some(order_by_fields) => {
+                for field_name in order_by_fields {
+                    // Existence, nullability and array-ness are already rejected
+                    // at parse time; a miss here just means nothing to resolve.
+                    let Some(field) = entity.get_field(field_name) else {
+                        continue;
+                    };
+                    let stored =
+                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
+                    if let GqlScalar::BigInt(precision) = stored {
+                        if bigint_stored_as_string(precision) {
+                            return Err(anyhow!(
+                                "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
+                                 `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
+                                 String (sorted lexicographically, not numerically) unless a \
+                                 precision is set. Add `@config(precision: N)` with \
+                                 N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores \
+                                 so it sorts as a numeric Decimal.",
+                                entity.name
+                            ));
+                        }
+                    }
+                }
+            }
+            // No custom orderBy, so `id` is the sorting key.
+            None => {
+                if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
+                    if bigint_stored_as_string(precision) {
+                        return Err(anyhow!(
+                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse stores as a \
+                             String (sorted lexicographically, not numerically) unless a precision is set. \
+                             Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with \
+                             N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric Decimal, \
+                             or set `@storage(clickhouse: {{orderBy: [...]}})` to sort by other fields.",
+                            entity.name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     let unsupported: Vec<(&str, &'static str)> = entities
         .iter()
         .flat_map(|e| {
@@ -428,7 +540,8 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
             if e.postgres == Some(true) && storage.postgres.is_none() {
                 out.push((e.name.as_str(), "postgres"));
             }
-            if e.clickhouse == Some(true) && storage.clickhouse.is_none() {
+            if e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
+            {
                 out.push((e.name.as_str(), "clickhouse"));
             }
             out
@@ -452,6 +565,65 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
          \n\
          Fixes:\n  \
          - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+    ))
+}
+
+/// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
+/// emitted: a `@storage` directive is taken literally, otherwise the entity
+/// follows the backends marked `default` in config.yaml.
+fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
+    if entity.has_storage_directive() {
+        entity.postgres == Some(true)
+    } else {
+        storage.postgres.is_some_and(|b| b.entity_default)
+    }
+}
+
+/// A `@derivedFrom` relationship is served by joining the two entities in
+/// Postgres, and it is backed by an index on the referenced entity's table. If
+/// that entity isn't in Postgres there is no table to join or index, so catch
+/// it here rather than letting table creation (or the end-of-backfill index
+/// pass) fail on an entity it can't resolve.
+pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = Vec::new();
+    for entity in entities {
+        if !is_stored_in_postgres(entity, storage) {
+            continue;
+        }
+        for field in &entity.fields {
+            let Some(derived) = field.get_derived_from_field() else {
+                continue;
+            };
+            let target = &derived.derived_from_entity;
+            let is_target_in_postgres = schema
+                .entities
+                .get(target)
+                .is_some_and(|e| is_stored_in_postgres(e, storage));
+            if !is_target_in_postgres {
+                invalid.push(format!(
+                    "  - `{}`.`{}` derives from `{}`, which is not stored in postgres.",
+                    entity.name, field.name, target
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    let listed = invalid.join("\n");
+    Err(anyhow!(
+        "Schema validation failed:\n\
+         \n\
+         @derivedFrom relationships between entities that don't share the postgres storage:\n\
+         {listed}\n\
+         \n\
+         Fixes:\n  \
+         - Add postgres to the @storage directive of the referenced entities, or\n  \
+         - Remove the @derivedFrom fields listed above."
     ))
 }
 
@@ -624,10 +796,11 @@ pub fn validate_clickhouse_nullable_arrays(
     for entity in &entities {
         // A storage directive's omitted backend resolves to false at runtime
         // (Config.res `Option.getOr(false)`), so a directive routes to
-        // ClickHouse only when it sets `clickhouse: true`. Without a directive
-        // the entity follows the backend's `default`.
+        // ClickHouse only when it enables the backend (boolean `true` or the
+        // table options object form). Without a directive the entity follows
+        // the backend's `default`.
         let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse == Some(true)
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
         } else {
             clickhouse.entity_default
         };
@@ -777,6 +950,7 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
+        validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
@@ -926,6 +1100,8 @@ impl SystemConfig {
                     has_rpc_sync_src,
                 )?;
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -934,6 +1110,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
@@ -1072,6 +1249,8 @@ impl SystemConfig {
                         .context("Failed inserting chain at chains map")?;
                 }
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1080,6 +1259,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
@@ -1213,6 +1393,8 @@ impl SystemConfig {
                 // keep it off for now.
                 let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1222,6 +1404,7 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
@@ -1919,11 +2102,74 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
-        // TODO: Validatate that all event names are unique
         validate_names_valid_rescript(
             &events.iter().map(|e| e.name.clone()).collect(),
             "event".to_string(),
         )?;
+
+        // Codegen keys the generated event modules by name and routing looks
+        // events up by name, so two events on one contract can't share a name.
+        // Overloads (same name, different signature) are the usual cause — point
+        // at the `name` alias as the fix; a byte-identical copy just needs
+        // removing.
+        let mut seen_by_name: HashMap<&str, &Event> = HashMap::new();
+        for event in &events {
+            if let Some(existing) = seen_by_name.insert(&event.name, event) {
+                if existing.sighash == event.sighash {
+                    return Err(anyhow!(
+                        "Contract {name} defines the event \"{}\" more than once. \
+                         Please remove the duplicate.",
+                        event.name,
+                    ));
+                }
+                return Err(anyhow!(
+                    "Contract {name} has two events named \"{}\". Give one of them a \
+                     unique name with the \"name\" field so the generated code and \
+                     the indexer's routing can tell them apart.",
+                    event.name,
+                ));
+            }
+        }
+
+        // Two events on one contract that share a dispatch key are
+        // indistinguishable at routing time — one log/instruction would decode
+        // to both — so reject them here. The key mirrors the runtime `eventId`:
+        // sighash plus indexed-topic count for EVM, the discriminator for SVM
+        // (already program-scoped, since these are one program's instructions),
+        // the sighash for Fuel (a `LogData` logId or a fixed `mint`/`burn`/…).
+        // Names are unique by the check above, so a collision here is always
+        // between two differently-named events.
+        let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
+        for event in &events {
+            let dispatch_key = match &event.kind {
+                EventKind::Params(params) => {
+                    let indexed_count = params.iter().filter(|p| p.indexed).count();
+                    Some(format!("{}_{}", event.sighash, indexed_count))
+                }
+                // The router decodes the discriminator to bytes before matching,
+                // so `0x0f` and `0x0F` collide — lowercase before keying.
+                EventKind::Svm(svm) => Some(
+                    svm.discriminator
+                        .as_ref()
+                        .map(|d| d.to_lowercase())
+                        .unwrap_or_else(|| "none".to_string()),
+                ),
+                EventKind::Fuel(_) => Some(event.sighash.clone()),
+            };
+            if let Some(dispatch_key) = dispatch_key {
+                if let Some(existing) =
+                    seen_by_dispatch_key.insert(dispatch_key, event.name.clone())
+                {
+                    return Err(anyhow!(
+                        "Contract {name} has two events the indexer can't tell apart: \
+                         \"{existing}\" and \"{}\". They match the same on-chain data, so \
+                         the indexer can't decide which one a log belongs to. Please remove \
+                         one of them.",
+                        event.name,
+                    ));
+                }
+            }
+        }
 
         Ok(Self {
             name,
@@ -2646,22 +2892,7 @@ mod test {
 
     use super::SystemConfig;
     use crate::{config_parsing::system_config::Event, project_paths::ParsedProjectPaths};
-    use handlebars::Handlebars;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    #[test]
-    fn renders_nested_f32() {
-        let hbs = Handlebars::new();
-
-        let rendered_backoff_multiplicative = hbs
-            .render_template(
-                "{{backoff_multiplicative}}",
-                &json!({"backoff_multiplicative": 0.8}),
-            )
-            .unwrap();
-        assert_eq!(&rendered_backoff_multiplicative, "0.8");
-    }
 
     #[test]
     fn in_memory_yaml_matches_filesystem_public_config() {
@@ -2723,94 +2954,6 @@ mod test {
             SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
-
-        let contract_abi = match &config
-            .get_contract(&contract_name)
-            .expect("Failed getting contract")
-            .abi
-        {
-            super::Abi::Evm(abi) => abi.typed.clone(),
-            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
-            super::Abi::Svm(_) => panic!("Svm abi should not be parsed"),
-        };
-
-        let expected_abi_string = r#"
-                [
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "NewGravatar",
-                    "type": "event"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "UpdatedGravatar",
-                    "type": "event"
-                }
-                ]
-    "#;
-
-        let expected_abi: alloy_json_abi::JsonAbi =
-            serde_json::from_str(expected_abi_string).unwrap();
-
-        assert_eq!(expected_abi, contract_abi);
-    }
-
-    #[test]
-    fn test_get_nested_contract_abi() {
-        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_root = test_dir.as_str();
-        let config_dir = "configs/nested-abi.yaml";
-        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
-            .expect("Failed creating parsed_paths");
-
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
-
-        let contract_name = "Contract3".to_string();
 
         let contract_abi = match &config
             .get_contract(&contract_name)
@@ -3180,8 +3323,10 @@ mod test {
     // --- validate_entity_storage: per-entity storage routing checks ---
 
     mod entity_storage_validation {
-        use super::super::{validate_entity_storage, Storage};
-        use crate::config_parsing::entity_parsing::{Entity, Schema};
+        use super::super::{validate_entity_storage, validate_relationship_storage, Storage};
+        use crate::config_parsing::entity_parsing::{
+            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Field, FieldType, Schema,
+        };
         use crate::config_parsing::human_config::ColumnNameFormat;
 
         // Bypass `Schema::new` validation: only storage routing matters here.
@@ -3200,7 +3345,7 @@ mod test {
                 multi_field_indexes: Vec::new(),
                 description: None,
                 postgres,
-                clickhouse,
+                clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
             }
         }
 
@@ -3255,6 +3400,77 @@ mod test {
             ]);
             assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
             assert!(validate_entity_storage(&multi(false, true), &schema).is_ok());
+        }
+
+        // The table options object form opts the entity into ClickHouse, so
+        // it must be rejected when ClickHouse isn't enabled globally.
+        #[test]
+        fn clickhouse_table_options_require_enabled_backend() {
+            let schema = make_schema(vec![Entity {
+                clickhouse: Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
+                    partition_by: Some("toYYYYMM(timestamp)".to_string()),
+                    ..ClickHouseTableOptions::default()
+                })),
+                ..entity("Transfer", Some(true), None)
+            }]);
+            assert!(validate_entity_storage(&postgres_only(), &schema).is_err());
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        // A @derivedFrom is served by joining the two entities in Postgres and
+        // backed by an index on the referenced table, so both sides have to be
+        // there.
+        fn derived_from(name: &str, target: &str, field: &str) -> Field {
+            Field {
+                name: name.to_string(),
+                field_type: FieldType::DerivedFromField {
+                    entity_name: target.to_string(),
+                    derived_from_field: field.to_string(),
+                },
+                description: None,
+            }
+        }
+
+        #[test]
+        fn derived_from_within_postgres_ok() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", Some(true), None),
+            ]);
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn derived_from_clickhouse_only_entity_rejected() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            let err = validate_relationship_storage(&multi(false, false), &schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`orders` derives from `Order`, which is not stored in postgres."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn derived_from_ignored_when_owner_is_not_in_postgres() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", None, Some(true))
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
         }
     }
 

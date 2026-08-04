@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use hypersync_client::format::Hex;
 use napi_derive::napi;
 
+use crate::address_store::AddressSet;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 
 /// Topic positions 1..3: static topic values, or `None` — the "currently
@@ -69,6 +69,7 @@ impl TopicSelection {
     }
 }
 
+#[derive(PartialEq, Eq)]
 struct MaterializedTopicSelection {
     topic0: Vec<String>,
     topic1: Vec<String>,
@@ -95,28 +96,25 @@ struct RegistrationSelection {
     transaction_fields: Vec<TransactionField>,
 }
 
-/// Left-pad a 20-byte address to a 32-byte topic value. Lowercased — topic
-/// values are compared as bytes server-side and registration-time values are
-/// lowercased the same way.
-fn address_to_topic(address: &str) -> Result<String> {
-    let bytes = hypersync_client::format::Address::decode_hex(address)
-        .with_context(|| format!("decode address {address} for topic encoding"))?;
-    Ok(format!(
-        "0x000000000000000000000000{}",
-        faster_hex::hex_string(bytes.as_slice())
-    ))
-}
-
 /// Fold selections without topic1..3 filters into one selection combining
 /// their topic0s, keeping the common case at a single log selection/request.
+/// Repeated topic0s and identical filtered selections are deduplicated —
+/// several registrations may select the same signature now that routing fans
+/// one log out to all of them.
 fn compress(selections: Vec<MaterializedTopicSelection>) -> Vec<MaterializedTopicSelection> {
     let mut filterless_topic0s: Vec<String> = Vec::new();
-    let mut with_filters = Vec::new();
+    let mut with_filters: Vec<MaterializedTopicSelection> = Vec::new();
     for selection in selections {
         if selection.has_filters() {
-            with_filters.push(selection);
+            if !with_filters.contains(&selection) {
+                with_filters.push(selection);
+            }
         } else {
-            filterless_topic0s.extend(selection.topic0);
+            for topic0 in selection.topic0 {
+                if !filterless_topic0s.contains(&topic0) {
+                    filterless_topic0s.push(topic0);
+                }
+            }
         }
     }
     let mut result = Vec::with_capacity(with_filters.len() + 1);
@@ -142,9 +140,6 @@ pub(crate) struct BuiltSelection {
     /// it's read off the log (the store key), and requesting it alone would
     /// pull the whole transaction table for nothing.
     pub transaction_fields: Vec<TransactionField>,
-    /// Inverted address index for routing (1:1 — each address belongs to one
-    /// contract).
-    pub contract_name_by_address: HashMap<String, String>,
 }
 
 /// Builds per-query log selections from the registrations passed at client
@@ -157,7 +152,7 @@ pub(crate) struct SelectionBuilder {
 
 impl SelectionBuilder {
     pub(crate) fn from_registrations(
-        registrations: &[super::types::OnEventRegistration],
+        registrations: &[super::types::OnEventRegistrationInput],
     ) -> Result<Self> {
         let mut map = HashMap::new();
         for reg in registrations {
@@ -191,7 +186,8 @@ impl SelectionBuilder {
     pub(crate) fn build(
         &self,
         registration_indexes: &[i64],
-        addresses_by_contract_name: &HashMap<String, Vec<String>>,
+        address_set: &AddressSet,
+        client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     ) -> Result<BuiltSelection> {
         // Buckets: address-free selections pool together; address-bound ones
         // group per contract so one contract's query can't fetch a sibling's
@@ -224,7 +220,7 @@ impl SelectionBuilder {
                     transaction_fields.push(field);
                 }
             }
-            if reg.depends_on_addresses {
+            if reg.depends_on_addresses && !client_filtered.applies(&reg.contract_name) {
                 if !ordered_contracts.contains(&reg.contract_name.as_str()) {
                     ordered_contracts.push(reg.contract_name.as_str());
                 }
@@ -238,6 +234,10 @@ impl SelectionBuilder {
                     .or_default()
                     .extend(reg.topic_selections.iter());
             } else {
+                // Address-free: genuine wildcards, plus client-filtered contracts
+                // whose ContractAddresses markers materialize to match-any (empty
+                // address topics). Routing re-applies the address gate on the
+                // returned items, against the store alone.
                 no_address.extend(reg.topic_selections.iter().map(|ts| ts.materialize(&[])));
             }
         }
@@ -255,22 +255,21 @@ impl SelectionBuilder {
 
         push_selections(&[], no_address);
 
+        // The set's per-contract slices carry both the address strings the
+        // filter needs and their padded topic forms, materialised once when the
+        // partition's set was first used rather than per query.
+        let cache = address_set.cache();
         for contract_name in ordered_contracts {
-            let addresses = match addresses_by_contract_name.get(contract_name) {
-                None => continue,
-                Some(addresses) if addresses.is_empty() => continue,
-                Some(addresses) => addresses,
+            let slice = match cache.slice(contract_name) {
+                Some(slice) if !slice.addresses.is_empty() => slice,
+                _ => continue,
             };
-            let address_topics: Vec<String> = addresses
-                .iter()
-                .map(|a| address_to_topic(a))
-                .collect::<Result<_>>()?;
             if let Some(selections) = by_contract.get(contract_name) {
                 push_selections(
-                    addresses,
+                    &slice.addresses,
                     selections
                         .iter()
-                        .map(|ts| ts.materialize(&address_topics))
+                        .map(|ts| ts.materialize(&slice.topics))
                         .collect(),
                 );
             }
@@ -279,18 +278,9 @@ impl SelectionBuilder {
                     &[],
                     selections
                         .iter()
-                        .map(|ts| ts.materialize(&address_topics))
+                        .map(|ts| ts.materialize(&slice.topics))
                         .collect(),
                 );
-            }
-        }
-
-        // Routing needs the whole partition index, including contracts with no
-        // selection in this query (their logs still fall back to wildcards).
-        let mut contract_name_by_address = HashMap::new();
-        for (contract_name, addresses) in addresses_by_contract_name {
-            for address in addresses {
-                contract_name_by_address.insert(address.clone(), contract_name.clone());
             }
         }
 
@@ -298,7 +288,6 @@ impl SelectionBuilder {
             log_selections,
             block_fields,
             transaction_fields,
-            contract_name_by_address,
         })
     }
 }
@@ -306,11 +295,16 @@ impl SelectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evm_hypersync_source::types::OnEventRegistration;
+    use crate::address_store::test_support::{evm_store, set_of};
+    use crate::evm_hypersync_source::types::OnEventRegistrationInput;
 
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const ADDR: &str = "0x1234567890abcdef1234567890abcdef12345678";
+    const ADDR_BYTES: [u8; 20] = [
+        0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd,
+        0xef, 0x12, 0x34, 0x56, 0x78,
+    ];
     const ADDR_TOPIC: &str = "0x0000000000000000000000001234567890abcdef1234567890abcdef12345678";
 
     fn reg(
@@ -320,8 +314,8 @@ mod tests {
         is_wildcard: bool,
         depends_on_addresses: bool,
         topic1: Option<Vec<String>>,
-    ) -> OnEventRegistration {
-        OnEventRegistration {
+    ) -> OnEventRegistrationInput {
+        OnEventRegistrationInput {
             index: id,
             sighash: sighash.to_string(),
             topic_count: 1,
@@ -329,6 +323,7 @@ mod tests {
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses,
+            start_block: None,
             params: vec![],
             topic_selections: vec![TopicSelectionInput {
                 topic0: vec![sighash.to_string()],
@@ -341,16 +336,18 @@ mod tests {
         }
     }
 
-    fn addresses(entries: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
-        entries
-            .iter()
-            .map(|(name, addrs)| {
-                (
-                    name.to_string(),
-                    addrs.iter().map(|a| a.to_string()).collect(),
-                )
-            })
-            .collect()
+    /// A store over `entries` plus a set spanning all of them — the pair a
+    /// query is built from.
+    fn addresses(entries: &[(&str, &[&str])]) -> (crate::address_store::AddressStore, AddressSet) {
+        let store = evm_store(entries);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+        let set = set_of(&store, &names);
+        (store, set)
+    }
+
+    /// A wildcard partition's set: no addresses, but still a real one.
+    fn no_addresses() -> (crate::address_store::AddressStore, AddressSet) {
+        addresses(&[])
     }
 
     #[test]
@@ -360,24 +357,22 @@ mod tests {
             reg(1, SIGHASH_B, "C", false, true, Some(vec![])),
         ])
         .unwrap();
-        let built = builder
-            .build(&[0, 1], &addresses(&[("C", &[ADDR])]))
-            .unwrap();
+        let (_store, set) = addresses(&[("C", &[ADDR])]);
+        let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
         assert_eq!(
-            built.log_selections,
-            vec![BuiltLogSelection {
-                addresses: vec![ADDR.to_string()],
-                topics: vec![
-                    vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
-                    vec![],
-                    vec![],
-                    vec![],
-                ],
-            }]
-        );
-        assert_eq!(
-            built.contract_name_by_address.get(ADDR),
-            Some(&"C".to_string())
+            (built.log_selections, set.cache().owner_of(&ADDR_BYTES),),
+            (
+                vec![BuiltLogSelection {
+                    addresses: vec![ADDR.to_string()],
+                    topics: vec![
+                        vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
+                        vec![],
+                        vec![],
+                        vec![],
+                    ],
+                }],
+                Some("C"),
+            )
         );
     }
 
@@ -392,7 +387,9 @@ mod tests {
             Some(vec![]),
         )])
         .unwrap();
-        let built = builder.build(&[0], &HashMap::new()).unwrap();
+        let built = builder
+            .build(&[0], &no_addresses().1, &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -410,7 +407,9 @@ mod tests {
         let builder =
             SelectionBuilder::from_registrations(&[reg(0, SIGHASH_A, "C", true, true, None)])
                 .unwrap();
-        let built = builder.build(&[0], &addresses(&[("C", &[ADDR])])).unwrap();
+        let built = builder
+            .build(&[0], &addresses(&[("C", &[ADDR])]).1, &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -426,6 +425,54 @@ mod tests {
     }
 
     #[test]
+    fn compress_dedupes_repeated_topic0s_and_identical_filtered_selections() {
+        let builder = SelectionBuilder::from_registrations(&[
+            // Two registrations selecting the same signature with no filters,
+            // plus two with an identical topic1 filter.
+            reg(0, SIGHASH_A, "C", true, false, Some(vec![])),
+            reg(1, SIGHASH_A, "D", true, false, Some(vec![])),
+            reg(
+                2,
+                SIGHASH_B,
+                "C",
+                true,
+                false,
+                Some(vec![ADDR_TOPIC.to_string()]),
+            ),
+            reg(
+                3,
+                SIGHASH_B,
+                "D",
+                true,
+                false,
+                Some(vec![ADDR_TOPIC.to_string()]),
+            ),
+        ])
+        .unwrap();
+        let built = builder
+            .build(&[0, 1, 2, 3], &no_addresses().1, &Default::default())
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                },
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![
+                        vec![SIGHASH_B.to_string()],
+                        vec![ADDR_TOPIC.to_string()],
+                        vec![],
+                        vec![],
+                    ],
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn contract_without_addresses_is_skipped() {
         let builder = SelectionBuilder::from_registrations(&[reg(
             0,
@@ -436,8 +483,64 @@ mod tests {
             Some(vec![]),
         )])
         .unwrap();
-        let built = builder.build(&[0], &addresses(&[("C", &[])])).unwrap();
+        let built = builder
+            .build(&[0], &addresses(&[("C", &[])]).1, &Default::default())
+            .unwrap();
         assert_eq!(built.log_selections, vec![]);
+    }
+
+    #[test]
+    fn client_filtered_contract_builds_address_free_selection() {
+        // A non-wildcard, address-dependent registration whose contract is
+        // client-filtered is queried address-free (topic0 only), even though
+        // the query carries no addresses for it.
+        let builder = SelectionBuilder::from_registrations(&[reg(
+            0,
+            SIGHASH_A,
+            "C",
+            false,
+            true,
+            Some(vec![]),
+        )])
+        .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C".to_string()
+            ]);
+        let built = builder
+            .build(&[0], &no_addresses().1, &client_filtered)
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![BuiltLogSelection {
+                addresses: vec![],
+                topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+            }]
+        );
+    }
+
+    #[test]
+    fn client_filtered_contract_addresses_marker_becomes_match_any() {
+        // A wildcard event filtering an indexed param by the contract's own
+        // addresses: when the contract is client-filtered the marker resolves to
+        // match-any (empty topic position) instead of the address topics.
+        let builder =
+            SelectionBuilder::from_registrations(&[reg(0, SIGHASH_A, "C", true, true, None)])
+                .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C".to_string()
+            ]);
+        let built = builder
+            .build(&[0], &addresses(&[("C", &[ADDR])]).1, &client_filtered)
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![BuiltLogSelection {
+                addresses: vec![],
+                topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+            }]
+        );
     }
 
     #[test]
@@ -449,7 +552,9 @@ mod tests {
             reg(1, SIGHASH_B, "C", false, true, Some(vec![])),
         ])
         .unwrap();
-        let built = builder.build(&[1], &addresses(&[("C", &[ADDR])])).unwrap();
+        let built = builder
+            .build(&[1], &addresses(&[("C", &[ADDR])]).1, &Default::default())
+            .unwrap();
         assert_eq!(
             built.log_selections,
             vec![BuiltLogSelection {
@@ -468,7 +573,9 @@ mod tests {
         b.block_fields = vec![BlockField::Number, BlockField::Nonce];
         b.transaction_fields = vec![TransactionField::GasPrice];
         let builder = SelectionBuilder::from_registrations(&[a, b]).unwrap();
-        let built = builder.build(&[0, 1], &HashMap::new()).unwrap();
+        let built = builder
+            .build(&[0, 1], &no_addresses().1, &Default::default())
+            .unwrap();
         assert_eq!(
             built.block_fields,
             vec![BlockField::Hash, BlockField::Number, BlockField::Nonce]
@@ -484,7 +591,10 @@ mod tests {
     #[test]
     fn unknown_registration_id_errors() {
         let builder = SelectionBuilder::from_registrations(&[]).unwrap();
-        let err = builder.build(&[7], &HashMap::new()).err().unwrap();
+        let err = builder
+            .build(&[7], &no_addresses().1, &Default::default())
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
     }
 }

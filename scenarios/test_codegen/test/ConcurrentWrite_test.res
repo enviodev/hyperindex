@@ -10,7 +10,7 @@ describe("Concurrent batch write and processing", () => {
 
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -30,6 +30,7 @@ describe("Concurrent batch write and processing", () => {
             ~updatedEffectsCache,
             ~updatedEntities,
             ~chainMetaData,
+            ~onWrite,
           ) => {
             writeBatchCalls := writeBatchCalls.contents + 1
             let run = async () => {
@@ -48,6 +49,7 @@ describe("Concurrent batch write and processing", () => {
                 ~updatedEffectsCache,
                 ~updatedEntities,
                 ~chainMetaData,
+                ~onWrite,
               ) {
               | exception exn =>
                 let message = switch exn->JsExn.anyToExnInternal {
@@ -134,14 +136,14 @@ describe("Concurrent batch write and processing", () => {
       await indexerMock.getBatchWritePromise()
 
       t.expect(
-        (writeBatchErrors, await indexerMock.queryHistory(SimpleEntity)),
+        (writeBatchErrors, await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>)),
         ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
       ).toEqual((
         [],
         [
           Set({
             checkpointId: 2n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "created",
@@ -149,11 +151,11 @@ describe("Concurrent batch write and processing", () => {
           }),
           Delete({
             checkpointId: 3n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
           }),
           Set({
             checkpointId: 4n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "recreated",

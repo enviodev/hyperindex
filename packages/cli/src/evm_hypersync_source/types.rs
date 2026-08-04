@@ -294,7 +294,7 @@ pub struct ParamMeta {
 /// routing identity (`id`/`contract_name`/`is_wildcard`), and the fetch state
 /// queries are built from (`topic_selections`, field selections).
 #[napi(object)]
-pub struct OnEventRegistration {
+pub struct OnEventRegistrationInput {
     /// Chain-scoped sequential registration index; returned on every routed
     /// item so JS resolves the registration by array index.
     pub index: i64,
@@ -306,6 +306,9 @@ pub struct OnEventRegistration {
     /// Whether the query for this event must be scoped to (or derived from)
     /// the contract's registered addresses.
     pub depends_on_addresses: bool,
+    /// Earliest block this registration accepts; absent is unrestricted. See
+    /// `crate::registration_start_block`.
+    pub start_block: Option<i64>,
     pub params: Vec<ParamMeta>,
     /// The registration's resolved `where` in disjunctive normal form (outer
     /// array is OR). Empty means the event is never fetched.

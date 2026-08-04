@@ -9,7 +9,7 @@ describe("Polling-stall loophole", () => {
 
       let source = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
         ~pollingInterval,
       )
       let _indexerMock = await MockIndexer.Indexer.make(

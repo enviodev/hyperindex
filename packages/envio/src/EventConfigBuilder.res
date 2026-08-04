@@ -292,61 +292,6 @@ let resolveFieldSelection = (
   )
 }
 
-// ============== Client-side address filter ==============
-
-let compileAddressFilter: string => (
-  Internal.eventPayload,
-  int,
-  dict<Internal.indexingContract>,
-) => bool = %raw(`function (body) {
-  return new Function("event", "blockNumber", "indexingAddresses", body);
-}`)
-
-// Body of the client-side address filter. Two analogous registered-at-or-before
-// checks, ANDed: (1) for non-wildcard events, the log's srcAddress must itself be
-// registered (ownership is resolved structurally by partition, but the temporal
-// `effectiveStartBlock` gate lives here now); (2) a DNF of address-filtered param
-// names (OR of AND-groups) for events that filter an indexed address param. The
-// DNF is fixed here, so it's unrolled into one boolean expression — no per-event
-// closure, loop, or array. `None` only for wildcard events without a param
-// filter. Exposed for snapshotting.
-// `srcAddressExpr` is the JS expression for the event's owning address: EVM and
-// Fuel events expose `event.srcAddress`; SVM instructions expose `event.programId`.
-let buildAddressFilterBody = (
-  groups: array<array<string>>,
-  ~isWildcard: bool,
-  ~srcAddressExpr: string="event.srcAddress",
-): option<string> => {
-  let paramLeaf = name =>
-    `(ic = indexingAddresses[p[${JSON.stringify(
-        JSON.String(name),
-      )}]]) !== undefined && ic.effectiveStartBlock <= blockNumber`
-  let paramDnf = switch groups {
-  | [] => None
-  | _ =>
-    Some(
-      groups
-      ->Array.map(group => "(" ++ group->Array.map(paramLeaf)->Array.join(" && ") ++ ")")
-      ->Array.join(" || "),
-    )
-  }
-  let srcLeaf = `(ic = indexingAddresses[${srcAddressExpr}]) !== undefined && ic.effectiveStartBlock <= blockNumber`
-  switch (isWildcard, paramDnf) {
-  | (true, None) => None
-  | (true, Some(dnf)) => Some("var p = event.params, ic; return " ++ dnf ++ ";")
-  | (false, None) => Some("var ic; return " ++ srcLeaf ++ ";")
-  | (false, Some(dnf)) =>
-    Some("var p = event.params, ic; return " ++ srcLeaf ++ " && (" ++ dnf ++ ");")
-  }
-}
-
-let buildAddressFilter = (
-  groups: array<array<string>>,
-  ~isWildcard: bool,
-  ~srcAddressExpr: string="event.srcAddress",
-): option<(Internal.eventPayload, int, dict<Internal.indexingContract>) => bool> =>
-  buildAddressFilterBody(groups, ~isWildcard, ~srcAddressExpr)->Option.map(compileAddressFilter)
-
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (
@@ -397,7 +342,7 @@ let buildEvmOnEventRegistration = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~where: option<JSON.t>,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
@@ -431,7 +376,7 @@ let buildEvmOnEventRegistration = (
     contractRegister,
     resolvedWhere,
     filterByAddresses,
-    clientAddressFilter: ?buildAddressFilter(addressFilterParamGroups, ~isWildcard),
+    addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
   }
@@ -516,7 +461,6 @@ let buildSvmOnEventRegistration = (
   isWildcard,
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  clientAddressFilter: ?buildAddressFilter([], ~isWildcard, ~srcAddressExpr="event.programId"),
   startBlock,
 }
 
@@ -594,6 +538,5 @@ let buildFuelOnEventRegistration = (
   isWildcard,
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  clientAddressFilter: ?buildAddressFilter([], ~isWildcard),
   startBlock,
 }

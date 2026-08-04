@@ -658,12 +658,7 @@ mod tests {
         }
     }
 
-    fn column<'a>(cols: &'a Columns, name: &str) -> Option<&'a Column> {
-        cols.columns
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, c)| c)
-    }
+    use crate::field_columns::test_support::column;
 
     fn bit(field: EvmTxField) -> u64 {
         1u64 << (field as u32)

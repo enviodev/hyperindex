@@ -1,6 +1,6 @@
-let chain1 = ChainMap.Chain.makeUnsafe(~chainId=1)
-let chain137 = ChainMap.Chain.makeUnsafe(~chainId=137)
-let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
+let chain1 = 1->ChainId.fromInt
+let chain137 = 137->ChainId.fromInt
+let chain1337 = 1337->ChainId.fromInt
 
 let getEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {
@@ -17,10 +17,10 @@ let getEvmEventConfig = (~config=?, ~contractName, ~eventName, ~chainId=?) =>
     Utils.magic: Internal.eventConfig => Internal.evmEventConfig
   )
 
-// Build the per-(event, chain) registration from the event definition + the
-// registered handlers, mirroring `HandlerRegister.finishRegistration`.
-// Handlers must have been registered (`HandlerLoader.registerAllHandlers`)
-// before calling.
+// The first per-(event, chain) registration built from the event definition +
+// the registered handlers. Handlers must have been registered
+// (`HandlerLoader.registerAllHandlers`) before calling; falls back to a bare
+// registration when the event has none.
 let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) => {
   let config = switch config {
   | Some(c) => c
@@ -29,9 +29,15 @@ let getOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) 
   let eventConfig = getEventConfig(~config, ~contractName, ~eventName, ~chainId?)
   let probeChainId = switch chainId {
   | Some(id) => id
-  | None => config.chainMap->ChainMap.values->Array.get(0)->Option.mapOr(0, c => c.id)
+  | None =>
+    config.chainMap
+    ->ChainMap.values
+    ->Array.get(0)
+    ->Option.mapOr(0->ChainId.fromInt, c => c.id)
   }
-  HandlerRegister.buildOnEventRegistration(~config, ~chainId=probeChainId, ~eventConfig)
+  HandlerRegister.getSimulateOnEventRegistrations(~config, ~chainId=probeChainId, ~eventConfig)
+  ->Array.get(0)
+  ->Option.getOrThrow
 }
 
 let getEvmOnEventRegistration = (~config=?, ~contractName, ~eventName, ~chainId=?) =>

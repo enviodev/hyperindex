@@ -766,8 +766,8 @@ impl Display for TypeIdent {
     }
 }
 
-///Implementation of Serialize allows handlebars get a stringified
-///version of the string representation of the rescript type
+///Serializes to the stringified ReScript type rather than the struct's
+///fields, so consumers receive the same text as the `Display` impl.
 impl Serialize for TypeIdent {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

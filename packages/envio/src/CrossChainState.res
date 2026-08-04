@@ -7,9 +7,13 @@ type t = {
   chainStates: dict<ChainState.t>,
   // Chain ids in a stable order, so the cross-chain loops iterate the chains
   // without allocating a values array on every tick.
-  chainIds: array<int>,
+  chainIds: array<ChainId.t>,
   // True once every chain has caught up to head/endBlock. Monotonic during a run.
   mutable isRealtime: bool,
+  // True once every chain has caught up and there's nothing left to process,
+  // but before the deferred schema indexes and `ready_at` are committed. The
+  // gap between this and `isRealtime` is the FinalizingIndexes phase.
+  mutable isCaughtUp: bool,
   mutable isInReorgThreshold: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
@@ -28,27 +32,28 @@ let make = (
   ~isRealtime,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
-  let crossChainState = {
+  {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
+    isCaughtUp: isRealtime,
     isInReorgThreshold,
     targetBufferSize,
   }
-  Prometheus.IndexingTargetBufferSize.set(~targetBufferSize)
-  crossChainState
 }
 
 // Resolve a chain's state by id. The id always comes from `chainIds`, which is
 // derived from `chainStates`, so the entry is guaranteed present.
 let getChainState = (crossChainState: t, chainId) =>
-  crossChainState.chainStates->Utils.Dict.dangerouslyGetByIntNonOption(chainId)->Option.getUnsafe
+  crossChainState.chainStates->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.getUnsafe
 
 // --- Accessors. ---
 
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
+let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
 let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
+let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -120,7 +125,6 @@ let createBatch = (
 // blockLag and flip the flag.
 let enterReorgThreshold = (crossChainState: t) => {
   Logging.info("Reorg threshold reached")
-  Prometheus.ReorgThreshold.set(~isInReorgThreshold=true)
 
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     crossChainState
@@ -131,10 +135,11 @@ let enterReorgThreshold = (crossChainState: t) => {
   crossChainState.isInReorgThreshold = true
 }
 
-// Commit each progressed chain's batch progress, then decide readiness for the
-// whole indexer. A chain is marked caught up only once EVERY chain is caught up
-// (reached endblock or fetched/processed to head) with no processable events
-// left — so no chain flips to ready while another is still backfilling.
+// Commit each progressed chain's batch progress, then record whether the whole
+// indexer has caught up (every chain reached endblock or processed to head,
+// with no processable events left). Catching up doesn't make the indexer ready:
+// the deferred schema indexes still have to be created, which `markReady`
+// below concludes once they're committed.
 let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampName: string) => {
   let chainIds = crossChainState.chainIds
 
@@ -147,24 +152,83 @@ let applyBatchProgress = (crossChainState: t, ~batch: Batch.t, ~blockTimestampNa
     }
   }
 
-  let indexerCaughtUp = crossChainState->nextItemIsNone && everyChainCaughtUp.contents
+  crossChainState.isCaughtUp =
+    crossChainState.isCaughtUp || (crossChainState->nextItemIsNone && everyChainCaughtUp.contents)
 
+  // A run resumed with every chain already stamped ready needs no finalize —
+  // the indexes were committed together with those stamps.
   let allChainsReady = ref(true)
   for i in 0 to chainIds->Array.length - 1 {
-    let cs = crossChainState->getChainState(chainIds->Array.getUnsafe(i))
-    if indexerCaughtUp {
-      cs->ChainState.markReady
-    }
-    if !(cs->ChainState.isReady) {
+    if !(crossChainState->getChainState(chainIds->Array.getUnsafe(i))->ChainState.isReady) {
       allChainsReady := false
     }
   }
 
-  if allChainsReady.contents {
-    Prometheus.ProgressReady.setAllReady()
+  crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
+}
+
+// Every chain has buffered up to its head (or endblock) with nothing
+// processable left. Derived from current state rather than from the flag a
+// progressed batch sets, because a run that reached the head and died before
+// finalizing resumes with no batch to process — nothing would ever set it.
+let isSettledAtHead = (crossChainState: t) => {
+  let settled = ref(crossChainState->nextItemIsNone)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    if (
+      !(
+        crossChainState
+        ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+        ->ChainState.isFetchingAtHead
+      )
+    ) {
+      settled := false
+    }
+  }
+  settled.contents
+}
+
+// Enter the FinalizingIndexes phase without a batch, for the resume above.
+let markCaughtUpIfSettled = (crossChainState: t) =>
+  if crossChainState->isSettledAtHead {
+    crossChainState.isCaughtUp = true
   }
 
-  crossChainState.isRealtime = crossChainState.isRealtime || allChainsReady.contents
+// The same resume, decided from persisted values at construction instead of from
+// the fetch frontier. A run that reached the head and died before finalizing has
+// no batch to process on resume, and by the time the first height lands the head
+// may have moved on — at which point no chain looks at head any more and the
+// indexes it still owes would wait out another whole backfill. Deciding here,
+// before any source request, keeps that debt tied to the progress that was
+// actually committed. Skipped once every chain carries `ready_at`: those indexes
+// were committed together with the stamps.
+let markCaughtUpOnResume = (crossChainState: t) => {
+  let everyChainCaughtUp = ref(crossChainState.chainIds->Array.length > 0)
+  let everyChainReady = ref(true)
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    if !(cs->ChainState.isDurablyCaughtUp) {
+      everyChainCaughtUp := false
+    }
+    if !(cs->ChainState.isReady) {
+      everyChainReady := false
+    }
+  }
+
+  if everyChainCaughtUp.contents && !everyChainReady.contents && crossChainState->nextItemIsNone {
+    crossChainState.isCaughtUp = true
+  }
+}
+
+// Concludes the FinalizingIndexes phase: stamps every chain with the `ready_at`
+// already committed alongside the deferred schema indexes and switches the
+// indexer to realtime.
+let markReady = (crossChainState: t, ~readyAt) => {
+  for i in 0 to crossChainState.chainIds->Array.length - 1 {
+    crossChainState
+    ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
+    ->ChainState.markReady(~readyAt)
+  }
+  crossChainState.isRealtime = true
 }
 
 // --- Fetch control. ---
@@ -232,7 +296,7 @@ let idleOrWaitAction = (cs: ChainState.t) =>
 // dropped — chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
-  ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
   let targetBudget = crossChainState.targetBufferSize->Int.toFloat
   let remaining = ref(
@@ -254,19 +318,6 @@ let checkAndFetch = async (
   // slice of the pool — one unknown chain shouldn't hold the whole budget
   // while it takes its first measurements. Its probe is one admission unit.
   let coldChainBudget = minimumAdmissionBudget
-
-  // Chunk reservations get headroom over the density estimate so a
-  // denser-than-expected range doesn't truncate at the server cap; realtime
-  // gets more since a forced catch-up query there costs a head-poll roundtrip.
-  let chunkItemsMultiplier = crossChainState.isRealtime ? 3. : 1.5
-
-  // Server-cap floor for bounded queries: their block range is already the
-  // hard bound on the response, so a low density estimate shrinking the cap
-  // below this only buys self-truncated responses. Splitting the target pool
-  // across a chain's concurrency slots keeps the worst case — every in-flight
-  // bounded query returning a full floored response at once — at ~one buffer
-  // target.
-  let itemsTargetFloor = crossChainState.targetBufferSize / FetchState.maxChainConcurrency
 
   let prioritizedChainStates = crossChainState->priorityOrder
 
@@ -293,39 +344,34 @@ let checkAndFetch = async (
       // hold the whole pool. (The general can't-fetch-yet rule, including
       // blockLag, lives in FetchState.getNextQuery — this branch only
       // short-circuits the unambiguous no-height case.)
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.WaitingForNewBlock)
+      actionByChain->ChainId.Dict.set(chainId, FetchState.WaitingForNewBlock)
     } else if remaining.contents < minimumAdmissionBudget {
       // More than 90% of the target pool is ready or reserved. Don't admit new
       // queries until a full admission unit becomes free. No wake-up poll is
       // needed: a saturated pool means some chain holds ready items or
       // in-flight reservations, so a batch completion or landing response is
       // guaranteed to schedule another tick that revisits this chain.
-      actionByChain->Utils.Dict.setByInt(chainId, FetchState.NothingToQuery)
+      actionByChain->ChainId.Dict.set(chainId, FetchState.NothingToQuery)
     } else {
       let isCold = cs->ChainState.effectiveDensity === None
       let chainTargetItems =
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
       let maxTargetBlock = switch alignment {
-      // 5% margin past the anchor's line: chains whose progress tracks the
+      // 10% margin past the anchor's line: chains whose progress tracks the
       // anchor closely would otherwise flap in and out of the clamp on every
       // small frontier move, stalling their pipeline every other tick.
       | Some((anchorChainId, progress)) if anchorChainId !== chainId =>
-        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.05))
+        Some(cs->ChainState.blockAtProgress(~progress=progress +. 0.1))
       | _ => None
       }
-      switch cs->ChainState.getNextQuery(
-        ~chainTargetItems,
-        ~chunkItemsMultiplier,
-        ~itemsTargetFloor,
-        ~maxTargetBlock?,
-      ) {
-      | WaitingForNewBlock as action => actionByChain->Utils.Dict.setByInt(chainId, action)
+      switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
+      | WaitingForNewBlock as action => actionByChain->ChainId.Dict.set(chainId, action)
       | NothingToQuery =>
         // A chain below its head can emit no query when its budget went to
         // more-behind chains or the cross-chain alignment clamped its range to
         // nothing — idleOrWaitAction keeps it polling for new blocks.
-        actionByChain->Utils.Dict.setByInt(chainId, idleOrWaitAction(cs))
+        actionByChain->ChainId.Dict.set(chainId, idleOrWaitAction(cs))
       | Ready(queries) => {
           let consumed =
             queries->Array.reduce(0., (acc, query: FetchState.query) =>
@@ -339,7 +385,7 @@ let checkAndFetch = async (
               {
                 "fromBlock": query.fromBlock,
                 "targetBlock": query.toBlock,
-                "targetEvents": query.itemsTarget,
+                "targetEvents": query.itemsEst,
               },
             )
           )
@@ -349,7 +395,7 @@ let checkAndFetch = async (
             "partitions": partitions,
           })
 
-          actionByChain->Utils.Dict.setByInt(chainId, FetchState.Ready(queries))
+          actionByChain->ChainId.Dict.set(chainId, FetchState.Ready(queries))
           // Mark the queries in flight and reserve their size against the
           // shared budget; released as each response lands in
           // handleQueryResult.
@@ -363,12 +409,10 @@ let checkAndFetch = async (
   let promises = []
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let chainId = crossChainState.chainIds->Array.getUnsafe(i)
-    switch actionByChain->Utils.Dict.dangerouslyGetByIntNonOption(chainId) {
+    switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) =>
-      let chain = ChainMap.Chain.makeUnsafe(~chainId)
-      promises->Array.push(dispatchChain(~chain, ~action))
+    | Some(action) => promises->Array.push(dispatchChain(~chainId=chainId, ~action))
     }
   }
   let _ = await promises->Promise.all

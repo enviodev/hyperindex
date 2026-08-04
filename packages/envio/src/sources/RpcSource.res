@@ -43,7 +43,7 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
 let getKnownRawBlockWithBackoff = async (
   ~client,
   ~sourceName,
-  ~chain,
+  ~chainId,
   ~blockNumber,
   ~backoffMsOnFailure,
   ~recordRequest: (~method: string, ~seconds: float) => unit,
@@ -60,7 +60,7 @@ let getKnownRawBlockWithBackoff = async (
         "err": err->Utils.prettifyExn,
         "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chainId,
         "type": "EXPONENTIAL_BACKOFF",
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
@@ -613,10 +613,12 @@ type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   lowercaseAddresses: bool,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
   ws?: string,
   headers?: dict<string>,
 }
@@ -626,18 +628,18 @@ let make = (
     sourceFor,
     syncConfig,
     url,
-    chain,
+    chainId,
     onEventRegistrations,
     lowercaseAddresses,
+    addressStore,
     ?ws,
     ?headers,
   }: options,
 ): t => {
-  let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
@@ -650,6 +652,7 @@ let make = (
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
+    ~addressStore,
   )
 
   // Requests are made from shared, memoized loaders, so they can't be
@@ -690,7 +693,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
@@ -707,7 +710,7 @@ let make = (
         getKnownRawBlockWithBackoff(
           ~client,
           ~sourceName=name,
-          ~chain,
+          ~chainId,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
           ~recordRequest,
@@ -719,7 +722,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
@@ -750,7 +753,7 @@ let make = (
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
               ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "receiptLoader: fetching transaction receipt - `getTransactionReceipt` rpc call",
@@ -802,8 +805,7 @@ let make = (
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress as _,
+    ~addressSet,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -836,13 +838,16 @@ let make = (
       )
     }
 
-    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage({
-      fromBlock,
-      toBlockCeiling: toBlock,
-      partitionId,
-      registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-      addressesByContractName,
-    }) catch {
+    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage(
+      {
+        fromBlock,
+        toBlockCeiling: toBlock,
+        partitionId,
+        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        clientFilteredContracts: selection.clientFilteredContracts,
+      },
+      addressSet,
+    ) catch {
     | exn =>
       switch exn->parseGetNextPageRetryError {
       | Some((attemptedToBlock, retry, requestStats)) =>
@@ -926,13 +931,13 @@ let make = (
           Internal.Event({
             onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
             blockNumber: block->getBlockNumber,
-            chain,
+            chainId,
             logIndex: log.logIndex,
             transactionIndex: log.transactionIndex,
             payload: {
               contractName: eventConfig.contractName,
               eventName: eventConfig.name,
-              chainId: chain->ChainMap.Chain.toChainId,
+              chainId,
               params: decoded,
               block,
               transaction,
@@ -1048,7 +1053,7 @@ let make = (
   {
     name,
     sourceFor,
-    chain,
+    chainId,
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,

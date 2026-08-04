@@ -1,16 +1,16 @@
 //! Borsh instruction decoder bridge.
 //!
-//! `parse_program_schema` deserialises a JSON descriptor produced by
-//! `public_config.rs` into an upstream `ProgramSchema`. The Solana client
-//! builds these once at creation time and keeps them keyed by program id;
-//! its `get` then decodes each matching instruction inline via
-//! `decode_with_schema`, so the `DecodedInstruction` shape rides back on the
-//! query response instead of crossing the napi boundary one call at a time.
+//! `build_program_schema` assembles an upstream `ProgramSchema` from the
+//! per-instruction schema pieces carried on the event registrations. The
+//! Solana client builds these once at creation time and keeps them keyed by
+//! program id; `get_event_items` then decodes each routed instruction inline
+//! via `decode_with_schema`, so the `DecodedInstruction` shape rides back on
+//! the query response instead of crossing the napi boundary one call at a
+//! time.
 
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
 
 use hypersync_client_solana::decode::{
     decode_instruction as upstream_decode, DecodedInstruction as UpstreamDecoded,
@@ -24,44 +24,22 @@ use crate::config_parsing::human_config::svm::{ArgComposite, ArgDef, ArgPrimitiv
 
 use super::mod_helpers::hex_to_bytes;
 
-/// Wire-format descriptor sent from the ReScript runtime at startup. Mirrors
-/// the JSON shape emitted by `public_config::SvmAbiJson` plus the per-program
-/// instruction list (which the runtime reconstructs from each event's
-/// `svm.discriminator`/`svm.accounts`/`svm.args`).
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProgramSchemaJson {
-    pub program_id: String,
-    #[serde(default)]
-    pub defined_types: BTreeMap<String, ArgType>,
-    pub instructions: Vec<InstructionSchemaJson>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstructionSchemaJson {
+/// One instruction's schema piece, assembled from a registration's
+/// `accounts`/`args` at client creation.
+#[derive(Debug)]
+pub(crate) struct InstructionSchemaInput {
     pub name: String,
     /// Hex (`0x`-prefixed or bare) — the bytes the dispatcher matches against
     /// the head of `instruction.data`.
     pub discriminator: String,
-    #[serde(default)]
     pub accounts: Vec<String>,
-    #[serde(default)]
     pub args: Vec<ArgDef>,
 }
 
-/// Parse a JSON descriptor into an upstream `ProgramSchema`. The Solana client
-/// calls this once per configured program at creation time; the resulting
-/// schema's `program_id` is the key the client decodes against.
-pub(crate) fn parse_program_schema(descriptor_json: &str) -> Result<UpstreamSchema> {
-    let descriptor: ProgramSchemaJson =
-        serde_json::from_str(descriptor_json).context("parse program schema descriptor")?;
-    build_program_schema(descriptor).context("build program schema")
-}
-
 /// Decode a raw instruction against a resolved schema. Called inline by the
-/// Solana client's `get`, so decoded instructions ride back on the query
-/// response instead of crossing the napi boundary one instruction at a time.
+/// Solana client's `get_event_items`, so decoded instructions ride back on the
+/// query response instead of crossing the napi boundary one instruction at a
+/// time.
 ///
 /// POC policy: any decode failure (unknown discriminator, account-count
 /// mismatch, trailing bytes, unresolved type) yields `None` so the indexer
@@ -112,9 +90,12 @@ impl From<UpstreamDecoded> for DecodedInstructionJson {
     }
 }
 
-fn build_program_schema(d: ProgramSchemaJson) -> Result<UpstreamSchema> {
-    let defined_types: BTreeMap<String, SvmFieldType> = d
-        .defined_types
+pub(crate) fn build_program_schema(
+    program_id: String,
+    defined_types: &BTreeMap<String, ArgType>,
+    instruction_inputs: Vec<InstructionSchemaInput>,
+) -> Result<UpstreamSchema> {
+    let defined_types: BTreeMap<String, SvmFieldType> = defined_types
         .iter()
         .map(|(name, ty)| {
             arg_type_to_field_type(ty)
@@ -124,7 +105,7 @@ fn build_program_schema(d: ProgramSchemaJson) -> Result<UpstreamSchema> {
         .collect::<Result<_>>()?;
 
     let mut instructions: BTreeMap<Vec<u8>, UpstreamIxSchema> = BTreeMap::new();
-    for ix in d.instructions {
+    for ix in instruction_inputs {
         let discriminator = hex_to_bytes(&ix.discriminator)
             .with_context(|| format!("instruction '{}' discriminator", ix.name))?;
         let accounts = ix
@@ -165,7 +146,7 @@ fn build_program_schema(d: ProgramSchemaJson) -> Result<UpstreamSchema> {
     }
 
     Ok(UpstreamSchema::build(
-        d.program_id,
+        program_id,
         instructions,
         defined_types,
     ))

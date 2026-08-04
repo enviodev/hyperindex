@@ -52,7 +52,7 @@ EffectContext.prototype = effectContextPrototype;
 @new
 external makeEffectContext: (
   contextParams,
-  ~chainId: option<int>,
+  ~chainId: option<ChainId.t>,
   ~effectName: string,
   ~defaultShouldCache: bool,
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
@@ -144,7 +144,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
 }
 
 let noopSet = (_entity: Internal.entity) => ()
-let noopDeleteUnsafe = (_entityId: string) => ()
+let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
 
 // Reads against ClickHouse-only entities have no Postgres table to hit;
 // surface a friendly error instead of letting the SQL layer fail with
@@ -168,7 +168,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
-              entityId: entity.id,
+              entityId: entity.id->EntityId.unsafeOfString,
               checkpointId: params.checkpointId,
               entity,
             }),
@@ -282,7 +282,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             }),
           )
         }
-      }->(Utils.magic: (string => unit) => unknown)
+      }->(Utils.magic: (EntityId.t => unit) => unknown)
     | _ =>
       JsError.throwWithMessage(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
     }
@@ -318,7 +318,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     | "chain" =>
       let chainId = params.item->Internal.getItemChainId
       params.chains
-      ->Utils.Dict.dangerouslyGetByIntNonOption(chainId)
+      ->ChainId.Dict.dangerouslyGetNonOption(chainId)
       ->(Utils.magic: option<Internal.chainInfo> => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {

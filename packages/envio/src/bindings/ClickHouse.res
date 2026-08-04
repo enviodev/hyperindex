@@ -44,9 +44,15 @@ let getClickHouseFieldType = (
   ~fieldType: Table.fieldType,
   ~isNullable: bool,
   ~isArray: bool,
+  ~chainIdMode: ChainId.mode=Int32,
 ): string => {
   let baseType = switch fieldType {
   | Int32 => "Int32"
+  | ChainId =>
+    switch chainIdMode {
+    | Int32 => "Int32"
+    | Int64 => "UInt64"
+    }
   | Uint32 => "UInt32"
   | UInt52 => "UInt64"
   | UInt64 => "UInt64"
@@ -91,7 +97,6 @@ let getClickHouseFieldType = (
         ->Array.joinUnsafe(", ")
       `${enumType}(${enumValues})`
     }
-  | Entity(_) => "String"
   }
 
   let baseType = if isArray {
@@ -124,6 +129,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 dateSchema
               }
             }
+          | ChainId => ChainId.schema->S.toUnknown
           // ClickHouse returns UInt64 values as strings, need to parse to float
           | UInt52 => {
               let uint52Schema =
@@ -261,11 +267,14 @@ let setUpdatesOrThrow = async (
         convertOrThrow: S.compile(
           S.array(
             S.union([
-              EntityHistory.makeSetUpdateSchema(makeClickHouseEntitySchema(entityConfig.table)),
+              EntityHistory.makeSetUpdateSchema(
+                ~idSchema=entityConfig.table->Table.getIdSchema,
+                makeClickHouseEntitySchema(entityConfig.table),
+              ),
               S.object(s => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Change.Delete({
-                  entityId: s.field(Table.idFieldName, S.string),
+                  entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
                   checkpointId: s.field(
                     EntityHistory.checkpointIdFieldName,
                     EntityHistory.unsafeCheckpointIdSchema,
@@ -307,11 +316,35 @@ let setUpdatesOrThrow = async (
   }
 }
 
+// A plain database created with ON CLUSTER doesn't turn subsequent DDL into
+// cluster-wide statements; ClickHouse keeps no "this database is clustered"
+// flag. Without a Replicated database engine, every CREATE must carry its own
+// ON CLUSTER to reach all replicas, otherwise it runs only on the connected
+// node. With a Replicated database engine the DDL propagates via the database's
+// own log, and combining it with ON CLUSTER is rejected/double-applied — so
+// table-level DDL must carry the clause only in the plain-database case.
+// The '{cluster}' macro resolves to each node's configured cluster name.
+let onClusterClause = (~onCluster: bool) => onCluster ? ` ON CLUSTER '{cluster}'` : ""
+
+// Strip both engine arguments `(...)` and a trailing `SETTINGS ...` clause to
+// get the bare engine name, e.g. `Replicated('/p','{shard}','{replica}') SETTINGS x=1`
+// and `Replicated SETTINGS x=1` both yield `Replicated`.
+let databaseEngineName = (engineSpec: string) =>
+  engineSpec
+  ->String.trim
+  ->String.split("(")
+  ->Array.getUnsafe(0)
+  ->String.split(" ")
+  ->Array.getUnsafe(0)
+  ->String.trim
+
 // Generate CREATE TABLE query for entity history table
 let makeCreateHistoryTableQuery = (
   ~entityConfig: Internal.entityConfig,
   ~database: string,
   ~replicated: bool=false,
+  ~onCluster: bool=false,
+  ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let fieldDefinitions = entityConfig.table.fields->Array.filterMap(field => {
@@ -323,6 +356,7 @@ let makeCreateHistoryTableQuery = (
           ~fieldType=field.fieldType,
           ~isNullable=field.isNullable,
           ~isArray=field.isArray,
+          ~chainIdMode,
         )
         `\`${fieldName}\` ${clickHouseType}`
       })
@@ -330,10 +364,76 @@ let makeCreateHistoryTableQuery = (
     }
   })
 
+  let (partitionBy, orderBy, ttl) = switch entityConfig.storage.clickhouseOptions {
+  | Some(options) => (options.partitionBy, options.orderBy, options.ttl)
+  | None => (None, None, None)
+  }
+
+  // Schema field name -> ClickHouse column name, so @storage(clickhouse: {...})
+  // options can reference fields the way they're written in the schema and get
+  // renames (`column_name_format: snake_case`) and linked-entity `_id` suffixes
+  // resolved here.
+  let columnByFieldName = Dict.make()
+  entityConfig.table.fields->Array.forEach(field =>
+    switch field {
+    | Field(f) => columnByFieldName->Dict.set(f.fieldName, f->Table.getClickHouseDbFieldName)
+    | DerivedFrom(_) => ()
+    }
+  )
+
+  let orderByColumns = switch orderBy {
+  | Some(fieldNames) =>
+    // envio_checkpoint_id stays appended so the sorting key keeps a
+    // deterministic tie-break and the view's checkpoint dedup gets a clean
+    // ascending run per prefix. id is dropped: ClickHouse entities are
+    // read-only, so nothing looks history rows up by id.
+    let userColumns =
+      fieldNames
+      ->Array.map(fieldName =>
+        switch columnByFieldName->Dict.get(fieldName) {
+        | Some(column) => `\`${column}\``
+        | None =>
+          // Validated at codegen, so a miss means the schema and the
+          // persisted config diverged.
+          JsError.throwWithMessage(
+            `ClickHouse orderBy field "${fieldName}" is not defined on entity "${entityConfig.name}"`,
+          )
+        }
+      )
+      ->Array.joinUnsafe(", ")
+    `${userColumns}, ${EntityHistory.checkpointIdFieldName}`
+  | None => `${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName}`
+  }
+
+  // partitionBy/ttl are raw ClickHouse expressions. Rewrite any bare identifier
+  // that names an entity field to that field's ClickHouse column, leaving
+  // functions, keywords, numbers, string literals and already-backticked
+  // identifiers untouched (a quoted token never matches a bare field name).
+  let resolveExpressionColumns = expression =>
+    expression->String.replaceRegExpBy0Unsafe(/'[^']*'|`[^`]*`|[A-Za-z_][A-Za-z0-9_]*/g, (
+      ~match,
+      ~offset as _,
+      ~input as _,
+    ) =>
+      switch columnByFieldName->Dict.get(match) {
+      | Some(column) => `\`${column}\``
+      | None => match
+      }
+    )
+
+  let partitionByClause = switch partitionBy {
+  | Some(expression) => `\nPARTITION BY ${expression->resolveExpressionColumns}`
+  | None => ""
+  }
+  let ttlClause = switch ttl {
+  | Some(expression) => `\nTTL ${expression->resolveExpressionColumns}`
+  | None => ""
+  }
+
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
-    )}\` (
+    )}\`${onClusterClause(~onCluster)} (
   ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
   \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
       ~fieldType=UInt64,
@@ -346,12 +446,17 @@ let makeCreateHistoryTableQuery = (
       ~isArray=false,
     )}
 )
-ENGINE = ${tableEngine}
-ORDER BY (${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+ENGINE = ${tableEngine}${partitionByClause}
+ORDER BY (${orderByColumns})${ttlClause}`
 }
 
 // Generate CREATE TABLE query for checkpoints
-let makeCreateCheckpointsTableQuery = (~database: string, ~replicated: bool=false) => {
+let makeCreateCheckpointsTableQuery = (
+  ~database: string,
+  ~replicated: bool=false,
+  ~onCluster: bool=false,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let chainIdField = (#chain_id: InternalTable.Checkpoints.field :> string)
@@ -359,12 +464,15 @@ let makeCreateCheckpointsTableQuery = (~database: string, ~replicated: bool=fals
   let blockHashField = (#block_hash: InternalTable.Checkpoints.field :> string)
   let eventsProcessedField = (#events_processed: InternalTable.Checkpoints.field :> string)
 
-  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\` (
+  `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\`${onClusterClause(
+      ~onCluster,
+    )} (
   \`${idField}\` ${getClickHouseFieldType(~fieldType=UInt64, ~isNullable=false, ~isArray=false)},
   \`${chainIdField}\` ${getClickHouseFieldType(
-      ~fieldType=Int32,
+      ~fieldType=ChainId,
       ~isNullable=false,
       ~isArray=false,
+      ~chainIdMode,
     )},
   \`${blockNumberField}\` ${getClickHouseFieldType(
       ~fieldType=Int32,
@@ -387,7 +495,11 @@ ORDER BY (${idField})`
 }
 
 // Generate CREATE VIEW query for entity current state
-let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: string) => {
+let makeCreateViewQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database: string,
+  ~onCluster: bool=false,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
@@ -409,7 +521,7 @@ let makeCreateViewQuery = (~entityConfig: Internal.entityConfig, ~database: stri
     })
     ->Array.joinUnsafe(", ")
 
-  `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\` AS
+  `CREATE VIEW IF NOT EXISTS ${database}.\`${entityConfig.name}\`${onClusterClause(~onCluster)} AS
 SELECT ${entityFields}
 FROM (
   SELECT ${entityFields}, \`${EntityHistory.changeFieldName}\`
@@ -427,22 +539,36 @@ let initialize = async (
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
+  ~chainIdMode: ChainId.mode=Int32,
 ) => {
   try {
-    let replicated = Env.ClickHouse.replicated()
     let databaseEngine = Env.ClickHouse.databaseEngine()
     let databaseEngineClause = switch databaseEngine {
     | Some(engine) => ` ENGINE = ${engine}`
     | None => ""
     }
-    // Replicated database engine requires CREATE DATABASE to run on every
-    // replica; ON CLUSTER fans the DDL out via Keeper. The '{cluster}' macro
-    // resolves to each node's configured cluster name.
-    let onClusterClause = replicated ? ` ON CLUSTER '{cluster}'` : ""
+    let hasReplicatedDatabaseEngine = switch databaseEngine {
+    | Some(engine) => engine->databaseEngineName === "Replicated"
+    | None => false
+    }
+    let envReplicated = Env.ClickHouse.replicated()
+    // A Replicated database engine only replicates data when its tables use the
+    // ReplicatedMergeTree engine, so it implies replicated mode even when
+    // ENVIO_CLICKHOUSE_REPLICATED is unset.
+    let replicated = envReplicated || hasReplicatedDatabaseEngine
+    if hasReplicatedDatabaseEngine && !envReplicated {
+      Logging.info(
+        "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so tables use the ReplicatedMergeTree engine.",
+      )
+    }
+    let databaseOnClusterClause = onClusterClause(~onCluster=replicated)
+    // DDL that a Replicated database engine propagates itself must not carry
+    // ON CLUSTER on top of it — the clause is only for the plain-database case.
+    let ddlOnCluster = replicated && !hasReplicatedDatabaseEngine
 
     switch databaseEngine {
     | Some(engineSpec) => {
-        let expectedEngineName = engineSpec->String.split("(")->Array.getUnsafe(0)->String.trim
+        let expectedEngineName = engineSpec->databaseEngineName
         let existingResult = await client->query({
           query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
         })
@@ -458,22 +584,66 @@ let initialize = async (
     | None => ()
     }
 
-    await client->exec({query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause}`})
+    if hasReplicatedDatabaseEngine {
+      // TRUNCATE DATABASE is unsupported on Replicated databases, so a reset
+      // has to DROP and recreate instead (plain databases keep the TRUNCATE
+      // fallback below). This requires the ClickHouse user to hold the DROP
+      // privilege; without it the reset fails here with ACCESS_DENIED. ON
+      // CLUSTER removes the database from every node — the engine's own log
+      // can't replicate the drop of the database it lives in — and SYNC waits
+      // for the drop to finish before the CREATE below.
+      await client->exec({
+        query: `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
+      })
+    } else {
+      await client->exec({
+        query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
+      })
+    }
     await client->exec({
-      query: `CREATE DATABASE IF NOT EXISTS ${database}${onClusterClause}${databaseEngineClause}`,
+      query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
     })
-    await client->exec({query: `USE ${database}`})
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({query: makeCreateHistoryTableQuery(~entityConfig, ~database, ~replicated)})
+        client->exec({
+          query: makeCreateHistoryTableQuery(
+            ~entityConfig,
+            ~database,
+            ~replicated,
+            ~onCluster=ddlOnCluster,
+            ~chainIdMode,
+          ),
+        })
       ),
     )->Utils.Promise.ignoreValue
-    await client->exec({query: makeCreateCheckpointsTableQuery(~database, ~replicated)})
+    await client->exec({
+      query: makeCreateCheckpointsTableQuery(
+        ~database,
+        ~replicated,
+        ~onCluster=ddlOnCluster,
+        ~chainIdMode,
+      ),
+    })
+
+    // The client pools HTTP connections, so consecutive statements may reach
+    // different replicas, while a Replicated database applies DDL from its
+    // Keeper log asynchronously. A CREATE VIEW is analyzed against the node's
+    // local metadata and can land on a replica that hasn't applied the table
+    // creates yet, failing with UNKNOWN_TABLE. Block until every replica has
+    // caught up before creating the views. ON CLUSTER must precede the
+    // database name in this command's grammar.
+    if hasReplicatedDatabaseEngine {
+      await client->exec({
+        query: `SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{cluster}' ${database}`,
+      })
+    }
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({query: makeCreateViewQuery(~entityConfig, ~database)})
+        client->exec({
+          query: makeCreateViewQuery(~entityConfig, ~database, ~onCluster=ddlOnCluster),
+        })
       ),
     )->Utils.Promise.ignoreValue
 

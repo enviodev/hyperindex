@@ -2,7 +2,7 @@ open Vitest
 
 type sourceFactory = RpcSource.options => Source.t
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
 let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
 let contractAddress = "0x00000000000000000000000000000000000000AA"
@@ -47,6 +47,8 @@ let makeRoutingRegistration = (
   ~contractName="ERC20",
   ~isWildcard=false,
   ~eventFilters=[topicSelection],
+  // topicCount is derived from paramsMetadata inside evmOnEventRegistration.
+  ~paramsMetadata: array<Internal.paramMeta>=[],
 ) => {
   MockIndexer.evmOnEventRegistration(
     ~id=sighash,
@@ -54,6 +56,7 @@ let makeRoutingRegistration = (
     ~blockFieldNames=[Number],
     ~isWildcard,
     ~eventFilters,
+    ~paramsMetadata,
   )->withPinIdentity(~index)
 }
 
@@ -65,34 +68,45 @@ let syncConfig = EvmChain.getSyncConfig({
   queryTimeoutMillis: 1_000,
 })
 
+// One store per registration, holding the single emitter these pins query for.
+let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
+  TestAddresses.makeStore(
+    ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+    ~addresses=[
+      {address, contractName: registration.eventConfig.contractName, registrationBlock: -1},
+    ],
+    // The source lowercases addresses, so the set must render them that way for
+    // the pinned eth_getLogs request bodies to match.
+    ~shouldChecksum=false,
+  )
+
 let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
   let options: RpcSource.options = {
     url,
-    chain,
+    chainId,
     onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig,
     lowercaseAddresses: true,
+    addressStore: makeAddressStore(~registration),
   }
   factory(options)
 }
 
 let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, ~retry=0) => {
-  let addressesByContractName = Dict.fromArray([
-    (registration.eventConfig.contractName, [address]),
-  ])
   source.getItemsOrThrow(
     ~fromBlock=100,
     ~toBlock=Some(100),
-    ~addressesByContractName,
-    ~contractNameByAddress=FetchState.deriveContractNameByAddress(addressesByContractName),
+    ~addressSet=makeAddressStore(~registration)->AddressStore.makeSet(
+      ~contractName=registration.eventConfig.contractName,
+    ),
     ~knownHeight=100,
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
-    ~itemsTarget=5_000,
+    ~itemsTarget=Some(5_000),
     ~retry,
     ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
   )
@@ -413,26 +427,24 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         ],
         async mock => {
           let registration = makeRegistration()
+          let addressStore = makeAddressStore(~registration)
           let options: RpcSource.options = {
             url: mock.url,
-            chain,
+            chainId,
             onEventRegistrations: [registration],
             sourceFor: Sync,
             syncConfig: defaultSyncConfig,
             lowercaseAddresses: true,
+            addressStore,
           }
           let source = factory(options)
-          let addressesByContractName = Dict.fromArray([
-            (registration.eventConfig.contractName, [address]),
-          ])
           let call = () =>
             RpcSourcePins.capture(() =>
               source.getItemsOrThrow(
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
-                ~addressesByContractName,
-                ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-                  addressesByContractName,
+                ~addressSet=addressStore->AddressStore.makeSet(
+                  ~contractName=registration.eventConfig.contractName,
                 ),
                 ~knownHeight=1_000_000,
                 ~partitionId="pin-partition",
@@ -440,7 +452,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                   dependsOnAddresses: true,
                   onEventRegistrations: [(registration :> Internal.onEventRegistration)],
                 },
-                ~itemsTarget=5_000,
+                ~itemsTarget=Some(5_000),
                 ~retry=0,
                 ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
               )
@@ -472,20 +484,34 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         "0x0000000000000000000000000000000000000000000000000000000000000001"
       let filter2 =
         "0x0000000000000000000000000000000000000000000000000000000000000002"
-      let registration = makeRoutingRegistration(~eventFilters=[
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
-          topic2: Values([]),
-          topic3: Values([]),
-        },
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([]),
-          topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
-          topic3: Values([]),
-        },
-      ])
+      // Two indexed params so the log can carry topic1/topic2 the branches
+      // filter on and decode cleanly (derived topicCount 3).
+      let registration = makeRoutingRegistration(
+        ~paramsMetadata=[
+          {name: "a", abiType: "uint256", indexed: true},
+          {name: "b", abiType: "uint256", indexed: true},
+        ],
+        ~eventFilters=[
+          {
+            Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
+            topic2: Values([]),
+            topic3: Values([]),
+          },
+          {
+            Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+            topic1: Values([]),
+            topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
+            topic3: Values([]),
+          },
+        ],
+      )
+      // Carries both filtered topics, so a real provider returns it for either
+      // branch's server-side filter; routing re-checks the registration's
+      // topic filters against these values and dedups to one item.
+      let orFanOutLog = JSON.parseOrThrow(
+        `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"0x2","removed":false}`,
+      )
       let page = await MockRpcServer.withScenario(
         ~name=`${name}: OR fan-out and dedup`,
         ~calls=[
@@ -495,7 +521,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filter1}"]],"address":["${normalizedContractAddress}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+            ~reply=RpcResult(JSON.Array([orFanOutLog])),
           ),
           MockRpcServer.expectCall(
             ~label="topic2 branch",
@@ -503,7 +529,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],null,["${filter2}"]],"address":["${normalizedContractAddress}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+            ~reply=RpcResult(JSON.Array([orFanOutLog])),
           ),
           MockRpcServer.expectCall(
             ~method="eth_getBlockByNumber",
@@ -559,15 +585,14 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             source.getItemsOrThrow(
               ~fromBlock=100,
               ~toBlock=Some(100),
-              ~addressesByContractName=Dict.make(),
-              ~contractNameByAddress=Dict.make(),
+              ~addressSet=makeAddressStore(~registration)->AddressStore.emptySet,
               ~knownHeight=100,
               ~partitionId="skip-all",
               ~selection={
                 dependsOnAddresses: false,
                 onEventRegistrations: [(registration :> Internal.onEventRegistration)],
               },
-              ~itemsTarget=5_000,
+              ~itemsTarget=Some(5_000),
               ~retry=0,
               ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
             )
@@ -606,18 +631,26 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           topic3: Values([]),
         },
       ]
+      // One indexed param so each contract's topic1-filtered log decodes.
+      let addressParam: array<Internal.paramMeta> = [
+        {name: "who", abiType: "address", indexed: true},
+      ]
       let eventA = makeRoutingRegistration(
         ~contractName="ContractA",
+        ~paramsMetadata=addressParam,
         ~eventFilters=selectionFor(filterA),
       )
       let eventB = makeRoutingRegistration(
         ~index=1,
         ~contractName="ContractB",
+        ~paramsMetadata=addressParam,
         ~eventFilters=selectionFor(filterB),
       )
-      let logFor = (~address, ~logIndex) =>
+      // A real provider's log for a topic1-filtered request carries that
+      // contract's filtered topic1 value; routing re-checks it per registration.
+      let logFor = (~address, ~topic1, ~logIndex) =>
         JSON.parseOrThrow(
-          `{"address":"${address}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"${logIndex}","removed":false}`,
+          `{"address":"${address}","topics":["${sighash}","${topic1}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"${logIndex}","removed":false}`,
         )
 
       let page = await MockRpcServer.withScenario(
@@ -629,7 +662,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterA}"]],"address":["${addressAString}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([logFor(~address=addressAString, ~logIndex="0x2")])),
+            ~reply=RpcResult(JSON.Array([logFor(~address=addressAString, ~topic1=filterA, ~logIndex="0x2")])),
           ),
           MockRpcServer.expectCall(
             ~label="ContractB logs",
@@ -637,7 +670,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=JSON.parseOrThrow(
               `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterB}"]],"address":["${addressBString}"]}]`,
             ),
-            ~reply=RpcResult(JSON.Array([logFor(~address=addressBString, ~logIndex="0x3")])),
+            ~reply=RpcResult(JSON.Array([logFor(~address=addressBString, ~topic1=filterB, ~logIndex="0x3")])),
           ),
           MockRpcServer.expectCall(
             ~method="eth_getBlockByNumber",
@@ -651,27 +684,34 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           ),
         ],
         async mock => {
+          let addressStore = TestAddresses.makeStore(
+            ~onEventRegistrations=[
+              (eventA :> Internal.onEventRegistration),
+              (eventB :> Internal.onEventRegistration),
+            ],
+            ~addresses=[
+              {address: addressA, contractName: "ContractA", registrationBlock: -1},
+              {address: addressB, contractName: "ContractB", registrationBlock: -1},
+            ],
+            ~shouldChecksum=false,
+          )
           let options: RpcSource.options = {
             url: mock.url,
-            chain,
+            chainId,
             onEventRegistrations: [eventA, eventB],
             sourceFor: Sync,
             syncConfig,
             lowercaseAddresses: true,
+            addressStore,
           }
           let source = factory(options)
-          let addressesByContractName = Dict.fromArray([
-            ("ContractA", [addressA]),
-            ("ContractB", [addressB]),
-          ])
           switch await RpcSourcePins.capture(() =>
             source.getItemsOrThrow(
               ~fromBlock=100,
               ~toBlock=Some(100),
-              ~addressesByContractName,
-              ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-                addressesByContractName,
-              ),
+              ~addressSet=addressStore
+              ->AddressStore.makeSet(~contractName="ContractA")
+              ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="ContractB")),
               ~knownHeight=100,
               ~partitionId="contract-scope",
               ~selection={
@@ -681,7 +721,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                   (eventB :> Internal.onEventRegistration),
                 ],
               },
-              ~itemsTarget=5_000,
+              ~itemsTarget=Some(5_000),
               ~retry=0,
               ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
             )

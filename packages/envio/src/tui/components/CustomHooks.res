@@ -4,16 +4,16 @@ module InitApi = {
     envioVersion: string,
     envioApiToken: option<string>,
     ecosystem: ecosystem,
-    hyperSyncNetworks: array<int>,
-    rpcNetworks: array<int>,
+    hyperSyncNetworks: array<ChainId.t>,
+    rpcNetworks: array<ChainId.t>,
   }
 
   let bodySchema = S.object(s => {
     envioVersion: s.field("envioVersion", S.string),
     envioApiToken: s.field("envioApiToken", S.option(S.string)),
     ecosystem: s.field("ecosystem", S.enum([Evm, Fuel, Svm])),
-    hyperSyncNetworks: s.field("hyperSyncNetworks", S.array(S.int)),
-    rpcNetworks: s.field("rpcNetworks", S.array(S.int)),
+    hyperSyncNetworks: s.field("hyperSyncNetworks", S.array(ChainId.schema)),
+    rpcNetworks: s.field("rpcNetworks", S.array(ChainId.schema)),
   })
 
   let makeBody = (~envioVersion, ~envioApiToken, ~config: Config.t) => {
@@ -28,6 +28,7 @@ module InitApi = {
       | Config.EvmSourceConfig({hypersync: None}) => false
       | Config.FuelSourceConfig(_) => true // Fuel always uses HyperFuel
       | Config.SvmSourceConfig(_) => false
+      | Config.SimulateSourceConfig(_) => false
       | Config.CustomSources(sources) => sources->Array.some(s => s.poweredByHyperSync)
       }
       switch usesHyperSync {

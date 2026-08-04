@@ -6,14 +6,14 @@ let testApiToken =
   )
 
 // Ethereum mainnet.
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 
 // Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
 // 2 indexed args (token0, token1) ⇒ topicCount = 3.
 let pairCreatedTopic0 = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
 let pairCreatedEventId = pairCreatedTopic0 ++ "_3"
 
-// Lowercase address so EventRouter lookup matches regardless of whether the
+// Lowercase address so routing lookups match regardless of whether the
 // source returns checksummed or lowercase addresses.
 let uniswapV2FactoryAddress =
   "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
@@ -66,6 +66,7 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   isWildcard: false,
   filterByAddresses: false,
   dependsOnAddresses: true,
+  addressFilterParamGroups: [],
   startBlock: None,
   handler: None,
   contractRegister: None,
@@ -82,8 +83,16 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   },
 }
 
-let makeAddressesByContractName = () =>
-  Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
+// The chain's address index, holding the one factory address these queries
+// fetch for.
+let addressStore = TestAddresses.makeStore(
+  ~onEventRegistrations=[(pairCreatedRegistration :> Internal.onEventRegistration)],
+  ~addresses=[
+    {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
+  ],
+  ~shouldChecksum=false,
+)
+let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
 
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
@@ -91,8 +100,8 @@ let makeSelection = (): FetchState.selection => {
 }
 
 let makeHyperSyncSource = () =>
-  HyperSyncSource.make({
-    chain,
+  EvmHyperSyncSource.make({
+    chainId,
     endpointUrl: "https://eth.hypersync.xyz",
     onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
@@ -101,28 +110,29 @@ let makeHyperSyncSource = () =>
     serializationFormat: Env.hypersyncClientSerializationFormat,
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
+    addressStore,
   })
 
 let makeRpcSource = () =>
   RpcSource.make({
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-    chain,
+    chainId,
     onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
     lowercaseAddresses: true,
+    addressStore,
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   try await source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),
-    ~addressesByContractName=makeAddressesByContractName(),
-    ~contractNameByAddress=FetchState.deriveContractNameByAddress(makeAddressesByContractName()),
+    ~addressSet=factorySet,
     ~knownHeight=toBlock + 1000,
     ~partitionId="0",
     ~selection=makeSelection(),
-    ~itemsTarget=5000,
+    ~itemsTarget=Some(5000),
     ~retry=0,
     ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
   ) catch {

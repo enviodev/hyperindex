@@ -7,10 +7,10 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  itemsTarget: 0,
+  itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addressesByContractName: Dict.make(),
+  addresses: TestAddresses.setOf([]),
 }
 
 type executeQueryMock = {
@@ -137,19 +137,19 @@ describe("SourceManager creation", () => {
   })
 
   it("Fails to create without primary sources", t => {
-    t.expect(
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(~isRealtime=false, ~sources=[])
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
-    t.expect(
+     "Invalid configuration, no data-source for historical sync provided")
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(
           ~isRealtime=false,
           ~sources=[MockIndexer.Source.make([], ~sourceFor=Fallback).source],
         )
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
+     "Invalid configuration, no data-source for historical sync provided")
   })
 })
 
@@ -197,17 +197,17 @@ describe("SourceManager.getSourceRole", () => {
 
 describe("SourceManager source priority with Live sources", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
-    itemsTarget: 5000,
+    itemsTarget: Some(5000),
     itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it(
@@ -425,15 +425,11 @@ describe("SourceManager fetchNext", () => {
     ~latestFetchedBlockNumber,
     ~numContracts=2,
   ): FetchState.partition => {
-    let addressesByContractName = Dict.make()
     let addresses = []
-
     for i in 0 to numContracts - 1 {
       let address = Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getOrThrow
       addresses->Array.push(address)
     }
-
-    addressesByContractName->Dict.set("MockContract", addresses)
 
     {
       id: partitionIndex->Int.toString,
@@ -442,7 +438,7 @@ describe("SourceManager fetchNext", () => {
         blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
-      addressesByContractName,
+      addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -473,6 +469,7 @@ describe("SourceManager fetchNext", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=partitions->Array.length,
       ~dynamicContracts=Utils.Set.make(),
+      ~clientFilteredContracts=Utils.Set.make(),
     )
 
     {
@@ -483,12 +480,12 @@ describe("SourceManager fetchNext", () => {
       normalSelection,
       latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
       maxOnBlockBufferSize: targetBufferSize,
-      chainId: 0,
-      contractConfigs: Dict.make(),
+      chainId: 0->ChainId.fromInt,
       blockLag: 0,
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
+      clientFilterAddressThreshold: None,
     }
   }
 
@@ -508,7 +505,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      itemsTarget: 5000,
+      itemsTarget: None,
       itemsEst: 5000,
       fetchedBlock: None,
     }
@@ -569,36 +566,36 @@ describe("SourceManager fetchNext", () => {
       ).toEqual([
         {
           partitionId: "2",
-          itemsTarget: 16_667,
+          itemsTarget: Some(16_667),
           itemsEst: 16_667,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition2.addressesByContractName,
+          addresses: partition2.addresses,
         },
         {
           partitionId: "0",
           // Starts at block 5 vs partition "2"'s block 2, so it covers less of
           // the range to the target and gets a smaller probe.
-          itemsTarget: 11_111,
+          itemsTarget: Some(11_111),
           itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition0.addressesByContractName,
+          addresses: partition0.addresses,
         },
         {
           partitionId: "1",
           // Starts furthest ahead (block 6), so it gets the smallest probe.
-          itemsTarget: 9_259,
+          itemsTarget: Some(9_259),
           itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition1.addressesByContractName,
+          addresses: partition1.addresses,
         },
       ])
 
@@ -1455,17 +1452,17 @@ describe("SourceManager wait for new blocks", () => {
 })
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
-    itemsTarget: 5000,
+    itemsTarget: Some(5000),
     itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it("Successfully executes the query", async t => {

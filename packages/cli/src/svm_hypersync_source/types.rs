@@ -100,7 +100,7 @@ pub struct QueryResponse {
     pub data: QueryResponseData,
 }
 
-fn to_hex(bytes: &[u8]) -> String {
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(2 + bytes.len() * 2);
     s.push_str("0x");
     for b in bytes {
@@ -109,7 +109,7 @@ fn to_hex(bytes: &[u8]) -> String {
     s
 }
 
-fn opt_hex(bytes: &Option<Vec<u8>>) -> Option<String> {
+pub(crate) fn opt_hex(bytes: &Option<Vec<u8>>) -> Option<String> {
     bytes.as_deref().map(to_hex)
 }
 

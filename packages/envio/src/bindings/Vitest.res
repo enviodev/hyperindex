@@ -34,7 +34,6 @@ type rec expectation<'a> = {
   toHavePropertyValue: 'b. (string, 'b) => unit,
   // Exception matchers
   toThrow: unit => unit,
-  toThrowError: string => unit,
   // Snapshot matchers
   toMatchSnapshot: unit => unit,
   // Negation
@@ -120,9 +119,6 @@ module Async = {
   @module("vitest") @scope("it")
   external it_fails: (string, testContext => promise<unit>) => unit = "fails"
 
-  let isClaudeCloud: bool = %raw(`process.env.CLAUDE_CODE_CONTAINER_ID != null`)
-  let itSkipInClaudeCloud = (name, fn) => it_skipIf(isClaudeCloud)(name, fn)
-
   @module("vitest")
   external test: (string, testContext => promise<unit>) => unit = "test"
 
@@ -151,3 +147,25 @@ module Async = {
 
 @module("vitest")
 external expect: ('a, ~message: string=?) => expectation<'a> = "expect"
+
+// Runs `fn` and returns the thrown error's message — mirroring JS's
+// `e instanceof Error ? e.message : String(e)` — or `None` when nothing threw.
+let messageOfThrown: (unit => 'a) => option<string> = %raw(`function (fn) {
+  try {
+    fn();
+    return undefined;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}`)
+
+// Strict counterpart to the built-in `toThrow`, which only checks that the
+// thrown message *contains* the expected string. `toThrowErrorEqual` requires
+// the whole message to match, so a test can pin the complete error text.
+// A plain ReScript function (not a custom `expect.extend` matcher), so it needs
+// no per-package vitest setup.
+// Compared as options rather than through a "didn't throw" placeholder string,
+// so a function that throws nothing can never match — not even when `expected`
+// happens to equal the placeholder.
+let toThrowErrorEqual = (t: testContext, fn: unit => 'a, ~message=?, expected: string) =>
+  t.expect(fn->messageOfThrown, ~message?).toEqual(Some(expected))

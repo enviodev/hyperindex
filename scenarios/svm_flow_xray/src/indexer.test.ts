@@ -1,5 +1,5 @@
 // Live E2E test against solana.hypersync.xyz. Drives the SVM stack end-to-end:
-// SvmHyperSyncSource -> EventRouter -> indexer.onInstruction dispatch ->
+// SvmHyperSyncSource -> Rust-side routing -> indexer.onInstruction dispatch ->
 // entity writes. The slot window is pinned in config.test.yaml.
 process.env.ENVIO_CONFIG = "config.test.yaml";
 

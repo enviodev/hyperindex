@@ -1,6 +1,6 @@
 open Vitest
 
-let chainId = 1
+let chainId = 1->ChainId.fromInt
 let baseChainConfig = {...Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe, id: chainId}
 
 // A registrations map with an onBlock config (no address partition) so
@@ -8,7 +8,7 @@ let baseChainConfig = {...Config.load().chainMap->ChainMap.values->Utils.Array.f
 let registrationsByChainId: HandlerRegister.registrationsByChainId = {
   let d = Dict.make()
   d->Dict.set(
-    chainId->Int.toString,
+    chainId->ChainId.toString,
     ({
       onEventRegistrations: [],
       onBlockRegistrations: [
@@ -94,7 +94,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   let dummyFetchState = () =>
     FetchState.make(
       ~onEventRegistrations=[],
-      ~contractConfigs=Dict.make(),
+      ~addressStore=TestAddresses.makeStore(),
       ~addresses=[],
       ~startBlock=0,
       ~endBlock=None,
@@ -120,7 +120,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     items: [],
     progressedChainsById: {
       let d = Dict.make()
-      d->Utils.Dict.setByInt(
+      d->ChainId.Dict.set(
         chainId,
         ({
           batchSize: 0,

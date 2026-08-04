@@ -14,7 +14,7 @@ describe("E2E rollback tests", () => {
     ~sourceMock: MockIndexer.Source.t,
     ~indexerMock: MockIndexer.Indexer.t,
     ~firstHistoryCheckpointId=2n,
-    ~chainId=1337,
+    ~chainId=1337->ChainId.fromInt,
   ) => {
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -104,8 +104,8 @@ describe("E2E rollback tests", () => {
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message="Should have two entities in the db",
     ).toEqual((
@@ -142,7 +142,7 @@ describe("E2E rollback tests", () => {
       [
         Set({
           checkpointId: firstHistoryCheckpointId,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "value-2",
@@ -150,7 +150,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId,
-          entityId: "2",
+          entityId: "2"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
@@ -158,7 +158,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
-          entityId: "3",
+          entityId: "3"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "3",
             value: "value-1",
@@ -166,7 +166,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId,
-          entityId: "4",
+          entityId: "4"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "4",
             value: "value-1",
@@ -174,7 +174,7 @@ describe("E2E rollback tests", () => {
         }),
         Delete({
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
-          entityId: "4",
+          entityId: "4"->EntityId.unsafeOfString,
         }),
       ],
     ))
@@ -259,8 +259,8 @@ describe("E2E rollback tests", () => {
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message="Should correctly rollback entities",
     ).toEqual((
@@ -286,7 +286,7 @@ describe("E2E rollback tests", () => {
       [
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "value-1",
@@ -294,7 +294,7 @@ describe("E2E rollback tests", () => {
         }),
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
-          entityId: "2",
+          entityId: "2"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "2",
             value: "value-2",
@@ -307,11 +307,11 @@ describe("E2E rollback tests", () => {
   Async.it("Should stay in reorg threshold on restart when progress is past threshold", async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let chains = [
       {
@@ -426,7 +426,7 @@ describe("E2E rollback tests", () => {
   Async.it("Rollback of a single chain indexer", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -445,7 +445,7 @@ describe("E2E rollback tests", () => {
   Async.it("Rolls back SET -> DELETE -> SET to the deleted state", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let resolveIndexerError = ref(None)
     let indexerErrorPromise = Promise.make((resolve, _reject) => {
@@ -509,7 +509,7 @@ describe("E2E rollback tests", () => {
     let rec waitForRecreatedEntityHistory = async () => {
       if shouldKeepWaitingForHistory.contents {
         let hasRecreatedEntityHistory =
-          (await indexerMock.queryHistory(SimpleEntity))->Array.length === 3
+          (await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>))->Array.length === 3
         if shouldKeepWaitingForHistory.contents && !hasRecreatedEntityHistory {
           await Utils.delay(1)
           await waitForRecreatedEntityHistory()
@@ -535,8 +535,8 @@ describe("E2E rollback tests", () => {
 
     t.expect(
       await Promise.all2((
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message="Should establish SET -> DELETE -> SET history before the rollback",
     ).toEqual((
@@ -544,13 +544,13 @@ describe("E2E rollback tests", () => {
       [
         Set({
           checkpointId: 2n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {Indexer.Entities.SimpleEntity.id: "1", value: "before-delete"},
         }),
-        Delete({checkpointId: 3n, entityId: "1"}),
+        Delete({checkpointId: 3n, entityId: "1"->EntityId.unsafeOfString}),
         Set({
           checkpointId: 4n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {Indexer.Entities.SimpleEntity.id: "1", value: "after-recreate"},
         }),
       ],
@@ -592,7 +592,7 @@ describe("E2E rollback tests", () => {
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="The entity should remain deleted at the rollback target",
     ).toEqual([])
   })
@@ -600,7 +600,7 @@ describe("E2E rollback tests", () => {
   Async.it("Parks a reorg detected while a batch is still processing", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -669,7 +669,7 @@ describe("E2E rollback tests", () => {
   Async.it("Fires onRollbackCommit per affected chain after the rollback write", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let rollbackCommitCalls = []
     let unregister = RollbackCommit.register(async (args: RollbackCommit.args) => {
@@ -692,7 +692,7 @@ describe("E2E rollback tests", () => {
     t.expect(
       rollbackCommitCalls,
       ~message="Should fire once for the reorged chain with the last valid block",
-    ).toEqual([{RollbackCommit.chainId: 1337, rollbackToBlock: 100}])
+    ).toEqual([{RollbackCommit.chainId: 1337->ChainId.fromInt, rollbackToBlock: 100}])
   })
 
   Async.it(
@@ -700,7 +700,7 @@ describe("E2E rollback tests", () => {
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -725,7 +725,7 @@ describe("E2E rollback tests", () => {
         {
           id: 2n,
           eventsProcessed: 0,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 102,
           blockHash: Js.Null.Value("0x0102"),
         },
@@ -736,7 +736,7 @@ describe("E2E rollback tests", () => {
   Async.it("Shouldn't detect reorg for rollbacked block", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -801,7 +801,7 @@ describe("E2E rollback tests", () => {
       {
         id: 4n,
         eventsProcessed: 0,
-        chainId: 1337,
+        chainId: 1337->ChainId.fromInt,
         blockNumber: 102,
         blockHash: Js.Null.Value("0x102a"),
       },
@@ -813,11 +813,11 @@ describe("E2E rollback tests", () => {
     async t => {
       let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock2 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -846,7 +846,7 @@ describe("E2E rollback tests", () => {
         ~sourceMock=sourceMock2,
         ~indexerMock,
         ~firstHistoryCheckpointId=3n,
-        ~chainId=100,
+        ~chainId=100->ChainId.fromInt,
       )
     },
   )
@@ -854,7 +854,7 @@ describe("E2E rollback tests", () => {
   Async.it("Rollback Dynamic Contract", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -994,9 +994,9 @@ describe("E2E rollback tests", () => {
         id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
           ->Array.getUnsafe(0)
           ->Address.toString}`,
-        chainId: 1337,
+        chainId: 1337->ChainId.fromInt,
         registrationBlock: 102,
-        registrationLogIndex: 2,
+        registrationLogIndex: -1,
         contractName: "SimpleNft",
       },
     ])
@@ -1088,9 +1088,9 @@ This might be wrong after we start exposing a block hash for progress block.`,
         id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
           ->Array.getUnsafe(0)
           ->Address.toString}`,
-        chainId: 1337,
+        chainId: 1337->ChainId.fromInt,
         registrationBlock: 102,
-        registrationLogIndex: 2,
+        registrationLogIndex: -1,
         contractName: "SimpleNft",
       },
     ])
@@ -1105,11 +1105,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it("Rollback of multichain indexer (single entity id change)", async t => {
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -1223,8 +1223,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
       ~message=`Should create history rows and checkpoints`,
     ).toEqual((
@@ -1232,35 +1232,35 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 3n,
           eventsProcessed: 1,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x0103"),
         },
         {
           id: 4n,
           eventsProcessed: 2,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x0103"),
         },
         {
           id: 5n,
           eventsProcessed: 1,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 106,
           blockHash: Js.Null.Value("0x0106"),
         },
         {
           id: 6n,
           eventsProcessed: 1,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 106,
           blockHash: Js.Null.Value("0x0106"),
         },
         {
           id: 7n,
           eventsProcessed: 1,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 107,
           blockHash: Js.Null.Null,
         },
@@ -1269,7 +1269,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 8n,
           eventsProcessed: 0,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 109,
           blockHash: Js.Null.Value("0x0109"),
         },
@@ -1283,7 +1283,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [
         Set({
           checkpointId: 3n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-0",
@@ -1291,7 +1291,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 4n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-2",
@@ -1299,7 +1299,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 5n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-3",
@@ -1307,7 +1307,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 6n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-4",
@@ -1315,7 +1315,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 7n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-5",
@@ -1485,22 +1485,22 @@ This might be wrong after we start exposing a block hash for progress block.`,
     t.expect(
       await Promise.all3((
         indexerMock.queryCheckpoints(),
-        indexerMock.query(SimpleEntity),
-        indexerMock.queryHistory(SimpleEntity),
+        (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+        (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
       )),
     ).toEqual((
       [
         {
           id: 3n,
           eventsProcessed: 1,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x0103"),
         },
         {
           id: 4n,
           eventsProcessed: 2,
-          chainId: 1337,
+          chainId: 1337->ChainId.fromInt,
           blockNumber: 103,
           blockHash: Js.Null.Value("0x0103"),
         },
@@ -1510,14 +1510,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
         {
           id: 10n,
           eventsProcessed: 2,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 106,
           blockHash: Js.Null.Value("0x0106"),
         },
         {
           id: 11n,
           eventsProcessed: 0,
-          chainId: 100,
+          chainId: 100->ChainId.fromInt,
           blockNumber: 111,
           blockHash: Js.Null.Value("0x0111"),
         },
@@ -1531,7 +1531,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       [
         Set({
           checkpointId: 3n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-0",
@@ -1539,7 +1539,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 4n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-2",
@@ -1547,7 +1547,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         }),
         Set({
           checkpointId: 10n,
-          entityId: "1",
+          entityId: "1"->EntityId.unsafeOfString,
           entity: {
             Indexer.Entities.SimpleEntity.id: "1",
             value: "call-4",
@@ -1563,11 +1563,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     async t => {
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -1691,8 +1691,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(SimpleEntity),
-          indexerMock.queryHistory(SimpleEntity),
+          (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+          (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
         )),
         ~message=`Should create history rows and checkpoints`,
       ).toEqual((
@@ -1700,35 +1700,35 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 3n,
             eventsProcessed: 1,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x0103"),
           },
           {
             id: 4n,
             eventsProcessed: 2,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x0103"),
           },
           {
             id: 5n,
             eventsProcessed: 1,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value("0x0106"),
           },
           {
             id: 6n,
             eventsProcessed: 2,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value("0x0106"),
           },
           {
             id: 7n,
             eventsProcessed: 1,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 107,
             blockHash: Js.Null.Null,
           },
@@ -1737,7 +1737,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 8n,
             eventsProcessed: 0,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 109,
             blockHash: Js.Null.Value("0x0109"),
           },
@@ -1751,7 +1751,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 3n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
@@ -1759,7 +1759,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 4n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
@@ -1767,7 +1767,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 5n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-3",
@@ -1775,7 +1775,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 6n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
@@ -1783,7 +1783,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 7n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-5",
@@ -1793,8 +1793,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ))
       t.expect(
         await Promise.all2((
-          indexerMock.query(EntityWithBigDecimal),
-          indexerMock.queryHistory(EntityWithBigDecimal),
+          (indexerMock.query("EntityWithBigDecimal"): promise<array<Indexer.Entities.EntityWithBigDecimal.t>>),
+          (indexerMock.queryHistory("EntityWithBigDecimal"): promise<array<Change.t<Indexer.Entities.EntityWithBigDecimal.t>>>),
         )),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
       ).toEqual((
@@ -1807,7 +1807,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 6n,
-            entityId: "foo",
+            entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.EntityWithBigDecimal.id: "foo",
               bigDecimal: BigDecimal.fromFloat(0.),
@@ -1900,22 +1900,22 @@ This might be wrong after we start exposing a block hash for progress block.`,
       t.expect(
         await Promise.all3((
           indexerMock.queryCheckpoints(),
-          indexerMock.query(SimpleEntity),
-          indexerMock.queryHistory(SimpleEntity),
+          (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
+          (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
         )),
       ).toEqual((
         [
           {
             id: 3n,
             eventsProcessed: 1,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x0103"),
           },
           {
             id: 4n,
             eventsProcessed: 2,
-            chainId: 1337,
+            chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value("0x0103"),
           },
@@ -1925,14 +1925,14 @@ This might be wrong after we start exposing a block hash for progress block.`,
           {
             id: 10n,
             eventsProcessed: 2,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value("0x0106"),
           },
           {
             id: 11n,
             eventsProcessed: 0,
-            chainId: 100,
+            chainId: 100->ChainId.fromInt,
             blockNumber: 111,
             blockHash: Js.Null.Value("0x0111"),
           },
@@ -1946,7 +1946,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 3n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-0",
@@ -1954,7 +1954,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 4n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-2",
@@ -1962,7 +1962,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 10n,
-            entityId: "1",
+            entityId: "1"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "1",
               value: "call-4",
@@ -1972,8 +1972,8 @@ This might be wrong after we start exposing a block hash for progress block.`,
       ))
       t.expect(
         await Promise.all2((
-          indexerMock.query(EntityWithBigDecimal),
-          indexerMock.queryHistory(EntityWithBigDecimal),
+          (indexerMock.query("EntityWithBigDecimal"): promise<array<Indexer.Entities.EntityWithBigDecimal.t>>),
+          (indexerMock.queryHistory("EntityWithBigDecimal"): promise<array<Change.t<Indexer.Entities.EntityWithBigDecimal.t>>>),
         )),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
       ).toEqual((
@@ -1986,7 +1986,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 10n,
-            entityId: "foo",
+            entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.EntityWithBigDecimal.id: "foo",
               bigDecimal: BigDecimal.fromFloat(0.),
@@ -2000,7 +2000,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
   Async.it("Double reorg should NOT cause negative event counter (regression test)", async t => {
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -2099,7 +2099,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     await indexerMock.getBatchWritePromise()
 
     t.expect(
-      await indexerMock.query(SimpleEntity),
+      await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>),
       ~message="Should have all entities rolled back",
     ).toEqual([])
   })
@@ -2109,7 +2109,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     async t => {
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
 
       let indexerMock = await MockIndexer.Indexer.make(
@@ -2149,11 +2149,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // but the non-reorg chain's counter stays at 0 while DB still has the old checkpoints.
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -2333,15 +2333,15 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // causing non-reorg chains to go negative on the second rollback.
     let sourceMock1337 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let sourceMock100 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#100,
+      ~chainId=#100,
     )
     let sourceMock137 = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#137,
+      ~chainId=#137,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -2539,7 +2539,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
     // 1. Setup mock source and indexer
     let sourceMock = MockIndexer.Source.make(
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-      ~chain=#1337,
+      ~chainId=#1337,
     )
     let indexerMock = await MockIndexer.Indexer.make(
       ~chains=[
@@ -2644,7 +2644,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
       // Setup mock source and indexer
       let sourceMock = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -2772,11 +2772,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
     async t => {
       let sourceMock1 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock2 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       // batchSize=1 ensures that chain 100's single event fills the batch,
       // causing chain 1337 to be SKIPPED during batch preparation.
@@ -2932,11 +2932,11 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       let sourceMock1337 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#1337,
+        ~chainId=#1337,
       )
       let sourceMock100 = MockIndexer.Source.make(
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chain=#100,
+        ~chainId=#100,
       )
       let indexerMock = await MockIndexer.Indexer.make(
         ~chains=[
@@ -2975,6 +2975,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
             ~updatedEffectsCache,
             ~updatedEntities,
             ~chainMetaData,
+            ~onWrite,
           ) => {
             writeBatchCalls := writeBatchCalls.contents + 1
             let run = async () => {
@@ -2991,6 +2992,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
                 ~updatedEffectsCache,
                 ~updatedEntities,
                 ~chainMetaData,
+                ~onWrite,
               )
             }
             run()
@@ -3177,10 +3179,10 @@ This might be wrong after we start exposing a block hash for progress block.`,
 
       t.expect(
         (
-          (await indexerMock.query(SimpleEntity))->Array.toSorted((a, b) =>
+          (await (indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>))->Array.toSorted((a, b) =>
             String.compare(a.id, b.id)
           ),
-          await indexerMock.queryHistory(SimpleEntity),
+          await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>),
           await indexerMock.metric("envio_rollback_events"),
         ),
         ~message="Chain 100's in-flight entity change should be rolled back together with its progress and reapplied on refetch",
@@ -3198,7 +3200,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
         [
           Set({
             checkpointId: 4n,
-            entityId: "reorg",
+            entityId: "reorg"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "reorg",
               value: "valid",
@@ -3206,7 +3208,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 3n,
-            entityId: "victim",
+            entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "victim",
               value: "before",
@@ -3214,7 +3216,7 @@ This might be wrong after we start exposing a block hash for progress block.`,
           }),
           Set({
             checkpointId: 8n,
-            entityId: "victim",
+            entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               Indexer.Entities.SimpleEntity.id: "victim",
               value: "reapplied",

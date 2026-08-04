@@ -175,7 +175,7 @@ jobs:
         run: pnpm test:templates
 
   # Scenario integration tests
-  # Requires DB services (postgres + hasura)
+  # Requires postgres only — GraphQL/Hasura coverage lives in the e2e-test job
   scenarios-test:
     runs-on: ubuntu-latest
     needs: build-envio-package
@@ -196,32 +196,15 @@ jobs:
         ports:
           - 5433:5432
 
-      hasura:
-        image: hasura/graphql-engine:v2.43.0
-        env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
-        ports:
-          - 8080:8080
-
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
-      - name: Wait for Hasura
-        run: |
-          for i in {1..60}; do
-            if curl -sSf http://localhost:8080/healthz >/dev/null; then
-              echo "Hasura is up"; exit 0; fi; sleep 1; done
-          echo "Hasura did not become ready"; exit 1
+      - name: envio-tests
+        working-directory: packages/envio-tests
+        run: pnpm test
 
       - name: test_codegen
         working-directory: scenarios/test_codegen

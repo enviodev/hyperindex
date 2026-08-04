@@ -4,36 +4,45 @@
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
-type evmHypersyncClientCtor
+type evmHyperSyncClientCtor
 type evmRpcClientCtor
-type svmHypersyncClientCtor
-type hyperfuelClientCtor
+type svmHyperSyncClientCtor
+type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
-type parseConfigYamlOptions = {
+type addressStoreCtor
+type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
   files?: dict<string>,
-  isRescript?: bool,
+  withIndexerTypes?: bool,
+}
+
+type fromUserApiResult = {
+  config: string,
+  indexerTypes: Null.t<string>,
+  indexerCode: Null.t<string>,
 }
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
-  parseConfigYaml: (string, parseConfigYamlOptions) => string,
+  fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
-  @as("EvmHypersyncClient")
-  evmHypersyncClient: evmHypersyncClientCtor,
+  @as("EvmHyperSyncClient")
+  evmHyperSyncClient: evmHyperSyncClientCtor,
   @as("EvmRpcClient")
   evmRpcClient: evmRpcClientCtor,
-  @as("SvmHypersyncClient")
-  svmHypersyncClient: svmHypersyncClientCtor,
-  @as("HyperfuelClient")
-  hyperfuelClient: hyperfuelClientCtor,
+  @as("SvmHyperSyncClient")
+  svmHyperSyncClient: svmHyperSyncClientCtor,
+  @as("FuelHyperSyncClient")
+  fuelHyperSyncClient: fuelHyperSyncClientCtor,
   @as("TransactionStore")
   transactionStore: transactionStoreCtor,
   @as("BlockStore")
   blockStore: blockStoreCtor,
+  @as("AddressStore")
+  addressStore: addressStoreCtor,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,
@@ -208,14 +217,20 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
 
 // Pure config entry point: no cwd, config file, schema file, .env, or process env lookup.
 // A supplied schema is authoritative; omitted or blank schema text means an empty schema.
-let parseConfigYaml = (~schema=?, ~env=?, ~files=?, ~isRescript=false, yaml) => {
+// With `withIndexerTypes`, the single parse also returns the generated
+// `.envio/types.d.ts`, so callers can type-check handlers against the config's
+// `indexer` surface without re-parsing.
+let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) => {
   let addon = getAddon()
-  addon.parseConfigYaml(yaml, {
-    ?schema,
-    ?env,
-    ?files,
-    isRescript,
-  })
+  addon.fromUserApi(
+    yaml,
+    {
+      ?schema,
+      ?env,
+      ?files,
+      withIndexerTypes,
+    },
+  )
 }
 
 let runCli = args => {

@@ -12,7 +12,8 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
+            self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
+            SystemConfig,
         },
     },
     constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
@@ -85,14 +86,34 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
     code
 }
 
+/// An entity's `id` rescript type and whether it is the default `string`.
+/// Foreign keys and id-keyed operations adopt this type; `ID!`/`String!` keep
+/// `string`, `Int!` is `int`, `BigInt!` is `bigint`.
+fn entity_id_type(entity: &EntityRecordTypeTemplate) -> (bool, String) {
+    entity
+        .params
+        .iter()
+        .find(|param| param.field_name.uncapitalized == "id")
+        .map(|param| match &param.field_type {
+            TypeIdent::ID | TypeIdent::String => (true, "string".to_string()),
+            other => (false, other.to_string()),
+        })
+        .unwrap_or((true, "string".to_string()))
+}
+
 fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     let mut code = String::new();
 
+    // The default id type. `ID!`/`String!` ids and the foreign keys that
+    // reference them render as this alias; numeric ids render as int/bigint.
     writeln!(code, "type id = string").unwrap();
 
     for entity in entities {
+        let (_, id_type) = entity_id_type(entity);
+
         writeln!(code).unwrap();
         writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
+        writeln!(code, "  type id = {}", id_type).unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
         writeln!(code).unwrap();
         writeln!(
@@ -106,11 +127,14 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
 
     if !entities.is_empty() {
         writeln!(code).unwrap();
-        writeln!(code, "type rec name<'entity> =").unwrap();
+        // Carries the entity's id type alongside the entity itself, so accessors
+        // keyed by a name (e.g. getTestIndexerEntityOperations) can type their
+        // by-id operations with that entity's real id scalar.
+        writeln!(code, "type rec name<'entity, 'id> =").unwrap();
         for entity in entities {
             writeln!(
                 code,
-                "  | @as(\"{0}\") {0}: name<{0}.t>",
+                "  | @as(\"{0}\") {0}: name<{0}.t, {0}.id>",
                 entity.name.capitalized
             )
             .unwrap();
@@ -194,7 +218,7 @@ pub struct EntityRecordTypeTemplate {
     pub type_code: String,
     pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
-    pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
+    pub composite_indexes: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
 }
@@ -250,8 +274,8 @@ impl EntityRecordTypeTemplate {
             .filter_map(|gql_field| gql_field.get_derived_from_field())
             .collect();
 
-        let composite_indices = entity
-            .get_composite_indices()
+        let composite_indexes = entity
+            .get_composite_indexes()
             .into_iter()
             .map(|fields| {
                 fields
@@ -289,7 +313,7 @@ impl EntityRecordTypeTemplate {
             type_code,
             get_where_filter_code,
             derived_fields,
-            composite_indices,
+            composite_indexes,
             params,
         })
     }
@@ -947,6 +971,17 @@ fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<(
 }
 
 impl ProjectTemplate {
+    /// The generated `.envio/types.d.ts` contents (the `declare module "envio"`
+    /// augmentation binding this config's chains/contracts/entities/enums).
+    pub fn indexer_types_dts(&self) -> &str {
+        &self.envio_types_dts
+    }
+
+    /// The generated `Indexer.res` contents (the project's ReScript surface).
+    pub fn indexer_code(&self) -> &str {
+        &self.indexer_code
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.
@@ -1307,14 +1342,20 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        let chain_id_type = format!(
-            "type chainId = [{}]",
-            chain_id_cases
-                .iter()
-                .map(|chain_id_case| format!("#{}", chain_id_case))
-                .collect::<Vec<_>>()
-                .join(" | "),
-        );
+        // ReScript integer polyvariants (`#137`) are int32-bound, so a config
+        // with a wider id falls back to the opaque runtime representation.
+        // TypeScript keeps its numeric literal union either way.
+        let chain_id_type = match cfg.chain_id_mode {
+            ChainIdMode::Int64 => "type chainId = ChainId.t".to_string(),
+            ChainIdMode::Int32 => format!(
+                "type chainId = [{}]",
+                chain_id_cases
+                    .iter()
+                    .map(|chain_id_case| format!("#{}", chain_id_case))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            ),
+        };
 
         // Generate indexer types and value
         let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
@@ -1446,45 +1487,82 @@ type indexer = {{
             ),
         };
 
-        // Generate getChainById function
-        let get_chain_by_id_cases = chain_configs
-            .iter()
-            .map(|chain| {
-                format!(
-                    "  | #{} => indexer.chains.\\\"{}\"",
-                    chain.network_config.id, chain.network_config.id
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Generate getChainById function. `chainId` is only a polyvariant in
+        // Int32 mode, so the Int64 form looks the key up on the chains record
+        // (whose fields are already the decimal ids) instead of matching.
+        let get_chain_by_id = match cfg.chain_id_mode {
+            ChainIdMode::Int64 => r#"/** Get chain configuration by chain ID. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch indexer.chains
+->(Utils.magic: indexerChains => dict<indexerChain>)
+->Dict.get(chainId->ChainId.toString) {
+| Some(chain) => chain
+| None => JsError.throwWithMessage("Chain " ++ chainId->ChainId.toString ++ " is not configured.")
+}
+}"#
+            .to_string(),
+            ChainIdMode::Int32 => {
+                let get_chain_by_id_cases = chain_configs
+                    .iter()
+                    .map(|chain| {
+                        format!(
+                            "  | #{} => indexer.chains.\\\"{}\"",
+                            chain.network_config.id, chain.network_config.id
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        let get_chain_by_id = format!(
-            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+                format!(
+                    r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {{
 switch chainId {{
 {}
 }}
 }}"#,
-            get_chain_by_id_cases
-        );
+                    get_chain_by_id_cases
+                )
+            }
+        };
 
         // Generate Enums and Entities modules
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
 
-        // Generate handlerContext types
+        // Generate handlerContext types. String ids use the plain
+        // `handlerEntityOperations`; numeric ids use the custom-id variant.
+        let has_custom_id_entity = entities.iter().any(|entity| !entity_id_type(entity).0);
         let handler_context_entity_fields = entities
             .iter()
             .map(|entity| {
-                format!(
-                    "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
-                    entity.name.original,
-                    entity.name.capitalized,
-                    entity.name.capitalized,
-                )
+                let name = &entity.name.capitalized;
+                if entity_id_type(entity).0 {
+                    format!(
+                        "  \\\"{name}\": handlerEntityOperations<Entities.{name}.t, Entities.{name}.getWhereFilter>,",
+                    )
+                } else {
+                    format!(
+                        "  \\\"{name}\": handlerEntityOperationsWithCustomId<Entities.{name}.t, Entities.{name}.id, Entities.{name}.getWhereFilter>,",
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
+
+        let custom_id_handler_ops_code = if has_custom_id_entity {
+            r#"
+
+type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
+  get: 'id => promise<option<'entity>>,
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: 'id => unit,
+}"#
+        } else {
+            ""
+        };
 
         let handler_context_code = format!(
             r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
@@ -1494,16 +1572,23 @@ switch chainId {{
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
   deleteUnsafe: string => unit,
+}}{custom_id_handler_ops_code}
+
+/** The chain the event being handled belongs to. */
+type handlerChain = {{
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
 }}
 
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
-{}
+  chain: handlerChain,
+{handler_context_entity_fields}
 }}"#,
-            handler_context_entity_fields
         );
 
         // Generate contract modules with event sub-modules
@@ -1748,9 +1833,9 @@ module Entities = {{
 {entities_module_code}
 }}
 
-{handler_context_code}
-
 {chain_id_type}
+
+{handler_context_code}
 
 type contractRegisterContract = {{ add: Address.t => unit }}
 
@@ -1794,7 +1879,12 @@ type contractRegisterContext = {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Generate entity ops fields for the testIndexer type
+        // Generate entity ops fields for the testIndexer type. String ids use
+        // the plain type; numeric ids use the custom-id variant.
+        // The string-id form stays the default so entities with a plain `ID!`
+        // keep an id-argument-free shape. The custom-id form is always emitted
+        // because `getTestIndexerEntityOperations` returns it for every entity,
+        // resolving the id through the name GADT.
         let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
 type testIndexerEntityOperations<'entity> = {
   /** Get an entity by ID. */
@@ -1805,15 +1895,30 @@ type testIndexerEntityOperations<'entity> = {
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
+}
+
+type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+  /** Get an entity by ID. */
+  get: 'id => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
 }"#;
 
         let test_indexer_entity_fields = entities
             .iter()
             .map(|entity| {
-                format!(
-                    "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
-                    entity.name.original, entity.name.capitalized,
-                )
+                let name = &entity.name.capitalized;
+                if entity_id_type(entity).0 {
+                    format!("  \\\"{name}\": testIndexerEntityOperations<Entities.{name}.t>,")
+                } else {
+                    format!(
+                        "  \\\"{name}\": testIndexerEntityOperationsWithCustomId<Entities.{name}.t, Entities.{name}.id>,",
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1848,7 +1953,7 @@ type testIndexer = {{
         // The GADT name value compiles to a string at runtime via @as decorators,
         // so @get_index can use Entities.name directly as a dictionary key
         if !entities.is_empty() {
-            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = """#;
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = """#;
 
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
@@ -2301,18 +2406,16 @@ type testIndexer = {{
                         .iter()
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
+                            // Foreign keys take the referenced entity's id type
+                            // (already resolved into field_type), exposed under
+                            // the `_id` column name.
                             let ts_type = param.field_type.to_ts_type_string();
-                            let (field_name, field_type) = if param.is_entity_field {
-                                let base_type = if param.field_type.is_option() {
-                                    "string | undefined".to_string()
-                                } else {
-                                    "string".to_string()
-                                };
-                                (format!("{}_id", param.field_name.original), base_type)
+                            let field_name = if param.is_entity_field {
+                                format!("{}_id", param.field_name.original)
                             } else {
-                                (param.field_name.original.clone(), ts_type)
+                                param.field_name.original.clone()
                             };
-                            format!("    readonly \"{}\": {};", field_name, field_type)
+                            format!("    readonly \"{}\": {};", field_name, ts_type)
                         })
                         .collect();
                     format!(
@@ -2819,6 +2922,7 @@ mod test {
         utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use std::vec;
     use system_config::FieldSelection;
 
@@ -3285,6 +3389,39 @@ mod test {
         );
     }
 
+    // The `@storage(clickhouse: {...})` table options object is mirrored
+    // into the entity storage JSON, while the boolean form keeps its shape.
+    #[test]
+    fn internal_config_json_mirrors_clickhouse_table_options() {
+        let json = get_internal_config_json_helper("config-clickhouse-options.yaml");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let entity_storages: Vec<(&str, Option<serde_json::Value>)> = parsed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap(), e.get("storage").cloned()))
+            .collect();
+        assert_eq!(
+            entity_storages,
+            vec![
+                (
+                    "Account",
+                    Some(serde_json::json!({"postgres": true, "clickhouse": true}))
+                ),
+                (
+                    "Transfer",
+                    Some(serde_json::json!({
+                        "clickhouse": {
+                            "partitionBy": "toYYYYMM(timestamp)",
+                            "orderBy": ["timestamp"],
+                            "ttl": "timestamp + INTERVAL 2 YEAR"
+                        }
+                    }))
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn envio_types_dts_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
@@ -3323,6 +3460,66 @@ mod test {
         // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
         let project_template = get_project_template_helper("config2.yaml");
         insta::assert_snapshot!(project_template.indexer_code);
+    }
+
+    #[test]
+    fn indexer_code_exposes_numeric_entity_id_types() {
+        // Each entity module exposes its id scalar so handler/test-indexer
+        // operations are keyed by the real type: `ID!` reuses `string`, while
+        // `Int!`/`BigInt!` render as `int`/`bigint`.
+        let yaml = r#"
+name: numeric-ids
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer()
+"#;
+        let schema = r#"
+type Chain {
+  id: Int!
+}
+type BigThing {
+  id: BigInt!
+}
+type Vault {
+  id: ID!
+  chain: Chain!
+  big: BigThing!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("numeric-id config should parse");
+        let indexer_code = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code;
+
+        let expectations = [
+            // `type id` is emitted before `type t`.
+            "module Chain = {\n    type id = int\n    type t = {id: int}",
+            "module BigThing = {\n    type id = bigint\n    type t = {id: bigint}",
+            // The FK columns adopt the referenced entity's id type.
+            "module Vault = {\n    type id = string\n    type t = {id: id, chain_id: int, big_id: bigint}",
+            // Numeric ids use the custom-id operation variants...
+            "handlerEntityOperationsWithCustomId<Entities.Chain.t, Entities.Chain.id, Entities.Chain.getWhereFilter>",
+            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.t, Entities.BigThing.id>",
+            // ...while string ids stay on the plain, id-argument-free variants.
+            "handlerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
+            "testIndexerEntityOperations<Entities.Vault.t>",
+        ];
+        for expected in expectations {
+            assert!(
+                indexer_code.contains(expected),
+                "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
+            );
+        }
     }
 
     #[test]
