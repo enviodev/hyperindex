@@ -250,6 +250,56 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     },
   )
 
+  Async.it(
+    "retries a non-advancing response with backoff instead of accepting it",
+    async t => {
+      let reg = makeReg()
+      let fromBlock = slot - 10
+      let source = makeSource(
+        ~onEventRegistrations=[reg],
+        ~client=makeMockClient(
+          ~response={nextSlot: fromBlock, blocks: [], items: []},
+        ),
+      )
+
+      let result = try {
+        let _ = await source.getItemsOrThrow(
+          ~fromBlock,
+          ~toBlock=Some(slot + 10),
+          ~addressSet=programSet,
+          ~knownHeight=slot + 1000,
+          ~partitionId="0",
+          ~itemsTarget=Some(5000),
+          ~selection={
+            onEventRegistrations: [reg],
+            dependsOnAddresses: true,
+          },
+          ~retry=2,
+          ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+        )
+        None
+      } catch {
+      | Source.GetItemsError(error) => Some(error)
+      }
+
+      t.expect(result).toEqual(
+        Some(
+          Source.FailedGettingItems({
+            exn: SvmHyperSyncSource.NonAdvancingResponse({
+              fromSlot: fromBlock,
+              nextSlot: fromBlock,
+            }),
+            attemptedToBlock: slot + 10,
+            retry: WithBackoff({
+              message: `SVM HyperSync has no data for slot ${fromBlock->Int.toString} yet (server tip is behind the reported height). Retrying until the server catches up.`,
+              backoffMillis: 2000,
+            }),
+          }),
+        ),
+      )
+    },
+  )
+
   // The whole registration set crosses the boundary once at construction —
   // selections, field unions, decoders, and routing derive from it in Rust.
   it("builds registration inputs from the event configs", t => {

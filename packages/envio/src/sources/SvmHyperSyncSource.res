@@ -67,8 +67,20 @@ let toSvmInstruction = (
   ),
 }
 
+// The server responds with next_slot == from_slot when the requested range is
+// beyond its queryable tip (its /height can run ahead of query availability,
+// routinely by a slot at the head and by much more during an ingest incident).
+exception NonAdvancingResponse({fromSlot: int, nextSlot: int})
+
 let make = (
-  {chainId, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis, addressStore}: options,
+  {
+    chainId,
+    endpointUrl,
+    apiToken,
+    onEventRegistrations,
+    clientTimeoutMillis,
+    addressStore,
+  }: options,
 ): t => {
   let name = "SvmHyperSync"
 
@@ -130,6 +142,31 @@ let make = (
     }
     let pageFetchTime = pageFetchRef->Performance.secondsSince
     let requestStats = [{Source.method: "getInstructions", seconds: pageFetchTime}]
+
+    // Accepting a non-advancing page would re-issue the identical query in a
+    // hot loop with no backoff (and its zero-width range would poison the
+    // partition's event-density average), so retry it with a bounded backoff
+    // until the server tip moves past the requested slot.
+    if resp.nextSlot <= fromBlock {
+      throw(
+        Source.GetItemsError(
+          Source.FailedGettingItems({
+            exn: NonAdvancingResponse({fromSlot: fromBlock, nextSlot: resp.nextSlot}),
+            attemptedToBlock: toBlock->Option.getOr(knownHeight),
+            retry: WithBackoff({
+              message: `SVM HyperSync has no data for slot ${fromBlock->Int.toString} yet (server tip is behind the reported height). Retrying until the server catches up.`,
+              backoffMillis: Pervasives.min(
+                switch retry {
+                | 0 => 500
+                | _ => 1000 * retry
+                },
+                5_000,
+              ),
+            }),
+          }),
+        ),
+      )
+    }
 
     let parsingRef = Performance.now()
 

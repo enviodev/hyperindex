@@ -690,13 +690,19 @@ module OptimizedPartitions = {
     // Update density for every response, independently from whether this range
     // is valid evidence of source capacity. A cap hit is still useful density
     // evidence because it reports items returned across the scanned range.
-    let observedEventDensity = itemsCount->Int.toFloat /. blockRange->Int.toFloat
-    // Seed from the first observation, then smooth every later observation
-    // with a 1:1 moving average. Keeping initialization explicit is important:
-    // zero is valid density evidence and must participate in the next blend.
-    let updatedEventDensity = switch p.eventDensity {
-    | None => Some(observedEventDensity)
-    | Some(eventDensity) => Some((eventDensity +. observedEventDensity) /. 2.)
+    // A response that didn't advance covers no range at all — skip it, or the
+    // 0/0 division would latch the moving average at NaN permanently.
+    let updatedEventDensity = if blockRange <= 0 {
+      p.eventDensity
+    } else {
+      let observedEventDensity = itemsCount->Int.toFloat /. blockRange->Int.toFloat
+      // Seed from the first observation, then smooth every later observation
+      // with a 1:1 moving average. Keeping initialization explicit is important:
+      // zero is valid density evidence and must participate in the next blend.
+      switch p.eventDensity {
+      | None => Some(observedEventDensity)
+      | Some(eventDensity) => Some((eventDensity +. observedEventDensity) /. 2.)
+      }
     }
 
     // Skip updating source capacity if a later response already updated it.
