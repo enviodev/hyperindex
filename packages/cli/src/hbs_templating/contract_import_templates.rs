@@ -343,9 +343,12 @@ impl Contract {
 
             // Expected entity
             content.push_str("\n    // Creating the expected entity\n");
+            // No entity type annotation: entities are per-chain, so a row read
+            // outside a handler carries the chain it belongs to on top of the
+            // entity's own fields.
             content.push_str(&format!(
-                "    const expected{}{}: {}_{} = {{\n",
-                contract_name, event_name, contract_name, event_name
+                "    const expected{}{} = {{\n",
+                contract_name, event_name
             ));
             content.push_str(&format!("      id: \"{}\",\n", entity_id));
             for param in &first_event.params {
@@ -354,6 +357,7 @@ impl Contract {
                     param.entity_key.uncapitalized, param.js_name
                 ));
             }
+            content.push_str(&format!("      chainId: {},\n", chain_id));
             content.push_str("    };\n");
 
             // Assert
@@ -476,8 +480,8 @@ impl Contract {
             ));
 
             content.push_str(&format!(
-                "\n    let expected{contract_name}{event_name}: Entities.{entity_name}.t = \
-                 {{\n\x20     id: \"{entity_id}\",\n",
+                "\n    let expected{contract_name}{event_name}: \
+                 Entities.{entity_name}.testIndexerRow = {{\n\x20     id: \"{entity_id}\",\n",
             ));
             for param in &first_event.params {
                 let value = if param.is_eth_address {
@@ -498,6 +502,7 @@ impl Contract {
                     param.entity_key.uncapitalized, value
                 ));
             }
+            content.push_str(&format!("      chainId: {chain_id},\n"));
             content.push_str("    }\n");
 
             // Assert

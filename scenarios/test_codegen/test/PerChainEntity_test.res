@@ -38,17 +38,11 @@ contracts:
       - event: Transfer()
 chains:
   - id: 1
-    rpc:
-      url: https://rpc.example.test
-      for: sync
     start_block: 1
     contracts:
       - name: Token
         address: "0x0000000000000000000000000000000000000001"
   - id: 137
-    rpc:
-      url: https://rpc.example.test
-      for: sync
     start_block: 1
     contracts:
       - name: Token

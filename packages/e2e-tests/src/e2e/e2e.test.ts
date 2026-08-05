@@ -414,49 +414,43 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     }).toEqual({ rows: pgCount, chains: 1 });
   });
 
-  it("joins a per-chain relationship on the chain as well as the id", async () => {
-    // With the chain missing from the mapping the GraphQL query still
-    // succeeds — it just resolves to the wrong rows once a second chain
-    // exists — so assert the mapping Hasura was configured with.
-    const response = await fetch("http://localhost:8080/v1/metadata", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-hasura-admin-secret": "testing",
-      },
-      body: JSON.stringify({ type: "export_metadata", args: {} }),
-    });
-    const exported = (await response.json()) as {
-      sources?: Array<{
-        tables?: Array<{
-          table?: { name?: string };
-          array_relationships?: Array<{
-            name: string;
-            using?: {
-              manual_configuration?: {
-                column_mapping?: Record<string, string>;
-              };
-            };
-          }>;
-        }>;
-      }>;
-    };
-    const chainAccount = exported.sources
-      ?.flatMap((source) => source.tables ?? [])
-      .find((table) => table.table?.name === "ChainAccount");
-    const transfers = chainAccount?.array_relationships?.find(
-      (r) => r.name === "transfers"
+  it("keeps a per-chain relationship from reaching another chain's row", async () => {
+    // Only one chain is indexed, so a second chain's row is planted directly to
+    // give the relationship something wrong to resolve to. It shares the `from`
+    // value the relationship joins on, and differs only by chain.
+    const account = await runPgSql(
+      `SELECT "id" FROM "ChainAccount" LIMIT 1`
     );
-    expect(transfers?.using?.manual_configuration?.column_mapping).toEqual({
-      id: "from",
-      chain_id: "chain_id",
-    });
+    const accountId = account[0]?.[0];
+    expect(accountId).toBeTruthy();
+
+    await runPgSql(
+      `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
+       VALUES ('planted-other-chain', '${accountId}', 1, 999)
+       ON CONFLICT DO NOTHING`
+    );
 
     const result = await graphql.query<{
-      ChainAccount: Array<{ id: string; transfers: Array<{ id: string }> }>;
-    }>(`{ ChainAccount(limit: 1) { id transfers { id } } }`);
-    expect(result.data?.ChainAccount.length).toBe(1);
-    expect(result.data?.ChainAccount[0]?.transfers.length).toBeGreaterThan(0);
+      ChainAccount: Array<{
+        id: string;
+        transfers: Array<{ id: string; chainId: number }>;
+      }>;
+    }>(
+      `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
+    );
+    const transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+
+    // Removed before asserting so a failure doesn't leave the row for the
+    // tests that follow.
+    await runPgSql(
+      `DELETE FROM "ChainTransfer" WHERE "id" = 'planted-other-chain'`
+    );
+
+    expect(transfers.length).toBeGreaterThan(0);
+    expect({
+      plantedRowReached: transfers.some((tr) => tr.id === "planted-other-chain"),
+      chains: [...new Set(transfers.map((tr) => tr.chainId))],
+    }).toEqual({ plantedRowReached: false, chains: [1] });
   });
 
   it("should be able to query GraphQL schema", async () => {

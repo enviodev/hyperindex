@@ -93,12 +93,9 @@ pub struct BaseConfig {
     pub storage: Option<StorageConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "By default a single entity row and effect cache is shared by every chain \
-                       the indexer runs, so the same entity id on two chains resolves to one row. \
-                       Set this to true to make entities and effect caches per-chain instead: \
-                       entity tables get a composite (id, chain id) primary key and effects get a \
-                       cache per chain. Sharing then becomes explicit — add `@crossChain` to an \
-                       entity in schema.graphql or `crossChain: true` to an effect. (default: \
+        description = "Make entities and effect caches per-chain instead of shared across every \
+                       chain (recommended). Sharing then becomes explicit — add `@crossChain` to \
+                       an entity in schema.graphql or `crossChain: true` to an effect. (default: \
                        false)"
     )]
     pub disable_default_cross_chain: Option<bool>,

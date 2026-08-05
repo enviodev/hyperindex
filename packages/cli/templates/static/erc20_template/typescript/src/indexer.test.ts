@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { createTestIndexer, type Account } from "envio";
+import { createTestIndexer } from "envio";
 import { TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
@@ -25,10 +25,12 @@ describe("Indexer Testing", () => {
               "sets": [
                 {
                   "balance": -1000000000000000000000000000n,
+                  "chainId": 1,
                   "id": "0x0000000000000000000000000000000000000000",
                 },
                 {
                   "balance": 1000000000000000000000000000n,
+                  "chainId": 1,
                   "id": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
                 },
               ],
@@ -59,10 +61,12 @@ describe("Indexer Testing", () => {
               "sets": [
                 {
                   "balance": 999999998000000000000000000n,
+                  "chainId": 1,
                   "id": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
                 },
                 {
                   "balance": 2000000000000000000n,
+                  "chainId": 1,
                   "id": "0xe5737257D9406019768167C26f5C6123864ceC1e",
                 },
               ],
@@ -85,14 +89,14 @@ describe("Transfers", () => {
     const userAddress1 = Addresses.mockAddresses[0]!;
     const userAddress2 = Addresses.mockAddresses[1]!;
 
-    // Make a mock entity to set the initial state of the mock db
-    const mockAccountEntity: Account = {
+    // Set an initial state for the user. Entities are per-chain (see
+    // `disable_default_cross_chain` in config.yaml), so outside a handler —
+    // where there is no chain in context — the row says which chain it is on.
+    indexer.Account.set({
       id: userAddress1,
       balance: 5n,
-    };
-
-    // Set an initial state for the user
-    indexer.Account.set(mockAccountEntity);
+      chainId: 1,
+    });
 
     // Create a mock Transfer event from userAddress1 to userAddress2
     // and process it

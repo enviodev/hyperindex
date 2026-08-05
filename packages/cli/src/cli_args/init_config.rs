@@ -167,7 +167,9 @@ pub mod evm {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
-                    disable_default_cross_chain: None,
+                    // The recommended mode for a new indexer: an entity id is
+                    // scoped to its chain unless it opts into `@crossChain`.
+                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: None,
                 contracts,
@@ -309,7 +311,9 @@ pub mod fuel {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
-                    disable_default_cross_chain: None,
+                    // The recommended mode for a new indexer: an entity id is
+                    // scoped to its chain unless it opts into `@crossChain`.
+                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,

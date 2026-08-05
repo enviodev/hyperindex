@@ -10,23 +10,20 @@ const bump = (amount: bigint) => ({
 
 // Both chains bump the same entity ids, which is exactly the collision the
 // per-chain mode is meant to keep apart.
-const processBothChains = () => {
+const processBothChains = async () => {
   const indexer = createTestIndexer();
-  return {
-    indexer,
-    result: indexer.process({
-      chains: {
-        1: { startBlock: 1, endBlock: 10, simulate: [bump(1n), bump(2n)] },
-        137: { startBlock: 1, endBlock: 10, simulate: [bump(10n)] },
-      },
-    }),
-  };
+  const result = await indexer.process({
+    chains: {
+      1: { startBlock: 1, endBlock: 10, simulate: [bump(1n), bump(2n)] },
+      137: { startBlock: 1, endBlock: 10, simulate: [bump(10n)] },
+    },
+  });
+  return { indexer, result };
 };
 
 describe("per-chain entities", () => {
   it("keeps the same entity id apart per chain", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     const counters = await indexer.Counter.getAll();
     assert.deepEqual(
@@ -39,8 +36,7 @@ describe("per-chain entities", () => {
   });
 
   it("merges a @crossChain entity into one row", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     assert.deepEqual(await indexer.GlobalCounter.getAll(), [
       { id: "total", count: 13n },
@@ -48,8 +44,8 @@ describe("per-chain entities", () => {
   });
 
   it("reports the chain on each change", async () => {
-    const { result } = processBothChains();
-    const { changes } = await result;
+    const { result } = await processBothChains();
+    const { changes } = result;
 
     // The per-chain Counter carries the chain it belongs to; the cross-chain
     // GlobalCounter doesn't, and accumulates across both chains.
@@ -81,8 +77,7 @@ describe("per-chain entities", () => {
   });
 
   it("throws when an id exists on more than one chain", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     assert.throws(
       () => indexer.Counter.get("total"),
@@ -91,8 +86,7 @@ describe("per-chain entities", () => {
   });
 
   it("resolves the ambiguity with getWhere on chainId", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     assert.deepEqual(
       await indexer.Counter.getWhere({ chainId: { _eq: 137 } }),
@@ -101,8 +95,7 @@ describe("per-chain entities", () => {
   });
 
   it("filters a per-chain entity by an ordinary field too", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     assert.deepEqual(
       await indexer.Counter.getWhere({ count: { _gte: 10n } }),
@@ -111,8 +104,7 @@ describe("per-chain entities", () => {
   });
 
   it("has no chainId to filter on for a @crossChain entity", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     assert.deepEqual(
       await indexer.GlobalCounter.getWhere({ id: { _eq: "total" } }),
@@ -142,8 +134,7 @@ describe("per-chain entities", () => {
 
 describe("effect scopes", () => {
   it("scopes an effect per chain unless it opts out", async () => {
-    const { indexer, result } = processBothChains();
-    await result;
+    const { indexer } = await processBothChains();
 
     // `chainLabel` states no scope, so the config's disabled default makes it
     // per-chain and its output differs per chain. `shared` is cross-chain and
