@@ -57,9 +57,9 @@ indexer.onEvent(
   { contract: "Factory", event: "PairCreated" },
   async ({ event, context }) => {
     const pair: Pair = {
-      id: `${event.chainId}-${event.params.pair}`,
-      token0_id: `${event.chainId}-${event.params.token0}`,
-      token1_id: `${event.chainId}-${event.params.token1}`,
+      id: event.params.pair,
+      token0_id: event.params.token0,
+      token1_id: event.params.token1,
     };
     context.Pair.set(pair);
   },

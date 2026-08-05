@@ -354,7 +354,8 @@ impl AddressStore {
                 .position(|&block| block == entry.registration_block)
             else {
                 return Err(napi::Error::from_reason(format!(
-                    "Registered address {} at block {} has no checkpoint in the batch that writes it.",
+                    "Registered address {} at block {} has no checkpoint in the batch that writes \
+                     it.",
                     address_string(store.ecosystem, &entry.key),
                     entry.registration_block
                 )));

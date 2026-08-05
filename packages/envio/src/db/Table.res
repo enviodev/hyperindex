@@ -43,6 +43,10 @@ type field = {
   isNullable: bool,
   isPrimaryKey: bool,
   isIndex: bool,
+  // The chain-id column appended to a per-chain entity's table. It's part of
+  // the primary key but not of the entity schema the handlers see, so the
+  // read paths skip it and the write path stamps it from the flush scope.
+  isChainId: bool,
   linkedEntity: option<string>,
   defaultValue: option<string>,
   description: option<string>,
@@ -71,6 +75,7 @@ let mkField = (
   ~isNullable=false,
   ~isPrimaryKey=false,
   ~isIndex=false,
+  ~isChainId=false,
   ~linkedEntity=?,
   ~description=?,
   ~postgresDbName=?,
@@ -84,6 +89,7 @@ let mkField = (
     isNullable,
     isPrimaryKey,
     isIndex,
+    isChainId,
     linkedEntity,
     defaultValue: default,
     description,
@@ -252,6 +258,16 @@ let getDerivedFromFields = table =>
     }
   )
 
+// The chain-id column of a per-chain entity table. None for cross-chain
+// entities and every internal table.
+let getChainIdField = (table): option<field> =>
+  table.fields->Array.findMap(field =>
+    switch field {
+    | Field({isChainId: true} as field) => Some(field)
+    | _ => None
+    }
+  )
+
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
 
@@ -334,12 +350,13 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
 // Parses rows into entity objects keyed by API field names (the camelCase
 // record field names are type-level only), reading each value from the
 // row key produced by ~rowFieldName.
-let makeRowsSchema = (table, ~rowFieldName) =>
+let makeRowsSchema = (table, ~rowFieldName, ~skipChainId=false) =>
   S.array(
     S.object(s => {
       let dict = Dict.make()
       table.fields->Array.forEach(field =>
         switch field {
+        | Field({isChainId: true}) if skipChainId => ()
         | Field(field) =>
           dict->Dict.set(field->getApiFieldName, s.field(field->rowFieldName, field.fieldSchema))
         | DerivedFrom(_) => ()
@@ -359,6 +376,12 @@ let rowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
 // cycle.
 let pgRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
   table->makeRowsSchema(~rowFieldName=getPgDbFieldName)
+)
+
+// Rows shaped like the entity the handlers see: the chain-id column is dropped,
+// since the chain is already known from the scope the rows were loaded for.
+let pgEntityRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(table =>
+  table->makeRowsSchema(~rowFieldName=getPgDbFieldName, ~skipChainId=true)
 )
 
 exception NonExistingTableField(string)

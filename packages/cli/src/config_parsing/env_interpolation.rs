@@ -80,8 +80,8 @@ impl<F: FnMut(&str) -> Option<String>> Interpolator<F> {
                 let inner_start = i + 2;
                 let close = find_close(input, inner_start).ok_or_else(|| {
                     anyhow!(
-                        "Failed to interpolate variables into your config file. Unbalanced \
-                             '${{' expression: {}",
+                        "Failed to interpolate variables into your config file. Unbalanced '${{' \
+                         expression: {}",
                         &input[i..]
                     )
                 })?;
@@ -142,16 +142,16 @@ pub fn interpolate_config_variables(
 
     if !interpolator.invalid_vars.is_empty() {
         return Err(anyhow!(
-            "Failed to interpolate variables into your config file. Invalid environment \
-                 variables are present: {}",
+            "Failed to interpolate variables into your config file. Invalid environment variables \
+             are present: {}",
             interpolator.invalid_vars.join(", ")
         ));
     }
 
     if !interpolator.missing_vars.is_empty() {
         return Err(anyhow!(
-            "Failed to interpolate variables into your config file. Environment variables are \
-                 not present: {}",
+            "Failed to interpolate variables into your config file. Environment variables are not \
+             present: {}",
             interpolator.missing_vars.join(", ")
         ));
     }
@@ -358,9 +358,10 @@ trailing brace after expr: "x}"
         let err =
             super::interpolate_config_variables(config_string.to_string(), |_| None).unwrap_err();
         assert_eq!(
-                err.to_string(),
-                "Failed to interpolate variables into your config file. Environment variables are not present: MISSING_INNER"
-            );
+            err.to_string(),
+            "Failed to interpolate variables into your config file. Environment variables are not \
+             present: MISSING_INNER"
+        );
     }
 
     #[test]
@@ -369,8 +370,9 @@ trailing brace after expr: "x}"
         let err =
             super::interpolate_config_variables(config_string.to_string(), |_| None).unwrap_err();
         assert_eq!(
-                err.to_string(),
-                "Failed to interpolate variables into your config file. Unbalanced '${' expression: ${MISSING:-${FALLBACK}"
-            );
+            err.to_string(),
+            "Failed to interpolate variables into your config file. Unbalanced '${' expression: \
+             ${MISSING:-${FALLBACK}"
+        );
     }
 }

@@ -131,7 +131,8 @@ impl Contract {
 
         if imported_events.is_empty() {
             return Err(anyhow::anyhow!(
-                "No events could be imported for contract '{}'. All events have unsupported parameter types.",
+                "No events could be imported for contract '{}'. All events have unsupported \
+                 parameter types.",
                 contract.name
             ));
         }
@@ -148,7 +149,10 @@ impl Contract {
 
         // Header comment
         content.push_str("/*\n");
-        content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
+        content.push_str(
+            " * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer \
+             features\n",
+        );
         content.push_str(" */\n");
 
         // Import the indexer instance
@@ -167,7 +171,8 @@ impl Contract {
         for event in &self.imported_events {
             content.push('\n');
             content.push_str(&format!(
-                "indexer.onEvent({{ contract: \"{}\", event: \"{}\" }}, async ({{ event, context }}) => {{\n",
+                "indexer.onEvent({{ contract: \"{}\", event: \"{}\" }}, async ({{ event, context \
+                 }}) => {{\n",
                 self.name.capitalized, event.name
             ));
             content.push_str(&format!(
@@ -204,7 +209,10 @@ impl Contract {
 
         // Header comment
         content.push_str("/*\n");
-        content.push_str(" * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features\n");
+        content.push_str(
+            " * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer \
+             features\n",
+        );
         content.push_str(" */\n");
         content.push('\n');
         content.push_str("open Indexer\n");
@@ -335,9 +343,12 @@ impl Contract {
 
             // Expected entity
             content.push_str("\n    // Creating the expected entity\n");
+            // No entity type annotation: entities are per-chain, so a row read
+            // outside a handler carries the chain it belongs to on top of the
+            // entity's own fields.
             content.push_str(&format!(
-                "    const expected{}{}: {}_{} = {{\n",
-                contract_name, event_name, contract_name, event_name
+                "    const expected{}{} = {{\n",
+                contract_name, event_name
             ));
             content.push_str(&format!("      id: \"{}\",\n", entity_id));
             for param in &first_event.params {
@@ -346,18 +357,25 @@ impl Contract {
                     param.entity_key.uncapitalized, param.js_name
                 ));
             }
+            content.push_str(&format!("      chainId: {},\n", chain_id));
             content.push_str("    };\n");
 
             // Assert
             content.push_str(
-                "    // Asserting that the entity in the mock database is the same as the expected entity\n",
+                "    // Asserting that the entity in the mock database is the same as the \
+                 expected entity\n",
             );
             content.push_str(&format!(
-                "    t.expect(actual{}{}, \"Actual {}{} should be the same as the expected {}{}\").toEqual(expected{}{});\n",
-                contract_name, event_name,
-                contract_name, event_name,
-                contract_name, event_name,
-                contract_name, event_name,
+                "    t.expect(actual{}{}, \"Actual {}{} should be the same as the expected \
+                 {}{}\").toEqual(expected{}{});\n",
+                contract_name,
+                event_name,
+                contract_name,
+                event_name,
+                contract_name,
+                event_name,
+                contract_name,
+                event_name,
             ));
 
             content.push_str("  });\n");
@@ -376,7 +394,8 @@ impl Contract {
             chain_id
         ));
         content.push_str(
-            "    t.expect(result.changes.length, \"Should have at least one change\").toBeGreaterThan(0);\n",
+            "    t.expect(result.changes.length, \"Should have at least one \
+             change\").toBeGreaterThan(0);\n",
         );
         content.push_str("    const firstChange = result.changes[0]!;\n");
         content.push_str(&format!(
@@ -433,11 +452,9 @@ impl Contract {
                 ));
             } else {
                 content.push_str(&format!(
-                    "          simulate: [\n\
-                     \x20           makeSimulateItem(\n\
-                     \x20             OnEvent({{\n\
-                     \x20               event: {}({}),\n\
-                     \x20               params: {{\n",
+                    "          simulate: [\n\x20           makeSimulateItem(\n\x20             \
+                     OnEvent({{\n\x20               event: {}({}),\n\x20               params: \
+                     {{\n",
                     contract_name, event_name
                 ));
                 for param in &first_event.params {
@@ -458,12 +475,13 @@ impl Contract {
 
             // Get actual entity and assert against expected
             content.push_str(&format!(
-                "\n    let actual{contract_name}{event_name} = await indexer.\\\"{entity_name}\".getOrThrow(\"{entity_id}\")\n",
+                "\n    let actual{contract_name}{event_name} = await \
+                 indexer.\\\"{entity_name}\".getOrThrow(\"{entity_id}\")\n",
             ));
 
             content.push_str(&format!(
-                "\n    let expected{contract_name}{event_name}: Entities.{entity_name}.t = {{\n\
-                 \x20     id: \"{entity_id}\",\n",
+                "\n    let expected{contract_name}{event_name}: \
+                 Entities.{entity_name}.testIndexerRow = {{\n\x20     id: \"{entity_id}\",\n",
             ));
             for param in &first_event.params {
                 let value = if param.is_eth_address {
@@ -484,14 +502,14 @@ impl Contract {
                     param.entity_key.uncapitalized, value
                 ));
             }
+            content.push_str(&format!("      chainId: {chain_id},\n"));
             content.push_str("    }\n");
 
             // Assert
             content.push_str(&format!(
-                "\n    t.expect(\n\
-                 \x20     actual{contract_name}{event_name},\n\
-                 \x20     ~message=\"Actual {entity_name} should be the same as the expected {entity_name}\",\n\
-                 \x20   ).toEqual(expected{contract_name}{event_name})\n",
+                "\n    t.expect(\n\x20     actual{contract_name}{event_name},\n\x20     \
+                 ~message=\"Actual {entity_name} should be the same as the expected \
+                 {entity_name}\",\n\x20   ).toEqual(expected{contract_name}{event_name})\n",
             ));
 
             content.push_str("  })\n");
@@ -511,7 +529,8 @@ impl Contract {
         ));
         content.push_str("    let indexer = createTestIndexer()\n\n");
         content.push_str(&format!(
-            "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} : TestIndexer.{}),\n      }},\n    }})\n\n",
+            "    let result = await indexer.process({{\n      chains: {{\n        \\\"{}\": ({{}} \
+             : TestIndexer.{}),\n      }},\n    }})\n\n",
             chain_id, chain_config_type
         ));
         content.push_str("    t.expect(\n");
@@ -573,12 +592,12 @@ impl Event {
                 };
                 format!(
                     "{event_module}.mock({{data: {data_code} /* It mocks event fields with \
-                   default values, so you only need to provide data */}})"
+                     default values, so you only need to provide data */}})"
                 )
             } // FIXME: Generate default data
             false => format!(
                 "{event_module}.createMockEvent({{/* It mocks event fields with default values. \
-               You can overwrite them if you need */}})"
+                 You can overwrite them if you need */}})"
             ),
         }
     }
@@ -609,11 +628,9 @@ impl Event {
                 Err(e) => {
                     // Log warning about the unsupported parameter type
                     eprintln!(
-                        "Warning: Skipping event '{}' in contract '{}': parameter '{}' has unsupported type - {}",
-                        event.name,
-                        contract.name,
-                        flattened_param.event_param.name,
-                        e
+                        "Warning: Skipping event '{}' in contract '{}': parameter '{}' has \
+                         unsupported type - {}",
+                        event.name, contract.name, flattened_param.event_param.name, e
                     );
                     has_unsupported_types = true;
                     break; // Skip this entire event
@@ -1023,8 +1040,9 @@ mod test {
         const IS_FUEL: bool = true;
         assert_eq!(
             Event::get_entity_id_code(!IS_FUEL, &Language::ReScript),
-            "`${(event.chainId :> int)->Belt.Int.toString}_${event.block.number->Belt.Int.\
-           toString}_${event.logIndex->Belt.Int.toString}`"
+            "`${(event.chainId :> \
+             int)->Belt.Int.toString}_${event.block.number->Belt.Int.toString}_${event.\
+             logIndex->Belt.Int.toString}`"
                 .to_string()
         );
 

@@ -248,15 +248,21 @@ type setUpdatesCache = {
 
 let setUpdatesOrThrow = async (
   client,
-  ~cache: Utils.WeakMap.t<Internal.entityConfig, setUpdatesCache>,
+  ~cache: dict<setUpdatesCache>,
   ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
+  ~scope: Internal.chainScope,
   ~database: string,
 ) => {
   if changes->Array.length === 0 {
     ()
   } else {
-    let {convertOrThrow, tableName} = switch cache->Utils.WeakMap.get(entityConfig) {
+    let chainIdField = entityConfig.table->Table.getChainIdField
+    let scopeChainId = scope->Internal.chainScopeChainId
+    // A delete row carries no entity to stamp, so the chain id is baked into
+    // the schema instead — which is why the cache is keyed per scope.
+    let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
+    let {convertOrThrow, tableName} = switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(cached) => cached
     | None =>
       let cached: setUpdatesCache = {
@@ -273,6 +279,11 @@ let setUpdatesOrThrow = async (
               ),
               S.object(s => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                switch (chainIdField, scopeChainId) {
+                | (Some(field), Some(chainId)) =>
+                  s.tag(field->Table.getClickHouseDbFieldName, chainId)
+                | _ => ()
+                }
                 Change.Delete({
                   entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
                   checkpointId: s.field(
@@ -294,8 +305,23 @@ let setUpdatesOrThrow = async (
         ),
       }
 
-      cache->Utils.WeakMap.set(entityConfig, cached)->ignore
+      cache->Dict.set(cacheKey, cached)
       cached
+    }
+
+    let changes = switch (chainIdField, scopeChainId) {
+    | (Some(field), Some(chainId)) =>
+      changes->Array.map(change =>
+        switch change {
+        | Change.Set(set) =>
+          Change.Set({
+            ...set,
+            entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
+          })
+        | Delete(_) => change
+        }
+      )
+    | _ => changes
     }
 
     try {
@@ -505,6 +531,16 @@ let makeCreateViewQuery = (
     ~entityIndex=entityConfig.index,
   )
 
+  // A per-chain entity's rows are only comparable within a chain, so the
+  // current-state dedup keys on (id, chain id).
+  let dedupKey =
+    switch entityConfig.table->Table.getChainIdField {
+    | Some(field) => [Table.idFieldName, field->Table.getClickHouseDbFieldName]
+    | None => [Table.idFieldName]
+    }
+    ->Array.map(name => `\`${name}\``)
+    ->Array.joinUnsafe(", ")
+
   let checkpointsTableName = InternalTable.Checkpoints.table.tableName
   let checkpointIdField = (#id: InternalTable.Checkpoints.field :> string)
 
@@ -528,7 +564,7 @@ FROM (
   FROM ${database}.\`${historyTableName}\`
   WHERE \`${EntityHistory.checkpointIdFieldName}\` <= (SELECT max(${checkpointIdField}) FROM ${database}.\`${checkpointsTableName}\`)
   ORDER BY \`${EntityHistory.checkpointIdFieldName}\` DESC
-  LIMIT 1 BY \`${Table.idFieldName}\`
+  LIMIT 1 BY ${dedupKey}
 )
 WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> string)}'`
 }

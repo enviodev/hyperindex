@@ -2,11 +2,45 @@
 // mutations route through IndexerState's domain operations; the write loop and
 // capacity/flush coordination live in Writing.
 
+// The scope must match the entity's own: a cross-chain entity has one table on
+// the indexer, a per-chain entity one table per ChainState. Taking the scope
+// rather than an optional chain id keeps a dummy chain id unrepresentable.
 let getInMemTable = (
   state: IndexerState.t,
   ~entityConfig: Internal.entityConfig,
+  ~scope: Internal.chainScope,
 ): InMemoryTable.Entity.t =>
-  state->IndexerState.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
+  switch scope {
+  | CrossChain => state->IndexerState.entities
+  | Chain(chainId) => state->IndexerState.getChainState(~chainId)->ChainState.entities
+  }->EntityTables.get(~entityName=entityConfig.name)
+
+// The scope a given entity's rows live in when reached from a handler running
+// on `chainId`.
+let entityScope = (entityConfig: Internal.entityConfig, ~chainId): Internal.chainScope =>
+  entityConfig.crossChain ? CrossChain : Chain(chainId)
+
+// The chain a row loaded from storage belongs to, taken off the row so what's
+// left matches the entity schema the handlers see. A per-chain entity whose row
+// carries no chain id would silently land in the wrong partition, so it throws.
+let takeRowScope = (
+  entity: Internal.entity,
+  ~entityConfig: Internal.entityConfig,
+): Internal.chainScope =>
+  switch entityConfig.table->Table.getChainIdField {
+  | None => CrossChain
+  | Some(field) =>
+    let row = entity->(Utils.magic: Internal.entity => dict<ChainId.t>)
+    switch row->Utils.Dict.dangerouslyGetNonOption(field.fieldName) {
+    | Some(chainId) =>
+      row->Utils.Dict.deleteInPlace(field.fieldName)
+      Chain(chainId)
+    | None =>
+      JsError.throwWithMessage(
+        `Rollback row for the per-chain entity "${entityConfig.name}" with id "${entity.id}" is missing its "${field.fieldName}" value.`,
+      )
+    }
+  }
 
 let getEffectInMemTable = (
   state: IndexerState.t,
@@ -114,16 +148,16 @@ let prepareRollbackDiff = async (
   let _ = await persistence.allEntities
   ->Array.filter(entityConfig => entityConfig.storage.postgres)
   ->Array.map(async entityConfig => {
-    let entityTable = state->getInMemTable(~entityConfig)
-
-    let (removedIds, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+    let (removals, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
     )
 
-    removedIds->Array.forEach(entityId => {
+    removals->Array.forEach(({entityId, scope}: Persistence.rollbackRemoval) => {
       deletedEntities->Utils.Dict.push(entityConfig.name, entityId)
-      entityTable->InMemoryTable.Entity.set(
+      state
+      ->getInMemTable(~entityConfig, ~scope)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Delete({
           entityId,
@@ -138,8 +172,11 @@ let prepareRollbackDiff = async (
       ->(Utils.magic: array<unknown> => array<Internal.entity>)
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
+      let scope = entity->takeRowScope(~entityConfig)
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryTable.Entity.set(
+      state
+      ->getInMemTable(~entityConfig, ~scope)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Set({
           entityId: entity.id->EntityId.unsafeOfString,
@@ -162,7 +199,10 @@ let prepareRollbackDiff = async (
 // registered them: the store is where they already live, and it knows which
 // ones the database hasn't seen yet.
 let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
-  let inMemTable = state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
+  let inMemTable = state->getInMemTable(
+    ~entityConfig=InternalTable.EnvioAddresses.entityConfig,
+    ~scope=CrossChain,
+  )
   let committedCheckpointId = state->IndexerState.committedCheckpointId
 
   batch.progressedChainsById->Utils.Dict.forEach(progressedChain => {

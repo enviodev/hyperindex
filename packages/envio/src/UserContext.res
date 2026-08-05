@@ -60,15 +60,19 @@ external makeEffectContext: (
 
 let initEffect = (params: contextParams) => {
   let handlerChainId = params.item->Internal.getItemChainId
+  // An effect that didn't state a scope follows the config: cross-chain by
+  // default, per-chain under `disable_default_cross_chain`.
+  let isCrossChain = (effect: Internal.effect) =>
+    effect.crossChain->Option.getOr(params.config.defaultCrossChain)
   // A chain-scoped effect always resolves against the chain of the handler that
   // triggered the call, even several effects deep, so the chain id is captured
   // once from the item and reused for the whole nested-call tree.
   let rec makeCaller = (~caller: option<Internal.effect>) => {
     (effect: Internal.effect, input: Internal.effectInput) => {
-      let scope = effect.crossChain ? Internal.CrossChain : Internal.Chain(handlerChainId)
+      let scope = effect->isCrossChain ? Internal.CrossChain : Internal.Chain(handlerChainId)
 
       switch caller {
-      | Some(callerEffect) if callerEffect.crossChain && !effect.crossChain =>
+      | Some(callerEffect) if callerEffect->isCrossChain && !(effect->isCrossChain) =>
         // A cross-chain effect isn't tied to a single chain, so it has no chain
         // to resolve a chain-scoped child against. Reject before any cache work.
         JsError.throwWithMessage(
@@ -114,6 +118,13 @@ type entityContextParams = {
   entityConfig: Internal.entityConfig,
 }
 
+// The handler context is always chain-scoped, so a per-chain entity resolves to
+// the chain the handler runs on and a cross-chain one to the shared partition.
+let entityScope = (params: entityContextParams) =>
+  params.entityConfig->InMemoryStore.entityScope(
+    ~chainId=params.item->Internal.getItemChainId,
+  )
+
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
 
@@ -123,6 +134,7 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~entityConfig,
+      ~scope=params->entityScope,
       ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~item=params.item,
@@ -164,7 +176,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       ? noopSet
       : (entity: Internal.entity) => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
@@ -188,6 +200,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
@@ -220,6 +233,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
@@ -250,6 +264,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~loadManager=params.loadManager,
               ~persistence=params.persistence,
               ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
               ~item=params.item,
@@ -273,7 +288,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       } else {
         entityId => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({

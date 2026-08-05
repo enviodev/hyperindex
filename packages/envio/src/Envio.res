@@ -186,7 +186,8 @@ and effectOptions<'input, 'output> = {
   rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
-  /** Whether the effect's cache is shared across all chains. Defaults to `true`.
+  /** Whether the effect's cache is shared across all chains. Defaults to `true`,
+   or to `false` when config.yaml sets `disable_default_cross_chain: true`.
    Set to `false` to isolate the cache (and rate limiting) per chain and enable
    `context.chain.id` inside the handler. */
   crossChain?: bool,
@@ -196,8 +197,8 @@ and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
-  /** The chain the effect was called on. Only available on effects created with
-   `crossChain: false`; accessing it on a cross-chain effect throws. */
+  /** The chain the effect was called on. Only available on chain-scoped
+   effects; accessing it on a cross-chain effect throws. */
   chain: effectChain,
 }
 and effectArgs<'input> = {
@@ -259,10 +260,9 @@ let createEffect = (
     | Some(true) => true
     | _ => false
     },
-    crossChain: switch options.crossChain {
-    | Some(false) => false
-    | _ => true
-    },
+    // Left unresolved: the config's `defaultCrossChain` fills it in when the
+    // effect didn't state one, and the config isn't available here.
+    crossChain: options.crossChain,
     rateLimit: switch options.rateLimit {
     | Disable => None
     | Enable({calls, per}) =>

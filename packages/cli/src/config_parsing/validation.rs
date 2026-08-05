@@ -90,9 +90,9 @@ pub fn validate_names_valid_rescript(
     let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "The config contains reserved words for {} names: {}. They are used for the \
-             generated code and must be valid identifiers, containing only alphanumeric \
-             characters and underscores.",
+            "The config contains reserved words for {} names: {}. They are used for the generated \
+             code and must be valid identifiers, containing only alphanumeric characters and \
+             underscores.",
             part_of_config,
             detected_reserved_words
                 .iter()
@@ -110,8 +110,8 @@ pub fn validate_names_valid_rescript(
     }
     if !invalid_names.is_empty() {
         return Err(anyhow!(
-            "The config contains invalid characters for {} names: {}. They are used for \
-             the generated code and must be valid identifiers, containing only alphanumeric \
+            "The config contains invalid characters for {} names: {}. They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
             invalid_names
@@ -134,8 +134,8 @@ impl human_config::evm::Chain {
         if let Some(network_endblock) = self.end_block {
             if network_endblock < self.start_block {
                 return Err(anyhow!(
-                    "The config has an end_block smaller than start_block for chain {}. \
-                     end_block must be greater than or equal to start_block.",
+                    "The config has an end_block smaller than start_block for chain {}. end_block \
+                     must be greater than or equal to start_block.",
                     self.id
                 ));
             }
@@ -234,8 +234,8 @@ pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     let hex = s.strip_prefix("0x").unwrap_or(s);
     if !matches!(hex.len(), 2 | 4 | 8 | 16) {
         return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits \
-             after stripping a `0x` prefix), got {} digits",
+            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
+             stripping a `0x` prefix), got {} digits",
             s,
             hex.len()
         ));
@@ -254,8 +254,8 @@ pub fn validate_deserialized_svm_config_yaml(
     for chain in &svm_config.chains {
         if chain.experimental.is_none() && chain.rpc.is_none() {
             return Err(anyhow!(
-                "A chain must define a data source: either an `rpc` endpoint or an \
-                 `experimental` HyperSync config. Both are missing."
+                "A chain must define a data source: either an `rpc` endpoint or an `experimental` \
+                 HyperSync config. Both are missing."
             ));
         }
 
@@ -341,8 +341,8 @@ pub fn validate_deserialized_svm_config_yaml(
                             for value in &filter.values {
                                 if !is_valid_solana_pubkey(value) {
                                     return Err(anyhow!(
-                                        "Account filter on instruction {:?} (program {:?}) has \
-                                         an invalid base58 pubkey {:?}",
+                                        "Account filter on instruction {:?} (program {:?}) has an \
+                                         invalid base58 pubkey {:?}",
                                         instr.name,
                                         program.name,
                                         value
@@ -358,8 +358,8 @@ pub fn validate_deserialized_svm_config_yaml(
 
     if !are_contract_names_unique(&all_program_names) {
         return Err(anyhow!(
-            "Duplicate program names detected. All program names must be unique across all \
-             chains and are case-insensitive."
+            "Duplicate program names detected. All program names must be unique across all chains \
+             and are case-insensitive."
         ));
     }
     validate_names_valid_rescript(&all_program_names, "program".to_string())?;
@@ -567,8 +567,8 @@ mod tests {
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "The config contains reserved words for contract names: \"module\", \"this\". \
-             They are used for the generated code and must be valid identifiers, containing only \
+            "The config contains reserved words for contract names: \"module\", \"this\". They \
+             are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
 
@@ -589,10 +589,10 @@ mod tests {
         );
         assert_eq!(
             invalid_names.unwrap_err().to_string(),
-            "The config contains invalid characters for contract names: \
-             \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". \
-             They are used for the generated code and must be valid identifiers, containing only \
-             alphanumeric characters and underscores."
+            "The config contains invalid characters for contract names: \"1StartsWithNumber\", \
+             \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
         );
     }
 

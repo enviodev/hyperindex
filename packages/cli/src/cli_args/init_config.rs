@@ -84,7 +84,7 @@ pub mod evm {
                     )
                     .context(format!(
                         "Unexpected, failed to add global contract {}. Contract should have \
-                     unique names",
+                         unique names",
                         selected_contract.name
                     ))?;
                     None
@@ -167,6 +167,9 @@ pub mod evm {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
+                    // The recommended mode for a new indexer: an entity id is
+                    // scoped to its chain unless it opts into `@crossChain`.
+                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: None,
                 contracts,
@@ -308,6 +311,9 @@ pub mod fuel {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
+                    // The recommended mode for a new indexer: an entity id is
+                    // scoped to its chain unless it opts into `@crossChain`.
+                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,

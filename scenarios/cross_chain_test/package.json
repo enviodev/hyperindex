@@ -1,0 +1,26 @@
+{
+  "name": "cross_chain_test",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "test": "rescript && tsc --noEmit && vitest run",
+    "start": "envio start",
+    "res:build": "rescript"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0",
+    "rescript": "12.2.0",
+    "@rescript/runtime": "12.2.0",
+    "rescript-schema": "9.5.1"
+  },
+  "dependencies": {
+    "envio": "file:../../packages/envio"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

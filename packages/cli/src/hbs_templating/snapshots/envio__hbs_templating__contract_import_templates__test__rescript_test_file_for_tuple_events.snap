@@ -38,7 +38,7 @@ describe("SablierLockupTranched contract CreateLockupTranchedStream event tests"
 
     let actualSablierLockupTranchedCreateLockupTranchedStream = await indexer.\"SablierLockupTranched_CreateLockupTranchedStream".getOrThrow("1_0_0")
 
-    let expectedSablierLockupTranchedCreateLockupTranchedStream: Entities.SablierLockupTranched_CreateLockupTranchedStream.t = {
+    let expectedSablierLockupTranchedCreateLockupTranchedStream: Entities.SablierLockupTranched_CreateLockupTranchedStream.testIndexerRow = {
       id: "1_0_0",
       streamId: 0n,
       funder: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
@@ -51,6 +51,7 @@ describe("SablierLockupTranched contract CreateLockupTranchedStream event tests"
       tranches: []->(Utils.magic: _ => JSON.t),
       timestamps: {"start": 0n, "end": 0n}->(Utils.magic: _ => JSON.t),
       broker: Envio.TestHelpers.Addresses.defaultAddress->Address.toString,
+      chainId: 1,
     }
 
     t.expect(

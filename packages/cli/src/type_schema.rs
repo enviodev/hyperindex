@@ -407,7 +407,8 @@ impl TypeIdent {
                 //a codegen bug.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -482,7 +483,8 @@ impl TypeIdent {
                 // unreachable! in `to_string_internal` / `get_default_value_rescript`.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -544,7 +546,8 @@ impl TypeIdent {
                 // unreachable! in `to_string_internal` / `get_default_value_rescript`.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -613,7 +616,8 @@ impl TypeIdent {
                 //literal must use the matching `{"key": value}` syntax.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -696,7 +700,8 @@ impl TypeIdent {
                 // codegen bug. Fail fast instead of silently emitting `{}`.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields

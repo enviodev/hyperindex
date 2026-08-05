@@ -48,6 +48,11 @@ pub(crate) struct PublicConfigJson<'a> {
     raw_events: bool,
     #[serde(skip_serializing_if = "is_default_chain_id_mode")]
     chain_id_mode: ChainIdMode,
+    // Omitted while true, which is what every config predating per-chain
+    // entities implies, so those projects keep producing the same JSON and
+    // the compat check doesn't ask them to reindex.
+    #[serde(skip_serializing_if = "is_true")]
+    default_cross_chain: bool,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
@@ -65,6 +70,20 @@ struct StorageConfig {
     postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    // How each backend spells appended internal columns (currently only the
+    // per-chain chain-id column). Omitted when the backend is disabled or
+    // keeps the default `original` format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_column_name_format: Option<ColumnNameFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_column_name_format: Option<ColumnNameFormat>,
+}
+
+fn non_default_format(backend: Option<system_config::StorageBackend>) -> Option<ColumnNameFormat> {
+    match backend?.column_name_format {
+        ColumnNameFormat::Original => None,
+        format => Some(format),
+    }
 }
 
 impl From<&system_config::Storage> for StorageConfig {
@@ -72,6 +91,8 @@ impl From<&system_config::Storage> for StorageConfig {
         Self {
             postgres: s.postgres.is_some(),
             clickhouse: s.clickhouse.is_some(),
+            postgres_column_name_format: non_default_format(s.postgres),
+            clickhouse_column_name_format: non_default_format(s.clickhouse),
         }
     }
 }
@@ -80,6 +101,11 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // Emitted only when the entity's resolved scope differs from
+    // `defaultCrossChain`, which the runtime falls back to. Repeating the
+    // default would diff against every project that predates the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cross_chain: Option<bool>,
     // Mirrors the user's `@storage(...)` directive verbatim: only the args
     // they wrote are emitted. Without a directive the entity gets the
     // backends marked `default` in config.yaml — stamped here, except when
@@ -835,6 +861,11 @@ impl SystemConfig {
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    cross_chain: Some(system_config::entity_is_cross_chain(
+                        entity,
+                        cfg.default_cross_chain,
+                    ))
+                    .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
                     storage,
                     properties,
                     derived_fields,
@@ -855,6 +886,7 @@ impl SystemConfig {
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
             chain_id_mode: cfg.chain_id_mode,
+            default_cross_chain: cfg.default_cross_chain,
             storage: (&cfg.storage).into(),
             evm,
             fuel,
@@ -869,7 +901,10 @@ impl SystemConfig {
     pub fn to_view_json(&self) -> Result<String> {
         let view = ConfigView {
             version: system_config::VERSION,
-            storage: (&self.storage).into(),
+            storage: ViewStorageConfig {
+                postgres: self.storage.postgres.is_some(),
+                clickhouse: self.storage.clickhouse.is_some(),
+            },
         };
         Ok(serde_json::to_string_pretty(&view)?)
     }
@@ -879,5 +914,15 @@ impl SystemConfig {
 #[serde(rename_all = "camelCase")]
 struct ConfigView<'a> {
     version: &'a str,
-    storage: StorageConfig,
+    storage: ViewStorageConfig,
+}
+
+// `envio config view` reports which backends are enabled, nothing more. Kept
+// separate from the internal config's `StorageConfig` so a field the runtime
+// needs doesn't silently become part of this command's output.
+#[derive(Serialize)]
+struct ViewStorageConfig {
+    postgres: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse: bool,
 }

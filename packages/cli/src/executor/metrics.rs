@@ -29,8 +29,8 @@ pub async fn run(runtime: bool) -> Result<()> {
 
     let response = client.get(&url).send().await.map_err(|e| {
         anyhow!(
-            "Failed to fetch metrics from {url}: {e}. Is the indexer running? \
-             Set ENVIO_INDEXER_PORT if it's listening on a different port."
+            "Failed to fetch metrics from {url}: {e}. Is the indexer running? Set \
+             ENVIO_INDEXER_PORT if it's listening on a different port."
         )
     })?;
 
