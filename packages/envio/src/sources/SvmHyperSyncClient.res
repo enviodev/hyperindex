@@ -110,13 +110,13 @@ module QueryTypes = {
 
   type fieldSelection = {block?: array<blockField>, transaction?: array<transactionField>}
 
-  /** Filter for selecting instructions. All non-empty fields are AND-ed: an
-   instruction must match at least one value in every non-empty field.
+  /** Filter for selecting instruction calls. All non-empty fields are AND-ed:
+   an instruction must match at least one value in every non-empty field.
 
    Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
    Account filters (a0..a9) take base58 pubkey strings. */
   type instructionSelection = {
-    programId?: array<string>,
+    executingAccount?: array<string>,
     d1?: array<string>,
     d2?: array<string>,
     d4?: array<string>,
@@ -129,7 +129,7 @@ module QueryTypes = {
   type query = {
     fromSlot: int,
     toSlot?: int,
-    instructions?: array<instructionSelection>,
+    instructionCalls?: array<instructionSelection>,
     includeAllBlocks?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
@@ -159,15 +159,16 @@ module ResponseTypes = {
     slot: int,
     transactionIndex: int,
     instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
+    executingAccount: string,
+    accountArguments: array<string>,
     data: string,
     d1?: string,
     d2?: string,
     d4?: string,
     d8?: string,
     isInner: bool,
-    isCommitted: bool,
+    // True when the parent transaction succeeded.
+    txSuccess: bool,
   }
 
   type queryResponseData = {

@@ -2,16 +2,18 @@
 #
 # Test-only config. Mirrors config.yaml but pins a finite slot window so
 # src/indexer.test.ts runs the full pipeline deterministically against
-# solana.hypersync.xyz. Selected via ENVIO_CONFIG=config.test.yaml.
+# solana-mainnet-history.hypersync.xyz (its history currently begins at slot
+# 422000000, so the window must not predate that). Selected via
+# ENVIO_CONFIG=config.test.yaml.
 name: svm-flow-xray
 description: Test variant of Flow X-Ray with a finite slot window.
 ecosystem: svm
 chains:
-  - start_block: 420650000
-    end_block: 420650008
+  - start_block: 422000003
+    end_block: 422000011
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: Jupiter
           program_id: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4
@@ -111,6 +113,25 @@ chains:
                 - userSourceTokenAccount
                 - userDestTokenAccount
                 - userSourceOwner
+              field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
+                token_balance_fields: true
+        # Orca + Meteora swap: same narrow discriminator match as config.yaml;
+        # the handler registers them, and every registered program must be
+        # configured on the chain.
+        - name: Orca
+          program_id: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
+          instructions:
+            - name: swap
+              discriminator: "0xf8c69e91e17587c8"
+              field_selection:
+                transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
+                token_balance_fields: true
+        - name: Meteora
+          program_id: LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo
+          instructions:
+            - name: swap
+              discriminator: "0xf8c69e91e17587c8"
               field_selection:
                 transaction_fields: [signatures, feePayer, success, fee, computeUnitsConsumed]
                 token_balance_fields: true

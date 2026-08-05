@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use hypersync_client_solana::simple_types as simple;
 use hypersync_solana_net_types::query as net;
+use hypersync_solana_net_types::Address;
 use napi_derive::napi;
 
 use super::mod_helpers::hex_to_bytes;
@@ -97,7 +98,9 @@ pub(crate) struct Registration {
     /// This registration's program in the chain's address store, resolved once
     /// at construction so the per-instruction gate is an index compare.
     pub contract_idx: u32,
-    pub program_id: String,
+    /// The registration's program id, parsed once at construction; `None`
+    /// only for placeholder registrations with no real program.
+    pub program_address: Option<Address>,
     pub is_wildcard: bool,
     /// Earliest slot this registration accepts; `None` is unrestricted.
     pub start_block: Option<i64>,
@@ -108,7 +111,7 @@ pub(crate) struct Registration {
     pub byte_len: usize,
     pub is_inner: Option<bool>,
     pub include_logs: bool,
-    pub account_filters: Vec<Vec<(usize, Vec<String>)>>,
+    pub account_filters: Vec<Vec<(usize, Vec<Address>)>>,
     pub transaction_columns: Vec<&'static str>,
     pub needs_token_balances: bool,
     pub block_columns: Vec<&'static str>,
@@ -145,7 +148,16 @@ impl Registration {
                             .with_context(|| {
                                 format!("account filter position {} out of a0..a9", filter.position)
                             })?;
-                        Ok((position, filter.values.clone()))
+                        let values = filter
+                            .values
+                            .iter()
+                            .map(|v| {
+                                v.parse::<Address>().map_err(|e| {
+                                    anyhow::anyhow!("invalid pubkey {v:?} in account filter: {e}")
+                                })
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Ok((position, values))
                     })
                     .collect::<Result<Vec<_>>>()
             })
@@ -170,6 +182,14 @@ impl Registration {
                 }
             }
         }
+        let program_address =
+            if input.program_id.is_empty() {
+                None
+            } else {
+                Some(input.program_id.parse::<Address>().map_err(|e| {
+                    anyhow::anyhow!("invalid program_id {:?}: {e}", input.program_id)
+                })?)
+            };
         let contract_idx = store.contract_idx(&input.contract_name).with_context(|| {
             format!(
                 "Program {} is missing from the chain's address store",
@@ -180,7 +200,7 @@ impl Registration {
             index: input.index,
             contract_name: input.contract_name.clone(),
             contract_idx,
-            program_id: input.program_id.clone(),
+            program_address,
             is_wildcard: input.is_wildcard,
             start_block: input.start_block,
             discriminator,
@@ -208,25 +228,27 @@ impl Registration {
     /// in the store) and registered at or before the instruction's slot.
     fn matches_scope(
         &self,
-        instr: &simple::Instruction,
+        instr: &simple::InstructionCall,
         address: &InstructionAddress,
         force_wildcard: bool,
         store: &StoreInner,
     ) -> bool {
-        self.program_id == instr.program_id
+        self.program_address
+            .is_some_and(|program| instr.executing_account == Some(program))
             && crate::registration_start_block::has_started(self.start_block, address.slot)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
                     && store.is_indexed_at(address.key, self.contract_idx, address.slot)))
             && self
                 .is_inner
-                .is_none_or(|is_inner| is_inner == instr.is_inner)
+                .is_none_or(|is_inner| instr.is_inner == Some(is_inner))
             && (self.account_filters.is_empty()
                 || self.account_filters.iter().any(|group| {
                     group.iter().all(|(position, values)| {
                         instr
-                            .accounts
-                            .get(*position)
+                            .account_arguments
+                            .as_ref()
+                            .and_then(|accounts| accounts.get(*position))
                             .is_some_and(|account| values.contains(account))
                     })
                 }))
@@ -245,19 +267,19 @@ impl Registration {
 /// One instruction selection of a built query, before conversion to the wire
 /// type; `PartialEq` so identical selections from same-signature
 /// registrations are deduplicated.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct BuiltInstructionSelection {
-    program_id: String,
+    program: Address,
     discriminator_hex: Option<String>,
     byte_len: usize,
-    accounts: [Option<Vec<String>>; 10],
+    accounts: [Option<Vec<Address>>; 10],
     is_inner: Option<bool>,
 }
 
 impl BuiltInstructionSelection {
     fn into_net(self) -> net::InstructionSelection {
         let mut selection = net::InstructionSelection {
-            program_id: vec![self.program_id],
+            executing_account: vec![self.program],
             is_inner: self.is_inner,
             ..Default::default()
         };
@@ -360,24 +382,24 @@ impl SelectionBuilder {
 
             // Placeholder configs carry no real program — skip rather than
             // ship a degenerate match-all selection.
-            if reg.program_id.is_empty() {
+            let Some(program) = reg.program_address else {
                 continue;
-            }
+            };
             // Each AND-group becomes its own selection; groups sharing the
             // same `(programId, dN)` are OR-ed by the wire protocol. An empty
             // outer array emits one selection with no account filtering.
-            let groups: &[Vec<(usize, Vec<String>)>] = if reg.account_filters.is_empty() {
+            let groups: &[Vec<(usize, Vec<Address>)>] = if reg.account_filters.is_empty() {
                 &[Vec::new()]
             } else {
                 &reg.account_filters
             };
             for group in groups {
                 let mut selection = BuiltInstructionSelection {
-                    program_id: reg.program_id.clone(),
+                    program,
                     discriminator_hex: reg.discriminator_hex.clone(),
                     byte_len: reg.byte_len,
                     is_inner: reg.is_inner,
-                    ..Default::default()
+                    accounts: Default::default(),
                 };
                 for (position, values) in group {
                     selection.accounts[*position] = Some(values.clone());
@@ -418,7 +440,7 @@ impl SelectionBuilder {
 /// registration matched.
 pub(crate) fn route_instruction(
     registrations: &[Arc<Registration>],
-    instr: &simple::Instruction,
+    instr: &simple::InstructionCall,
     address: &InstructionAddress,
     client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     store: &StoreInner,
@@ -431,11 +453,12 @@ pub(crate) fn route_instruction(
             store,
         )
     };
+    let data = instr.data.as_deref().unwrap_or_default();
     for byte_len in [8usize, 4, 2, 1] {
         let matched: Vec<Arc<Registration>> = registrations
             .iter()
             .filter(|reg| {
-                reg.byte_len == byte_len && reg.matches_discriminator(&instr.data) && scoped(reg)
+                reg.byte_len == byte_len && reg.matches_discriminator(data) && scoped(reg)
             })
             .cloned()
             .collect();
@@ -497,11 +520,12 @@ mod tests {
         }
     }
 
-    fn instruction(program_id: &str, data: &[u8]) -> simple::Instruction {
-        simple::Instruction {
-            program_id: program_id.to_string(),
-            data: data.to_vec(),
-            is_committed: true,
+    fn instruction(program_id: &str, data: &[u8]) -> simple::InstructionCall {
+        simple::InstructionCall {
+            executing_account: Some(program_id.parse().unwrap()),
+            data: Some(data.to_vec()),
+            is_inner: Some(false),
+            tx_success: Some(true),
             ..Default::default()
         }
     }
@@ -543,15 +567,16 @@ mod tests {
         store: &AddressStore,
         set: &AddressSet,
         built: &BuiltSelection,
-        instr: &simple::Instruction,
+        instr: &simple::InstructionCall,
     ) -> Vec<i64> {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
-        let key = instr.program_id.as_bytes();
+        let program_id = instr.executing_account.unwrap().to_string();
+        let key = program_id.as_bytes();
         let address = InstructionAddress {
             key,
             contract_name: set.cache().owner_of(key),
-            slot: instr.slot as i64,
+            slot: instr.slot.unwrap_or_default() as i64,
         };
         route_instruction(
             &built.registrations,
@@ -578,7 +603,16 @@ mod tests {
         let views: Vec<(Vec<String>, Vec<String>, Vec<String>)> = built
             .instruction_selections
             .iter()
-            .map(|s| (s.program_id.clone(), s.d1.clone(), s.d8.clone()))
+            .map(|s| {
+                (
+                    s.executing_account
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                    s.d1.clone(),
+                    s.d8.clone(),
+                )
+            })
             .collect();
         assert_eq!(
             views,
@@ -610,7 +644,12 @@ mod tests {
         let views: Vec<(Vec<String>, Vec<String>)> = built
             .instruction_selections
             .iter()
-            .map(|s| (s.a1.clone(), s.a2.clone()))
+            .map(|s| {
+                (
+                    s.a1.iter().map(ToString::to_string).collect(),
+                    s.a2.iter().map(ToString::to_string).collect(),
+                )
+            })
             .collect();
         assert_eq!(
             views,
@@ -770,7 +809,7 @@ mod tests {
         .unwrap();
         let at = |slot: u64| {
             let mut instr = instruction(PROG_A, &[0x21]);
-            instr.slot = slot;
+            instr.slot = Some(slot);
             route_indexes(&store, &set, &built, &instr)
         };
         assert_eq!((at(69), at(70)), (Vec::<i64>::new(), vec![0]));
@@ -789,7 +828,7 @@ mod tests {
         let (store, set, built) = build(&[open, restricted], &[0, 1], &[("Owned", PROG_A)]);
         let at = |slot: u64| {
             let mut instr = instruction(PROG_A, &[0x21]);
-            instr.slot = slot;
+            instr.slot = Some(slot);
             route_indexes(&store, &set, &built, &instr)
         };
         assert_eq!((at(99), at(100)), (vec![0], vec![0, 1]));
@@ -818,9 +857,11 @@ mod tests {
         }]];
         let (store, set, built) = build(&[filtered], &[0], &[]);
         let mut matching = instruction(PROG_A, &[0x21]);
-        matching.accounts = vec![ACCOUNT_2.to_string(), ACCOUNT_1.to_string()];
+        matching.account_arguments =
+            Some(vec![ACCOUNT_2.parse().unwrap(), ACCOUNT_1.parse().unwrap()]);
         let mut rejected = instruction(PROG_A, &[0x21]);
-        rejected.accounts = vec![ACCOUNT_1.to_string(), ACCOUNT_2.to_string()];
+        rejected.account_arguments =
+            Some(vec![ACCOUNT_1.parse().unwrap(), ACCOUNT_2.parse().unwrap()]);
         assert_eq!(
             (
                 route_indexes(&store, &set, &built, &matching),
@@ -837,7 +878,7 @@ mod tests {
         let (store, set, built) = build(&[outer_only], &[0], &[]);
         let outer = instruction(PROG_A, &[0x21]);
         let mut inner = instruction(PROG_A, &[0x21]);
-        inner.is_inner = true;
+        inner.is_inner = Some(true);
         assert_eq!(
             (
                 route_indexes(&store, &set, &built, &outer),

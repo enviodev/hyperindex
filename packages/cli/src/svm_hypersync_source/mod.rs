@@ -4,13 +4,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use napi_derive::napi;
 
-mod borsh_decoder;
 mod config;
+mod decode;
 mod query;
 mod selection;
 pub(crate) mod types;
 
-/// Local hex helpers. Lives here so `decoder.rs` can pull them via
+/// Local hex helpers. Lives here so `decode.rs` can pull them via
 /// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary
 /// and without exposing a public hex parser at the napi surface.
 pub(crate) mod mod_helpers {
@@ -40,13 +40,13 @@ use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
 use crate::block_store::BlockStore;
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
 use crate::transaction_store::TransactionStore;
-use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
 use config::SvmClientConfig;
+use decode::{DecodedInstructionJson, InstructionSchemaInput};
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
 use types::{opt_hex, to_hex, QueryResponse};
 
-/// Move the response's transactions and token balances into a
+/// Move the response's transactions and token-side account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
 /// only the config-selected fields are materialised at batch prep; many
 /// instructions in one transaction collapse to a single stored row, and token
@@ -58,19 +58,34 @@ use types::{opt_hex, to_hex, QueryResponse};
 /// items).
 fn build_svm_store(
     mut transactions: Vec<simple::Transaction>,
-    mut token_balances: Vec<simple::TokenBalance>,
+    mut account_activity: Vec<simple::AccountActivity>,
     keys: Option<&HashSet<(u64, u32)>>,
 ) -> TransactionStore {
     if let Some(keys) = keys {
-        transactions.retain(|tx| keys.contains(&(tx.slot, tx.transaction_index)));
-        token_balances.retain(|b| {
-            b.transaction_index
-                .is_some_and(|i| keys.contains(&(b.slot, i)))
+        transactions.retain(|tx| {
+            tx.slot
+                .zip(tx.transaction_index)
+                .is_some_and(|k| keys.contains(&k))
+        });
+        account_activity.retain(|a| {
+            a.slot
+                .zip(a.transaction_index)
+                .is_some_and(|k| keys.contains(&k))
         });
     }
     let store = TransactionStore::new_svm();
-    store.insert_svm_txs(transactions);
-    store.insert_svm_token_balances(token_balances);
+    store.insert_svm_txs(
+        transactions
+            .into_iter()
+            .filter_map(types::SvmTxRow::from_simple)
+            .collect(),
+    );
+    store.insert_svm_token_balances(
+        account_activity
+            .into_iter()
+            .filter_map(types::SvmTokenBalanceRow::from_activity)
+            .collect(),
+    );
     store
 }
 
@@ -143,7 +158,7 @@ fn build_schemas(
     parts_by_program
         .into_iter()
         .map(|(program_id, parts)| {
-            let schema = borsh_decoder::build_program_schema(
+            let schema = decode::build_program_schema(
                 program_id.clone(),
                 &parts.defined_types,
                 parts.instructions,
@@ -236,12 +251,12 @@ impl SvmHyperSyncClient {
             .context("solana get")
             .map_err(map_err)?;
 
-        // Retain raw transactions + token balances in Rust; the store
-        // materialises the parent transaction (selected fields only) at batch
-        // prep.
+        // Retain raw transactions + token-side account activity in Rust; the
+        // store materialises the parent transaction (selected fields only) at
+        // batch prep.
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
-            std::mem::take(&mut resp.token_balances),
+            std::mem::take(&mut resp.account_activity),
             None,
         );
 
@@ -291,15 +306,18 @@ impl SvmHyperSyncClient {
         }
         if built.needs_token_balances {
             // The store keys balance rows by account regardless of what the
-            // consumer selected, so `account` always rides along.
-            field_selection.token_balance = parse_columns(&[
+            // consumer selected, so `account` always rides along. `mint` is
+            // the token-side discriminant of the unified account_activity
+            // table, so it always rides along too.
+            field_selection.account_activity = parse_columns(&[
                 "slot",
                 "transaction_index",
                 "account",
                 "mint",
-                "owner",
-                "pre_amount",
-                "post_amount",
+                "pre_owner",
+                "post_owner",
+                "pre_token_balance",
+                "post_token_balance",
             ])
             .map_err(map_err)?;
         }
@@ -319,7 +337,7 @@ impl SvmHyperSyncClient {
                 })
                 .transpose()
                 .map_err(map_err)?,
-            instructions: built.instruction_selections.clone(),
+            instruction_calls: built.instruction_selections.clone(),
             field_selection,
             max_num_instructions: params
                 .max_num_instructions
@@ -346,7 +364,7 @@ impl SvmHyperSyncClient {
         let items = {
             let store = self.address_store.read().unwrap();
             build_event_items(
-                &resp.instructions,
+                &resp.instruction_calls,
                 std::mem::take(&mut resp.logs),
                 &built,
                 &self.schemas,
@@ -373,7 +391,7 @@ impl SvmHyperSyncClient {
 
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
-            std::mem::take(&mut resp.token_balances),
+            std::mem::take(&mut resp.account_activity),
             Some(&referenced_transactions),
         );
         let (block_headers, block_store) =
@@ -460,7 +478,7 @@ pub struct EventItemsResponse {
 /// messages). Borsh decoding runs once per instruction against its program's
 /// schema, when one exists.
 fn build_event_items(
-    instructions: &[simple::Instruction],
+    instructions: &[simple::InstructionCall],
     logs: Vec<simple::Log>,
     built: &selection::BuiltSelection,
     schemas: &HashMap<String, UpstreamSchema>,
@@ -470,14 +488,14 @@ fn build_event_items(
 ) -> Result<Vec<EventItem>> {
     let mut logs_by_key: HashMap<(u64, u32, Vec<u32>), Vec<LogItem>> = HashMap::new();
     for log in logs {
-        if let (Some(transaction_index), Some(instruction_address)) =
-            (log.transaction_index, log.instruction_address)
+        if let (Some(slot), Some(transaction_index), Some(instruction_address)) =
+            (log.slot, log.transaction_index, log.instruction_address)
         {
             logs_by_key
-                .entry((log.slot, transaction_index, instruction_address))
+                .entry((slot, transaction_index, instruction_address))
                 .or_default()
                 .push(LogItem {
-                    kind: log.kind.unwrap_or_default(),
+                    kind: log.kind.map(|k| k.as_str().to_string()).unwrap_or_default(),
                     message: log.message.unwrap_or_default(),
                 });
         }
@@ -485,15 +503,24 @@ fn build_event_items(
 
     let mut items: Vec<EventItem> = Vec::with_capacity(instructions.len());
     for instr in instructions {
-        // Instructions from failed transactions are excluded. HyperSync has no
-        // server-side predicate to filter instructions by parent-transaction
-        // success, so the client filters on the `isCommitted` flag it already
-        // delivers on every instruction row.
-        if !instr.is_committed {
+        // Instructions from failed transactions are excluded: their state
+        // changes were rolled back, so nothing there is a handler-visible
+        // effect. `tx_success` reports the PARENT transaction's outcome and
+        // rides on every instruction row.
+        if instr.tx_success == Some(false) {
             continue;
         }
-        let slot = i64::try_from(instr.slot).context("instruction.slot overflow")?;
-        let program_key = instr.program_id.as_bytes();
+        let slot_raw = instr.slot.context("instruction.slot missing")?;
+        let transaction_index = instr
+            .transaction_index
+            .context("instruction.transaction_index missing")?;
+        let slot = i64::try_from(slot_raw).context("instruction.slot overflow")?;
+        let program_id = instr
+            .executing_account
+            .as_ref()
+            .context("instruction.executing_account missing")?
+            .to_string();
+        let program_key = program_id.as_bytes();
         let address = selection::InstructionAddress {
             key: program_key,
             contract_name: set_cache.owner_of(program_key),
@@ -509,15 +536,15 @@ fn build_event_items(
         if routed.is_empty() {
             continue;
         }
-        let decoded = schemas.get(&instr.program_id).and_then(|schema| {
-            borsh_decoder::decode_with_schema(schema, instr.accounts.clone(), instr.data.clone())
-        });
+        let decoded = schemas
+            .get(&program_id)
+            .and_then(|schema| decode::decode_with_schema(schema, instr));
         let logs = if routed.iter().any(|reg| reg.include_logs) {
             logs_by_key
                 .get(&(
-                    instr.slot,
-                    instr.transaction_index,
-                    instr.instruction_address.clone(),
+                    slot_raw,
+                    transaction_index,
+                    instr.instruction_address.clone().unwrap_or_default(),
                 ))
                 .cloned()
         } else {
@@ -527,20 +554,28 @@ fn build_event_items(
             items.push(EventItem {
                 on_event_registration_index: reg.index,
                 slot,
-                transaction_index: i64::from(instr.transaction_index),
+                transaction_index: i64::from(transaction_index),
                 instruction_address: instr
                     .instruction_address
+                    .as_deref()
+                    .unwrap_or_default()
                     .iter()
                     .map(|&v| i64::from(v))
                     .collect(),
-                program_id: instr.program_id.clone(),
-                accounts: instr.accounts.clone(),
-                data: to_hex(&instr.data),
+                program_id: program_id.clone(),
+                accounts: instr
+                    .account_arguments
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                data: to_hex(instr.data.as_deref().unwrap_or_default()),
                 d1: opt_hex(&instr.d1),
                 d2: opt_hex(&instr.d2),
                 d4: opt_hex(&instr.d4),
                 d8: opt_hex(&instr.d8),
-                is_inner: instr.is_inner,
+                is_inner: instr.is_inner.unwrap_or_default(),
                 decoded: decoded.clone(),
                 logs: if reg.include_logs { logs.clone() } else { None },
             });
@@ -575,17 +610,21 @@ fn take_blocks(
     resp: &mut simple::SolanaResponse,
     slots: Option<&HashSet<u64>>,
 ) -> Result<(Vec<types::Block>, BlockStore)> {
-    let mut raw_blocks = std::mem::take(&mut resp.blocks);
-    let block_headers: Vec<types::Block> = raw_blocks
+    let mut block_rows: Vec<types::SvmBlockRow> = std::mem::take(&mut resp.blocks)
+        .into_iter()
+        .map(types::SvmBlockRow::try_from)
+        .collect::<Result<Vec<_>>>()
+        .context("mapping solana block rows")?;
+    let block_headers: Vec<types::Block> = block_rows
         .iter()
-        .map(types::Block::from_raw)
+        .map(types::Block::from_row)
         .collect::<Result<Vec<_>>>()
         .context("mapping solana block headers")?;
     if let Some(slots) = slots {
-        raw_blocks.retain(|b| slots.contains(&b.slot));
+        block_rows.retain(|b| slots.contains(&b.slot));
     }
     let block_store = BlockStore::new_svm();
-    block_store.insert_svm_blocks(raw_blocks);
+    block_store.insert_svm_blocks(block_rows);
     Ok((block_headers, block_store))
 }
 
@@ -601,14 +640,17 @@ mod tests {
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
-    /// Live test against `solana.hypersync.xyz`. Run with:
-    ///     cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
+    /// Live test against the public Solana mainnet endpoint (queries need a
+    /// bearer token). Run with:
+    ///     ENVIO_API_TOKEN=... cargo test -p envio --lib svm_hypersync_source::tests -- --ignored --nocapture
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
         let client = SvmHyperSyncClient::new(
             SvmClientConfig {
-                url: "https://solana.hypersync.xyz".into(),
+                url: crate::config_parsing::hypersync_endpoints::SOLANA_MAINNET_HYPERSYNC_URL
+                    .into(),
+                api_token: std::env::var("ENVIO_API_TOKEN").ok(),
                 ..Default::default()
             },
             "hyperindex-test".into(),
@@ -624,8 +666,9 @@ mod tests {
         let q = SvmQuery {
             from_slot: from,
             to_slot: Some(height),
-            instructions: Some(vec![InstructionSelection {
-                program_id: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
+            instruction_calls: Some(vec![InstructionSelection {
+                executing_account: Some(vec![TOKEN_METADATA_PROGRAM.into()]),
+                tx_success: Some(true),
                 ..Default::default()
             }]),
             max_num_instructions: Some(200),
@@ -645,9 +688,10 @@ mod tests {
             "expected at least one Token Metadata instruction"
         );
         for ix in resp.data.instructions.iter().take(3) {
-            assert_eq!(ix.program_id, TOKEN_METADATA_PROGRAM);
+            assert_eq!(ix.executing_account, TOKEN_METADATA_PROGRAM);
             assert!(ix.data.starts_with("0x"));
             assert!(ix.data.len() > 2, "data should not be empty hex");
+            assert!(ix.tx_success, "tx_success filter must hold");
         }
     }
 
@@ -698,7 +742,7 @@ mod tests {
     fn route(
         store: &AddressStore,
         set: &AddressSet,
-        instructions: &[simple::Instruction],
+        instructions: &[simple::InstructionCall],
         logs: Vec<simple::Log>,
         built: &selection::BuiltSelection,
     ) -> Result<Vec<EventItem>> {
@@ -715,14 +759,14 @@ mod tests {
         )
     }
 
-    fn committed_instruction(data: &[u8]) -> simple::Instruction {
-        simple::Instruction {
-            program_id: TOKEN_METADATA_PROGRAM.to_string(),
-            data: data.to_vec(),
-            slot: 42,
-            transaction_index: 7,
-            instruction_address: vec![1],
-            is_committed: true,
+    fn committed_instruction(data: &[u8]) -> simple::InstructionCall {
+        simple::InstructionCall {
+            executing_account: Some(TOKEN_METADATA_PROGRAM.parse().unwrap()),
+            data: Some(data.to_vec()),
+            slot: Some(42),
+            transaction_index: Some(7),
+            instruction_address: Some(vec![1]),
+            tx_success: Some(true),
             ..Default::default()
         }
     }
@@ -739,8 +783,8 @@ mod tests {
         .unwrap();
         let committed = committed_instruction(&[0x21]);
         let mut uncommitted = committed_instruction(&[0x21]);
-        uncommitted.is_committed = false;
-        uncommitted.transaction_index = 8;
+        uncommitted.tx_success = Some(false);
+        uncommitted.transaction_index = Some(8);
         let items = route(&store, &set, &[committed, uncommitted], vec![], &built).unwrap();
         assert_eq!(
             items
@@ -773,15 +817,15 @@ mod tests {
         .unwrap();
         let instr = committed_instruction(&[0x21]);
         let log = simple::Log {
-            slot: 42,
+            slot: Some(42),
             transaction_index: Some(7),
             instruction_address: Some(vec![1]),
-            kind: Some("data".to_string()),
+            kind: Some(hypersync_solana_net_types::LogKind::Data),
             message: Some("hello".to_string()),
             ..Default::default()
         };
         let unscoped_log = simple::Log {
-            slot: 42,
+            slot: Some(42),
             transaction_index: Some(7),
             instruction_address: None,
             ..Default::default()
@@ -848,20 +892,28 @@ mod tests {
 
     use crate::field_columns::test_support::{column, str_column};
 
+    fn addr(seed: u8) -> hypersync_solana_net_types::Address {
+        hypersync_solana_net_types::Address([seed; 32])
+    }
+
+    fn hash(seed: u8) -> hypersync_solana_net_types::Hash {
+        hypersync_solana_net_types::Hash([seed; 32])
+    }
+
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn store_keeps_only_the_transactions_and_balances_items_reference() {
-        let tx = |slot, index| simple::Transaction {
-            slot,
-            transaction_index: index,
-            fee_payer: Some(format!("payer{slot}")),
+        let tx = |slot: u64, index| simple::Transaction {
+            slot: Some(slot),
+            transaction_index: Some(index),
+            fee_payer: Some(addr(slot as u8)),
             ..Default::default()
         };
-        let balance = |slot, index| simple::TokenBalance {
-            slot,
+        let balance = |slot: u64, index| simple::AccountActivity {
+            slot: Some(slot),
             transaction_index: Some(index),
-            account: Some(format!("acct{slot}")),
-            mint: Some(format!("mint{slot}")),
+            account: Some(addr(slot as u8)),
+            mint: Some(addr(100 + slot as u8)),
             ..Default::default()
         };
         // Only (42, 7) is routed; (43, 7) came back on the same page unreferenced.
@@ -893,10 +945,10 @@ mod tests {
         assert_eq!(
             (str_column(&cols, "feePayer"), mints),
             (
-                vec![Some("payer42".to_string()), None],
+                vec![Some(addr(42).to_string()), None],
                 // The unreferenced transaction keeps no balances either; a
                 // selected row with none materialises as `[]`.
-                vec![Some(vec![Some("mint42".to_string())]), Some(vec![])],
+                vec![Some(vec![Some(addr(142).to_string())]), Some(vec![])],
             )
         );
     }
@@ -907,17 +959,17 @@ mod tests {
         // filter by and must keep everything.
         let mut resp = simple::SolanaResponse {
             blocks: vec![simple::Block {
-                slot: 43,
-                blockhash: "hash43".to_string(),
+                slot: Some(43),
+                blockhash: Some(hash(43)),
                 ..Default::default()
             }],
             ..Default::default()
         };
         let store = build_svm_store(
             vec![simple::Transaction {
-                slot: 43,
-                transaction_index: 7,
-                fee_payer: Some("payer43".to_string()),
+                slot: Some(43),
+                transaction_index: Some(7),
+                fee_payer: Some(addr(43)),
                 ..Default::default()
             }],
             vec![],
@@ -944,8 +996,8 @@ mod tests {
         assert_eq!(
             (str_column(&txs, "feePayer"), str_column(&blocks, "hash")),
             (
-                vec![Some("payer43".to_string())],
-                vec![Some("hash43".to_string())],
+                vec![Some(addr(43).to_string())],
+                vec![Some(hash(43).to_string())],
             )
         );
     }
@@ -955,13 +1007,13 @@ mod tests {
         let mut resp = simple::SolanaResponse {
             blocks: vec![
                 simple::Block {
-                    slot: 42,
-                    blockhash: "hash42".to_string(),
+                    slot: Some(42),
+                    blockhash: Some(hash(42)),
                     ..Default::default()
                 },
                 simple::Block {
-                    slot: 43,
-                    blockhash: "hash43".to_string(),
+                    slot: Some(43),
+                    blockhash: Some(hash(43)),
                     ..Default::default()
                 },
             ],
@@ -986,7 +1038,7 @@ mod tests {
                 // Reorg detection and the batch's latest timestamp read every
                 // returned slot, so headers aren't filtered.
                 vec![42, 43],
-                vec![Some("hash42".to_string()), None],
+                vec![Some(hash(42).to_string()), None],
             )
         );
     }

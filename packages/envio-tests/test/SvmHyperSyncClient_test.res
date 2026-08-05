@@ -1,17 +1,20 @@
 open Vitest
 
-// Live test: hit `solana.hypersync.xyz` and verify that the napi binding +
-// ReScript wrapper return Metaplex Token Metadata instructions for the most
-// recent slot window.
+// Live test: hit the Solana HyperSync endpoint and verify that the napi
+// binding + ReScript wrapper return Metaplex Token Metadata instructions for
+// the most recent slot window. Queries need a bearer token: set
+// ENVIO_API_TOKEN before flipping this on.
 //
 // `describe_skip` so CI / `pnpm test` doesn't depend on the network. Flip to
 // `describe` to run locally.
 describe_skip("SvmHyperSyncClient live", () => {
   let tokenMetadataProgram = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+  let readEnv: string => option<string> = %raw(`(k) => process.env[k]`)
 
   Async.it("returns Token Metadata instructions for a recent slot window", async t => {
     let client = SvmHyperSyncClient.make(
-    ~url="https://solana.hypersync.xyz",
+    ~url="https://solana-mainnet-history.hypersync.xyz",
+    ~apiToken=?readEnv("ENVIO_API_TOKEN"),
     ~addressStore=AddressStore.make(
       ~ecosystem=Ecosystem.Svm,
       ~shouldChecksum=false,
@@ -22,7 +25,7 @@ describe_skip("SvmHyperSyncClient live", () => {
     let query: SvmHyperSyncClient.query = {
       fromSlot: Pervasives.max(0, height - 10_000),
       toSlot: height,
-      instructions: [{programId: [tokenMetadataProgram]}],
+      instructionCalls: [{executingAccount: [tokenMetadataProgram]}],
       maxNumInstructions: 200,
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join — no per-selection include flags needed.
@@ -49,7 +52,7 @@ describe_skip("SvmHyperSyncClient live", () => {
     let summary = {
       "heightLooksRecent": height > 300_000_000,
       "hasInstructions": resp.data.instructions->Array.length > 0,
-      "firstProgramId": first->Option.mapOr("", i => i.programId),
+      "firstProgramId": first->Option.mapOr("", i => i.executingAccount),
       "firstDataIsHex": first->Option.mapOr(false, i => i.data->String.startsWith("0x")),
       // Every matched instruction's slot must come with a sane blockTime —
       // `SvmHyperSyncSource` relies on this join for `instruction.block.time`.

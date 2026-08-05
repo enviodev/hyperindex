@@ -977,8 +977,8 @@ pub mod svm {
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[schemars(
-            description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
-                           endpoint at https://solana.hypersync.xyz)"
+            description = "URL of the HyperSync endpoint. Defaults to the public Solana mainnet \
+                           HyperSync endpoint when the hypersync_config block is omitted."
         )]
         pub url: String,
     }
@@ -1026,10 +1026,12 @@ pub mod svm {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Experimental {
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "HyperSync Config for fetching historical instructions on this chain."
+            description = "HyperSync Config for fetching historical instructions on this chain. \
+                           Defaults to the public Solana mainnet HyperSync endpoint."
         )]
-        pub hypersync_config: HypersyncConfig,
+        pub hypersync_config: Option<HypersyncConfig>,
         #[schemars(description = "Solana programs to index on this chain.")]
         pub programs: Vec<Program>,
     }
@@ -1679,7 +1681,7 @@ chains:
   - start_block: 200000000
     experimental:
       hypersync_config:
-        url: https://solana.hypersync.xyz
+        url: https://solana-mainnet-history.hypersync.xyz
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -1702,8 +1704,8 @@ chains:
             let chain = &cfg.chains[0];
             let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
-                experimental.hypersync_config.url.as_str(),
-                "https://solana.hypersync.xyz"
+                experimental.hypersync_config.as_ref().unwrap().url.as_str(),
+                "https://solana-mainnet-history.hypersync.xyz"
             );
             let programs = &experimental.programs;
             assert_eq!(programs.len(), 1);

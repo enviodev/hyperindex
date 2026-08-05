@@ -2,6 +2,11 @@ use anyhow::Context;
 
 use super::chain_helpers::{HypersyncChain, Network};
 
+/// The public Solana mainnet HyperSync endpoint, used when an SVM config does
+/// not spell out `experimental.hypersync_config.url`. Queries against it
+/// require a bearer token (`ENVIO_API_TOKEN`).
+pub const SOLANA_MAINNET_HYPERSYNC_URL: &str = "https://solana-mainnet-history.hypersync.xyz";
+
 pub fn network_to_hypersync_url(network: &HypersyncChain) -> String {
     format!("https://{}.hypersync.xyz", *network as u64)
 }

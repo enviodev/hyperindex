@@ -13,7 +13,7 @@ expression: json
       "0": {
         "id": 0,
         "startBlock": 200000000,
-        "hypersync": "https://solana.hypersync.xyz",
+        "hypersync": "https://solana-mainnet-history.hypersync.xyz",
         "contracts": {
           "TokenMetadata": {
             "addresses": [
