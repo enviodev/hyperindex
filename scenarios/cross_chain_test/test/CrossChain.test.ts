@@ -47,29 +47,23 @@ describe("per-chain entities", () => {
     const { result } = await processBothChains();
     const { changes } = result;
 
-    // The per-chain Counter carries the chain it belongs to; the cross-chain
-    // GlobalCounter doesn't, and accumulates across both chains.
+    // A change belongs to one chain, so the per-chain Counter inside it doesn't
+    // repeat the chain id. The cross-chain GlobalCounter accumulates across both.
     assert.deepEqual(
       changes.map((change) => ({
         chainId: change.chainId,
-        // `chainId` is stamped onto a per-chain row, so it has to be part of
-        // the change's row type as well.
-        counter: change.Counter?.sets?.map((counter) => ({
-          id: counter.id,
-          count: counter.count,
-          chainId: counter.chainId,
-        })),
+        counter: change.Counter?.sets,
         global: change.GlobalCounter?.sets,
       })),
       [
         {
           chainId: 1,
-          counter: [{ id: "total", count: 3n, chainId: 1 }],
+          counter: [{ id: "total", count: 3n }],
           global: [{ id: "total", count: 3n }],
         },
         {
           chainId: 137,
-          counter: [{ id: "total", count: 10n, chainId: 137 }],
+          counter: [{ id: "total", count: 10n }],
           global: [{ id: "total", count: 13n }],
         },
       ],

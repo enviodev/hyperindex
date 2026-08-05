@@ -44,8 +44,7 @@ describe("Indexer Testing", () => {
                 {
                   "amount0": -3000000000000000000n,
                   "amount1": 39159647513529870n,
-                  "chainId": 1,
-                  "id": "1_12373187_275",
+                  "id": "12373187_275",
                   "liquidity": 13823839187817749392n,
                   "pool": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
                   "recipient": "0x0459B3FBf7c1840ee03a63ca4AA95De48322322e",

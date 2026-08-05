@@ -108,10 +108,11 @@ indexer.chains[1].MyContract.abi;    // [...]
 
 ## Common Pitfalls
 
-**Entity IDs** — for a string id, `${chainId}_${blockNumber}_${logIndex}` is globally unique across chains and blocks; use it unless the entity is a singleton keyed by address:
+**Entity IDs** — with `disable_default_cross_chain: true` a row is identified by `(id, chainId)`, so the id only has to be unique within its chain:
 ```ts
-const id = `${event.chainId}_${event.block.number}_${event.logIndex}`;
+const id = `${event.block.number}_${event.logIndex}`;
 ```
+Without the flag — or on an entity marked `@crossChain` — the id is the whole key, so prefix it with `${event.chainId}_` to keep chains apart.
 
 **Entity relationships** — schema uses the entity reference (`token0: Token!`); handlers use the `_id` suffix codegen adds (`token0_id: token0.id`), typed as the referenced entity's id. Never write the bare name (`token0`) in the handler, and never put `_id` in the schema.
 

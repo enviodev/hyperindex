@@ -1578,7 +1578,7 @@ type EntityChange<Config extends IndexerConfigTypes = GlobalConfig> = {
   };
 } & {
   readonly [K in keyof ConfigEntities<Config>]?: EntityChangeValue<
-    TestIndexerEntityRow<Config, K, ConfigEntities<Config>[K]>
+    ConfigEntities<Config>[K]
   >;
 };
 

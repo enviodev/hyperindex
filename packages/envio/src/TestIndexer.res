@@ -166,12 +166,14 @@ let handleWriteBatch = (
         // The store keeps decoded entities so load comparisons (bigint /
         // BigDecimal) work on real values. Ids are keyed by their string form
         // since they may be string/int/bigint.
-        let entity = switch (chainIdField, scope->Internal.chainScopeChainId) {
+        let storedEntity = switch (chainIdField, scope->Internal.chainScopeChainId) {
         | (Some(field), Some(chainId)) =>
           entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId)
         | _ => entity
         }
-        entityDict->Dict.set(rowKey(~scope, ~entityId), entity)
+        entityDict->Dict.set(rowKey(~scope, ~entityId), storedEntity)
+        // The change already carries the checkpoint's chainId, so the entity
+        // inside it stays unstamped.
         entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
       | Delete({entityId, checkpointId}) =>
         Dict.delete(entityDict->Obj.magic, rowKey(~scope, ~entityId))
@@ -616,8 +618,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ~entityIndex as _,
     ~chainIdColumn as _,
     ~safeCheckpointId as _,
-  ) =>
-    (),
+  ) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",

@@ -36,11 +36,11 @@ indexer.onEvent(
   { contract: "ERC20", event: "Transfer", wildcard: true },
   async ({ event, context }) => {
     const tokenAddress = event.srcAddress; // The actual contract address
-    const id = `${event.chainId}-${event.transaction.hash}-${event.logIndex}`;
+    const id = `${event.transaction.hash}-${event.logIndex}`;
 
     context.Transfer.set({
       id,
-      token_id: `${event.chainId}-${tokenAddress}`,
+      token_id: tokenAddress,
       from: event.params.from,
       to: event.params.to,
       value: event.params.value,
