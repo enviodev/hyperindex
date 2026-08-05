@@ -1794,6 +1794,7 @@ dependencies = [
  "hypersync-client-solana",
  "hypersync-solana-net-types",
  "include_dir",
+ "indexmap",
  "inquire",
  "insta",
  "itertools 0.11.0",

@@ -119,6 +119,12 @@ type t = {
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // Write plans compiled by the CLI from `tables`, kept as the JSON the
+  // config carries. `Materialization` turns them into handlers, which is where
+  // their shape is validated.
+  materializations: array<JSON.t>,
+  // Tables the runtime maintains itself, so a handler can't also write them.
+  materializedTables: dict<bool>,
 }
 
 module EnvioAddresses = {
@@ -613,6 +619,7 @@ let publicConfigSchema = S.schema(s =>
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
     "enums": s.matches(S.option(S.dict(S.array(S.string)))),
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
+    "materializations": s.matches(S.option(S.array(S.json(~validate=false)))),
   }
 )
 
@@ -1072,6 +1079,17 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     })
     ->Dict.fromArray
 
+  let materializations = publicConfig["materializations"]->Option.getOr([])
+  let materializedTables = Dict.make()
+  materializations->Array.forEach(materialization => {
+    switch materialization
+    ->JSON.Decode.object
+    ->Option.flatMap(fields => fields->Dict.get("table")) {
+    | Some(String(table)) => materializedTables->Dict.set(table, true)
+    | _ => JsError.throwWithMessage("Invalid indexer config: a materialization has no `table`.")
+    }
+  })
+
   // Extract contract handlers from the public config
   let contractHandlers = switch publicContractsConfig {
   | Some(contractsDict) =>
@@ -1110,6 +1128,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntities,
     allEntities,
     allEnums,
+    materializations,
+    materializedTables,
   }
 }
 

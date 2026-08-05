@@ -161,6 +161,7 @@ pub mod evm {
 
             Ok(HumanConfig {
                 base: BaseConfig {
+                    tables: None,
                     name: init_config.name.clone(),
                     description: None,
                     schema: None,
@@ -305,6 +306,7 @@ pub mod fuel {
 
             HumanConfig {
                 base: BaseConfig {
+                    tables: None,
                     name: init_config.name.clone(),
                     description: None,
                     schema: None,

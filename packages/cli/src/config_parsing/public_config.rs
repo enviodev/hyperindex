@@ -2,6 +2,7 @@ use super::{
     entity_parsing::{self, IndexFieldDirection},
     field_types,
     human_config::{self, evm::For, ColumnNameFormat},
+    materialization::Materialization,
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
         EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -62,6 +63,11 @@ pub(crate) struct PublicConfigJson<'a> {
     svm: Option<SvmConfig<'a>>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
+    // Write plans compiled from `tables`. Omitted when there are none, so every
+    // project predating the field keeps producing the same JSON — this config is
+    // persisted to `envio_info` and diffed on resume.
+    #[serde(skip_serializing_if = "<[Materialization]>::is_empty")]
+    materializations: &'a [Materialization],
 }
 
 #[derive(Serialize, Debug)]
@@ -893,6 +899,7 @@ impl SystemConfig {
             svm,
             enums: enums_json,
             entities: entities_json,
+            materializations: &cfg.materializations,
         };
 
         Ok(serde_json::to_string_pretty(&config)? + "\n")

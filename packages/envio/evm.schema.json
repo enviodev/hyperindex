@@ -56,6 +56,17 @@
         "null"
       ]
     },
+    "tables": {
+      "description": "Tables the indexer stores, declared in config instead of schema.graphql. A table either declares `fields` and is written by handlers, or declares `from` + `select` and is materialized from a source with no handler code.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Tables"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "anyOf": [
@@ -257,6 +268,115 @@
             },
             "required": [
               "postgres"
+            ]
+          }
+        }
+      ]
+    },
+    "Tables": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "description": "Manual mode: field name to GraphQL type (e.g. `balance: BigInt!`). The table is written by handlers. Mutually exclusive with `select`.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "cross_chain": {
+            "description": "Share one row across every chain instead of keeping the same id per chain. Only meaningful with `disable_default_cross_chain: true`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "with": {
+            "description": "Table-local intermediate relations, like SQL CTEs. A list of queries is a UNION ALL; every branch must produce the same columns.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "$ref": "#/$defs/Queries"
+            }
+          },
+          "from": {
+            "description": "What the table is materialized from: `evm.events`, or the name of one of its own `with` relations.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "where": {
+            "description": "Filter and type narrowing. Scalars are equality shorthand, sibling fields are ANDed, and `_and`/`_or` nest."
+          },
+          "select": {
+            "description": "The table's complete public shape. Plain strings are source paths; YAML numbers, booleans and null are literals. Mutually exclusive with `fields`.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "Queries": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Source to read from. Currently only `evm.events`.",
+              "type": "string"
+            },
+            "where": {
+              "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+            },
+            "select": {
+              "type": "object",
+              "additionalProperties": {
+                "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "from",
+            "select"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "description": "Source to read from. Currently only `evm.events`.",
+                "type": "string"
+              },
+              "where": {
+                "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+              },
+              "select": {
+                "type": "object",
+                "additionalProperties": {
+                  "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "select"
             ]
           }
         }

@@ -12,6 +12,7 @@ use super::{
         HumanConfig,
     },
     hypersync_endpoints,
+    materialization::{self, Materialization},
     validation::{self, validate_names_valid_rescript},
 };
 use crate::utils::dotenv::{self, EnvMap};
@@ -117,7 +118,9 @@ trait ConfigSource {
     fn project_paths(&self) -> &ParsedProjectPaths;
     fn is_rescript(&self) -> bool;
     fn env_var(&mut self, name: &str) -> Option<String>;
-    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema>;
+    /// `allow_missing` lets a project with a `tables:` config skip
+    /// schema.graphql entirely — but only when it didn't name one explicitly.
+    fn load_schema(&self, configured_path: &Option<String>, allow_missing: bool) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
 }
@@ -152,7 +155,17 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         self.env.var(name)
     }
 
-    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema> {
+    fn load_schema(&self, configured_path: &Option<String>, allow_missing: bool) -> Result<Schema> {
+        if allow_missing && configured_path.is_none() {
+            let default_path = path_utils::get_config_path_relative_to_root(
+                self.project_paths,
+                PathBuf::from(DEFAULT_SCHEMA_PATH),
+            )
+            .context("Failed creating a relative path to schema")?;
+            if !default_path.exists() {
+                return Ok(Schema::empty());
+            }
+        }
         Schema::parse_from_file(self.project_paths, configured_path)
             .context("Parsing schema file for config")
     }
@@ -237,7 +250,11 @@ impl ConfigSource for MemoryConfigSource<'_> {
         self.env.get(name).cloned()
     }
 
-    fn load_schema(&self, _configured_path: &Option<String>) -> Result<Schema> {
+    fn load_schema(
+        &self,
+        _configured_path: &Option<String>,
+        _allow_missing: bool,
+    ) -> Result<Schema> {
         match self.schema.map(str::trim) {
             None | Some("") => Ok(Schema::empty()),
             Some(schema) => Schema::from_string(schema),
@@ -359,6 +376,8 @@ pub struct SystemConfig {
     // Project uses ReScript when a rescript.json sits at the project root —
     // file existence is the source of truth; no explicit flag in config.yaml.
     pub is_rescript: bool,
+    // Write plans compiled from `tables`. One per (table, event, union branch).
+    pub materializations: Vec<Materialization>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1043,18 +1062,20 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
         let storage = Storage::resolve(base_config.storage.as_ref())?;
-        validate_entity_storage(&storage, &schema)?;
-        validate_relationship_storage(&storage, &schema)?;
-        validate_db_column_names(&storage, &schema)?;
-        validate_cross_chain_directives(default_cross_chain, &schema)?;
-        validate_chain_id_field_names(&schema, default_cross_chain)?;
-        validate_cross_chain_relationships(&schema, default_cross_chain)?;
-        validate_clickhouse_nullable_arrays(&storage, &schema)?;
+        if let Some(tables) = &base_config.tables {
+            materialization::validate_table_names(tables)?;
+            if !matches!(human_config, HumanConfig::Evm(_)) {
+                return Err(anyhow!(
+                    "`tables` is only supported for EVM configs — `evm.events` is currently the \
+                     only source a table can be materialized from."
+                ));
+            }
+        }
 
         let final_project_paths = source.project_paths().clone();
         let is_rescript = source.is_rescript();
 
-        match human_config {
+        let built: Result<SystemConfig> = match human_config {
             HumanConfig::Evm(ref evm_config) => {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
@@ -1223,6 +1244,7 @@ impl SystemConfig {
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
+                    materializations: vec![],
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -1370,6 +1392,7 @@ impl SystemConfig {
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
+                    materializations: vec![],
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -1516,9 +1539,44 @@ impl SystemConfig {
                     handlers: None,
                     human_config,
                     is_rescript,
+                    materializations: vec![],
                 })
             }
+        };
+        let mut config = built?;
+
+        // Compiled here, after the contracts are built: a materialized table's
+        // types come from the events it reads. The tables it declares become
+        // entities, so every schema validation below sees them too.
+        if let Some(tables) = config.human_config.get_base_config().tables.clone() {
+            let contracts: BTreeMap<String, &Contract> = config
+                .contracts
+                .iter()
+                .map(|(name, contract)| (name.clone(), contract))
+                .collect();
+            let compiled = materialization::compile(&tables, &contracts, &config.schema)
+                .context("Failed compiling `tables`")?;
+            config.schema = config
+                .schema
+                .extended_with(&compiled.sdl)
+                .context("Failed adding the tables from config.yaml to the schema")?;
+            config.materializations = compiled.materializations;
+            if config.get_ecosystem() == Ecosystem::Evm {
+                config
+                    .field_selection
+                    .extend_from_names(&compiled.block_fields, &compiled.transaction_fields)?;
+            }
         }
+
+        validate_entity_storage(&config.storage, &config.schema)?;
+        validate_relationship_storage(&config.storage, &config.schema)?;
+        validate_db_column_names(&config.storage, &config.schema)?;
+        validate_cross_chain_directives(config.default_cross_chain, &config.schema)?;
+        validate_chain_id_field_names(&config.schema, config.default_cross_chain)?;
+        validate_cross_chain_relationships(&config.schema, config.default_cross_chain)?;
+        validate_clickhouse_nullable_arrays(&config.storage, &config.schema)?;
+
+        Ok(config)
     }
 
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
@@ -1603,7 +1661,8 @@ impl SystemConfig {
             }
         };
 
-        let schema = source.load_schema(&human_config.get_base_config().schema)?;
+        let base = human_config.get_base_config();
+        let schema = source.load_schema(&base.schema, base.tables.is_some())?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -2826,6 +2885,39 @@ impl FieldSelection {
             .collect();
 
         Self::new(transaction_fields, block_fields)
+    }
+
+    /// Add the block/transaction fields a materialized table reads, so the
+    /// source fetches them. Names are the camelCase ones config.yaml uses.
+    pub fn extend_from_names(
+        &mut self,
+        block_fields: &std::collections::BTreeSet<String>,
+        transaction_fields: &std::collections::BTreeSet<String>,
+    ) -> Result<()> {
+        let all = Self::all_evm();
+        for name in block_fields {
+            if !self.block_fields.iter().any(|f| &f.name == name) {
+                let field = all
+                    .block_fields
+                    .iter()
+                    .find(|f| &f.name == name)
+                    .ok_or_else(|| anyhow!("Unknown block field {name}"))?;
+                self.block_fields.push(field.clone());
+            }
+        }
+        for name in transaction_fields {
+            if !self.transaction_fields.iter().any(|f| &f.name == name) {
+                let field = all
+                    .transaction_fields
+                    .iter()
+                    .find(|f| &f.name == name)
+                    .ok_or_else(|| anyhow!("Unknown transaction field {name}"))?;
+                self.transaction_fields.push(field.clone());
+            }
+        }
+        self.block_fields.sort();
+        self.transaction_fields.sort();
+        Ok(())
     }
 
     pub fn try_from_config_field_selection(

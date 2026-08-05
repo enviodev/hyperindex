@@ -59,29 +59,6 @@ let withRegistration = (fn: activeRegistration => unit) => {
   }
 }
 
-// Idempotent: handlers register once (import-cached), so the first call builds
-// the registration and every later call reuses it. `config` must be the full
-// chain set — registrations resolve for all its chains here, and
-// `finishRegistration` later narrows to whatever config it's given.
-let startRegistration = (~config: Config.t) => {
-  switch getActiveRegistration() {
-  | Some(_) => ()
-  | None =>
-    let r = {
-      config,
-      registrationsByChainId: Dict.make(),
-      finished: false,
-    }
-    EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
-    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
-    // multiple handlers on one event this replay order is the dispatch order, so
-    // it must not reverse (which `Array.pop` would).
-    let queued = preRegistered->Array.copy
-    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
-    queued->Array.forEach(fn => fn(r))
-  }
-}
-
 let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainRegistrations => {
   let key = chainId->ChainId.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -299,6 +276,41 @@ let addOnEventRegistration = (
           )}.`,
       )
     }
+  }
+}
+
+// Idempotent: handlers register once (import-cached), so the first call builds
+// the registration and every later call reuses it. `config` must be the full
+// chain set — registrations resolve for all its chains here, and
+// `finishRegistration` later narrows to whatever config it's given.
+let startRegistration = (~config: Config.t) => {
+  switch getActiveRegistration() {
+  | Some(_) => ()
+  | None =>
+    let r = {
+      config,
+      registrationsByChainId: Dict.make(),
+      finished: false,
+    }
+    EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
+    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
+    // multiple handlers on one event this replay order is the dispatch order, so
+    // it must not reverse (which `Array.pop` would).
+    let queued = preRegistered->Array.copy
+    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
+    queued->Array.forEach(fn => fn(r))
+    // Materialized tables create their own fetch demand, so their handlers are
+    // registered before any user module — the events they read then look no
+    // different from events a handler asked for.
+    Materialization.buildHandlers(config)->Array.forEach(((contractName, eventName, handler)) =>
+      r->addOnEventRegistration(
+        ~contractName,
+        ~eventName,
+        ~handler=Some(handler),
+        ~contractRegister=None,
+        ~eventOptions=None,
+      )
+    )
   }
 }
 

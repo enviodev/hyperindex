@@ -720,6 +720,11 @@ let fuelTransferParamsSchema = S.schema(s => {
   amount: s.matches(Utils.BigInt.schema),
 })
 
+// Reserved handler-context prop that yields entity operations allowed to write a
+// materialized table, keyed by the table's own name. Absent from the generated
+// handler types, so user code can't reach it by accident.
+let materializerProp = "envio_materializer"
+
 type entity = private {id: string}
 
 // Raw ClickHouse expressions/field names from the entity's

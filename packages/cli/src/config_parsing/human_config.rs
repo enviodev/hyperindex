@@ -99,6 +99,13 @@ pub struct BaseConfig {
                        false)"
     )]
     pub disable_default_cross_chain: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Tables the indexer stores, declared in config instead of schema.graphql. A \
+                       table either declares `fields` and is written by handlers, or declares \
+                       `from` + `select` and is materialized from a source with no handler code."
+    )]
+    pub tables: Option<crate::config_parsing::materialization::Tables>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -1605,6 +1612,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let expected_cfg = fuel::HumanConfig {
             base: BaseConfig {
+                tables: None,
                 name: "Fuel indexer".to_string(),
                 description: None,
                 schema: None,
@@ -1658,6 +1666,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     fn serializes_fuel_config() {
         let cfg = fuel::HumanConfig {
             base: BaseConfig {
+                tables: None,
                 name: "Fuel indexer".to_string(),
                 description: None,
                 schema: None,

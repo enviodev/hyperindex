@@ -116,14 +116,15 @@ let initEffect = (params: contextParams) => {
 type entityContextParams = {
   ...contextParams,
   entityConfig: Internal.entityConfig,
+  // Set only for the context `Materialization` writes through, which is the one
+  // path allowed to write a materialized table.
+  isMaterializer: bool,
 }
 
 // The handler context is always chain-scoped, so a per-chain entity resolves to
 // the chain the handler runs on and a cross-chain one to the shared partition.
 let entityScope = (params: entityContextParams) =>
-  params.entityConfig->InMemoryStore.entityScope(
-    ~chainId=params.item->Internal.getItemChainId,
-  )
+  params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
 
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
@@ -166,17 +167,32 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
+// A materialized table's rows are derived from its `select`, so a handler write
+// would be silently reverted the next time the source event is reprocessed.
+let throwMaterializedReadOnly = (entityConfig: Internal.entityConfig, op: string): 'a =>
+  JsError.throwWithMessage(
+    `context.${entityConfig.name->Utils.String.capitalize}.${op}() is unavailable: \`${entityConfig.name}\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to \`fields\` to write it from handlers.`,
+  )
+
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
+    // The materializer reaches its entities through `Internal.materializerProp`,
+    // which builds the context with `isMaterializer` — so the guard closes the
+    // ordinary `context.<Table>` accessor only.
+    let isMaterialized =
+      params.config.materializedTables->Dict.has(params.entityConfig.name) && !params.isMaterializer
 
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(
+            ~entityConfig=params.entityConfig,
+            ~scope=params->entityScope,
+          )
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
@@ -257,6 +273,11 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         (
           (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
         )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
+      } else if isMaterialized {
+        (
+          (_entity: Internal.entity) =>
+            throwMaterializedReadOnly(params.entityConfig, "getOrCreate")
+        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
       } else {
         (
           (entity: Internal.entity) =>
@@ -281,14 +302,26 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             })
         )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
       }
-    | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
+    | "set" =>
+      if isMaterialized {
+        ((_entity: Internal.entity) => throwMaterializedReadOnly(params.entityConfig, "set"))->(
+          Utils.magic: (Internal.entity => unit) => unknown
+        )
+      } else {
+        set->(Utils.magic: (Internal.entity => unit) => unknown)
+      }
     | "deleteUnsafe" =>
-      if params.isPreload {
+      if isMaterialized {
+        (_entityId: EntityId.t) => throwMaterializedReadOnly(params.entityConfig, "deleteUnsafe")
+      } else if params.isPreload {
         noopDeleteUnsafe
       } else {
         entityId => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(
+            ~entityConfig=params.entityConfig,
+            ~scope=params->entityScope,
+          )
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({
@@ -303,6 +336,23 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     }
   },
 }
+
+let makeEntityContext = (params: contextParams, ~entityConfig, ~isMaterializer) =>
+  {
+    item: params.item,
+    isPreload: params.isPreload,
+    indexerState: params.indexerState,
+    loadManager: params.loadManager,
+    persistence: params.persistence,
+    checkpointId: params.checkpointId,
+    chains: params.chains,
+    isResolved: params.isResolved,
+    config: params.config,
+    entityConfig,
+    isMaterializer,
+  }
+  ->Utils.Proxy.make(entityTraps)
+  ->(Utils.magic: entityContextParams => unknown)
 
 let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -335,23 +385,19 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       params.chains
       ->ChainId.Dict.dangerouslyGetNonOption(chainId)
       ->(Utils.magic: option<Internal.chainInfo> => unknown)
+    | _ if prop === Internal.materializerProp =>
+      (
+        (table: string) =>
+          switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(
+            table->Utils.String.capitalize,
+          ) {
+          | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=true)
+          | None => JsError.throwWithMessage(`Materialized table '${table}' has no entity.`)
+          }
+      )->(Utils.magic: (string => unknown) => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) =>
-        {
-          item: params.item,
-          isPreload: params.isPreload,
-          indexerState: params.indexerState,
-          loadManager: params.loadManager,
-          persistence: params.persistence,
-          checkpointId: params.checkpointId,
-          chains: params.chains,
-          isResolved: params.isResolved,
-          config: params.config,
-          entityConfig,
-        }
-        ->Utils.Proxy.make(entityTraps)
-        ->(Utils.magic: entityContextParams => unknown)
+      | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=false)
       | None =>
         JsError.throwWithMessage(
           `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,

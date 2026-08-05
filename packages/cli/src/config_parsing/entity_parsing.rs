@@ -59,6 +59,28 @@ impl Schema {
     }
 
     fn from_document(document: Document<String>) -> anyhow::Result<Self> {
+        let (entities, enums) = Self::definitions_from_document(document)?;
+        Self::new(entities, enums)
+    }
+
+    /// Parse `sdl` and validate it together with this schema, so a generated
+    /// table may reference an entity the user wrote and vice versa. The parsed
+    /// definitions go first, keeping the merged order stable.
+    pub fn extended_with(&self, sdl: &str) -> anyhow::Result<Self> {
+        if sdl.trim().is_empty() {
+            return Ok(self.clone());
+        }
+        let document = graphql_parser::parse_schema::<String>(sdl)
+            .context("Failed to parse the generated schema as a document")?;
+        let (mut entities, mut enums) = Self::definitions_from_document(document)?;
+        entities.extend(self.entities.values().cloned());
+        enums.extend(self.enums.values().cloned());
+        Self::new(entities, enums)
+    }
+
+    fn definitions_from_document(
+        document: Document<String>,
+    ) -> anyhow::Result<(Vec<Entity>, Vec<GraphQLEnum>)> {
         let entities = document
             .definitions
             .iter()
@@ -89,7 +111,7 @@ impl Schema {
             .collect::<anyhow::Result<Vec<GraphQLEnum>>>()
             .context("Failed constructing enums in schema from document")?;
 
-        Self::new(entities, enums)
+        Ok((entities, enums))
     }
 
     pub fn parse_from_file(

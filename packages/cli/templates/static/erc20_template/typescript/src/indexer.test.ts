@@ -1,79 +1,37 @@
 import { describe, it } from "vitest";
-import { createTestIndexer } from "envio";
-import { TestHelpers } from "envio";
+import { createTestIndexer, TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
+// `accounts` and `approvals` are materialized by `tables` in config.yaml, so
+// there are no handlers to test — the config is the thing under test.
 describe("Indexer Testing", () => {
-  it("Should create accounts from ERC20 Transfer events", async (t) => {
+  it("Should materialize accounts from the first ERC20 mint", async (t) => {
     const indexer = createTestIndexer();
 
-    t.expect(
-      await indexer.process({
-        chains: {
-          1: {
-            startBlock: 10_861_674,
-            endBlock: 10_861_674,
-          },
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 10_861_674,
+          endBlock: 10_861_674,
         },
-      }),
-      "Should find the first mint at block 10_861_674"
-    ).toMatchInlineSnapshot(`
-      {
-        "changes": [
-          {
-            "Account": {
-              "sets": [
-                {
-                  "balance": -1000000000000000000000000000n,
-                  "id": "0x0000000000000000000000000000000000000000",
-                },
-                {
-                  "balance": 1000000000000000000000000000n,
-                  "id": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
-                },
-              ],
-            },
-            "block": 10861674,
-            "chainId": 1,
-            "eventsProcessed": 1,
-          },
-        ],
-      }
-    `);
+      },
+    });
 
     t.expect(
-      await indexer.process({
-        chains: {
-          1: {
-            startBlock: 10_861_766,
-            endBlock: 10_861_766,
-          },
-        },
-      }),
-      "Updates existing account balance on transfer"
-    ).toMatchInlineSnapshot(`
+      await indexer.Accounts.getAll(),
+      "The mint at block 10_861_674 debits the zero address and credits the recipient"
+    ).toEqual([
       {
-        "changes": [
-          {
-            "Account": {
-              "sets": [
-                {
-                  "balance": 999999998000000000000000000n,
-                  "id": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
-                },
-                {
-                  "balance": 2000000000000000000n,
-                  "id": "0xe5737257D9406019768167C26f5C6123864ceC1e",
-                },
-              ],
-            },
-            "block": 10861766,
-            "chainId": 1,
-            "eventsProcessed": 1,
-          },
-        ],
-      }
-    `);
+        id: "0x0000000000000000000000000000000000000000",
+        balance: -1000000000000000000000000000n,
+        chainId: 1,
+      },
+      {
+        id: "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
+        balance: 1000000000000000000000000000n,
+        chainId: 1,
+      },
+    ]);
   });
 });
 
@@ -81,21 +39,11 @@ describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", async (t) => {
     const indexer = createTestIndexer();
 
-    // Get mock addresses from helpers
     const userAddress1 = Addresses.mockAddresses[0]!;
     const userAddress2 = Addresses.mockAddresses[1]!;
 
-    // Set an initial state for the user. Entities are per-chain (see
-    // `disable_default_cross_chain` in config.yaml), so outside a handler —
-    // where there is no chain in context — the row says which chain it is on.
-    indexer.Account.set({
-      id: userAddress1,
-      balance: 5n,
-      chainId: 1,
-    });
-
-    // Create a mock Transfer event from userAddress1 to userAddress2
-    // and process it
+    // A balance is the sum of every contribution to it, so two transfers in
+    // opposite directions leave userAddress1 at 5 - 3 = 2.
     await indexer.process({
       chains: {
         1: {
@@ -103,23 +51,68 @@ describe("Transfers", () => {
             {
               contract: "ERC20",
               event: "Transfer",
-              params: {
-                from: userAddress1,
-                to: userAddress2,
-                value: 3n,
-              },
+              params: { from: userAddress2, to: userAddress1, value: 5n },
+            },
+            {
+              contract: "ERC20",
+              event: "Transfer",
+              params: { from: userAddress1, to: userAddress2, value: 3n },
             },
           ],
         },
       },
     });
 
-    const account1 = await indexer.Account.getOrThrow(userAddress1);
-    const account2 = await indexer.Account.getOrThrow(userAddress2);
+    const account1 = await indexer.Accounts.getOrThrow(userAddress1, { chainId: 1 });
+    const account2 = await indexer.Accounts.getOrThrow(userAddress2, { chainId: 1 });
 
     t.expect(
-      { from: account1.balance, to: account2.balance },
-      "Transfer of 3 should move balance from userAddress1 (5 → 2) to userAddress2 (0 → 3)"
-    ).toEqual({ from: 2n, to: 3n });
+      { first: account1.balance, second: account2.balance },
+      "userAddress1 receives 5 then sends 3"
+    ).toEqual({ first: 2n, second: -2n });
+  });
+});
+
+describe("Approvals", () => {
+  it("Approval records the amount and creates both accounts", async (t) => {
+    const indexer = createTestIndexer();
+
+    const owner = Addresses.mockAddresses[0]!;
+    const spender = Addresses.mockAddresses[1]!;
+
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            {
+              contract: "ERC20",
+              event: "Approval",
+              params: { owner, spender, value: 100n },
+            },
+          ],
+        },
+      },
+    });
+
+    t.expect({
+      approvals: await indexer.Approvals.getAll(),
+      // `_ref` doesn't create the referenced row, so the config contributes a
+      // zero-valued balance change for each side of the approval.
+      accounts: await indexer.Accounts.getAll(),
+    }).toEqual({
+      approvals: [
+        {
+          id: `${owner}-${spender}`,
+          amount: 100n,
+          owner_id: owner,
+          spender_id: spender,
+          chainId: 1,
+        },
+      ],
+      accounts: [
+        { id: owner, balance: 0n, chainId: 1 },
+        { id: spender, balance: 0n, chainId: 1 },
+      ],
+    });
   });
 });
