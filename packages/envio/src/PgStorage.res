@@ -587,7 +587,9 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
   }
 }
 
-// WeakMap for caching table batch set queries
+// Caches table batch set queries. The query text has the schema baked into it,
+// so it's keyed by schema as well as table — one process writing the same table
+// into two schemas would otherwise send every row to whichever it saw first.
 let setQueryCache = Utils.WeakMap.make()
 let setOrThrow = async (
   sql,
@@ -601,7 +603,14 @@ let setOrThrow = async (
     ()
   } else {
     // Get or create cached query for this table
-    let data = switch setQueryCache->Utils.WeakMap.get(table) {
+    let bySchema = switch setQueryCache->Utils.WeakMap.get(table) {
+    | Some(bySchema) => bySchema
+    | None =>
+      let bySchema = Dict.make()
+      setQueryCache->Utils.WeakMap.set(table, bySchema)->ignore
+      bySchema
+    }
+    let data = switch bySchema->Utils.Dict.dangerouslyGetNonOption(pgSchema) {
     | Some(cached) => cached
     | None => {
         let newQuery = makeTableBatchSetQuery(
@@ -610,7 +619,7 @@ let setOrThrow = async (
           ~itemSchema=itemSchema->S.toUnknown,
           ~chainIdMode,
         )
-        setQueryCache->Utils.WeakMap.set(table, newQuery)->ignore
+        bySchema->Dict.set(pgSchema, newQuery)
         newQuery
       }
     }

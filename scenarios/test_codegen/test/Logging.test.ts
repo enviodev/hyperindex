@@ -27,19 +27,26 @@ const runWithStrategy = (strategy: string): string => {
   });
 };
 
-const testLogStrategy = (strategy: string) => {
+// The ECS transport writes through a worker thread, so the order two
+// statements reach stdout isn't guaranteed once the machine is loaded. Compare
+// those lines as a set: every line still has to match exactly, only their
+// relative order is allowed to differ.
+const sortLines = (s: string) => s.split("\n").sort().join("\n");
+
+const testLogStrategy = (strategy: string, { ordered = true } = {}) => {
   it(`LOG_STRATEGY=${strategy}`, () => {
     const output = runWithStrategy(strategy);
     const snapshotPath = path.join(SNAPSHOTS_DIR, `Logging.${strategy}.snap`);
     const expected = readFileSync(snapshotPath, "utf-8");
-    assert.equal(normalize(output), normalize(expected));
+    const compare = ordered ? normalize : (s: string) => sortLines(normalize(s));
+    assert.equal(compare(output), compare(expected));
   });
 };
 
 describe("Logging Output", () => {
   testLogStrategy("console-pretty");
   testLogStrategy("console-raw");
-  testLogStrategy("ecs-console");
+  testLogStrategy("ecs-console", { ordered: false });
 });
 
 // These strategies write to file, not stdout - test separately

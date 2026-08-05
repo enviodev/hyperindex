@@ -10,6 +10,8 @@ let entityConfig = (name: string): Internal.entityConfig => config->entityConfig
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
+// Its schema is never created — a query through this persistence means a test is
+// wired wrong, and pointing it at a real schema would hide that.
 let defaultPersistenceRef = ref(None)
 let defaultPersistence = () =>
   switch defaultPersistenceRef.contents {
@@ -21,7 +23,7 @@ let defaultPersistence = () =>
       ~storage=PgStorage.makeStorageFromEnv(
         ~config,
         ~sql=PgStorage.makeClient(),
-        ~pgSchema=Env.Db.publicSchema,
+        ~pgSchema=TestPgSchema.make(),
         ~isHasuraEnabled=false,
       ),
     )
@@ -462,10 +464,23 @@ module Indexer = {
       ~scope: Internal.chainScope,
     ) => promise<array<{"id": string, "output": JSON.t}>>,
     metric: string => promise<array<metric>>,
-    // Quiesce the run: its loops keep driving the shared database otherwise, and
-    // a later test resetting the schema would take their writes into it.
+    // The schema this indexer's tables live in. Raw SQL in a test must go
+    // through it rather than a global, since every `run` gets its own.
+    pgSchema: string,
+    // Quiesce the run: its loops keep driving the database otherwise, and the
+    // schema is dropped out from under them at the end of `run`.
     stop: unit => promise<unit>,
     restart: unit => promise<t>,
+  }
+
+  // Postgres resources owned by one `run` — a schema, plus every client and
+  // indexer created inside it (`restart` adds more).
+  type scope = {
+    pgSchema: string,
+    clients: array<Postgres.sql>,
+    stops: array<unit => promise<unit>>,
+    // Whether a write could still land after `stop` gave up waiting.
+    hasPendingWrite: array<unit => bool>,
   }
 
   type chainConfig = {
@@ -478,6 +493,7 @@ module Indexer = {
   }
 
   let rec make = async (
+    ~scope: scope,
     ~chains: array<chainConfig>,
     // Defaults to the generated project config.
     ~config as customConfig: option<Config.t>=?,
@@ -570,7 +586,8 @@ module Indexer = {
     installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let sql = PgStorage.makeClient()
-    let pgSchema = Env.Db.publicSchema
+    scope.clients->Array.push(sql)->ignore
+    let pgSchema = scope.pgSchema
     let storage = mapStorage(
       // Tracking tables in Hasura costs ~1.9 seconds per indexer.
       PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
@@ -609,14 +626,35 @@ module Indexer = {
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
-    // lands on the shared database afterwards.
-    let stop = async () => {
-      await state->Writing.flush
-      state->IndexerState.stop
-      while state->IndexerState.isProcessing || state->IndexerState.writeFiber->Option.isSome {
-        await Utils.delay(1)
+    // lands on the database afterwards.
+    // Idempotent: `restart` stops the previous indexer, and so does the `run`
+    // teardown that stops every indexer the scope created.
+    let stopped = ref(None)
+    let stop = () =>
+      switch stopped.contents {
+      | Some(promise) => promise
+      | None =>
+        let promise = (
+          async () => {
+            await state->Writing.flush
+            state->IndexerState.stop
+            // Bounded: a test may leave a handler that never resolves, which
+            // pins `isProcessing` forever. `run` checks what actually settled
+            // before it decides to drop the schema.
+            let deadline = Date.now() +. 2000.
+            while (
+              (state->IndexerState.isProcessing ||
+              state->IndexerState.writeFiber->Option.isSome) && Date.now() < deadline
+            ) {
+              await Utils.delay(1)
+            }
+          }
+        )()
+        stopped := Some(promise)
+        promise
       }
-    }
+    scope.stops->Array.push(stop)->ignore
+    scope.hasPendingWrite->Array.push(() => state->IndexerState.writeFiber->Option.isSome)->ignore
 
     {
       getBatchWritePromise: () => {
@@ -849,12 +887,14 @@ module Indexer = {
           }
         )
       },
+      pgSchema,
       stop,
       restart: async () => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         await make(
+          ~scope,
           ~chains,
           ~config=?customConfig,
           ~enableRawEvents,
@@ -872,6 +912,76 @@ module Indexer = {
           ~mapStorage,
         )
       },
+    }
+  }
+
+  // Runs `body` against a fresh indexer in a Postgres schema of its own, then
+  // tears both down — so tests never stop an indexer by hand, and files can run
+  // in parallel against one database. Cleanup runs even when the body throws,
+  // otherwise a failing test would leave its schema and connections behind.
+  let run = async (
+    ~chains: array<chainConfig>,
+    ~config as customConfig: option<Config.t>=?,
+    ~saveFullHistory=false,
+    ~enableRawEvents=false,
+    ~batchSize=?,
+    ~maxAddrInPartition=?,
+    ~clientFilterAddressThreshold=?,
+    ~shouldRollbackOnReorg=true,
+    ~reducedPollingInterval=?,
+    ~targetBufferSize=?,
+    ~reorgThresholdReadyTolerance=0,
+    ~onError=?,
+    ~onExit=?,
+    ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
+    body: t => promise<unit>,
+  ) => {
+    let scope = {pgSchema: TestPgSchema.make(), clients: [], stops: [], hasPendingWrite: []}
+
+    let outcome = try {
+      let indexer = await make(
+        ~scope,
+        ~chains,
+        ~config=?customConfig,
+        ~saveFullHistory,
+        ~enableRawEvents,
+        ~batchSize?,
+        ~maxAddrInPartition?,
+        ~clientFilterAddressThreshold?,
+        ~shouldRollbackOnReorg,
+        ~reducedPollingInterval?,
+        ~targetBufferSize?,
+        ~reorgThresholdReadyTolerance,
+        ~onError?,
+        ~onExit?,
+        ~mapStorage,
+      )
+      await body(indexer)
+      None
+    } catch {
+    | exn => Some(exn)
+    }
+
+    // Stop before dropping: a still-running loop would fail its next query
+    // against the vanished schema and report that instead of the real failure.
+    for i in 0 to scope.stops->Array.length - 1 {
+      switch scope.stops->Array.get(i) {
+      | Some(stop) => await stop()
+      | None => ()
+      }
+    }
+    // A write still in flight would fail fatally against a vanished schema, so
+    // leave that schema for the sweeper rather than pulling it out from under.
+    let isQuiesced = scope.hasPendingWrite->Array.every(pending => !pending())
+    switch scope.clients->Array.get(0) {
+    | Some(sql) if isQuiesced => await sql->TestPgSchema.drop(~pgSchema=scope.pgSchema)
+    | _ => ()
+    }
+    let _ = await Promise.all(scope.clients->Array.map(sql => sql->Postgres.endSql))
+
+    switch outcome {
+    | Some(exn) => throw(exn)
+    | None => ()
     }
   }
 }

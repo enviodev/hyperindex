@@ -13,16 +13,18 @@ export default defineConfig({
       "test/integration-raw-events.test.ts",
       "test/topic-hashing.test.ts",
     ],
-    // Run tests sequentially - both file-wide and test-wide
-    fileParallelism: false,
+    // Files run in parallel: every indexer gets a Postgres schema of its own
+    // (see MockIndexer.Indexer.run), so they no longer share one. Tests within
+    // a file stay sequential — they share the process-global config and
+    // handler registry.
     sequence: {
       concurrent: false,
     },
     pool: "forks",
-    maxWorkers: 1,
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
+    globalSetup: ["test/globalSetup.ts"],
     passWithNoTests: true,
     server: {
       deps: {

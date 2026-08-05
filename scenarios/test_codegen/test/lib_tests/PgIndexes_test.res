@@ -52,7 +52,10 @@ let makeStorage = (~sql=sql, pgSchema) =>
 // after the tables exist, then the storage resumes — the same order a restart
 // onto an existing schema sees.
 // Each test owns a schema; they'd otherwise pile up in the developer's database
-// run after run, since nothing else ever looks at them again.
+// run after run, since nothing else ever looks at them again. The name is
+// unique per run so two suites can share a database without colliding.
+let testSchema = suffix => `${TestPgSchema.make()}_${suffix}`
+
 let createdSchemas = []
 
 Async.afterAll(async () => {
@@ -135,7 +138,7 @@ let catchMessage = promise =>
 
 describe("Indexes built against a real schema", () => {
   Async.it("Builds a separate full index when only a partial one exists", async t => {
-    let pgSchema = "test_pg_indexes_partial"
+    let pgSchema = testSchema("partial")
     // Covers only the rows its predicate selects, so it can't answer the
     // unrestricted lookups a getWhere filter makes — but it does hold a name.
     let storage = await setup(
@@ -156,7 +159,7 @@ describe("Indexes built against a real schema", () => {
   })
 
   Async.it("Leaves a same-named index on another table untouched", async t => {
-    let pgSchema = "test_pg_indexes_conflict"
+    let pgSchema = testSchema("conflict")
     let storage = await setup(
       ~pgSchema,
       ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`],
@@ -181,7 +184,7 @@ describe("Indexes built against a real schema", () => {
   // INVALID index behind that still owns its name. The planner refuses to use
   // it, so it must never be counted as coverage.
   Async.it("Refuses to count an invalid index left by a failed build", async t => {
-    let pgSchema = "test_pg_indexes_invalid"
+    let pgSchema = testSchema("invalid")
     let storage = await setup(~pgSchema)
 
     let _ = await sql->Postgres.unsafe(
@@ -213,7 +216,7 @@ describe("Indexes built against a real schema", () => {
   // Same identity, an older name. Matching the catalog on what an index covers
   // keeps it instead of building a duplicate under the generated name.
   Async.it("Keeps a valid legacy index instead of rebuilding it", async t => {
-    let pgSchema = "test_pg_indexes_legacy"
+    let pgSchema = testSchema("legacy")
     let storage = await setup(
       ~pgSchema,
       ~fixtures=[`CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id");`],
@@ -230,7 +233,7 @@ describe("Indexes built against a real schema", () => {
   })
 
   Async.it("Builds an automatic index for a getWhere column, once", async t => {
-    let pgSchema = "test_pg_indexes_automatic"
+    let pgSchema = testSchema("automatic")
     let storage = await setup(~pgSchema)
     let column = "optionalStringToTestLinkedEntities"
 
@@ -255,7 +258,7 @@ describe("Indexes built against a real schema", () => {
   // stopped holding, the catalog would report a name we never look for and
   // verification would fail every finalize. This pins the boundary.
   Async.it("Round-trips a table name at Postgres' identifier limit", async t => {
-    let pgSchema = "test_pg_indexes_long_name"
+    let pgSchema = testSchema("long_name")
     let tableName = "Entity" ++ "x"->String.repeat(57)
     let entity: Internal.entityConfig = {
       ...entityA,
@@ -291,7 +294,7 @@ describe("Indexes built against a real schema", () => {
   // resyncing that index, the catalog keeps claiming the name is free and every
   // later request replans a create that can only raise "already exists".
   Async.it("Recovers when the read-back fails after the index was built", async t => {
-    let pgSchema = "test_pg_indexes_flaky"
+    let pgSchema = testSchema("flaky")
     let queries = []
     // One-shot: the storage reads the catalog during initialize too, so the
     // failure is armed only once the schema is up.
@@ -336,7 +339,7 @@ describe("Indexes built against a real schema", () => {
   // A finalize that dies part way through must not undo the indexes it already
   // built, and must not claim readiness the schema doesn't back yet.
   Async.it("Keeps the indexes it built when a later one fails, and retries the rest", async t => {
-    let pgSchema = "test_pg_indexes_partial_failure"
+    let pgSchema = testSchema("partial_failure")
     let tableName = "Triple"
     let entity: Internal.entityConfig = {
       ...entityA,
@@ -416,7 +419,7 @@ describe("Indexes built against a real schema", () => {
   })
 
   Async.it("Skips the schema index an automatic build already created", async t => {
-    let pgSchema = "test_pg_indexes_shared"
+    let pgSchema = testSchema("shared")
     let storage = await setup(~pgSchema)
 
     await storage.ensureQueryIndexes(~table=entityA.table, ~filters=[eq(~fieldName="b_id")])

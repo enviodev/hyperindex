@@ -23,37 +23,39 @@ describe("Dynamic contracts startup size", () => {
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chainId=#1337,
       )
-      let _indexerMock = await MockIndexer.Indexer.make(
+      await MockIndexer.Indexer.run(
         ~chains=[
           {
             chain: #1337,
             sourceConfig: Config.CustomSources([sourceMock.source]),
           },
         ],
+        async indexerMock => {
+          let sql = PgStorage.makeClient()
+          let pgSchema = indexerMock.pgSchema
+
+          let chainId = 1337->ChainId.fromInt
+          let rowCount = 120
+          let contractNameLength = 5_000_000
+
+          let _ = await sql->Postgres.unsafe(
+            `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.name}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
+  SELECT '${chainId->ChainId.toString}-0x' || lpad(to_hex(g), 40, '0'), ${chainId->ChainId.toString}, 0, -1, repeat('x', ${contractNameLength->Int.toString})
+  FROM generate_series(1, ${rowCount->Int.toString}) AS g;`,
+          )
+
+          let initialStates = await InternalTable.Chains.getInitialState(sql, ~pgSchema)
+          let chainState =
+            initialStates->Array.find(state => state.id === chainId)->Option.getOrThrow
+
+          t.expect(
+            chainState.indexingAddresses
+            ->Array.filter(address => address.contractName->String.length === contractNameLength)
+            ->Array.length,
+            ~message=`All registered dynamic contracts should load even when the aggregated json exceeds the V8 string limit`,
+          ).toBe(rowCount)
+        },
       )
-
-      let sql = PgStorage.makeClient()
-      let pgSchema = Env.Db.publicSchema
-
-      let chainId = 1337->ChainId.fromInt
-      let rowCount = 120
-      let contractNameLength = 5_000_000
-
-      let _ = await sql->Postgres.unsafe(
-        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.name}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT '${chainId->ChainId.toString}-0x' || lpad(to_hex(g), 40, '0'), ${chainId->ChainId.toString}, 0, -1, repeat('x', ${contractNameLength->Int.toString})
-FROM generate_series(1, ${rowCount->Int.toString}) AS g;`,
-      )
-
-      let initialStates = await InternalTable.Chains.getInitialState(sql, ~pgSchema)
-      let chainState = initialStates->Array.find(state => state.id === chainId)->Option.getOrThrow
-
-      t.expect(
-        chainState.indexingAddresses
-        ->Array.filter(address => address.contractName->String.length === contractNameLength)
-        ->Array.length,
-        ~message=`All registered dynamic contracts should load even when the aggregated json exceeds the V8 string limit`,
-      ).toBe(rowCount)
     },
   )
 })

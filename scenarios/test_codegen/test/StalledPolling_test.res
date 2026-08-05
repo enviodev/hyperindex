@@ -12,41 +12,43 @@ describe("Polling-stall loophole", () => {
         ~chainId=#1337,
         ~pollingInterval,
       )
-      let _indexerMock = await MockIndexer.Indexer.make(
+      await MockIndexer.Indexer.run(
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
         ~shouldRollbackOnReorg=false,
         ~reducedPollingInterval,
+        async _indexerMock => {
+          await Utils.delay(0)
+
+          source.resolveGetHeightOrThrow(300)
+          await Utils.delay(0)
+          await Utils.delay(0)
+
+          // Handler that never resolves keeps the batch in-progress,
+          // so isReady stays false while the buffer sits at the head.
+          let blockingHandler = async _ => {
+            let _ = await Promise.make((_, _) => ())
+          }
+          source.resolveGetItemsOrThrow(
+            [{blockNumber: 150, logIndex: 0, handler: blockingHandler}],
+            ~latestFetchedBlockNumber=300,
+          )
+
+          await Utils.delay(5)
+
+          let baseline = source.getHeightOrThrowCalls->Array.length
+
+          let deadline = Date.now() +. 50.
+          while Date.now() < deadline {
+            source.resolveGetHeightOrThrow(300)
+            await Utils.delay(2)
+          }
+
+          let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
+
+          t.expect(newCalls).toBeGreaterThan(1)
+          t.expect(newCalls).toBeLessThanOrEqual(8)
+        },
       )
-      await Utils.delay(0)
-
-      source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // Handler that never resolves keeps the batch in-progress,
-      // so isReady stays false while the buffer sits at the head.
-      let blockingHandler = async _ => {
-        let _ = await Promise.make((_, _) => ())
-      }
-      source.resolveGetItemsOrThrow(
-        [{blockNumber: 150, logIndex: 0, handler: blockingHandler}],
-        ~latestFetchedBlockNumber=300,
-      )
-
-      await Utils.delay(5)
-
-      let baseline = source.getHeightOrThrowCalls->Array.length
-
-      let deadline = Date.now() +. 50.
-      while Date.now() < deadline {
-        source.resolveGetHeightOrThrow(300)
-        await Utils.delay(2)
-      }
-
-      let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
-
-      t.expect(newCalls).toBeGreaterThan(1)
-      t.expect(newCalls).toBeLessThanOrEqual(8)
     },
   )
 })

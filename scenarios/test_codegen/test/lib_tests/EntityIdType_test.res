@@ -15,7 +15,12 @@ let numericIdTable = Table.mkTable(
     Table.mkField("value", String, ~fieldSchema=S.string),
     // Foreign key to BigParent: adopts BigParent's BigInt id type, stored as
     // the `parent_id` column.
-    Table.mkField("parent", BigInt({}), ~linkedEntity="BigParent", ~fieldSchema=Utils.BigInt.schema),
+    Table.mkField(
+      "parent",
+      BigInt({}),
+      ~linkedEntity="BigParent",
+      ~fieldSchema=Utils.BigInt.schema,
+    ),
   ],
 )
 
@@ -34,9 +39,7 @@ describe("Non-string entity id support", () => {
         ~pgSchema="public",
         ~isNumericArrayAsText=false,
       ),
-    ).toBe(
-      `CREATE TABLE IF NOT EXISTS "public"."NumericId"("id" INTEGER NOT NULL, "value" TEXT NOT NULL, "parent_id" NUMERIC NOT NULL, PRIMARY KEY("id"));`,
-    )
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."NumericId"("id" INTEGER NOT NULL, "value" TEXT NOT NULL, "parent_id" NUMERIC NOT NULL, PRIMARY KEY("id"));`)
   })
 
   it("casts delete-by-ids to the id column type instead of text", t => {
@@ -81,27 +84,26 @@ describe("Non-string entity id support", () => {
   })
 
   it("serializes a history set update keeping the numeric id value", t => {
-    let entitySchema =
-      S.object(s =>
+    let entitySchema = S.object(
+      s =>
         {
           "id": s.field("id", S.int),
           "value": s.field("value", S.string),
-        }
-      )->(Utils.magic: S.t<{"id": int, "value": string}> => S.t<Internal.entity>)
+        },
+    )->(Utils.magic: S.t<{"id": int, "value": string}> => S.t<Internal.entity>)
 
     let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
       ~idSchema=numericIdTable->Table.getIdSchema,
       entitySchema,
     )
 
-    let json =
-      Change.Set({
-        entityId: 123->EntityId.unsafeOfAny,
-        entity: {"id": 123, "value": "x"}->(
-          Utils.magic: {"id": int, "value": string} => Internal.entity
-        ),
-        checkpointId: 5n,
-      })->S.reverseConvertToJsonOrThrow(setUpdateSchema)
+    let json = Change.Set({
+      entityId: 123->EntityId.unsafeOfAny,
+      entity: {"id": 123, "value": "x"}->(
+        Utils.magic: {"id": int, "value": string} => Internal.entity
+      ),
+      checkpointId: 5n,
+    })->S.reverseConvertToJsonOrThrow(setUpdateSchema)
 
     t.expect(json).toEqual(
       %raw(`{"id": 123, "value": "x", "envio_checkpoint_id": "5", "envio_change": "SET"}`),
@@ -197,50 +199,49 @@ chains:
     )
 
     let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#1337)
-    let indexerMock = await MockIndexer.Indexer.make(
+    await MockIndexer.Indexer.run(
       ~config,
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
       ~shouldRollbackOnReorg=false,
-    )
-    await Utils.delay(0)
+      async indexerMock => {
+        await Utils.delay(0)
 
-    source.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
+        source.resolveGetHeightOrThrow(300)
+        await Utils.delay(0)
+        await Utils.delay(0)
 
-    source.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 5,
-          logIndex: 0,
-          handler: async args => {
-            let context =
-              args.context->(Utils.magic: MockIndexer.handlerContext => handlerContext)
-            context.chain.set({id: 137})
-            // Deleted below by its numeric id, exercising delete-by-id with an
-            // integer column instead of text.
-            context.chain.set({id: 10})
-            context.bigThing.set({"id": 999n})
-            context.vault.set({id: "v1", chainId: 137, bigId: 999n})
-            context.chain.deleteUnsafe(10)
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=300,
-    )
-    await indexerMock.getBatchWritePromise()
+        source.resolveGetItemsOrThrow(
+          [
+            {
+              blockNumber: 5,
+              logIndex: 0,
+              handler: async args => {
+                let context =
+                  args.context->(Utils.magic: MockIndexer.handlerContext => handlerContext)
+                context.chain.set({id: 137})
+                // Deleted below by its numeric id, exercising delete-by-id with an
+                // integer column instead of text.
+                context.chain.set({id: 10})
+                context.bigThing.set({"id": 999n})
+                context.vault.set({id: "v1", chainId: 137, bigId: 999n})
+                context.chain.deleteUnsafe(10)
+              },
+            },
+          ],
+          ~latestFetchedBlockNumber=300,
+        )
+        await indexerMock.getBatchWritePromise()
 
-    let chains: array<chainEntity> = await indexerMock.queryRaw(
-      config.userEntitiesByName->Dict.getUnsafe("Chain"),
-    )
-    let vaults: array<vaultEntity> = await indexerMock.queryRaw(
-      config.userEntitiesByName->Dict.getUnsafe("Vault"),
-    )
+        let chains: array<chainEntity> = await indexerMock.queryRaw(
+          config.userEntitiesByName->Dict.getUnsafe("Chain"),
+        )
+        let vaults: array<vaultEntity> = await indexerMock.queryRaw(
+          config.userEntitiesByName->Dict.getUnsafe("Vault"),
+        )
 
-    t.expect((chains, vaults)).toEqual((
-      [{id: 137}],
-      [{id: "v1", chainId: 137, bigId: 999n}],
-    ))
+        t.expect((chains, vaults)).toEqual(([{id: 137}], [{id: "v1", chainId: 137, bigId: 999n}]))
+      },
+    )
   })
 })
 
@@ -271,30 +272,36 @@ chains:
   let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal, or set `@storage(clickhouse: {orderBy: [...]})` to sort by other fields."
 
   it("rejects an unbounded BigInt id on a clickhouse entity", t => {
-    t->toThrowErrorEqual(() =>
-      parseWithStorage(
-        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! }`,
-        ~storage=bothBackends,
-      )->ignore
-    , expectedError)
+    t->toThrowErrorEqual(
+      () =>
+        parseWithStorage(
+          ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! }`,
+          ~storage=bothBackends,
+        )->ignore,
+      expectedError,
+    )
   })
 
   it("rejects a BigInt id whose precision exceeds the ClickHouse Decimal ceiling", t => {
-    t->toThrowErrorEqual(() =>
-      parseWithStorage(
-        ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 100) }`,
-        ~storage=bothBackends,
-      )->ignore
-    , expectedError)
+    t->toThrowErrorEqual(
+      () =>
+        parseWithStorage(
+          ~schema=`type Thing @storage(clickhouse: true) { id: BigInt! @config(precision: 100) }`,
+          ~storage=bothBackends,
+        )->ignore,
+      expectedError,
+    )
   })
 
   it("rejects an unbounded BigInt id when clickhouse is the default backend", t => {
-    t->toThrowErrorEqual(() =>
-      parseWithStorage(
-        ~schema=`type Thing { id: BigInt! }`,
-        ~storage="  postgres:\n    default: true\n  clickhouse:\n    default: true",
-      )->ignore
-    , expectedError)
+    t->toThrowErrorEqual(
+      () =>
+        parseWithStorage(
+          ~schema=`type Thing { id: BigInt! }`,
+          ~storage="  postgres:\n    default: true\n  clickhouse:\n    default: true",
+        )->ignore,
+      expectedError,
+    )
   })
 
   it("accepts a BigInt id with a numeric precision on a clickhouse entity", t => {
