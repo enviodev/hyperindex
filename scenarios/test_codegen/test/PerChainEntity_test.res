@@ -588,44 +588,73 @@ describe("Per-chain history prune", () => {
     await Utils.delay(0)
     await indexerMock.stop()
 
+    let globalEntityConfig = config.userEntitiesByName->Dict.getUnsafe("GlobalCounter")
     let sql = PgStorage.makeClient()
     let pgSchema = Env.Db.publicSchema
     let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
+    let globalHistoryTable =
+      PgStorage.getEntityHistory(~entityConfig=globalEntityConfig).table.tableName
 
-    // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1
-    // sits entirely below it.
+    // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1's
+    // "shared" sits entirely below it and its "above" entirely above.
     let _ = await sql->Postgres.unsafe(
       `INSERT INTO "${pgSchema}"."${historyTable}"
          ("id", "count", "chainId", "envio_checkpoint_id", "envio_change")
        VALUES ('shared', 1, 137, 10, 'SET'),
               ('shared', 2, 137, 40, 'SET'),
-              ('shared', 3, 1, 20, 'SET')`,
+              ('shared', 3, 1, 20, 'SET'),
+              ('above', 4, 1, 50, 'SET')`,
+    )
+    // The same three shapes without a chain column, so the cross-chain form of
+    // the query is exercised too.
+    let _ = await sql->Postgres.unsafe(
+      `INSERT INTO "${pgSchema}"."${globalHistoryTable}"
+         ("id", "count", "envio_checkpoint_id", "envio_change")
+       VALUES ('straddle', 1, 10, 'SET'),
+              ('straddle', 2, 40, 'SET'),
+              ('below', 3, 20, 'SET'),
+              ('above', 4, 50, 'SET')`,
     )
 
-    await EntityHistory.pruneStaleEntityHistory(
-      sql,
-      ~pgSchema,
-      ~entityName=entityConfig.name,
-      ~entityIndex=entityConfig.index,
-      ~chainIdColumn=entityConfig.table
-      ->Table.getChainIdField
-      ->Option.map(Table.getPgDbFieldName),
-      ~safeCheckpointId=30n,
-    )
+    let prune = entityConfig =>
+      EntityHistory.pruneStaleEntityHistory(
+        sql,
+        ~pgSchema,
+        ~entityName=(entityConfig: Internal.entityConfig).name,
+        ~entityIndex=entityConfig.index,
+        ~chainIdColumn=entityConfig.table
+        ->Table.getChainIdField
+        ->Option.map(Table.getPgDbFieldName),
+        ~safeCheckpointId=30n,
+      )
+    await prune(entityConfig)
+    await prune(globalEntityConfig)
 
     let remaining: array<{"chainId": int, "envio_checkpoint_id": string}> =
       await sql->Postgres.unsafe(
         `SELECT "chainId", "envio_checkpoint_id"::text FROM "${pgSchema}"."${historyTable}"
          ORDER BY "chainId", "envio_checkpoint_id"`,
       )
+    let globalRemaining: array<{"id": string, "envio_checkpoint_id": string}> =
+      await sql->Postgres.unsafe(
+        `SELECT "id", "envio_checkpoint_id"::text FROM "${pgSchema}"."${globalHistoryTable}"
+         ORDER BY "id", "envio_checkpoint_id"`,
+      )
     let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."${historyTable}"`)
+    let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."${globalHistoryTable}"`)
 
-    t.expect(
+    t.expect((
       remaining->Array.map(row => (row["chainId"], row["envio_checkpoint_id"])),
-    ).toEqual([
-      // Chain 137 keeps its anchor at 10 because it has a later row at 40.
-      (137, "10"),
-      (137, "40"),
-    ])
+      globalRemaining->Array.map(row => (row["id"], row["envio_checkpoint_id"])),
+    )).toEqual((
+      [
+        // Nothing of chain 1's "above" is stale yet, and chain 137 keeps its
+        // anchor at 10 because it has a later row at 40.
+        (1, "50"),
+        (137, "10"),
+        (137, "40"),
+      ],
+      [("above", "50"), ("straddle", "10"), ("straddle", "40")],
+    ))
   })
 })

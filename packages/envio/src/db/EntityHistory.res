@@ -100,28 +100,23 @@ let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~c
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
 
+  // Whether a key still has a row above the safe checkpoint is an aggregate
+  // over the same groups as the anchor, so it's computed in the one pass
+  // rather than as a per-row correlated lookup.
+  // `d.envio_checkpoint_id <= $1` is implied by the rest of the predicate — it
+  // is there to keep the rows above the safe checkpoint out of the join.
   `WITH anchors AS (
-  SELECT ${anchorKeys}, MAX(t.${checkpointIdFieldName}) AS keep_checkpoint_id
-  FROM ${historyTableRef} t WHERE t.${checkpointIdFieldName} <= $1
+  SELECT ${anchorKeys},
+    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= $1) AS keep_checkpoint_id,
+    bool_or(t.${checkpointIdFieldName} > $1) AS has_above
+  FROM ${historyTableRef} t
   GROUP BY ${anchorKeys}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
 WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
-  AND (
-    d.${checkpointIdFieldName} < a.keep_checkpoint_id
-    OR (
-      d.${checkpointIdFieldName} = a.keep_checkpoint_id AND
-      NOT EXISTS (
-        SELECT 1 FROM ${historyTableRef} ps 
-        WHERE ${makeKeyMatch(
-      ~chainIdColumn,
-      ~left="ps",
-      ~right="d",
-    )} AND ps.${checkpointIdFieldName} > $1
-      ) 
-    )
-  );`
+  AND d.${checkpointIdFieldName} <= $1
+  AND (d.${checkpointIdFieldName} < a.keep_checkpoint_id OR NOT a.has_above);`
 }
 
 let pruneStaleEntityHistory = (
