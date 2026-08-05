@@ -48,8 +48,10 @@ pub(crate) struct PublicConfigJson<'a> {
     raw_events: bool,
     #[serde(skip_serializing_if = "is_default_chain_id_mode")]
     chain_id_mode: ChainIdMode,
-    // Always emitted, together with each entity's resolved `crossChain`, so
-    // the runtime never has to re-derive one from the other.
+    // Omitted while true, which is what every config predating per-chain
+    // entities implies, so those projects keep producing the same JSON and
+    // the compat check doesn't ask them to reindex.
+    #[serde(skip_serializing_if = "is_true")]
     default_cross_chain: bool,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,9 +101,11 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
-    // Resolved against the config's `defaultCrossChain`, so the runtime reads
-    // one boolean per entity instead of combining a flag and a directive.
-    cross_chain: bool,
+    // Emitted only when the entity's resolved scope differs from
+    // `defaultCrossChain`, which the runtime falls back to. Repeating the
+    // default would diff against every project that predates the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cross_chain: Option<bool>,
     // Mirrors the user's `@storage(...)` directive verbatim: only the args
     // they wrote are emitted. Without a directive the entity gets the
     // backends marked `default` in config.yaml — stamped here, except when
@@ -857,10 +861,11 @@ impl SystemConfig {
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    cross_chain: system_config::entity_is_cross_chain(
+                    cross_chain: Some(system_config::entity_is_cross_chain(
                         entity,
                         cfg.default_cross_chain,
-                    ),
+                    ))
+                    .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
                     storage,
                     properties,
                     derived_fields,

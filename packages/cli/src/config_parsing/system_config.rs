@@ -450,7 +450,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 .collect::<Vec<_>>()
                 .join("\n");
             return Err(anyhow!(
-                    "Schema validation failed:\n\nEntities with no storage backend (no @storage \
+                "Schema validation failed:\n\nEntities with no storage backend (no @storage \
                      directive, and no backend is marked `default: true` in \
                      config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend \
                      under `storage:` in config.yaml to include these entities automatically. \
@@ -458,7 +458,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                      add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
                      entities listed above. Example:\n      type {example} @storage(postgres: \
                      true) {{ ... }}"
-                ));
+            ));
         }
     }
 
@@ -573,6 +573,17 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
         entity.postgres == Some(true)
     } else {
         storage.postgres.is_some_and(|b| b.entity_default)
+    }
+}
+
+/// The ClickHouse counterpart of `is_stored_in_postgres`. A directive routes an
+/// entity to ClickHouse only when it enables the backend — either `true` or the
+/// table options object.
+fn is_stored_in_clickhouse(entity: &Entity, storage: &Storage) -> bool {
+    if entity.has_storage_directive() {
+        entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+    } else {
+        storage.clickhouse.is_some_and(|b| b.entity_default)
     }
 }
 
@@ -751,11 +762,15 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
+/// The name the chain-id field appended to per-chain entities carries on the
+/// GraphQL/API surface, whatever its column is called.
+pub const CHAIN_ID_FIELD_NAME: &str = "chainId";
+
 /// The chain-id column appended to per-chain entity tables, spelled for the
 /// backend's configured `column_name_format`.
 pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
     match format {
-        human_config::ColumnNameFormat::Original => "chainId",
+        human_config::ColumnNameFormat::Original => CHAIN_ID_FIELD_NAME,
         human_config::ColumnNameFormat::SnakeCase => "chain_id",
     }
 }
@@ -847,13 +862,6 @@ pub fn validate_chain_id_column_names(
     schema: &Schema,
     default_cross_chain: bool,
 ) -> anyhow::Result<()> {
-    let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
-    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
-        if !formats.contains(&backend.column_name_format) {
-            formats.push(backend.column_name_format);
-        }
-    }
-
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -862,18 +870,51 @@ pub fn validate_chain_id_column_names(
         if entity_is_cross_chain(entity, default_cross_chain) {
             continue;
         }
-        for format in &formats {
-            let reserved = chain_id_column_name(*format);
-            for gql_field in entity.get_fields() {
-                if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
-                    if pg_field.db_column_name(*format) == reserved {
-                        let line = format!(
-                            "  - `{}.{}` maps to the \"{reserved}\" column.",
-                            entity.name, pg_field.field_name
-                        );
-                        if !offending.contains(&line) {
-                            offending.push(line);
+
+        // Only a backend the entity is written to spells the appended column,
+        // so an unused backend's `column_name_format` reserves nothing.
+        let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
+        for backend in [
+            is_stored_in_postgres(entity, storage)
+                .then_some(storage.postgres)
+                .flatten(),
+            is_stored_in_clickhouse(entity, storage)
+                .then_some(storage.clickhouse)
+                .flatten(),
+        ]
+        .iter()
+        .flatten()
+        {
+            if !formats.contains(&backend.column_name_format) {
+                formats.push(backend.column_name_format);
+            }
+        }
+
+        for gql_field in entity.get_fields() {
+            match gql_field.get_postgres_field(schema, entity)? {
+                Some(pg_field) => {
+                    for format in &formats {
+                        let reserved = chain_id_column_name(*format);
+                        if pg_field.db_column_name(*format) == reserved {
+                            let line = format!(
+                                "  - `{}.{}` maps to the \"{reserved}\" column.",
+                                entity.name, pg_field.field_name
+                            );
+                            if !offending.contains(&line) {
+                                offending.push(line);
+                            }
                         }
+                    }
+                }
+                // A derived field has no column of its own, but the appended
+                // one keeps the `chainId` API name whatever the column format,
+                // so the two still collide on the entity's GraphQL surface.
+                None => {
+                    if gql_field.name == CHAIN_ID_FIELD_NAME {
+                        offending.push(format!(
+                            "  - `{}.{}` uses the reserved `{CHAIN_ID_FIELD_NAME}` field name.",
+                            entity.name, gql_field.name
+                        ));
                     }
                 }
             }

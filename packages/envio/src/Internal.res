@@ -796,7 +796,6 @@ type chainScope =
   | @as("crossChain") CrossChain
   | Chain(ChainId.t)
 
-// "crossChain" or the decimal chain id.
 let chainScopeToString = scope =>
   switch scope {
   | CrossChain => "crossChain"

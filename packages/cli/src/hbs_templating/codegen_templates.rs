@@ -1079,16 +1079,16 @@ impl ProjectTemplate {
                 } else {
                     let event = event_name.unwrap_or("<EventName>");
                     format!(
-                            "{i}@deprecated(\"Not selected for this event. To enable, add to \
+                        "{i}@deprecated(\"Not selected for this event. To enable, add to \
                              config.yaml:\\nevents:\\n  - event: {event}\\n    \
                              field_selection:\\n      {kind}:\\n        - \
                              {field}\")\n{i}{res_name}?: unit,",
-                            i = indent,
-                            event = event,
-                            kind = field_kind,
-                            field = f.name.camel,
-                            res_name = f.res_name,
-                        )
+                        i = indent,
+                        event = event,
+                        kind = field_kind,
+                        field = f.name.camel,
+                        res_name = f.res_name,
+                    )
                 }
             })
             .collect();

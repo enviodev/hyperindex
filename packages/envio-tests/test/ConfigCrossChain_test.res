@@ -555,3 +555,105 @@ describe("Effect scope defaults", () => {
     )).toEqual((false, true, true))
   })
 })
+
+// `envio_info` is diffed path by path against the JSON stored on the last
+// successful init, so a field that only ever repeats a default would force
+// every project predating it to reset and reindex.
+describe("Public config compatibility", () => {
+  let publicJson = (~schema, ~disableDefaultCrossChain) =>
+    Core.fromUserApi(
+      ~schema,
+      configYaml(~disableDefaultCrossChain),
+    ).config->JSON.parseOrThrow
+
+  let key = (json: JSON.t, k) =>
+    switch json {
+    | Object(d) => d->Dict.get(k)
+    | _ => None
+    }
+
+  let entityKey = (json, name, k) =>
+    json
+    ->key("entities")
+    ->Option.flatMap(entities =>
+      switch entities {
+      | Array(arr) => arr->Array.find(e => e->key("name") === Some(JSON.Encode.string(name)))
+      | _ => None
+      }
+    )
+    ->Option.flatMap(e => e->key(k))
+
+  it("Omits the scope fields a default project would only repeat", t => {
+    let json = publicJson(
+      ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+`,
+      ~disableDefaultCrossChain=false,
+    )
+    t.expect((
+      json->key("defaultCrossChain"),
+      json->entityKey("Counter", "crossChain"),
+    )).toEqual((None, None))
+  })
+
+  it("Emits only the scopes that differ from the resolved default", t => {
+    let json = publicJson(~schema, ~disableDefaultCrossChain=true)
+    t.expect((
+      json->key("defaultCrossChain"),
+      json->entityKey("Counter", "crossChain"),
+      json->entityKey("GlobalCounter", "crossChain"),
+    )).toEqual((
+      Some(JSON.Encode.bool(false)),
+      None,
+      Some(JSON.Encode.bool(true)),
+    ))
+  })
+})
+
+describe("Cross-chain validation gaps", () => {
+  it("Rejects a @derivedFrom field that claims the chain-id name", t => {
+    t.expect(
+      parseError(
+        ~schema=`
+type Counter {
+  id: ID!
+  chainId: [Tally!]! @derivedFrom(field: "counter")
+}
+type Tally {
+  id: ID!
+  counter: Counter!
+}
+`,
+      )->Option.map(m => m->String.includes("`Counter.chainId`")),
+    ).toEqual(Some(true))
+  })
+
+  it("Reserves the chain-id name only in the formats the entity is stored in", t => {
+    let error =
+      try {
+        let _ = InternalTestIndexer.fromUserApi(
+          ~configYaml=configYaml(~disableDefaultCrossChain=true) ++
+          `storage:
+  postgres:
+    column_name_format: original
+  clickhouse:
+    column_name_format: snake_case
+`,
+          ~schema=`
+type Counter @storage(postgres: true) {
+  id: ID!
+  chain_id: Int!
+}
+`,
+        )
+        None
+      } catch {
+      | exn =>
+        Some(exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string})->(e => e["message"]))
+      }
+    t.expect(error).toEqual(None)
+  })
+})

@@ -56,9 +56,14 @@ describe("per-chain entities", () => {
     assert.deepEqual(
       changes.map((change) => ({
         chainId: change.chainId,
-        counter: (change as { Counter?: { sets: unknown[] } }).Counter?.sets,
-        global: (change as { GlobalCounter?: { sets: unknown[] } }).GlobalCounter
-          ?.sets,
+        // `chainId` is stamped onto a per-chain row, so it has to be part of
+        // the change's row type as well.
+        counter: change.Counter?.sets?.map((counter) => ({
+          id: counter.id,
+          count: counter.count,
+          chainId: counter.chainId,
+        })),
+        global: change.GlobalCounter?.sets,
       })),
       [
         {
