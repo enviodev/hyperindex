@@ -115,14 +115,7 @@ type Counter @crossChain {
       ),
     )).toEqual((
       Some(
-        `Config parse error: Schema validation failed:
-
-Entity fields using a name reserved for the chain id added to per-chain entities:
-  - \`Counter.chainId\`
-
-Fixes:
-  - Rename the listed fields in schema.graphql.
-  - Or add \`@crossChain\` to the entity so its rows are shared across chains and no chain id is added.`,
+        "Config parse error: `Counter.chainId` is not allowed, since envio sets `chainId` on every per-chain entity for you. Either rename the field, or add `@crossChain` to `Counter` — its rows are then shared across chains and the field is yours to set.",
       ),
       // Cross-chain entities have nothing appended, so the name is free.
       None,

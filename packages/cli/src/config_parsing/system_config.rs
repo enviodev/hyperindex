@@ -855,28 +855,25 @@ pub fn validate_chain_id_field_names(
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let mut offending: Vec<String> = vec![];
     for entity in &entities {
         if entity_is_cross_chain(entity, default_cross_chain) {
             continue;
         }
         for gql_field in entity.get_fields() {
             if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&gql_field.name.as_str()) {
-                offending.push(format!("  - `{}.{}`", entity.name, gql_field.name));
+                return Err(anyhow!(
+                    "`{entity}.{field}` is not allowed, since envio sets `chainId` on every \
+                     per-chain entity for you. Either rename the field, or add `@crossChain` to \
+                     `{entity}` — its rows are then shared across chains and the field is yours \
+                     to set.",
+                    entity = entity.name,
+                    field = gql_field.name
+                ));
             }
         }
     }
 
-    if offending.is_empty() {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "Schema validation failed:\n\nEntity fields using a name reserved for the chain id added \
-         to per-chain entities:\n{}\n\nFixes:\n  - Rename the listed fields in schema.graphql.\n  \
-         - Or add `@crossChain` to the entity so its rows are shared across chains and no chain \
-         id is added.",
-        offending.join("\n")
-    ))
+    Ok(())
 }
 
 // ClickHouse has no `Nullable(Array(T))` type, so a nullable array column on a
