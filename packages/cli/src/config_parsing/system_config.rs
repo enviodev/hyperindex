@@ -795,6 +795,50 @@ pub fn validate_cross_chain_directives(
     ))
 }
 
+/// A reference stores only the referenced entity's id, so a cross-chain entity
+/// pointing at a per-chain one has no chain with which to resolve it. The other
+/// combinations are unambiguous: a per-chain entity resolves a per-chain
+/// reference within its own chain, and a cross-chain id is global. A
+/// `@derivedFrom` is the mirror of a reference on the other entity, so checking
+/// the references alone covers both.
+pub fn validate_cross_chain_relationships(
+    schema: &Schema,
+    default_cross_chain: bool,
+) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = vec![];
+    for entity in &entities {
+        if !entity_is_cross_chain(entity, default_cross_chain) {
+            continue;
+        }
+        for (field, related) in entity.get_related_entities(schema)? {
+            if field.get_derived_from_field().is_some()
+                || entity_is_cross_chain(related, default_cross_chain)
+            {
+                continue;
+            }
+            invalid.push(format!(
+                "  - `{}`.`{}` references `{}`, which is per-chain.",
+                entity.name, field.name, related.name
+            ));
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nCross-chain entities referencing per-chain \
+         entities:\n{}\n\nA reference stores only the referenced entity's id, and a per-chain id \
+         needs a chain to resolve. Fixes:\n  - Make the referenced entities cross-chain with \
+         `@crossChain`, or\n  - Remove `@crossChain` from the entities listed above so they \
+         resolve the reference within their own chain.",
+        invalid.join("\n")
+    ))
+}
+
 /// Per-chain entities get a chain-id column appended to their table, so no
 /// schema field may claim that column name. Cross-chain entities keep the name
 /// free.
@@ -1020,6 +1064,7 @@ impl SystemConfig {
         validate_db_column_names(&storage, &schema)?;
         validate_cross_chain_directives(default_cross_chain, &schema)?;
         validate_chain_id_column_names(&storage, &schema, default_cross_chain)?;
+        validate_cross_chain_relationships(&schema, default_cross_chain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
@@ -3008,79 +3053,6 @@ mod test {
             filesystem.to_public_config_json(false).unwrap(),
             memory.to_public_config_json(false).unwrap(),
         );
-    }
-
-    mod cross_chain {
-        use super::SystemConfig;
-        use pretty_assertions::assert_eq;
-        use std::collections::HashMap;
-
-        fn parse(disable_default_cross_chain: bool, schema: &str) -> anyhow::Result<SystemConfig> {
-            let mut yaml = String::from("name: cross-chain\n");
-            if disable_default_cross_chain {
-                yaml.push_str("disable_default_cross_chain: true\n");
-            }
-            yaml.push_str("chains:\n  - id: 1\n    start_block: 0\n    contracts: []\n");
-            SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
-        }
-
-        fn resolved(config: &SystemConfig, entity: &str) -> bool {
-            super::super::entity_is_cross_chain(
-                config.schema.entities.get(entity).expect("entity"),
-                config.default_cross_chain,
-            )
-        }
-
-        const SCHEMA: &str = "type Counter { id: ID! count: Int! }";
-        const SCHEMA_ANNOTATED: &str =
-            "type Counter { id: ID! count: Int! }\ntype Global @crossChain { id: ID! }";
-
-        #[test]
-        fn default_mode_makes_every_entity_cross_chain() {
-            let config = parse(false, SCHEMA).expect("config");
-            assert_eq!(
-                (config.default_cross_chain, resolved(&config, "Counter")),
-                (true, true)
-            );
-        }
-
-        #[test]
-        fn disabled_default_makes_entities_per_chain_unless_annotated() {
-            let config = parse(true, SCHEMA_ANNOTATED).expect("config");
-            assert_eq!(
-                (
-                    config.default_cross_chain,
-                    resolved(&config, "Counter"),
-                    resolved(&config, "Global"),
-                ),
-                (false, false, true)
-            );
-        }
-
-        #[test]
-        fn cross_chain_directive_rejected_in_default_mode() {
-            assert_eq!(
-                parse(false, SCHEMA_ANNOTATED).unwrap_err().to_string(),
-                "@crossChain on `Global` has no effect because entities are cross-chain by \
-                 default. Set `disable_default_cross_chain: true` in config.yaml to make entities \
-                 per-chain, or remove the directive."
-            );
-        }
-
-        #[test]
-        fn chain_id_field_collides_only_on_per_chain_entities() {
-            let schema = "type Counter { id: ID! chainId: Int! }";
-            assert_eq!(
-                parse(true, schema).unwrap_err().to_string(),
-                "Schema validation failed:\n\nEntity fields that collide with the chain-id column \
-                 added to per-chain entities:\n  - `Counter.chainId` maps to the \"chainId\" \
-                 column.\n\nFixes:\n  - Rename the listed fields in schema.graphql.\n  - Or add \
-                 `@crossChain` to the entity so its rows are shared across chains and no chain-id \
-                 column is added."
-            );
-            assert!(parse(false, schema).is_ok());
-            assert!(parse(true, "type Counter @crossChain { id: ID! chainId: Int! }").is_ok());
-        }
     }
 
     #[test]

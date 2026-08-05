@@ -74,6 +74,141 @@ type Counter {
   })
 })
 
+// Codegen errors, asserted through the same parse path a user hits.
+let parseError = (~schema, ~disableDefaultCrossChain=true) =>
+  try {
+    let _ = InternalTestIndexer.fromUserApi(
+      ~configYaml=configYaml(~disableDefaultCrossChain),
+      ~schema,
+    )
+    None
+  } catch {
+  | exn => Some(exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string})->(e => e["message"]))
+  }
+
+describe("Cross-chain schema validation", () => {
+  it("Rejects @crossChain when entities are already cross-chain by default", t => {
+    t.expect(parseError(~schema, ~disableDefaultCrossChain=false)).toEqual(
+      Some(
+        "Config parse error: @crossChain on `GlobalCounter` has no effect because entities are cross-chain by default. Set `disable_default_cross_chain: true` in config.yaml to make entities per-chain, or remove the directive.",
+      ),
+    )
+  })
+
+  it("Reserves the chain-id column name on per-chain entities only", t => {
+    let withChainIdField = `
+type Counter {
+  id: ID!
+  chainId: Int!
+}
+`
+    t.expect((
+      parseError(~schema=withChainIdField),
+      parseError(~schema=withChainIdField, ~disableDefaultCrossChain=false),
+      parseError(
+        ~schema=`
+type Counter @crossChain {
+  id: ID!
+  chainId: Int!
+}
+`,
+      ),
+    )).toEqual((
+      Some(
+        `Config parse error: Schema validation failed:
+
+Entity fields that collide with the chain-id column added to per-chain entities:
+  - \`Counter.chainId\` maps to the "chainId" column.
+
+Fixes:
+  - Rename the listed fields in schema.graphql.
+  - Or add \`@crossChain\` to the entity so its rows are shared across chains and no chain-id column is added.`,
+      ),
+      // Cross-chain entities have no appended column, so the name is free.
+      None,
+      None,
+    ))
+  })
+
+  it("Rejects a cross-chain entity referencing a per-chain one", t => {
+    t.expect(
+      parseError(
+        ~schema=`
+type Counter {
+  id: ID!
+}
+type GlobalCounter @crossChain {
+  id: ID!
+  counter: Counter!
+}
+`,
+      ),
+    ).toEqual(
+      Some(
+        `Config parse error: Schema validation failed:
+
+Cross-chain entities referencing per-chain entities:
+  - \`GlobalCounter\`.\`counter\` references \`Counter\`, which is per-chain.
+
+A reference stores only the referenced entity's id, and a per-chain id needs a chain to resolve. Fixes:
+  - Make the referenced entities cross-chain with \`@crossChain\`, or
+  - Remove \`@crossChain\` from the entities listed above so they resolve the reference within their own chain.`,
+      ),
+    )
+  })
+
+  it("Allows every other combination of reference scopes", t => {
+    t.expect((
+      // per-chain -> per-chain: resolved within the referencing entity's chain.
+      parseError(
+        ~schema=`
+type Counter { id: ID! }
+type Tally { id: ID! counter: Counter! }
+`,
+      ),
+      // per-chain -> cross-chain: a cross-chain id is global.
+      parseError(
+        ~schema=`
+type Counter @crossChain { id: ID! }
+type Tally { id: ID! counter: Counter! }
+`,
+      ),
+      // cross-chain -> cross-chain.
+      parseError(
+        ~schema=`
+type Counter @crossChain { id: ID! }
+type Tally @crossChain { id: ID! counter: Counter! }
+`,
+      ),
+      // Nothing is per-chain at all.
+      parseError(
+        ~schema=`
+type Counter { id: ID! }
+type Tally { id: ID! counter: Counter! }
+`,
+        ~disableDefaultCrossChain=false,
+      ),
+    )).toEqual((None, None, None, None))
+  })
+
+  it("Rejects a @derivedFrom whose forward reference crosses scopes", t => {
+    t.expect(
+      parseError(
+        ~schema=`
+type Counter {
+  id: ID!
+  tallies: [Tally!]! @derivedFrom(field: "counter")
+}
+type Tally @crossChain {
+  id: ID!
+  counter: Counter!
+}
+`,
+      )->Option.map(m => m->String.includes("`Tally`.`counter` references `Counter`")),
+    ).toEqual(Some(true))
+  })
+})
+
 describe("Per-chain entity DDL", () => {
   it("Puts the chain id in the entity table's primary key", t => {
     t.expect(
