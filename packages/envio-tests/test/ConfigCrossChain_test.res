@@ -95,7 +95,7 @@ describe("Cross-chain schema validation", () => {
     )
   })
 
-  it("Reserves the chain-id column name on per-chain entities only", t => {
+  it("Reserves the chain-id names on per-chain entities only", t => {
     let withChainIdField = `
 type Counter {
   id: ID!
@@ -115,19 +115,67 @@ type Counter @crossChain {
       ),
     )).toEqual((
       Some(
-        `Config parse error: Schema validation failed:
-
-Entity fields that collide with the chain-id column added to per-chain entities:
-  - \`Counter.chainId\` maps to the "chainId" column.
-
-Fixes:
-  - Rename the listed fields in schema.graphql.
-  - Or add \`@crossChain\` to the entity so its rows are shared across chains and no chain-id column is added.`,
+        "Config parse error: `Counter.chainId` is not allowed, since envio sets `chainId` on every per-chain entity for you. Either rename the field, or add `@crossChain` to `Counter` — its rows are then shared across chains and the field is yours to set.",
       ),
-      // Cross-chain entities have no appended column, so the name is free.
+      // Cross-chain entities have nothing appended, so the name is free.
       None,
       None,
     ))
+  })
+
+  // Which spelling the column takes depends on the backend's
+  // `column_name_format`, but a name a user may give a field shouldn't: both
+  // are reserved wherever the entity is stored.
+  it("Reserves both spellings regardless of the storage backends", t => {
+    let reserved = (~name, ~storage) =>
+      try {
+        let _ = InternalTestIndexer.fromUserApi(
+          ~configYaml=configYaml(~disableDefaultCrossChain=true) ++ storage,
+          ~schema=`
+type Counter {
+  id: ID!
+  ${name}: Int!
+}
+`,
+        )
+        false
+      } catch {
+      | _ => true
+      }
+
+    let postgresOnly = ""
+    let snakeCaseClickHouse = `storage:
+  postgres:
+    column_name_format: original
+  clickhouse:
+    column_name_format: snake_case
+`
+    t.expect((
+      reserved(~name="chainId", ~storage=postgresOnly),
+      reserved(~name="chain_id", ~storage=postgresOnly),
+      reserved(~name="chainId", ~storage=snakeCaseClickHouse),
+      reserved(~name="chain_id", ~storage=snakeCaseClickHouse),
+    )).toEqual((true, true, true, true))
+  })
+
+  // A derived field has no column of its own, so a check that only looked at
+  // physical columns let it through — and the appended chain id then collided
+  // with it on the entity's GraphQL surface.
+  it("Rejects a @derivedFrom field that claims the chain-id name", t => {
+    t.expect(
+      parseError(
+        ~schema=`
+type Counter {
+  id: ID!
+  chainId: [Tally!]! @derivedFrom(field: "counter")
+}
+type Tally {
+  id: ID!
+  counter: Counter!
+}
+`,
+      )->Option.map(m => m->String.includes("`Counter.chainId`")),
+    ).toEqual(Some(true))
   })
 
   it("Rejects a cross-chain entity referencing a per-chain one", t => {
@@ -553,5 +601,62 @@ describe("Effect scope defaults", () => {
       makeEffect()->resolve(~defaultCrossChain=true),
       makeEffect(~crossChain=true)->resolve(~defaultCrossChain=false),
     )).toEqual((false, true, true))
+  })
+})
+
+// `envio_info` is diffed path by path against the JSON stored on the last
+// successful init, so a field that only ever repeats a default would force
+// every project predating it to reset and reindex.
+describe("Public config compatibility", () => {
+  let publicJson = (~schema, ~disableDefaultCrossChain) =>
+    Core.fromUserApi(
+      ~schema,
+      configYaml(~disableDefaultCrossChain),
+    ).config->JSON.parseOrThrow
+
+  let key = (json: JSON.t, k) =>
+    switch json {
+    | Object(d) => d->Dict.get(k)
+    | _ => None
+    }
+
+  let entityKey = (json, name, k) =>
+    json
+    ->key("entities")
+    ->Option.flatMap(entities =>
+      switch entities {
+      | Array(arr) => arr->Array.find(e => e->key("name") === Some(JSON.Encode.string(name)))
+      | _ => None
+      }
+    )
+    ->Option.flatMap(e => e->key(k))
+
+  it("Omits the scope fields a default project would only repeat", t => {
+    let json = publicJson(
+      ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+`,
+      ~disableDefaultCrossChain=false,
+    )
+    t.expect((
+      json->key("defaultCrossChain"),
+      json->entityKey("Counter", "crossChain"),
+    )).toEqual((None, None))
+  })
+
+  it("Emits only the scopes that differ from the resolved default", t => {
+    let json = publicJson(~schema, ~disableDefaultCrossChain=true)
+    t.expect((
+      json->key("defaultCrossChain"),
+      json->entityKey("Counter", "crossChain"),
+      json->entityKey("GlobalCounter", "crossChain"),
+    )).toEqual((
+      Some(JSON.Encode.bool(false)),
+      None,
+      Some(JSON.Encode.bool(true)),
+    ))
   })
 })

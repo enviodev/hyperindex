@@ -5,7 +5,6 @@ expression: json
 {
   "version": "0.0.1-dev",
   "name": "Solana indexer",
-  "defaultCrossChain": true,
   "storage": {
     "postgres": true
   },
@@ -298,7 +297,6 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
-      "crossChain": true,
       "properties": [
         {
           "name": "id",

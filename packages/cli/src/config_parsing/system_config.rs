@@ -450,7 +450,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 .collect::<Vec<_>>()
                 .join("\n");
             return Err(anyhow!(
-                    "Schema validation failed:\n\nEntities with no storage backend (no @storage \
+                "Schema validation failed:\n\nEntities with no storage backend (no @storage \
                      directive, and no backend is marked `default: true` in \
                      config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend \
                      under `storage:` in config.yaml to include these entities automatically. \
@@ -458,7 +458,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                      add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
                      entities listed above. Example:\n      type {example} @storage(postgres: \
                      true) {{ ... }}"
-                ));
+            ));
         }
     }
 
@@ -760,6 +760,10 @@ pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static 
     }
 }
 
+/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
+/// the appended field keeps on the API surface.
+pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
+
 /// Whether an entity's rows are shared across chains. With the default
 /// cross-chain mode every entity is; otherwise only those carrying
 /// `@crossChain`.
@@ -839,57 +843,37 @@ pub fn validate_cross_chain_relationships(
     ))
 }
 
-/// Per-chain entities get a chain-id column appended to their table, so no
-/// schema field may claim that column name. Cross-chain entities keep the name
-/// free.
-pub fn validate_chain_id_column_names(
-    storage: &Storage,
+/// Per-chain entities get a chain-id field appended, so no schema field may
+/// claim its name. Both spellings are reserved whatever the backends and their
+/// `column_name_format` are, so the name a user may give a field never depends
+/// on where the entity happens to be stored. Cross-chain entities get nothing
+/// appended and keep both names free.
+pub fn validate_chain_id_field_names(
     schema: &Schema,
     default_cross_chain: bool,
 ) -> anyhow::Result<()> {
-    let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
-    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
-        if !formats.contains(&backend.column_name_format) {
-            formats.push(backend.column_name_format);
-        }
-    }
-
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let mut offending: Vec<String> = vec![];
     for entity in &entities {
         if entity_is_cross_chain(entity, default_cross_chain) {
             continue;
         }
-        for format in &formats {
-            let reserved = chain_id_column_name(*format);
-            for gql_field in entity.get_fields() {
-                if let Some(pg_field) = gql_field.get_postgres_field(schema, entity)? {
-                    if pg_field.db_column_name(*format) == reserved {
-                        let line = format!(
-                            "  - `{}.{}` maps to the \"{reserved}\" column.",
-                            entity.name, pg_field.field_name
-                        );
-                        if !offending.contains(&line) {
-                            offending.push(line);
-                        }
-                    }
-                }
+        for gql_field in entity.get_fields() {
+            if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&gql_field.name.as_str()) {
+                return Err(anyhow!(
+                    "`{entity}.{field}` is not allowed, since envio sets `chainId` on every \
+                     per-chain entity for you. Either rename the field, or add `@crossChain` to \
+                     `{entity}` — its rows are then shared across chains and the field is yours \
+                     to set.",
+                    entity = entity.name,
+                    field = gql_field.name
+                ));
             }
         }
     }
 
-    if offending.is_empty() {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "Schema validation failed:\n\nEntity fields that collide with the chain-id column added \
-         to per-chain entities:\n{}\n\nFixes:\n  - Rename the listed fields in schema.graphql.\n  \
-         - Or add `@crossChain` to the entity so its rows are shared across chains and no \
-         chain-id column is added.",
-        offending.join("\n")
-    ))
+    Ok(())
 }
 
 // ClickHouse has no `Nullable(Array(T))` type, so a nullable array column on a
@@ -1063,7 +1047,7 @@ impl SystemConfig {
         validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
         validate_cross_chain_directives(default_cross_chain, &schema)?;
-        validate_chain_id_column_names(&storage, &schema, default_cross_chain)?;
+        validate_chain_id_field_names(&schema, default_cross_chain)?;
         validate_cross_chain_relationships(&schema, default_cross_chain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
