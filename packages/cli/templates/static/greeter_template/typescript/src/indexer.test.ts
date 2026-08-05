@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { createTestIndexer, type User } from "envio";
+import { createTestIndexer } from "envio";
 import { TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
@@ -23,15 +23,17 @@ describe("Greeter template tests", () => {
       },
     });
 
-    const expectedUserEntity: User = {
+    // Entities are per-chain (see `disable_default_cross_chain` in
+    // config.yaml), so a row read outside a handler carries the chain it
+    // belongs to.
+    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
+    t.expect(actualUserEntity).toEqual({
       id: userAddress,
       latestGreeting: greeting,
       numberOfGreetings: 1,
       greetings: [greeting],
-    };
-
-    const actualUserEntity = await indexer.User.getOrThrow(userAddress);
-    t.expect(actualUserEntity).toEqual(expectedUserEntity);
+      chainId: 137,
+    });
   });
 
   it("2 Greetings from the same users results in that user having a greeter count of 2", async (t) => {

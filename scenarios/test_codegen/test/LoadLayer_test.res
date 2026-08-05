@@ -11,6 +11,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -39,6 +40,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -74,6 +76,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -104,6 +107,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -149,6 +153,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -191,6 +196,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -235,6 +241,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -251,6 +258,7 @@ describe("LoadLayer", () => {
 
       indexerState->MockIndexer.InMemoryStore.setEntity(
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         user1,
       )
 
@@ -292,6 +300,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -336,6 +345,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -350,6 +360,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -382,6 +393,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -428,6 +440,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -480,6 +493,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~item,
           ~ecosystem=MockIndexer.config.ecosystem,
@@ -521,6 +535,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -561,6 +576,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -623,6 +639,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -638,6 +655,7 @@ describe("LoadLayer", () => {
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -679,6 +697,7 @@ describe("LoadLayer", () => {
 
     indexerState->MockIndexer.InMemoryStore.setEntity(
       ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
@@ -715,6 +734,7 @@ describe("LoadLayer", () => {
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
           ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~item,
           ~ecosystem=MockIndexer.config.ecosystem,
@@ -738,6 +758,7 @@ describe("LoadLayer", () => {
 
       indexerState->MockIndexer.InMemoryStore.setEntity(
         ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         user1,
       )
 

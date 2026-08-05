@@ -10,10 +10,8 @@ let keepLatestChangesLimit = Env.inMemoryObjectsTarget
 
 let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
-  state
-  ->IndexerState.allEntities
-  ->Array.forEach(entityConfig => {
-    total := total.contents +. (state->InMemoryStore.getInMemTable(~entityConfig)).changesCount
+  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) => {
+    total := total.contents +. table.changesCount
   })
   state
   ->IndexerState.effectState
@@ -113,14 +111,12 @@ let runOneWrite = async (state: IndexerState.t) => {
 
     let rollback = state->IndexerState.takeRollback
 
-    let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
-      let table = state->InMemoryStore.getInMemTable(~entityConfig)
+    let updatedEntities = []
+    state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
       let changes =
         table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
-      if changes->Utils.Array.isEmpty {
-        None
-      } else {
-        Some(({entityConfig, changes}: Persistence.updatedEntity))
+      if changes->Utils.Array.notEmpty {
+        updatedEntities->Array.push(({entityConfig, scope, changes}: Persistence.updatedEntity))
       }
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
@@ -221,12 +217,8 @@ let commitBatch = (state: IndexerState.t, ~batch: Batch.t) => {
 // keepLoadedFromDb, entries seeded from a db read are spared.
 let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   let committedCheckpointId = state->IndexerState.committedCheckpointId
-  state
-  ->IndexerState.allEntities
-  ->Array.forEach(entityConfig =>
-    state
-    ->InMemoryStore.getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) =>
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state
   ->IndexerState.effectState

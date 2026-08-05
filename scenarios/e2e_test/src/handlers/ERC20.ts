@@ -76,6 +76,15 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     value: event.params.value,
   });
 
+  // Per-chain entities: the same id on another chain would be a separate row,
+  // and the ChainAccount -> ChainTransfer relationship must stay within a chain.
+  context.ChainTransfer.set({
+    id,
+    from: event.params.from,
+    value: event.params.value,
+  });
+  context.ChainAccount.set({ id: event.params.from });
+
   // Values are chosen beyond float64 precision so a regression that lets
   // Hasura serve NUMERIC[] as numbers changes the digits, not just the type.
   context.NumericArrays.set({

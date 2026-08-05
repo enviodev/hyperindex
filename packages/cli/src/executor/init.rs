@@ -398,8 +398,8 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
 
     let mut out = String::new();
     out.push_str(
-        "Welcome to Envio Indexer! Let's set up an indexer that will become a reliable \
-         blockchain backend you trust, love, and own.\n\n",
+        "Welcome to Envio Indexer! Let's set up an indexer that will become a reliable blockchain \
+         backend you trust, love, and own.\n\n",
     );
     out.push_str("Leave the rest to your favorite agent:\n\n");
 
@@ -414,8 +414,8 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     }
     let _ = writeln!(
         out,
-        "  {step}. Prompt the user for the project intent if it is missing from context \
-         (what should the indexer track and surface?)."
+        "  {step}. Prompt the user for the project intent if it is missing from context (what \
+         should the indexer track and surface?)."
     );
     step += 1;
     let _ = writeln!(
