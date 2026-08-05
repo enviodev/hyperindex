@@ -49,8 +49,8 @@ impl TryFrom<simple::Block> for SvmBlockRow {
     }
 }
 
-/// Owned SVM transaction row for the `TransactionStore`. Rows without the
-/// (slot, transaction_index) key are dropped at conversion.
+/// Owned SVM transaction row for the `TransactionStore`, carrying the
+/// pre-validated (slot, transaction_index) key.
 #[derive(Default, Clone)]
 pub struct SvmTxRow {
     pub slot: u64,
@@ -66,11 +66,17 @@ pub struct SvmTxRow {
     pub version: Option<String>,
 }
 
-impl SvmTxRow {
-    pub(crate) fn from_simple(t: simple::Transaction) -> Option<Self> {
-        Some(Self {
-            slot: t.slot?,
-            transaction_index: t.transaction_index?,
+impl TryFrom<simple::Transaction> for SvmTxRow {
+    type Error = anyhow::Error;
+    fn try_from(t: simple::Transaction) -> Result<Self> {
+        Ok(Self {
+            // The store keys by (slot, transaction_index) and the query
+            // builder splices both columns in front of every transaction
+            // selection, so their absence is a malformed response.
+            slot: t.slot.ok_or_else(|| anyhow!("transaction.slot missing"))?,
+            transaction_index: t
+                .transaction_index
+                .ok_or_else(|| anyhow!("transaction.transaction_index missing"))?,
             signatures: t
                 .signatures
                 .map(|v| v.iter().map(ToString::to_string).collect())
@@ -91,9 +97,8 @@ impl SvmTxRow {
 }
 
 /// One token-side `account_activity` row shaped for the store's token-balance
-/// companion table (the public `tokenBalances` transaction field). Native-only
-/// rows and rows missing the (slot, transaction_index, account) key are
-/// dropped at conversion.
+/// companion table (the public `tokenBalances` transaction field), carrying the
+/// pre-validated (slot, transaction_index, account) key.
 #[derive(Default, Clone)]
 pub struct SvmTokenBalanceRow {
     pub slot: u64,
@@ -116,21 +121,44 @@ fn owner_at_transaction_end(
 }
 
 impl SvmTokenBalanceRow {
-    pub(crate) fn from_activity(a: simple::AccountActivity) -> Option<Self> {
+    /// `Ok(None)` for a native-only row, which the public `tokenBalances`
+    /// field does not carry.
+    ///
+    /// The native rows must be dropped here rather than excluded by an
+    /// `account_activity: [{kind: ["token"]}]` selection: a non-empty
+    /// account-activity selection is AND-ed into the query's match set, not
+    /// applied as a filter on the join, so it drops every matched instruction
+    /// whose transaction has no token activity. Measured against
+    /// solana-mainnet-history over slots 422100000..422100002, adding that
+    /// selection to a ComputeBudget query cut the returned instructions from
+    /// 924 to 401.
+    pub(crate) fn from_activity(a: simple::AccountActivity) -> Result<Option<Self>> {
         // Mint presence is the token-side discriminant of the unified
         // account_activity row (only token rows carry one), so a native-only
         // row drops out here without paying for the derived token_state
         // column. `mint` is always selected by the query builder.
-        let mint = a.mint?;
-        Some(Self {
-            slot: a.slot?,
-            transaction_index: a.transaction_index?,
-            account: a.account?.to_string(),
+        let Some(mint) = a.mint else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            // The store keys by (slot, transaction_index, account) and the
+            // query builder always selects all three, so absence on a token
+            // row is a malformed response.
+            slot: a
+                .slot
+                .ok_or_else(|| anyhow!("account_activity.slot missing"))?,
+            transaction_index: a
+                .transaction_index
+                .ok_or_else(|| anyhow!("account_activity.transaction_index missing"))?,
+            account: a
+                .account
+                .ok_or_else(|| anyhow!("account_activity.account missing"))?
+                .to_string(),
             mint: mint.to_string(),
             owner: owner_at_transaction_end(a.pre_owner, a.post_owner),
             pre_amount: a.pre_token_balance.map(|v| v.to_string()),
             post_amount: a.post_token_balance.map(|v| v.to_string()),
-        })
+        }))
     }
 }
 
@@ -165,8 +193,9 @@ pub struct Instruction {
     pub a5: Option<String>,
     pub is_inner: bool,
     /// True when the parent transaction succeeded (renamed from
-    /// `is_committed`). Queries filter on `tx_success: true`, so this is a
-    /// belt-and-braces flag rather than the primary exclusion mechanism.
+    /// `is_committed`). Reports the PARENT transaction's outcome, not the
+    /// instruction's: Solana metadata only records instructions that actually
+    /// executed.
     pub tx_success: bool,
     /// Borsh-decoded view, populated by `get` when a matching program schema
     /// was supplied in the query. `None` when no schema applies or decode failed.
@@ -285,9 +314,11 @@ impl TryFrom<simple::InstructionCall> for Instruction {
                 .to_string(),
             account_arguments: i
                 .account_arguments
-                .map(|v| v.iter().map(ToString::to_string).collect())
-                .unwrap_or_default(),
-            data: to_hex(&i.data.unwrap_or_default()),
+                .ok_or_else(|| anyhow!("instruction.account_arguments missing"))?
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            data: to_hex(&i.data.ok_or_else(|| anyhow!("instruction.data missing"))?),
             d1: opt_hex(&i.d1),
             d2: opt_hex(&i.d2),
             d4: opt_hex(&i.d4),
@@ -298,11 +329,12 @@ impl TryFrom<simple::InstructionCall> for Instruction {
             a3: opt_addr(&i.a3),
             a4: opt_addr(&i.a4),
             a5: opt_addr(&i.a5),
-            is_inner: i.is_inner.unwrap_or(false),
-            // Queries always send `tx_success: true`, so a row missing the
-            // flag (never expected: the column is always selected) can only
-            // be from a successful transaction.
-            tx_success: i.tx_success.unwrap_or(true),
+            is_inner: i
+                .is_inner
+                .ok_or_else(|| anyhow!("instruction.is_inner missing"))?,
+            tx_success: i
+                .tx_success
+                .ok_or_else(|| anyhow!("instruction.tx_success missing"))?,
             decoded: None,
         })
     }

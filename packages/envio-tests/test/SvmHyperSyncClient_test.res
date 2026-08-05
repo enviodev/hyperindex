@@ -9,12 +9,17 @@ open Vitest
 // `describe` to run locally.
 describe_skip("SvmHyperSyncClient live", () => {
   let tokenMetadataProgram = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-  let readEnv: string => option<string> = %raw(`(k) => process.env[k]`)
 
   Async.it("returns Token Metadata instructions for a recent slot window", async t => {
+    // Read inside the test body, not at module load: the suite is skipped by
+    // default, so a missing token must not break an unrelated `pnpm test`.
+    let apiToken =
+      Env.envioApiToken->Option.getOrThrow(
+        ~message="ENVIO_API_TOKEN env var must be set to run SvmHyperSyncClient tests",
+      )
     let client = SvmHyperSyncClient.make(
     ~url="https://solana-mainnet-history.hypersync.xyz",
-    ~apiToken=?readEnv("ENVIO_API_TOKEN"),
+    ~apiToken,
     ~addressStore=AddressStore.make(
       ~ecosystem=Ecosystem.Svm,
       ~shouldChecksum=false,

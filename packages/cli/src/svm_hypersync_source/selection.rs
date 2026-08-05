@@ -281,6 +281,13 @@ impl BuiltInstructionSelection {
         let mut selection = net::InstructionSelection {
             executing_account: vec![self.program],
             is_inner: self.is_inner,
+            // Instructions of failed transactions are excluded server-side:
+            // their state changes were rolled back, so nothing there is a
+            // handler-visible effect. A store ingested with the server's
+            // failed-transaction trim keeps no such rows to begin with, which
+            // makes this a no-op there; sending it is what makes the exclusion
+            // hold on a store ingested without the trim.
+            tx_success: Some(true),
             ..Default::default()
         };
         if let Some(d) = self.discriminator_hex {
@@ -588,6 +595,29 @@ mod tests {
         .iter()
         .map(|reg| reg.index)
         .collect()
+    }
+
+    /// Excluding failed transactions is a server-side filter, not something
+    /// the client is trusted to do after the fact, so every built selection
+    /// must carry it.
+    #[test]
+    fn every_built_selection_filters_out_failed_transactions() {
+        let (_store, _set, built) = build(
+            &[
+                reg(0, PROG_A, Some("0x21"), 1, false),
+                reg(1, PROG_B, None, 0, true),
+            ],
+            &[0, 1],
+            &[("Owned", PROG_A)],
+        );
+        assert_eq!(
+            built
+                .instruction_selections
+                .iter()
+                .map(|s| s.tx_success)
+                .collect::<Vec<_>>(),
+            vec![Some(true), Some(true)]
+        );
     }
 
     #[test]

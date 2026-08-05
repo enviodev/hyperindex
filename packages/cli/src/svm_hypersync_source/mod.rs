@@ -57,36 +57,28 @@ use types::{opt_hex, to_hex, QueryResponse};
 /// `None` stores the whole response (the raw `get` query, which builds no
 /// items).
 fn build_svm_store(
-    mut transactions: Vec<simple::Transaction>,
-    mut account_activity: Vec<simple::AccountActivity>,
+    transactions: Vec<simple::Transaction>,
+    account_activity: Vec<simple::AccountActivity>,
     keys: Option<&HashSet<(u64, u32)>>,
-) -> TransactionStore {
+) -> Result<TransactionStore> {
+    let mut txs: Vec<types::SvmTxRow> = transactions
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect::<Result<_>>()
+        .context("mapping solana transaction rows")?;
+    let mut balances: Vec<types::SvmTokenBalanceRow> = account_activity
+        .into_iter()
+        .filter_map(|a| types::SvmTokenBalanceRow::from_activity(a).transpose())
+        .collect::<Result<_>>()
+        .context("mapping solana account activity rows")?;
     if let Some(keys) = keys {
-        transactions.retain(|tx| {
-            tx.slot
-                .zip(tx.transaction_index)
-                .is_some_and(|k| keys.contains(&k))
-        });
-        account_activity.retain(|a| {
-            a.slot
-                .zip(a.transaction_index)
-                .is_some_and(|k| keys.contains(&k))
-        });
+        txs.retain(|tx| keys.contains(&(tx.slot, tx.transaction_index)));
+        balances.retain(|b| keys.contains(&(b.slot, b.transaction_index)));
     }
     let store = TransactionStore::new_svm();
-    store.insert_svm_txs(
-        transactions
-            .into_iter()
-            .filter_map(types::SvmTxRow::from_simple)
-            .collect(),
-    );
-    store.insert_svm_token_balances(
-        account_activity
-            .into_iter()
-            .filter_map(types::SvmTokenBalanceRow::from_activity)
-            .collect(),
-    );
-    store
+    store.insert_svm_txs(txs);
+    store.insert_svm_token_balances(balances);
+    Ok(store)
 }
 
 /// Per-program Borsh schemas from the registrations that carry schema pieces
@@ -258,7 +250,8 @@ impl SvmHyperSyncClient {
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.account_activity),
             None,
-        );
+        )
+        .map_err(map_err)?;
 
         let (block_headers, block_store) = take_blocks(&mut resp, None).map_err(map_err)?;
 
@@ -393,7 +386,8 @@ impl SvmHyperSyncClient {
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.account_activity),
             Some(&referenced_transactions),
-        );
+        )
+        .map_err(map_err)?;
         let (block_headers, block_store) =
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
@@ -503,10 +497,11 @@ fn build_event_items(
 
     let mut items: Vec<EventItem> = Vec::with_capacity(instructions.len());
     for instr in instructions {
-        // Instructions from failed transactions are excluded: their state
-        // changes were rolled back, so nothing there is a handler-visible
-        // effect. `tx_success` reports the PARENT transaction's outcome and
-        // rides on every instruction row.
+        // Every built selection carries `tx_success: true`, so the server has
+        // already dropped instructions of failed transactions. Re-checking the
+        // flag costs a compare and keeps the exclusion honest if a selection
+        // ever ships without it; a row that omits the column entirely cannot
+        // have passed the server-side filter, so `None` is not a rejection.
         if instr.tx_success == Some(false) {
             continue;
         }
@@ -520,6 +515,16 @@ fn build_event_items(
             .as_ref()
             .context("instruction.executing_account missing")?
             .to_string();
+        let instruction_address = instr
+            .instruction_address
+            .as_deref()
+            .context("instruction.instruction_address missing")?;
+        let account_arguments = instr
+            .account_arguments
+            .as_deref()
+            .context("instruction.account_arguments missing")?;
+        let data = instr.data.as_deref().context("instruction.data missing")?;
+        let is_inner = instr.is_inner.context("instruction.is_inner missing")?;
         let program_key = program_id.as_bytes();
         let address = selection::InstructionAddress {
             key: program_key,
@@ -541,11 +546,7 @@ fn build_event_items(
             .and_then(|schema| decode::decode_with_schema(schema, instr));
         let logs = if routed.iter().any(|reg| reg.include_logs) {
             logs_by_key
-                .get(&(
-                    slot_raw,
-                    transaction_index,
-                    instr.instruction_address.clone().unwrap_or_default(),
-                ))
+                .get(&(slot_raw, transaction_index, instruction_address.to_vec()))
                 .cloned()
         } else {
             None
@@ -555,27 +556,15 @@ fn build_event_items(
                 on_event_registration_index: reg.index,
                 slot,
                 transaction_index: i64::from(transaction_index),
-                instruction_address: instr
-                    .instruction_address
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|&v| i64::from(v))
-                    .collect(),
+                instruction_address: instruction_address.iter().map(|&v| i64::from(v)).collect(),
                 program_id: program_id.clone(),
-                accounts: instr
-                    .account_arguments
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                data: to_hex(instr.data.as_deref().unwrap_or_default()),
+                accounts: account_arguments.iter().map(ToString::to_string).collect(),
+                data: to_hex(data),
                 d1: opt_hex(&instr.d1),
                 d2: opt_hex(&instr.d2),
                 d4: opt_hex(&instr.d4),
                 d8: opt_hex(&instr.d8),
-                is_inner: instr.is_inner.unwrap_or_default(),
+                is_inner,
                 decoded: decoded.clone(),
                 logs: if reg.include_logs { logs.clone() } else { None },
             });
@@ -759,6 +748,8 @@ mod tests {
         )
     }
 
+    /// A row shaped like a real response: the query builder never projects the
+    /// instruction_call table, so every column below arrives populated.
     fn committed_instruction(data: &[u8]) -> simple::InstructionCall {
         simple::InstructionCall {
             executing_account: Some(TOKEN_METADATA_PROGRAM.parse().unwrap()),
@@ -766,9 +757,45 @@ mod tests {
             slot: Some(42),
             transaction_index: Some(7),
             instruction_address: Some(vec![1]),
+            account_arguments: Some(vec![]),
+            is_inner: Some(false),
             tx_success: Some(true),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn an_instruction_missing_an_always_selected_column_errors() {
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = SelectionBuilder::from_registrations(
+            &[reg_input(0, "0x21", false)],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap()
+        .build(&[0])
+        .unwrap();
+        let missing = |mutate: fn(&mut simple::InstructionCall)| {
+            let mut instr = committed_instruction(&[0x21]);
+            mutate(&mut instr);
+            match route(&store, &set, &[instr], vec![], &built) {
+                Err(e) => e.to_string(),
+                Ok(_) => "unexpectedly accepted a malformed row".to_string(),
+            }
+        };
+        assert_eq!(
+            (
+                missing(|i| i.instruction_address = None),
+                missing(|i| i.account_arguments = None),
+                missing(|i| i.data = None),
+                missing(|i| i.is_inner = None),
+            ),
+            (
+                "instruction.instruction_address missing".to_string(),
+                "instruction.account_arguments missing".to_string(),
+                "instruction.data missing".to_string(),
+                "instruction.is_inner missing".to_string(),
+            )
+        );
     }
 
     #[test]
@@ -922,7 +949,8 @@ mod tests {
             vec![tx(42, 7), tx(43, 7)],
             vec![balance(42, 7), balance(43, 7)],
             Some(&referenced),
-        );
+        )
+        .expect("build store");
 
         let mask = ((1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32))
             | (1u64 << (crate::transaction_store::SvmTxField::TokenBalances as u32)))
@@ -974,7 +1002,8 @@ mod tests {
             }],
             vec![],
             None,
-        );
+        )
+        .expect("build store");
         let (_, block_store) = take_blocks(&mut resp, None).expect("take blocks");
 
         let txs = store

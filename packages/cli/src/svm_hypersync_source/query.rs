@@ -20,7 +20,6 @@ pub struct SvmQuery {
     pub instruction_calls: Option<Vec<InstructionSelection>>,
     pub transactions: Option<Vec<TransactionSelection>>,
     pub logs: Option<Vec<LogSelection>>,
-    pub account_activity: Option<Vec<AccountActivitySelection>>,
     pub include_all_blocks: Option<bool>,
     pub fields: Option<FieldSelection>,
     pub max_num_blocks: Option<i64>,
@@ -28,19 +27,6 @@ pub struct SvmQuery {
     pub max_num_instructions: Option<i64>,
     pub max_num_logs: Option<i64>,
     pub max_num_account_activity: Option<i64>,
-}
-
-/// Filter for selecting rows of the unified `account_activity` table (the
-/// merged replacement for the removed `balances`/`token_balances` tables).
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct AccountActivitySelection {
-    /// "native" and/or "token"; empty matches every row.
-    pub kind: Option<Vec<String>>,
-    pub account: Option<Vec<String>>,
-    pub mint: Option<Vec<String>>,
-    pub owner: Option<Vec<String>>,
-    pub program_id: Option<Vec<String>>,
 }
 
 /// Filter for selecting instruction calls. All non-empty fields are AND-ed: an
@@ -211,34 +197,6 @@ impl TryFrom<LogSelection> for net::LogSelection {
     }
 }
 
-impl TryFrom<AccountActivitySelection> for net::AccountActivitySelection {
-    type Error = anyhow::Error;
-
-    fn try_from(s: AccountActivitySelection) -> Result<Self> {
-        Ok(Self {
-            kind: s
-                .kind
-                .unwrap_or_default()
-                .into_iter()
-                .map(|k| match k.as_str() {
-                    "native" => Ok(net::ActivityKind::Native),
-                    "token" => Ok(net::ActivityKind::Token),
-                    other => Err(anyhow::anyhow!("invalid activity kind {:?}", other)),
-                })
-                .collect::<Result<_>>()?,
-            account: parse_addresses(s.account, "account")?,
-            transaction_id: Vec::new(),
-            mint: parse_addresses(s.mint, "mint")?,
-            owner: parse_addresses(s.owner, "owner")?,
-            program_id: parse_addresses(s.program_id, "program_id")?,
-            is_signer: None,
-            is_writable: None,
-            is_fee_payer: None,
-            from_lookup_table: None,
-        })
-    }
-}
-
 fn try_map_selections<T, U>(items: Option<Vec<T>>) -> Result<Vec<U>>
 where
     U: TryFrom<T, Error = anyhow::Error>,
@@ -267,7 +225,6 @@ impl TryFrom<SvmQuery> for net::SolanaQuery {
             instruction_calls: try_map_selections(q.instruction_calls)?,
             transactions: try_map_selections(q.transactions)?,
             logs: try_map_selections(q.logs)?,
-            account_activity: try_map_selections(q.account_activity)?,
             include_all_blocks: q.include_all_blocks.unwrap_or_default(),
             field_selection: q
                 .fields
@@ -288,6 +245,13 @@ impl TryFrom<SvmQuery> for net::SolanaQuery {
                 .max_num_account_activity
                 .filter(|v| *v >= 0)
                 .map(|v| v as usize),
+            // Deliberately left empty: a non-empty account-activity selection
+            // is AND-ed into the query's match set rather than filtering the
+            // join, so it silently drops matched instructions whose
+            // transaction has no matching activity row. Columns alone (see
+            // `FieldSelection::account_activity`) opt into the join without
+            // touching what matches.
+            account_activity: Vec::new(),
         })
     }
 }
