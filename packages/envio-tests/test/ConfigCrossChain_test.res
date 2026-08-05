@@ -95,7 +95,7 @@ describe("Cross-chain schema validation", () => {
     )
   })
 
-  it("Reserves the chain-id column name on per-chain entities only", t => {
+  it("Reserves the chain-id names on per-chain entities only", t => {
     let withChainIdField = `
 type Counter {
   id: ID!
@@ -117,17 +117,72 @@ type Counter @crossChain {
       Some(
         `Config parse error: Schema validation failed:
 
-Entity fields that collide with the chain-id column added to per-chain entities:
-  - \`Counter.chainId\` maps to the "chainId" column.
+Entity fields using a name reserved for the chain id added to per-chain entities:
+  - \`Counter.chainId\`
 
 Fixes:
   - Rename the listed fields in schema.graphql.
-  - Or add \`@crossChain\` to the entity so its rows are shared across chains and no chain-id column is added.`,
+  - Or add \`@crossChain\` to the entity so its rows are shared across chains and no chain id is added.`,
       ),
-      // Cross-chain entities have no appended column, so the name is free.
+      // Cross-chain entities have nothing appended, so the name is free.
       None,
       None,
     ))
+  })
+
+  // Which spelling the column takes depends on the backend's
+  // `column_name_format`, but a name a user may give a field shouldn't: both
+  // are reserved wherever the entity is stored.
+  it("Reserves both spellings regardless of the storage backends", t => {
+    let reserved = (~name, ~storage) =>
+      try {
+        let _ = InternalTestIndexer.fromUserApi(
+          ~configYaml=configYaml(~disableDefaultCrossChain=true) ++ storage,
+          ~schema=`
+type Counter {
+  id: ID!
+  ${name}: Int!
+}
+`,
+        )
+        false
+      } catch {
+      | _ => true
+      }
+
+    let postgresOnly = ""
+    let snakeCaseClickHouse = `storage:
+  postgres:
+    column_name_format: original
+  clickhouse:
+    column_name_format: snake_case
+`
+    t.expect((
+      reserved(~name="chainId", ~storage=postgresOnly),
+      reserved(~name="chain_id", ~storage=postgresOnly),
+      reserved(~name="chainId", ~storage=snakeCaseClickHouse),
+      reserved(~name="chain_id", ~storage=snakeCaseClickHouse),
+    )).toEqual((true, true, true, true))
+  })
+
+  // A derived field has no column of its own, so a check that only looked at
+  // physical columns let it through — and the appended chain id then collided
+  // with it on the entity's GraphQL surface.
+  it("Rejects a @derivedFrom field that claims the chain-id name", t => {
+    t.expect(
+      parseError(
+        ~schema=`
+type Counter {
+  id: ID!
+  chainId: [Tally!]! @derivedFrom(field: "counter")
+}
+type Tally {
+  id: ID!
+  counter: Counter!
+}
+`,
+      )->Option.map(m => m->String.includes("`Counter.chainId`")),
+    ).toEqual(Some(true))
   })
 
   it("Rejects a cross-chain entity referencing a per-chain one", t => {
@@ -610,50 +665,5 @@ type Counter {
       None,
       Some(JSON.Encode.bool(true)),
     ))
-  })
-})
-
-describe("Cross-chain validation gaps", () => {
-  it("Rejects a @derivedFrom field that claims the chain-id name", t => {
-    t.expect(
-      parseError(
-        ~schema=`
-type Counter {
-  id: ID!
-  chainId: [Tally!]! @derivedFrom(field: "counter")
-}
-type Tally {
-  id: ID!
-  counter: Counter!
-}
-`,
-      )->Option.map(m => m->String.includes("`Counter.chainId`")),
-    ).toEqual(Some(true))
-  })
-
-  it("Reserves the chain-id name only in the formats the entity is stored in", t => {
-    let error =
-      try {
-        let _ = InternalTestIndexer.fromUserApi(
-          ~configYaml=configYaml(~disableDefaultCrossChain=true) ++
-          `storage:
-  postgres:
-    column_name_format: original
-  clickhouse:
-    column_name_format: snake_case
-`,
-          ~schema=`
-type Counter @storage(postgres: true) {
-  id: ID!
-  chain_id: Int!
-}
-`,
-        )
-        None
-      } catch {
-      | exn =>
-        Some(exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string})->(e => e["message"]))
-      }
-    t.expect(error).toEqual(None)
   })
 })

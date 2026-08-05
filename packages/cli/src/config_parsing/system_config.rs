@@ -576,17 +576,6 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
     }
 }
 
-/// The ClickHouse counterpart of `is_stored_in_postgres`. A directive routes an
-/// entity to ClickHouse only when it enables the backend — either `true` or the
-/// table options object.
-fn is_stored_in_clickhouse(entity: &Entity, storage: &Storage) -> bool {
-    if entity.has_storage_directive() {
-        entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
-    } else {
-        storage.clickhouse.is_some_and(|b| b.entity_default)
-    }
-}
-
 /// A `@derivedFrom` relationship is served by joining the two entities in
 /// Postgres, and it is backed by an index on the referenced entity's table. If
 /// that entity isn't in Postgres there is no table to join or index, so catch
@@ -762,18 +751,18 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
-/// The name the chain-id field appended to per-chain entities carries on the
-/// GraphQL/API surface, whatever its column is called.
-pub const CHAIN_ID_FIELD_NAME: &str = "chainId";
-
 /// The chain-id column appended to per-chain entity tables, spelled for the
 /// backend's configured `column_name_format`.
 pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
     match format {
-        human_config::ColumnNameFormat::Original => CHAIN_ID_FIELD_NAME,
+        human_config::ColumnNameFormat::Original => "chainId",
         human_config::ColumnNameFormat::SnakeCase => "chain_id",
     }
 }
+
+/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
+/// the appended field keeps on the API surface.
+pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
 
 /// Whether an entity's rows are shared across chains. With the default
 /// cross-chain mode every entity is; otherwise only those carrying
@@ -854,11 +843,12 @@ pub fn validate_cross_chain_relationships(
     ))
 }
 
-/// Per-chain entities get a chain-id column appended to their table, so no
-/// schema field may claim that column name. Cross-chain entities keep the name
-/// free.
-pub fn validate_chain_id_column_names(
-    storage: &Storage,
+/// Per-chain entities get a chain-id field appended, so no schema field may
+/// claim its name. Both spellings are reserved whatever the backends and their
+/// `column_name_format` are, so the name a user may give a field never depends
+/// on where the entity happens to be stored. Cross-chain entities get nothing
+/// appended and keep both names free.
+pub fn validate_chain_id_field_names(
     schema: &Schema,
     default_cross_chain: bool,
 ) -> anyhow::Result<()> {
@@ -870,53 +860,9 @@ pub fn validate_chain_id_column_names(
         if entity_is_cross_chain(entity, default_cross_chain) {
             continue;
         }
-
-        // Only a backend the entity is written to spells the appended column,
-        // so an unused backend's `column_name_format` reserves nothing.
-        let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
-        for backend in [
-            is_stored_in_postgres(entity, storage)
-                .then_some(storage.postgres)
-                .flatten(),
-            is_stored_in_clickhouse(entity, storage)
-                .then_some(storage.clickhouse)
-                .flatten(),
-        ]
-        .iter()
-        .flatten()
-        {
-            if !formats.contains(&backend.column_name_format) {
-                formats.push(backend.column_name_format);
-            }
-        }
-
         for gql_field in entity.get_fields() {
-            match gql_field.get_postgres_field(schema, entity)? {
-                Some(pg_field) => {
-                    for format in &formats {
-                        let reserved = chain_id_column_name(*format);
-                        if pg_field.db_column_name(*format) == reserved {
-                            let line = format!(
-                                "  - `{}.{}` maps to the \"{reserved}\" column.",
-                                entity.name, pg_field.field_name
-                            );
-                            if !offending.contains(&line) {
-                                offending.push(line);
-                            }
-                        }
-                    }
-                }
-                // A derived field has no column of its own, but the appended
-                // one keeps the `chainId` API name whatever the column format,
-                // so the two still collide on the entity's GraphQL surface.
-                None => {
-                    if gql_field.name == CHAIN_ID_FIELD_NAME {
-                        offending.push(format!(
-                            "  - `{}.{}` uses the reserved `{CHAIN_ID_FIELD_NAME}` field name.",
-                            entity.name, gql_field.name
-                        ));
-                    }
-                }
+            if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&gql_field.name.as_str()) {
+                offending.push(format!("  - `{}.{}`", entity.name, gql_field.name));
             }
         }
     }
@@ -925,10 +871,10 @@ pub fn validate_chain_id_column_names(
         return Ok(());
     }
     Err(anyhow!(
-        "Schema validation failed:\n\nEntity fields that collide with the chain-id column added \
+        "Schema validation failed:\n\nEntity fields using a name reserved for the chain id added \
          to per-chain entities:\n{}\n\nFixes:\n  - Rename the listed fields in schema.graphql.\n  \
-         - Or add `@crossChain` to the entity so its rows are shared across chains and no \
-         chain-id column is added.",
+         - Or add `@crossChain` to the entity so its rows are shared across chains and no chain \
+         id is added.",
         offending.join("\n")
     ))
 }
@@ -1104,7 +1050,7 @@ impl SystemConfig {
         validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
         validate_cross_chain_directives(default_cross_chain, &schema)?;
-        validate_chain_id_column_names(&storage, &schema, default_cross_chain)?;
+        validate_chain_id_field_names(&schema, default_cross_chain)?;
         validate_cross_chain_relationships(&schema, default_cross_chain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
