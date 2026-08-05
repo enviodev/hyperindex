@@ -122,19 +122,38 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
             entity.get_where_filter_code
         )
         .unwrap();
+        // The shapes the chain-agnostic test-indexer operations exchange.
+        // Outside a handler there is no chain in context, so a per-chain
+        // entity's row and filter carry the chain id; a cross-chain entity's
+        // are the entity's own.
+        writeln!(code).unwrap();
+        if entity.cross_chain {
+            writeln!(code, "  type testIndexerRow = t").unwrap();
+            writeln!(code, "  type testIndexerGetWhereFilter = getWhereFilter").unwrap();
+        } else {
+            writeln!(code, "  type testIndexerRow = {{...t, chainId: int}}").unwrap();
+            writeln!(
+                code,
+                "  type testIndexerGetWhereFilter = {{...getWhereFilter, @as(\"chainId\") \
+                 chainId?: Envio.whereOperator<int>}}"
+            )
+            .unwrap();
+        }
         writeln!(code, "}}").unwrap();
     }
 
     if !entities.is_empty() {
         writeln!(code).unwrap();
-        // Carries the entity's id type alongside the entity itself, so accessors
-        // keyed by a name (e.g. getTestIndexerEntityOperations) can type their
-        // by-id operations with that entity's real id scalar.
-        writeln!(code, "type rec name<'entity, 'id> =").unwrap();
+        // Carries every type the name-keyed test-indexer accessor
+        // (getTestIndexerEntityOperations) needs, so its operations are typed
+        // with that entity's real id scalar and filter rather than a free
+        // variable.
+        writeln!(code, "type rec name<'entity, 'id, 'getWhereFilter> =").unwrap();
         for entity in entities {
             writeln!(
                 code,
-                "  | @as(\"{0}\") {0}: name<{0}.t, {0}.id>",
+                "  | @as(\"{0}\") {0}: name<{0}.testIndexerRow, {0}.id, \
+                 {0}.testIndexerGetWhereFilter>",
                 entity.name.capitalized
             )
             .unwrap();
@@ -1920,35 +1939,12 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
         // A per-chain entity's rows are only identified by (id, chain id), and
         // these operations run outside any handler — so they exchange the
         // entity plus its chain id rather than the entity alone.
-        let test_indexer_row_types = entities
-            .iter()
-            .filter(|entity| !entity.cross_chain)
-            .map(|entity| {
-                let name = &entity.name.capitalized;
-                format!(
-                    "\ntype testIndexerRow{name} = {{...Entities.{name}.t, chainId: int}}\ntype \
-                     testIndexerGetWhereFilter{name} = {{...Entities.{name}.getWhereFilter, \
-                     @as(\"chainId\") chainId?: Envio.whereOperator<int>}}\n"
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
         let test_indexer_entity_fields = entities
             .iter()
             .map(|entity| {
                 let name = &entity.name.capitalized;
-                let (row, filter) = if entity.cross_chain {
-                    (
-                        format!("Entities.{name}.t"),
-                        format!("Entities.{name}.getWhereFilter"),
-                    )
-                } else {
-                    (
-                        format!("testIndexerRow{name}"),
-                        format!("testIndexerGetWhereFilter{name}"),
-                    )
-                };
+                let row = format!("Entities.{name}.testIndexerRow");
+                let filter = format!("Entities.{name}.testIndexerGetWhereFilter");
                 if entity_id_type(entity).0 {
                     format!("  \\\"{name}\": testIndexerEntityOperations<{row}, {filter}>,")
                 } else {
@@ -1971,7 +1967,7 @@ type testIndexerProcessConfig = {{
 }}
 
 {test_indexer_entity_ops_type}
-{test_indexer_row_types}
+
 /** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {{
   /** Process blocks for the specified chains and return progress with changes. */
@@ -1991,7 +1987,7 @@ type testIndexer = {{
         // The GADT name value compiles to a string at runtime via @as decorators,
         // so @get_index can use Entities.name directly as a dictionary key
         if !entities.is_empty() {
-            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = """#;
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = """#;
 
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
@@ -3560,11 +3556,12 @@ type Vault {
             // Numeric ids use the custom-id operation variants...
             "handlerEntityOperationsWithCustomId<Entities.Chain.t, Entities.Chain.id, \
              Entities.Chain.getWhereFilter>",
-            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.t, Entities.BigThing.id, \
-             Entities.BigThing.getWhereFilter>",
+            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.testIndexerRow, \
+             Entities.BigThing.id, Entities.BigThing.testIndexerGetWhereFilter>",
             // ...while string ids stay on the plain, id-argument-free variants.
             "handlerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
-            "testIndexerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
+            "testIndexerEntityOperations<Entities.Vault.testIndexerRow, \
+             Entities.Vault.testIndexerGetWhereFilter>",
         ];
         for expected in expectations {
             assert!(
@@ -3612,13 +3609,19 @@ type GlobalCounter @crossChain {
             .indexer_code;
 
         let expectations = [
-            "type testIndexerRowCounter = {...Entities.Counter.t, chainId: int}",
-            "type testIndexerGetWhereFilterCounter = {...Entities.Counter.getWhereFilter, \
-             @as(\"chainId\") chainId?: Envio.whereOperator<int>}",
-            "\"Counter\": testIndexerEntityOperations<testIndexerRowCounter, \
-             testIndexerGetWhereFilterCounter>,",
-            "\"GlobalCounter\": testIndexerEntityOperations<Entities.GlobalCounter.t, \
-             Entities.GlobalCounter.getWhereFilter>,",
+            // The per-chain entity's row and filter carry the chain id...
+            "type testIndexerRow = {...t, chainId: int}",
+            "type testIndexerGetWhereFilter = {...getWhereFilter, @as(\"chainId\") chainId?: \
+             Envio.whereOperator<int>}",
+            // ...while the @crossChain one's are the entity's own.
+            "type testIndexerRow = t",
+            "type testIndexerGetWhereFilter = getWhereFilter",
+            "\"Counter\": testIndexerEntityOperations<Entities.Counter.testIndexerRow, \
+             Entities.Counter.testIndexerGetWhereFilter>,",
+            // The name GADT carries all three, so the accessor keyed by it has
+            // no free type variable left.
+            "| @as(\"Counter\") Counter: name<Counter.testIndexerRow, Counter.id, \
+             Counter.testIndexerGetWhereFilter>",
         ];
         for expected in expectations {
             assert!(
@@ -3626,8 +3629,9 @@ type GlobalCounter @crossChain {
                 "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
             );
         }
-        assert!(!indexer_code.contains("testIndexerRowGlobalCounter"));
-        assert!(!indexer_code.contains("testIndexerGetWhereFilterGlobalCounter"));
+        // The filter variable is bound by the GADT rather than left free, so
+        // the accessor types getWhere with the entity's real filter.
+        assert!(indexer_code.contains("Entities.name<'entity, 'id, 'getWhereFilter>) =>"));
     }
 
     #[test]

@@ -79,10 +79,13 @@ module Entities = {
     type t = {id: id, slot: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("slot") slot?: Envio.whereOperator<int>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
-  type rec name<'entity, 'id> =
-    | @as("SlotPing") SlotPing: name<SlotPing.t, SlotPing.id>
+  type rec name<'entity, 'id, 'getWhereFilter> =
+    | @as("SlotPing") SlotPing: name<SlotPing.testIndexerRow, SlotPing.id, SlotPing.testIndexerGetWhereFilter>
 }
 
 type chainId = [#0]
@@ -229,10 +232,10 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.t, Entities.SlotPing.getWhereFilter>,
+  \"SlotPing": testIndexerEntityOperations<Entities.SlotPing.testIndexerRow, Entities.SlotPing.testIndexerGetWhereFilter>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

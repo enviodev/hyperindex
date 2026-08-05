@@ -196,6 +196,9 @@ module Entities = {
     type t = {id: id, count: bigint}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("count") count?: Envio.whereOperator<bigint>}
+
+    type testIndexerRow = {...t, chainId: int}
+    type testIndexerGetWhereFilter = {...getWhereFilter, @as("chainId") chainId?: Envio.whereOperator<int>}
   }
 
   module GlobalCounter = {
@@ -203,6 +206,9 @@ module Entities = {
     type t = {id: id, count: bigint}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("count") count?: Envio.whereOperator<bigint>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module Label = {
@@ -210,12 +216,15 @@ module Entities = {
     type t = {id: id, value: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("value") value?: Envio.whereOperator<string>}
+
+    type testIndexerRow = {...t, chainId: int}
+    type testIndexerGetWhereFilter = {...getWhereFilter, @as("chainId") chainId?: Envio.whereOperator<int>}
   }
 
-  type rec name<'entity, 'id> =
-    | @as("Counter") Counter: name<Counter.t, Counter.id>
-    | @as("GlobalCounter") GlobalCounter: name<GlobalCounter.t, GlobalCounter.id>
-    | @as("Label") Label: name<Label.t, Label.id>
+  type rec name<'entity, 'id, 'getWhereFilter> =
+    | @as("Counter") Counter: name<Counter.testIndexerRow, Counter.id, Counter.testIndexerGetWhereFilter>
+    | @as("GlobalCounter") GlobalCounter: name<GlobalCounter.testIndexerRow, GlobalCounter.id, GlobalCounter.testIndexerGetWhereFilter>
+    | @as("Label") Label: name<Label.testIndexerRow, Label.id, Label.testIndexerGetWhereFilter>
 }
 
 type chainId = [#1 | #137]
@@ -427,12 +436,6 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   set: 'entity => unit,
 }
 
-type testIndexerRowCounter = {...Entities.Counter.t, chainId: int}
-type testIndexerGetWhereFilterCounter = {...Entities.Counter.getWhereFilter, @as("chainId") chainId?: Envio.whereOperator<int>}
-
-type testIndexerRowLabel = {...Entities.Label.t, chainId: int}
-type testIndexerGetWhereFilterLabel = {...Entities.Label.getWhereFilter, @as("chainId") chainId?: Envio.whereOperator<int>}
-
 /** Test indexer type with process method, entity access, and chain info. */
 type testIndexer = {
   /** Process blocks for the specified chains and return progress with changes. */
@@ -441,12 +444,12 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"Counter": testIndexerEntityOperations<testIndexerRowCounter, testIndexerGetWhereFilterCounter>,
-  \"GlobalCounter": testIndexerEntityOperations<Entities.GlobalCounter.t, Entities.GlobalCounter.getWhereFilter>,
-  \"Label": testIndexerEntityOperations<testIndexerRowLabel, testIndexerGetWhereFilterLabel>,
+  \"Counter": testIndexerEntityOperations<Entities.Counter.testIndexerRow, Entities.Counter.testIndexerGetWhereFilter>,
+  \"GlobalCounter": testIndexerEntityOperations<Entities.GlobalCounter.testIndexerRow, Entities.GlobalCounter.testIndexerGetWhereFilter>,
+  \"Label": testIndexerEntityOperations<Entities.Label.testIndexerRow, Entities.Label.testIndexerGetWhereFilter>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

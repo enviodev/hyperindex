@@ -564,3 +564,74 @@ describe("Effect scope under the disabled default", () => {
     ))
   })
 })
+
+describe("Per-chain history prune", () => {
+  // The prune keeps, per (id, chain), the latest history row at or below the
+  // safe checkpoint — but only when that chain still has a row above it.
+  // Grouping by id alone would take one chain's anchor as the other's and
+  // delete the row a later rollback needs, which no assertion on the entity
+  // tables would reveal. The checkpoints are seeded directly so the safe point
+  // can sit between them.
+  Async.it("Keeps each chain's own anchor", async t => {
+    let {config} = InternalTestIndexer.fromUserApi(~schema, ~configYaml)
+    let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Counter")
+
+    let source1 = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#1)
+    let source137 = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#137)
+    // Creates the schema and the per-chain history table.
+    let indexerMock = await MockIndexer.Indexer.make(
+      ~config,
+      ~chains=[
+        {chain: #1, sourceConfig: Config.CustomSources([source1.source])},
+        {chain: #137, sourceConfig: Config.CustomSources([source137.source])},
+      ],
+      ~shouldRollbackOnReorg=false,
+    )
+    await Utils.delay(0)
+    source1.resolveGetHeightOrThrow(300)
+    source137.resolveGetHeightOrThrow(300)
+    await Utils.delay(0)
+    await Utils.delay(0)
+    await indexerMock.stop()
+
+    let sql = PgStorage.makeClient()
+    let pgSchema = Env.Db.publicSchema
+    let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
+
+    // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1
+    // sits entirely below it.
+    let _ = await sql->Postgres.unsafe(
+      `INSERT INTO "${pgSchema}"."${historyTable}"
+         ("id", "count", "chainId", "envio_checkpoint_id", "envio_change")
+       VALUES ('shared', 1, 137, 10, 'SET'),
+              ('shared', 2, 137, 40, 'SET'),
+              ('shared', 3, 1, 20, 'SET')`,
+    )
+
+    await EntityHistory.pruneStaleEntityHistory(
+      sql,
+      ~pgSchema,
+      ~entityName=entityConfig.name,
+      ~entityIndex=entityConfig.index,
+      ~chainIdColumn=entityConfig.table
+      ->Table.getChainIdField
+      ->Option.map(Table.getPgDbFieldName),
+      ~safeCheckpointId=30n,
+    )
+
+    let remaining: array<{"chainId": int, "envio_checkpoint_id": string}> =
+      await sql->Postgres.unsafe(
+        `SELECT "chainId", "envio_checkpoint_id"::text FROM "${pgSchema}"."${historyTable}"
+         ORDER BY "chainId", "envio_checkpoint_id"`,
+      )
+    let _ = await sql->Postgres.unsafe(`DELETE FROM "${pgSchema}"."${historyTable}"`)
+
+    t.expect(
+      remaining->Array.map(row => (row["chainId"], row["envio_checkpoint_id"])),
+    ).toEqual([
+      // Chain 137 keeps its anchor at 10 because it has a later row at 40.
+      (137, "10"),
+      (137, "40"),
+    ])
+  })
+})
