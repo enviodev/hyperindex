@@ -20,7 +20,6 @@ describe("Indexer smoke test", () => {
               "ChainAccount": {
                 "sets": [
                   {
-                    "chainId": 1,
                     "id": "0x0000000000000000000000000000000000000000",
                   },
                 ],
@@ -28,7 +27,6 @@ describe("Indexer smoke test", () => {
               "ChainTransfer": {
                 "sets": [
                   {
-                    "chainId": 1,
                     "from": "0x0000000000000000000000000000000000000000",
                     "id": "1-10861674-23",
                     "value": 1000000000000000000000000000n,
