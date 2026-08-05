@@ -466,6 +466,39 @@ describe("Per-chain ClickHouse writes", () => {
   })
 })
 
+// A relationship between two per-chain entities is only meaningful within one
+// chain. Hasura joins on the column_mapping alone, so the chain has to be in it.
+describe("Per-chain Hasura relationships", () => {
+  it("Joins on the chain id when both sides are per-chain", t => {
+    t.expect((
+      Hasura.makeColumnMapping(
+        ~relationalKey="counter_id",
+        ~isDerivedFrom=false,
+        ~chainIdColumn=Some("chainId"),
+      ),
+      Hasura.makeColumnMapping(
+        ~relationalKey="counter_id",
+        ~isDerivedFrom=true,
+        ~chainIdColumn=Some("chainId"),
+      ),
+    )).toEqual((
+      `{"counter_id": "id", "chainId": "chainId"}`,
+      `{"id": "counter_id", "chainId": "chainId"}`,
+    ))
+  })
+
+  it("Joins on the id alone when either side is cross-chain", t => {
+    t.expect((
+      Hasura.makeColumnMapping(
+        ~relationalKey="counter_id",
+        ~isDerivedFrom=false,
+        ~chainIdColumn=None,
+      ),
+      Hasura.makeColumnMapping(~relationalKey="counter_id", ~isDerivedFrom=true, ~chainIdColumn=None),
+    )).toEqual((`{"counter_id": "id"}`, `{"id": "counter_id"}`))
+  })
+})
+
 describe("Chain-id stamping", () => {
   let entity =
     {"id": "total", "count": 5n}->(Utils.magic: {"id": string, "count": bigint} => Internal.entity)

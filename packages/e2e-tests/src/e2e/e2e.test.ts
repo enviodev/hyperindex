@@ -366,6 +366,99 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
+  // The per-chain pair. Their tables carry a chain-id column in the primary
+  // key, spelled per backend: `chain_id` in Postgres (column_name_format:
+  // snake_case) and `chainId` in ClickHouse (the default format).
+  it("gives per-chain entities a chain-id column in both backends", async () => {
+    const pgColumns = await runPgSql(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'ChainTransfer'
+        ORDER BY column_name`
+    );
+    expect(pgColumns.map((r) => r[0])).toContain("chain_id");
+
+    const pgPrimaryKey = await runPgSql(
+      `SELECT a.attname FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = '"ChainTransfer"'::regclass AND i.indisprimary
+        ORDER BY a.attname`
+    );
+    expect(pgPrimaryKey.map((r) => r[0])).toEqual(["chain_id", "id"]);
+
+    const chColumns = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.columns
+        WHERE database = '${CH_DATABASE}' AND table = 'ChainTransfer'
+        FORMAT JSON`
+    );
+    expect(chColumns.data.map((r) => r.name)).toContain("chainId");
+  });
+
+  it("serves per-chain rows through ClickHouse deduped per (id, chain)", async () => {
+    const pgRows = await runPgSql(`SELECT count(*)::text FROM "ChainTransfer"`);
+    const pgCount = Number(pgRows[0]?.[0]);
+    expect(pgCount).toBeGreaterThan(0);
+
+    // The view dedups with LIMIT 1 BY (id, chainId); a dedup on id alone would
+    // collapse rows that differ only by chain.
+    const chRows = await queryClickHouse<
+      ClickHouseResult<{ c: string; chains: string }>
+    >(
+      `SELECT count() as c, uniqExact(chainId) as chains
+         FROM ${CH_DATABASE}.ChainTransfer FORMAT JSON`
+    );
+    expect({
+      rows: Number(chRows.data[0]?.c),
+      chains: Number(chRows.data[0]?.chains),
+    }).toEqual({ rows: pgCount, chains: 1 });
+  });
+
+  it("joins a per-chain relationship on the chain as well as the id", async () => {
+    // With the chain missing from the mapping the GraphQL query still
+    // succeeds — it just resolves to the wrong rows once a second chain
+    // exists — so assert the mapping Hasura was configured with.
+    const response = await fetch("http://localhost:8080/v1/metadata", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-hasura-admin-secret": "testing",
+      },
+      body: JSON.stringify({ type: "export_metadata", args: {} }),
+    });
+    const exported = (await response.json()) as {
+      sources?: Array<{
+        tables?: Array<{
+          table?: { name?: string };
+          array_relationships?: Array<{
+            name: string;
+            using?: {
+              manual_configuration?: {
+                column_mapping?: Record<string, string>;
+              };
+            };
+          }>;
+        }>;
+      }>;
+    };
+    const chainAccount = exported.sources
+      ?.flatMap((source) => source.tables ?? [])
+      .find((table) => table.table?.name === "ChainAccount");
+    const transfers = chainAccount?.array_relationships?.find(
+      (r) => r.name === "transfers"
+    );
+    expect(transfers?.using?.manual_configuration?.column_mapping).toEqual({
+      id: "from",
+      chain_id: "chain_id",
+    });
+
+    const result = await graphql.query<{
+      ChainAccount: Array<{ id: string; transfers: Array<{ id: string }> }>;
+    }>(`{ ChainAccount(limit: 1) { id transfers { id } } }`);
+    expect(result.data?.ChainAccount.length).toBe(1);
+    expect(result.data?.ChainAccount[0]?.transfers.length).toBeGreaterThan(0);
+  });
+
   it("should be able to query GraphQL schema", async () => {
     const result = await graphql.query<{
       __schema: { queryType: { name: string } };
