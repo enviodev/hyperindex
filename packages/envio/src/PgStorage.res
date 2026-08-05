@@ -140,10 +140,7 @@ let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =
             `Unexpected non-object schema for entity "${entityConfig.name}".`,
           )
         }
-        dict->Dict.set(
-          chainIdField.fieldName,
-          s.matches(ChainId.schema->S.toUnknown),
-        )
+        dict->Dict.set(chainIdField.fieldName, s.matches(ChainId.schema->S.toUnknown))
         dict
       })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>)
     }
@@ -390,12 +387,12 @@ let rec makeFilterCondition = (
 }
 
 // The chain-id predicate a per-chain entity's row-level SQL needs, already
-// including the leading AND. Empty for cross-chain entities and for internal
-// tables, which have no such column.
+// including the leading AND. The chain id is bound as $2 — after the id
+// params at $1 — so one prepared statement serves every chain. Empty for
+// cross-chain entities and for internal tables, which have no such column.
 let makeChainIdCondition = (~table: Table.table, ~chainId: option<ChainId.t>) =>
   switch (table->Table.getChainIdField, chainId) {
-  | (Some(field), Some(chainId)) =>
-    ` AND "${field->Table.getPgDbFieldName}" = ${chainId->ChainId.toString}`
+  | (Some(field), Some(_)) => ` AND "${field->Table.getPgDbFieldName}" = $2`
   | _ => ""
   }
 
@@ -833,16 +830,24 @@ let deleteByIdsOrThrow = async (
   ~chainId: option<ChainId.t>=None,
 ) => {
   let chainIdCondition = makeChainIdCondition(~table, ~chainId)
+  let chainIdParams = switch chainId {
+  | Some(chainId) if chainIdCondition !== "" => [chainId->(Utils.magic: ChainId.t => unknown)]
+  | _ => []
+  }
   // A JSON array of the serialized ids. For a single id the query binds it as
   // `$1` directly (the array is the positional-params array); for many it binds
-  // the whole array to `$1` behind an `ANY(...)`.
+  // the whole array to `$1` behind an `ANY(...)`. The chain id, when the
+  // condition needs it, rides along as $2.
   let idsJson = table->Table.encodeIdsToJson(ids)
   switch await (
     switch ids {
     | [_] =>
       sql->Postgres.preparedUnsafe(
         makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName, ~chainIdCondition),
-        idsJson->Obj.magic,
+        idsJson
+        ->(Utils.magic: JSON.t => array<unknown>)
+        ->Array.concat(chainIdParams)
+        ->Obj.magic,
       )
     | _ =>
       sql->Postgres.preparedUnsafe(
@@ -852,7 +857,7 @@ let deleteByIdsOrThrow = async (
           ~idPgType=table->Table.getIdPgFieldType(~pgSchema),
           ~chainIdCondition,
         ),
-        [idsJson]->Obj.magic,
+        [idsJson->(Utils.magic: JSON.t => unknown)]->Array.concat(chainIdParams)->Obj.magic,
       )
     }
   ) {
@@ -892,10 +897,11 @@ let makeInsertDeleteUpdatesQuery = (
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
   // The chain-id column is part of the history primary key, so a DELETE row
-  // carries the scope's chain rather than the NULL every other data field gets.
-  let (chainIdColumn, chainIdLiteral) = switch (entityConfig.table->Table.getChainIdField, chainId) {
-  | (Some(field), Some(chainId)) => (field->Table.getPgDbFieldName, chainId->ChainId.toString)
-  | _ => ("", "")
+  // carries the scope's chain — bound once as $3 — rather than the NULL every
+  // other data field gets.
+  let chainIdColumn = switch (entityConfig.table->Table.getChainIdField, chainId) {
+  | (Some(field), Some(_)) => field->Table.getPgDbFieldName
+  | _ => ""
   }
   let selectParts = allHistoryFieldNames->Array.map(fieldName => {
     switch fieldName {
@@ -904,7 +910,7 @@ let makeInsertDeleteUpdatesQuery = (
       `u.${EntityHistory.checkpointIdFieldName}`
     | field if field == EntityHistory.changeFieldName =>
       `'${(EntityHistory.RowAction.DELETE :> string)}'`
-    | field if chainIdColumn !== "" && field == chainIdColumn => chainIdLiteral
+    | field if chainIdColumn !== "" && field == chainIdColumn => "$3"
     | _ => "NULL"
     }
   })
@@ -1032,6 +1038,13 @@ let rec writeBatch = async (
       | _ => changes
       }
 
+      // Bound as $3 by the history-delete query, after its two unnest arrays.
+      // Empty for cross-chain entities, whose SQL has no such param.
+      let chainIdParams = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+      | (Some(_), Some(chainId)) => [chainId->(Utils.magic: ChainId.t => unknown)]
+      | _ => []
+      }
+
       // The rollback-diff change is written to the entity table only, never the
       // history table; when present it is an id's oldest change.
       let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
@@ -1112,10 +1125,16 @@ let rec writeBatch = async (
                 sql
                 ->Postgres.preparedUnsafe(
                   makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
-                  (
-                    entityConfig.table->Table.encodeIdsToJson(batchDeleteEntityIds),
-                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
-                  )->Obj.magic,
+                  [
+                    entityConfig.table
+                    ->Table.encodeIdsToJson(batchDeleteEntityIds)
+                    ->(Utils.magic: JSON.t => unknown),
+                    batchDeleteCheckpointIds
+                    ->Utils.BigInt.arrayToStringArray
+                    ->(Utils.magic: array<string> => unknown),
+                  ]
+                  ->Array.concat(chainIdParams)
+                  ->Obj.magic,
                 )
                 ->Utils.Promise.ignoreValue,
               )
@@ -1420,9 +1439,7 @@ let rollbackRowStateSchema: Table.table => S.t<(
 
 // The chain a rollback row belongs to, read from the chain-id column both
 // rollback queries select. None for a cross-chain entity, which has no column.
-let rollbackChainIdSchema: Table.table => option<
-  S.t<ChainId.t>,
-> = Utils.WeakMap.memoize(table =>
+let rollbackChainIdSchema: Table.table => option<S.t<ChainId.t>> = Utils.WeakMap.memoize(table =>
   table
   ->Table.getChainIdField
   ->Option.map(field => S.object(s => s.field(field->Table.getPgDbFieldName, ChainId.schema)))

@@ -141,7 +141,7 @@ let pruneStaleEntityHistory = (
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0
 // The ids belong to a single chain (the flush group's scope), so the chain is
-// pinned with a literal rather than unnested alongside them.
+// bound once as $2 rather than unnested alongside them.
 let makeBackfillHistoryQuery = (
   ~pgSchema,
   ~entityName,
@@ -152,7 +152,7 @@ let makeBackfillHistoryQuery = (
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let chainFilter = switch (chainIdColumn, chainId) {
-  | (Some(column), Some(chainId)) => ` AND e."${column}" = ${chainId->ChainId.toString}`
+  | (Some(column), Some(_)) => ` AND e."${column}" = $2`
   | _ => ""
   }
   `WITH target_ids AS (
@@ -179,6 +179,13 @@ let backfillHistory = (
   ~ids: array<EntityId.t>,
 ) => {
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
+  let chainIdColumn = table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+  let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
+  switch (chainIdColumn, chainId) {
+  | (Some(_), Some(chainId)) =>
+    params->Array.push(chainId->(Utils.magic: ChainId.t => unknown))->ignore
+  | _ => ()
+  }
   sql
   ->Postgres.preparedUnsafe(
     makeBackfillHistoryQuery(
@@ -186,10 +193,10 @@ let backfillHistory = (
       ~entityIndex,
       ~pgSchema,
       ~idPgType,
-      ~chainIdColumn=table->Table.getChainIdField->Option.map(Table.getPgDbFieldName),
+      ~chainIdColumn,
       ~chainId,
     ),
-    [table->Table.encodeIdsToJson(ids)]->(Utils.magic: array<JSON.t> => unknown),
+    params->Obj.magic,
   )
   ->Utils.Promise.ignoreValue
 }
