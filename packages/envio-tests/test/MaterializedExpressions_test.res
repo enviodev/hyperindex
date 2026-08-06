@@ -1,9 +1,10 @@
 // The expression and filter kinds the ERC-20 config doesn't reach: `_literal`,
-// `_json`, `_concat` over mixed types, and a `where` that survives compilation
-// as a runtime predicate.
+// `_concat` over mixed types, and a `where` that survives compilation as a
+// runtime predicate.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: materialized-expressions
+disable_default_cross_chain: true
 contracts:
   - name: ERC20
     events:
@@ -42,12 +43,6 @@ tables:
             - params.value
       kind:
         _literal: large
-      detail:
-        _json:
-          to: params.to
-          amounts:
-            - params.value
-            - 0
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -84,7 +79,7 @@ describe("Materialized expressions", () => {
         // \`_concat\` renders an Int, an address and a BigInt canonically.
         id: \`1/\${alice}/250\`,
         kind: "large",
-        detail: { to: alice, amounts: [250n, 0] },
+        chainId: 1,
       },
     ]);
   });

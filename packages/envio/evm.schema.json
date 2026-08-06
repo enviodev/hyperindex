@@ -278,16 +278,6 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "fields": {
-            "description": "Manual mode: field name to GraphQL type (e.g. `balance: BigInt!`). The table is written by handlers. Mutually exclusive with `select`.",
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
           "cross_chain": {
             "description": "Share one row across every chain instead of keeping the same id per chain. Only meaningful with `disable_default_cross_chain: true`.",
             "type": [
@@ -313,20 +303,24 @@
             ]
           },
           "where": {
-            "description": "Filter and type narrowing. Scalars are equality shorthand, sibling fields are ANDed, and `_and`/`_or` nest."
-          },
-          "select": {
-            "description": "The table's complete public shape. Plain strings are source paths; YAML numbers, booleans and null are literals. Mutually exclusive with `fields`.",
+            "description": "Field conditions, ANDed together. A scalar is equality shorthand (`eventName: Transfer`); an object is either a nested path (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of filters. `contractName` and `eventName` also narrow which events the table's paths are typed against.",
             "type": [
               "object",
               "null"
-            ],
+            ]
+          },
+          "select": {
+            "description": "The table's complete public shape. Plain strings are source paths; YAML numbers, booleans and null are literals.",
+            "type": "object",
             "additionalProperties": {
-              "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+              "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`)."
             }
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "required": [
+          "select"
+        ]
       }
     },
     "Queries": {
@@ -339,12 +333,16 @@
               "type": "string"
             },
             "where": {
-              "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+              "description": "Field conditions, ANDed together. A scalar is equality shorthand (`eventName: Transfer`); an object is either a nested path (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of filters. `contractName` and `eventName` also narrow which events the table's paths are typed against.",
+              "type": [
+                "object",
+                "null"
+              ]
             },
             "select": {
               "type": "object",
               "additionalProperties": {
-                "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+                "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`)."
               }
             }
           },
@@ -364,12 +362,16 @@
                 "type": "string"
               },
               "where": {
-                "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+                "description": "Field conditions, ANDed together. A scalar is equality shorthand (`eventName: Transfer`); an object is either a nested path (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of filters. `contractName` and `eventName` also narrow which events the table's paths are typed against.",
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "select": {
                 "type": "object",
                 "additionalProperties": {
-                  "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+                  "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`)."
                 }
               }
             },

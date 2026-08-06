@@ -8,10 +8,12 @@ open Vitest
 type account = {
   id: string,
   balance: bigint,
+  @as("chainId") chainId: int,
 }
 
 let configYaml = `
 name: materialized-rollback
+disable_default_cross_chain: true
 contracts:
   - name: ERC20
     events:
@@ -130,8 +132,8 @@ describe("Materialized reducer rollback", () => {
     await indexerMock.stop()
 
     t.expect(accounts->Array.toSorted((a, b) => String.compare(a.id, b.id))).toEqual([
-      {id: alice, balance: -5n},
-      {id: bob, balance: 5n},
+      {id: alice, balance: -5n, chainId: 1},
+      {id: bob, balance: 5n, chainId: 1},
     ])
   })
 

@@ -147,24 +147,6 @@ let rec compileExpr = (json: JSON.t): eval => {
       ->Array.map(part => part(event)->toText)
       ->Array.joinUnsafe(separator)
       ->(Utils.magic: string => unknown)
-  | "jsonObject" =>
-    let entries =
-      json
-      ->requireArray("entries")
-      ->Array.map(entry =>
-        switch entry {
-        | Array([String(key), value]) => (key, value->compileExpr)
-        | _ => throwInvalid("a `_json` object entry is not a [key, expression] pair.")
-        }
-      )
-    event => {
-      let object = Dict.make()
-      entries->Array.forEach(((key, value)) => object->Dict.set(key, value(event)))
-      object->(Utils.magic: dict<unknown> => unknown)
-    }
-  | "jsonArray" =>
-    let items = json->requireArray("items")->Array.map(compileExpr)
-    event => items->Array.map(item => item(event))->(Utils.magic: array<unknown> => unknown)
   | kind => throwInvalid(`\`${kind}\` is not a known materialization expression.`)
   }
 }

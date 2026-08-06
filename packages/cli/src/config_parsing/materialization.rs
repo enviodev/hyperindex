@@ -1,14 +1,15 @@
-//! `tables:` in config.yaml — table definitions that own both the schema and,
-//! for materialized tables, the writes.
+//! `tables:` in config.yaml — table definitions that own both their schema and
+//! their writes. A table declares `from` + `select` and is maintained by the
+//! runtime with no handler code; tables handlers write stay in schema.graphql.
 //!
-//! A table is either manual (`fields`, written by handlers) or materialized
-//! (`from`/`select`, written by the runtime with no handler code). Compilation
-//! turns the materialized ones into
+//! Compilation turns each one into
 //!   * GraphQL SDL, merged into the schema the rest of the pipeline already
 //!     consumes, so entity types, tables, Hasura and the generated TS types all
-//!     come out of the existing machinery, and
+//!     come out of the existing machinery,
 //!   * a flat list of write plans, one per (table, event, union branch), carried
-//!     to the runtime through the public config JSON.
+//!     to the runtime through the public config JSON, and
+//!   * the block/transaction fields each event has to fetch, attached to that
+//!     event rather than to the source, so an event no table reads pays nothing.
 //!
 //! Table-local CTEs (`with`) are inlined at compile time: a union branch's
 //! column expressions are substituted into the outer `select`, so the runtime
@@ -51,7 +52,35 @@ impl JsonSchema for RawYaml {
         json_schema!({
             "description": "A source path (\"params.owner\"), a YAML literal, or a structured \
                             expression whose single key is an operator (`_literal`, `_negate`, \
-                            `_sum`, `_concat`, `_ref`, `_derived_from`, `_json`)."
+                            `_sum`, `_concat`, `_ref`, `_derived_from`)."
+        })
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+}
+
+/// A `where` clause, kept unparsed for the same reason as `RawYaml`. Separate
+/// only so editors describe a filter as a filter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RawFilter(pub Yaml);
+
+impl JsonSchema for RawFilter {
+    fn schema_name() -> Cow<'static, str> {
+        "MaterializationFilter".into()
+    }
+
+    fn json_schema(_gen: &mut SchemaGenerator) -> JsonSchemaSchema {
+        json_schema!({
+            "type": "object",
+            "description": "Field conditions, ANDed together. A scalar is equality shorthand \
+                            (`eventName: Transfer`); an object is either a nested path \
+                            (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, \
+                            `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of \
+                            filters. `contractName` and `eventName` also narrow which events the \
+                            table's paths are typed against."
         })
     }
 
@@ -85,13 +114,6 @@ impl JsonSchema for Tables {
 pub struct TableConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        with = "Option<BTreeMap<String, String>>",
-        description = "Manual mode: field name to GraphQL type (e.g. `balance: BigInt!`). The \
-                       table is written by handlers. Mutually exclusive with `select`."
-    )]
-    pub fields: Option<IndexMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
         description = "Share one row across every chain instead of keeping the same id per chain. \
                        Only meaningful with `disable_default_cross_chain: true`."
     )]
@@ -110,18 +132,13 @@ pub struct TableConfig {
     )]
     pub from: Option<String>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
+    pub filter: Option<RawFilter>,
     #[schemars(
-        description = "Filter and type narrowing. Scalars are equality shorthand, sibling fields \
-                       are ANDed, and `_and`/`_or` nest."
-    )]
-    pub filter: Option<RawYaml>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        with = "Option<BTreeMap<String, RawYaml>>",
+        with = "BTreeMap<String, RawYaml>",
         description = "The table's complete public shape. Plain strings are source paths; YAML \
-                       numbers, booleans and null are literals. Mutually exclusive with `fields`."
+                       numbers, booleans and null are literals."
     )]
-    pub select: Option<IndexMap<String, RawYaml>>,
+    pub select: IndexMap<String, RawYaml>,
 }
 
 /// One or many queries. A bare mapping is the single-branch shorthand.
@@ -179,7 +196,7 @@ pub struct Query {
     #[schemars(description = "Source to read from. Currently only `evm.events`.")]
     pub from: String,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
-    pub filter: Option<RawYaml>,
+    pub filter: Option<RawFilter>,
     #[schemars(with = "BTreeMap<String, RawYaml>")]
     pub select: IndexMap<String, RawYaml>,
 }
@@ -388,10 +405,6 @@ enum CExpr {
         separator: Option<String>,
         values: Vec<CExpr>,
     },
-    #[serde(rename = "jsonObject")]
-    JsonObject { entries: Vec<(String, CExpr)> },
-    #[serde(rename = "jsonArray")]
-    JsonArray { items: Vec<CExpr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -545,10 +558,9 @@ pub struct Compiled {
     /// GraphQL SDL for every table declared in `tables`.
     pub sdl: String,
     pub materializations: Vec<Materialization>,
-    /// Block fields the materializations read, so they get fetched.
-    pub block_fields: BTreeSet<String>,
-    /// Transaction fields the materializations read.
-    pub transaction_fields: BTreeSet<String>,
+    /// Per-event block/transaction fields the materializations read, so each
+    /// event fetches exactly what its tables select.
+    pub field_demand: DemandByEvent,
 }
 
 //
@@ -621,11 +633,31 @@ fn descend_abi<'a>(abi: &'a AbiType, segment: &str) -> Option<&'a AbiType> {
     }
 }
 
-/// What a resolved path costs in fetched data.
+/// What one event's resolved paths cost in fetched data.
 #[derive(Default)]
-struct Demand {
-    block: BTreeSet<String>,
-    transaction: BTreeSet<String>,
+pub struct Demand {
+    pub block: BTreeSet<String>,
+    pub transaction: BTreeSet<String>,
+}
+
+/// Field demand keyed by the event that carries it, so each `events:` entry
+/// selects only what the tables reading it actually touch, rather than every
+/// event on every contract paying for the widest selection.
+#[derive(Default)]
+pub struct DemandByEvent(pub BTreeMap<(String, String), Demand>);
+
+impl DemandByEvent {
+    fn merge(&mut self, contract_name: &str, event_name: &str, from: Demand) {
+        if from.block.is_empty() && from.transaction.is_empty() {
+            return;
+        }
+        let into = self
+            .0
+            .entry((contract_name.to_string(), event_name.to_string()))
+            .or_default();
+        into.block.extend(from.block);
+        into.transaction.extend(from.transaction);
+    }
 }
 
 impl Shape<'_> {
@@ -941,12 +973,11 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
             ty: Ty::new(Scalar::Null),
         }),
         Yaml::Sequence(_) => Err(anyhow!(
-            "a list is not an expression. Use `_concat` to join values, or `_json` to build a \
-             JSON array."
+            "a list is not an expression. Use `_concat` to join values."
         )),
         Yaml::Mapping(_) => Err(anyhow!(
             "an object is only an expression when its single key is an operator like `_literal`, \
-             `_negate`, `_sum`, `_concat`, `_ref` or `_json`."
+             `_negate`, `_sum`, `_concat` or `_ref`."
         )),
         Yaml::Tagged(tagged) => compile_expr(&tagged.value, ctx, demand),
     }
@@ -1055,10 +1086,6 @@ fn compile_operator(
                 ty: Ty::new(Scalar::String),
             })
         }
-        "_json" => Ok(Typed {
-            expr: compile_json(inner, ctx, demand).context("in `_json`")?,
-            ty: Ty::new(Scalar::Json),
-        }),
         "_sum" => Err(anyhow!(
             "`_sum` is a reducer, so it can only be a top-level field of `select`"
         )),
@@ -1070,34 +1097,6 @@ fn compile_operator(
              `select`"
         )),
         other => Err(anyhow!("`{other}` is not a known operator")),
-    }
-}
-
-/// Inside `_json` an object builds a JSON object and a list a JSON array, so
-/// keys don't have to be operators.
-fn compile_json(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<CExpr> {
-    match value {
-        Yaml::Mapping(map) if as_operator(value)?.is_none() => {
-            let mut entries = Vec::with_capacity(map.len());
-            for (key, item) in map {
-                let key = yaml_string(key, "a `_json` object key")?;
-                let item = compile_json(item, ctx, demand)
-                    .with_context(|| format!("in `_json` key `{key}`"))?;
-                entries.push((key, item));
-            }
-            Ok(CExpr::JsonObject { entries })
-        }
-        Yaml::Sequence(items) => {
-            let mut compiled = Vec::with_capacity(items.len());
-            for (index, item) in items.iter().enumerate() {
-                compiled.push(
-                    compile_json(item, ctx, demand)
-                        .with_context(|| format!("in `_json` item {index}"))?,
-                );
-            }
-            Ok(CExpr::JsonArray { items: compiled })
-        }
-        other => Ok(compile_expr(other, ctx, demand)?.expr),
     }
 }
 
@@ -1450,7 +1449,7 @@ pub fn compile(
 
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
-    let mut demand = Demand::default();
+    let mut demand = DemandByEvent::default();
 
     for (table_name, table) in &tables.0 {
         let compiled = compile_table(
@@ -1476,8 +1475,7 @@ pub fn compile(
     Ok(Compiled {
         sdl,
         materializations,
-        block_fields: demand.block,
-        transaction_fields: demand.transaction,
+        field_demand: demand,
     })
 }
 
@@ -1502,49 +1500,14 @@ fn compile_table(
     contracts: &BTreeMap<String, &Contract>,
     block_field_types: &BTreeMap<String, Ty>,
     transaction_field_types: &BTreeMap<String, Ty>,
-    demand: &mut Demand,
+    demand: &mut DemandByEvent,
 ) -> Result<(TableSchema, Vec<Materialization>)> {
-    match (&table.fields, &table.select) {
-        (Some(_), Some(_)) => {
-            return Err(anyhow!(
-                "`fields` and `select` are mutually exclusive: `fields` declares a table handlers \
-                 write, `select` one the indexer materializes."
-            ))
-        }
-        (None, None) => {
-            return Err(anyhow!(
-                "a table needs either `fields` (written by handlers) or `from` + `select` \
-                 (materialized)."
-            ))
-        }
-        (Some(fields), None) => {
-            if table.from.is_some() || table.with.is_some() || table.filter.is_some() {
-                return Err(anyhow!(
-                    "`from`, `with` and `where` only apply to a materialized table, which is \
-                     declared with `select` instead of `fields`."
-                ));
-            }
-            if !fields.contains_key("id") {
-                return Err(anyhow!("every table must declare an `id` field"));
-            }
-            return Ok((
-                TableSchema {
-                    name: table_name.to_string(),
-                    cross_chain: table.cross_chain.unwrap_or(false),
-                    fields: fields
-                        .iter()
-                        .map(|(name, gql_type)| (name.clone(), gql_type.clone(), None))
-                        .collect(),
-                },
-                vec![],
-            ));
-        }
-        (None, Some(_)) => (),
-    }
-
-    let select = table.select.as_ref().expect("checked above");
+    let select = &table.select;
     let from = table.from.as_deref().ok_or_else(|| {
-        anyhow!("a materialized table needs `from`, e.g. `from: {EVM_EVENTS_SOURCE}`")
+        anyhow!(
+            "a table needs `from` to say what it is materialized from, e.g. `from: \
+             {EVM_EVENTS_SOURCE}`"
+        )
     })?;
     if !select.contains_key("id") {
         return Err(anyhow!("every table must select an `id`"));
@@ -1649,12 +1612,14 @@ fn compile_table(
             table_names,
         };
 
+        let mut branch_demand = Demand::default();
         let mut resolved = Vec::with_capacity(select.len());
         for (field_name, value) in select {
-            let selected = compile_selected(&value.0, &ctx, demand)
+            let selected = compile_selected(&value.0, &ctx, &mut branch_demand)
                 .with_context(|| format!("in `select.{field_name}`"))?;
             resolved.push((field_name.clone(), selected));
         }
+        demand.merge(&branch.contract_name, &branch.event_name, branch_demand);
 
         let shapes: Vec<FieldShape> = resolved
             .iter()
@@ -1840,7 +1805,7 @@ fn compile_relation(
     contracts: &BTreeMap<String, &Contract>,
     block_field_types: &BTreeMap<String, Ty>,
     transaction_field_types: &BTreeMap<String, Ty>,
-    demand: &mut Demand,
+    demand: &mut DemandByEvent,
 ) -> Result<(Vec<Branch>, Option<(String, IndexMap<String, Ty>)>)> {
     if queries.0.is_empty() {
         return Err(anyhow!(
@@ -1904,13 +1869,16 @@ fn compile_relation(
                 substitutions: None,
                 table_names,
             };
+            let mut branch_demand = Demand::default();
             let mut columns: IndexMap<String, Typed> = IndexMap::new();
             for (column_name, value) in &query.select {
-                let typed = compile_expr(&value.0, &ctx, demand).with_context(|| {
-                    format!("in `with.{relation_name}[{query_index}].select.{column_name}`")
-                })?;
+                let typed =
+                    compile_expr(&value.0, &ctx, &mut branch_demand).with_context(|| {
+                        format!("in `with.{relation_name}[{query_index}].select.{column_name}`")
+                    })?;
                 columns.insert(column_name.clone(), typed);
             }
+            demand.merge(&contract_name, &event_name, branch_demand);
 
             match &mut column_types {
                 None => {
@@ -1977,7 +1945,7 @@ fn resolve_event_branches(
     contracts: &BTreeMap<String, &Contract>,
     block_field_types: &BTreeMap<String, Ty>,
     transaction_field_types: &BTreeMap<String, Ty>,
-    demand: &mut Demand,
+    demand: &mut DemandByEvent,
     table_names: &[String],
 ) -> Result<Vec<(String, String, Option<CFilter>)>> {
     let mut named = (BTreeSet::new(), BTreeSet::new());
@@ -2023,21 +1991,22 @@ fn resolve_event_branches(
                     // Field demand is only real for branches that survive, so
                     // it is collected into a scratch set and merged on success.
                     let mut branch_demand = Demand::default();
-                    match evaluate(
+                    let residual = evaluate(
                         condition,
                         contract_name,
                         &event.name,
                         &shape,
                         &mut branch_demand,
                         table_names,
-                    )? {
+                    )?;
+                    match residual {
                         Residual::False => continue,
                         Residual::True => {
-                            merge_demand(demand, branch_demand);
+                            demand.merge(contract_name, &event.name, branch_demand);
                             None
                         }
                         Residual::Unknown(filter) => {
-                            merge_demand(demand, branch_demand);
+                            demand.merge(contract_name, &event.name, branch_demand);
                             Some(filter)
                         }
                     }
@@ -2047,11 +2016,6 @@ fn resolve_event_branches(
         }
     }
     Ok(branches)
-}
-
-fn merge_demand(into: &mut Demand, from: Demand) {
-    into.block.extend(from.block);
-    into.transaction.extend(from.transaction);
 }
 
 /// `_ref` and `_derived_from` name tables, and the generated SDL uses those
@@ -2085,6 +2049,7 @@ mod test {
 
     const ERC20_YAML: &str = r#"
 name: erc20-indexer
+disable_default_cross_chain: true
 contracts:
   - name: ERC20
     events:
@@ -2330,6 +2295,7 @@ tables:
     fn compiles_nested_boolean_filters_into_a_runtime_residual() {
         let yaml = r#"
 name: t
+disable_default_cross_chain: true
 contracts:
   - name: ERC20
     events:
@@ -2381,63 +2347,41 @@ tables:
                 "fields": [{"name": "value", "op": "set", "expr": {"kind": "path", "path": ["params", "value"]}}]
             }])
         );
-        // Selecting `transaction.hash` is what makes it get fetched.
+        // Selecting `transaction.hash` is what makes it get fetched — and it
+        // lands on the event that carries it, not on every event globally.
+        let event = &config
+            .get_contract(&"ERC20".to_string())
+            .expect("ERC20")
+            .events[0];
         assert_eq!(
-            config
-                .field_selection
-                .transaction_fields
-                .iter()
-                .map(|f| f.name.clone())
-                .collect::<Vec<_>>(),
-            vec!["hash".to_string()]
+            event.field_selection.as_ref().map(|selection| (
+                selection
+                    .block_fields
+                    .iter()
+                    .map(|f| f.name.clone())
+                    .collect::<Vec<_>>(),
+                selection
+                    .transaction_fields
+                    .iter()
+                    .map(|f| f.name.clone())
+                    .collect::<Vec<_>>()
+            )),
+            Some((vec![], vec!["hash".to_string()]))
         );
+        assert!(config.field_selection.transaction_fields.is_empty());
     }
 
+    // Shared rows across chains would make the same id on two chains collide,
+    // which for a token indexer silently merges balances.
     #[test]
-    fn rejects_a_table_that_is_both_manual_and_materialized() {
-        let yaml = ERC20_YAML.replace(
-            "  approvals:\n    from: evm.events",
-            "  approvals:\n    fields:\n      id: ID!\n    from: evm.events",
-        );
+    fn requires_per_chain_entities() {
+        let yaml = ERC20_YAML.replace("disable_default_cross_chain: true\n", "");
+        let error = parse_error(&yaml);
         assert!(
-            parse_error(&yaml).contains("mutually exclusive"),
-            "{}",
-            parse_error(&yaml)
+            error.contains("`tables` needs `disable_default_cross_chain: true`")
+                && error.contains("`cross_chain: true`"),
+            "{error}"
         );
-    }
-
-    #[test]
-    fn manual_tables_declare_their_own_fields() {
-        let yaml = r#"
-name: t
-contracts:
-  - name: ERC20
-    events:
-      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: ERC20
-        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
-tables:
-  totals:
-    fields:
-      id: ID!
-      total: BigInt!
-"#;
-        let config = parse(yaml).expect("manual table should compile");
-        assert_eq!(
-            config
-                .get_entity(&"totals".to_string())
-                .expect("totals")
-                .get_fields()
-                .iter()
-                .map(|f| format!("{}: {}", f.name, f.field_type))
-                .collect::<Vec<_>>(),
-            vec!["id: ID!".to_string(), "total: BigInt!".to_string()]
-        );
-        assert!(config.materializations.is_empty());
     }
 
     #[test]
@@ -2459,6 +2403,7 @@ mod expression_test {
         format!(
             r#"
 name: t
+disable_default_cross_chain: true
 contracts:
   - name: ERC20
     events:
@@ -2534,10 +2479,10 @@ tables:
         );
     }
 
-    // `_literal` is the only way to write a string constant, and `_json` builds a
-    // Json column from a nested structure of expressions.
+    // `_literal` is the only way to write a string constant: a plain string is a
+    // source path, so a typo can't silently become data.
     #[test]
-    fn compiles_literals_and_json_structures() {
+    fn compiles_a_string_literal() {
         let yaml = config_with(
             r#"    from: evm.events
     where:
@@ -2545,17 +2490,9 @@ tables:
     select:
       id: params.from
       kind:
-        _literal: transfer
-      detail:
-        _json:
-          to: params.to
-          amounts:
-            - params.value
-            - 1
-          note:
-            _literal: seen"#,
+        _literal: transfer"#,
         );
-        let config = parse(&yaml).expect("literals and json should compile");
+        let config = parse(&yaml).expect("literals should compile");
         let public: serde_json::Value =
             serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
                 .expect("valid json");
@@ -2563,28 +2500,77 @@ tables:
             public["entities"][0]["properties"],
             serde_json::json!([
                 {"name": "id", "type": "string"},
-                {"name": "kind", "type": "string"},
-                {"name": "detail", "type": "json"}
+                {"name": "kind", "type": "string"}
             ])
         );
         assert_eq!(
             serde_json::to_value(&config.materializations[0].fields).expect("serializable"),
             serde_json::json!([
-                {"name": "kind", "op": "set", "expr": {"kind": "string", "value": "transfer"}},
+                {"name": "kind", "op": "set", "expr": {"kind": "string", "value": "transfer"}}
+            ])
+        );
+    }
+
+    // Fetch demand is per event, not per source: an event no table reads keeps
+    // paying nothing, and one that is read adds its fields on top of whatever
+    // the global `field_selection` already asked for.
+    #[test]
+    fn adds_field_demand_only_to_the_events_that_carry_it() {
+        let yaml = r#"
+name: t
+disable_default_cross_chain: true
+field_selection:
+  transaction_fields:
+    - gasPrice
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+      - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  transfers:
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: transaction.hash
+      miner: block.miner
+"#;
+        let config = parse(yaml).expect("per-event demand should compile");
+        let public: serde_json::Value =
+            serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
+                .expect("valid json");
+        let events = &public["evm"]["contracts"]["ERC20"]["events"];
+        assert_eq!(
+            events,
+            &serde_json::json!([
                 {
-                    "name": "detail",
-                    "op": "set",
-                    "expr": {
-                        "kind": "jsonObject",
-                        "entries": [
-                            ["to", {"kind": "path", "path": ["params", "to"]}],
-                            ["amounts", {"kind": "jsonArray", "items": [
-                                {"kind": "path", "path": ["params", "value"]},
-                                {"kind": "int", "value": 1}
-                            ]}],
-                            ["note", {"kind": "string", "value": "seen"}]
-                        ]
-                    }
+                    "name": "Transfer",
+                    "sighash": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "params": [
+                        {"name": "from", "abiType": "address", "indexed": true},
+                        {"name": "to", "abiType": "address", "indexed": true},
+                        {"name": "value", "abiType": "uint256"}
+                    ],
+                    // Its own two fields, plus the global `gasPrice` it would
+                    // have inherited had it not overridden the selection.
+                    "blockFields": ["miner"],
+                    "transactionFields": ["gasPrice", "hash"]
+                },
+                {
+                    "name": "Approval",
+                    "sighash": "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+                    "params": [
+                        {"name": "owner", "abiType": "address", "indexed": true},
+                        {"name": "spender", "abiType": "address", "indexed": true},
+                        {"name": "value", "abiType": "uint256"}
+                    ]
                 }
             ])
         );
@@ -2620,8 +2606,7 @@ tables:
       id: params.from
       last:
         _sum: params.value"#,
-        )
-        .replace("name: t", "name: t\ndisable_default_cross_chain: true");
+        );
         let config = parse(&yaml).expect("cross_chain table should compile");
         let public: serde_json::Value =
             serde_json::from_str(&config.to_public_config_json(false).expect("public config"))

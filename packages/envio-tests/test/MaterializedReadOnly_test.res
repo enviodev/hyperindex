@@ -1,10 +1,11 @@
 // A materialized table is derived from its `select`, so a handler write would be
 // silently reverted the next time the source event is reprocessed. Handlers can
-// read one; only the materializer writes it. A `fields` table alongside it stays
-// fully writable.
+// read one; only the materializer writes it. An entity from schema.graphql
+// alongside it stays fully writable.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: materialized-read-only
+disable_default_cross_chain: true
 contracts:
   - name: ERC20
     events:
@@ -25,10 +26,12 @@ tables:
       id: params.to
       received:
         _sum: params.value
-  notes:
-    fields:
-      id: ID!
-      note: String!
+`,
+  ~schema=`
+type Note {
+  id: ID!
+  note: String!
+}
 `,
   ~handlers=`
 import { indexer } from "envio";
@@ -36,7 +39,7 @@ import { indexer } from "envio";
 indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
   // Reading a materialized table from a handler is fine.
   const account = await context.Accounts.get(event.params.to);
-  context.Notes.set({
+  context.Note.set({
     id: event.params.to,
     note: account ? \`received \${account.received}\` : "unseen",
   });
@@ -75,10 +78,10 @@ describe("materialized tables are read-only from handlers", () => {
 
     t.expect({
       accounts: await indexer.Accounts.getAll(),
-      notes: await indexer.Notes.getAll(),
+      notes: await indexer.Note.getAll(),
     }).toEqual({
-      accounts: [{ id: alice, received: 5n }],
-      notes: [{ id: alice, note: "received 5" }],
+      accounts: [{ id: alice, received: 5n, chainId: 1 }],
+      notes: [{ id: alice, note: "received 5", chainId: 1 }],
     });
   });
 
@@ -89,7 +92,7 @@ describe("materialized tables are read-only from handlers", () => {
     );
 
     t.expect(message).toBe(
-      "context.Accounts.set() is unavailable: \`accounts\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to \`fields\` to write it from handlers."
+      "context.Accounts.set() is unavailable: \`accounts\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to schema.graphql to write it from handlers."
     );
   });
 });

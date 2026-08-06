@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: erc20-indexer
 description: ERC-20 Indexer
-# Entities and effect caches are per-chain: the same id on two chains is two
-# independent rows. Recommended for multichain indexers since v3.6.0. Opt a
-# single table back into a shared row with `cross_chain: true`, or an effect
-# with `crossChain: true`.
+# Tables and effect caches are per-chain: the same id on two chains is two
+# independent rows. Required by `tables`, since two chains' UNI balances must
+# not merge into one row. Opt a single table back into a shared row with
+# `cross_chain: true`, or an effect with `crossChain: true`.
 disable_default_cross_chain: true
 contracts:
   - name: ERC20
@@ -24,7 +24,7 @@ chains:
         address: "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74" #UNI
 # `tables` owns both the schema and the writes, so this indexer needs no
 # schema.graphql and no handlers. Every column's type is inferred from the
-# events it reads.
+# events it reads, and each event fetches only the fields its tables select.
 tables:
   accounts:
     with:

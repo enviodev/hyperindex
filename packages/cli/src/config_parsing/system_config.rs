@@ -118,9 +118,10 @@ trait ConfigSource {
     fn project_paths(&self) -> &ParsedProjectPaths;
     fn is_rescript(&self) -> bool;
     fn env_var(&mut self, name: &str) -> Option<String>;
-    /// `allow_missing` lets a project with a `tables:` config skip
-    /// schema.graphql entirely — but only when it didn't name one explicitly.
-    fn load_schema(&self, configured_path: &Option<String>, allow_missing: bool) -> Result<Schema>;
+    /// A project without schema.graphql has no entities, which is valid: its
+    /// tables may come from `tables:`, or it may have handlers that only call
+    /// effects. A path the config names explicitly still has to exist.
+    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
 }
@@ -155,8 +156,8 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         self.env.var(name)
     }
 
-    fn load_schema(&self, configured_path: &Option<String>, allow_missing: bool) -> Result<Schema> {
-        if allow_missing && configured_path.is_none() {
+    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema> {
+        if configured_path.is_none() {
             let default_path = path_utils::get_config_path_relative_to_root(
                 self.project_paths,
                 PathBuf::from(DEFAULT_SCHEMA_PATH),
@@ -250,11 +251,7 @@ impl ConfigSource for MemoryConfigSource<'_> {
         self.env.get(name).cloned()
     }
 
-    fn load_schema(
-        &self,
-        _configured_path: &Option<String>,
-        _allow_missing: bool,
-    ) -> Result<Schema> {
+    fn load_schema(&self, _configured_path: &Option<String>) -> Result<Schema> {
         match self.schema.map(str::trim) {
             None | Some("") => Ok(Schema::empty()),
             Some(schema) => Schema::from_string(schema),
@@ -1070,6 +1067,16 @@ impl SystemConfig {
                      only source a table can be materialized from."
                 ));
             }
+            if default_cross_chain {
+                return Err(anyhow!(
+                    "`tables` needs `disable_default_cross_chain: true` at the top of \
+                     config.yaml. Without it every table shares one row per id across all chains, \
+                     so the same id on two chains would collide — for a token indexer that \
+                     silently merges balances. Add:\n\n    disable_default_cross_chain: \
+                     true\n\nand mark any table that really is chain-independent with \
+                     `cross_chain: true`."
+                ));
+            }
         }
 
         let final_project_paths = source.project_paths().clone();
@@ -1561,10 +1568,41 @@ impl SystemConfig {
                 .extended_with(&compiled.sdl)
                 .context("Failed adding the tables from config.yaml to the schema")?;
             config.materializations = compiled.materializations;
-            if config.get_ecosystem() == Ecosystem::Evm {
-                config
+
+            // Fetch demand lands on the events the tables actually read, so an
+            // event no table touches keeps whatever selection it already had.
+            let global_selection = config.field_selection.clone();
+            let has_rpc_sync_src = match &config.human_config {
+                HumanConfig::Evm(evm_config) => {
+                    evm_config.chains.iter().any(evm_chain_has_rpc_sync_src)
+                }
+                _ => false,
+            };
+            for ((contract_name, event_name), demand) in compiled.field_demand.0 {
+                let contract = config.contracts.get_mut(&contract_name).ok_or_else(|| {
+                    anyhow!("Contract `{contract_name}` went missing while planning fetches")
+                })?;
+                let event = contract
+                    .events
+                    .iter_mut()
+                    .find(|event| event.name == event_name)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Event `{event_name}` went missing from `{contract_name}` while \
+                             planning fetches"
+                        )
+                    })?;
+                let base = event
                     .field_selection
-                    .extend_from_names(&compiled.block_fields, &compiled.transaction_fields)?;
+                    .as_ref()
+                    .unwrap_or(&global_selection)
+                    .clone();
+                event.field_selection = Some(
+                    base.with_added(&demand.block, &demand.transaction, has_rpc_sync_src)
+                        .with_context(|| {
+                            format!("Failed selecting fields for `{contract_name}.{event_name}`")
+                        })?,
+                );
             }
         }
 
@@ -1661,8 +1699,7 @@ impl SystemConfig {
             }
         };
 
-        let base = human_config.get_base_config();
-        let schema = source.load_schema(&base.schema, base.tables.is_some())?;
+        let schema = source.load_schema(&human_config.get_base_config().schema)?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -2889,35 +2926,60 @@ impl FieldSelection {
 
     /// Add the block/transaction fields a materialized table reads, so the
     /// source fetches them. Names are the camelCase ones config.yaml uses.
-    pub fn extend_from_names(
-        &mut self,
+    pub fn with_added(
+        &self,
         block_fields: &std::collections::BTreeSet<String>,
         transaction_fields: &std::collections::BTreeSet<String>,
-    ) -> Result<()> {
+        has_rpc_sync_src: bool,
+    ) -> Result<Self> {
+        use human_config::evm::{BlockField, TransactionField};
+        use strum::IntoEnumIterator;
+
         let all = Self::all_evm();
+        let mut selection = self.clone();
         for name in block_fields {
-            if !self.block_fields.iter().any(|f| &f.name == name) {
+            if has_rpc_sync_src {
+                let field = BlockField::iter()
+                    .find(|field| &field.to_string() == name)
+                    .ok_or_else(|| anyhow!("Unknown block field {name}"))?;
+                if RpcBlockField::try_from(field).is_err() {
+                    return Err(anyhow!(
+                        "`block.{name}` is unavailable when indexing via RPC"
+                    ));
+                }
+            }
+            if !selection.block_fields.iter().any(|f| &f.name == name) {
                 let field = all
                     .block_fields
                     .iter()
                     .find(|f| &f.name == name)
                     .ok_or_else(|| anyhow!("Unknown block field {name}"))?;
-                self.block_fields.push(field.clone());
+                selection.block_fields.push(field.clone());
             }
         }
         for name in transaction_fields {
-            if !self.transaction_fields.iter().any(|f| &f.name == name) {
+            if has_rpc_sync_src {
+                let field = TransactionField::iter()
+                    .find(|field| &field.to_string() == name)
+                    .ok_or_else(|| anyhow!("Unknown transaction field {name}"))?;
+                if RpcTransactionField::try_from(field).is_err() {
+                    return Err(anyhow!(
+                        "`transaction.{name}` is unavailable when indexing via RPC"
+                    ));
+                }
+            }
+            if !selection.transaction_fields.iter().any(|f| &f.name == name) {
                 let field = all
                     .transaction_fields
                     .iter()
                     .find(|f| &f.name == name)
                     .ok_or_else(|| anyhow!("Unknown transaction field {name}"))?;
-                self.transaction_fields.push(field.clone());
+                selection.transaction_fields.push(field.clone());
             }
         }
-        self.block_fields.sort();
-        self.transaction_fields.sort();
-        Ok(())
+        selection.block_fields.sort();
+        selection.transaction_fields.sort();
+        Ok(selection)
     }
 
     pub fn try_from_config_field_selection(

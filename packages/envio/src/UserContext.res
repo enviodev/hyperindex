@@ -171,7 +171,7 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
 // would be silently reverted the next time the source event is reprocessed.
 let throwMaterializedReadOnly = (entityConfig: Internal.entityConfig, op: string): 'a =>
   JsError.throwWithMessage(
-    `context.${entityConfig.name->Utils.String.capitalize}.${op}() is unavailable: \`${entityConfig.name}\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to \`fields\` to write it from handlers.`,
+    `context.${entityConfig.name->Utils.String.capitalize}.${op}() is unavailable: \`${entityConfig.name}\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to schema.graphql to write it from handlers.`,
   )
 
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
