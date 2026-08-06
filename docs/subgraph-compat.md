@@ -41,6 +41,7 @@ validation on `save()` · **0.0.9** `getBalance`/`hasCode`. Support ≥ 0.0.5.
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR) | ✅ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
+| Block handler's `ethereum.Block` arg | envio `onBlock` provides only `block.number` — other fields (`hash`, `timestamp`, …) → §7 error on access | ⚠️ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass (§4) | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload | ✅ |
@@ -56,8 +57,9 @@ semantics), stored entity references.
 
 Rewritten by the translator: `id: Bytes!` → `String` (lowercase 0x-hex at the
 boundary; envio only allows `ID`/`String`/`Int`/`BigInt` ids), `Int8` →
-`BigInt`, stored entity lists → `[String!]!` id arrays, `_Schema_ @fulltext`
-stripped.
+`BigInt` (Int8 is a 64-bit integer — `i64` in AS; envio's `Int` is 32-bit
+and JS numbers are only safe to 2^53, so `BigInt` is the lossless fit),
+stored entity lists → `[String!]!` id arrays, `_Schema_ @fulltext` stripped.
 
 §7 error: **interfaces** (`interface X` / `implements`) and
 **timeseries/aggregations** (`@entity(timeseries: true)`, `@aggregation`).
@@ -69,7 +71,7 @@ stripped.
 | `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides |
 | `Entity.load`, `store.get`, derived loaders, `getInBlock` | sync try-read; miss → suspend (§5). `getInBlock` never suspends: miss = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary |
-| `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` unavailable |
+| `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
 | `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend, only real failures → `{reverted: true}` |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
@@ -148,12 +150,11 @@ the runtime ships in the same package (§8).
   pending; abort; throw)`. Effect cache keys are already computed
   synchronously;
 - the replay loop itself as an internal `runSync(context, fn)` so core owns
-  round reset (`Aborted → Active`, clear pending), settle-and-rethrow, and
-  termination: a **progress check** (suspending on a key that was already
-  resolved this handler = non-determinism or eviction loop → immediate clear
-  error) plus a fixed high round cap (~10k) as backstop. Neither is
-  user-configurable — configurability would only mask non-deterministic
-  mappings.
+  round reset (`Aborted → Active`, clear pending) and settle-and-rethrow.
+  v1 has no termination guard — mappings are deterministic by graph-node's
+  rules, so every round makes progress. Later hardening (if needed): a
+  progress check (suspending on an already-resolved key = non-determinism or
+  eviction loop → clear error naming the handler and key).
 
 ## 6. AsyncLocalStorage scope
 
@@ -188,6 +189,8 @@ issues welcome a 👍 — demand drives prioritization):
 | GraphQL interfaces | translation (schema) |
 | Timeseries & aggregations | translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
+| `event.transactionLogIndex` | runtime, on access |
+| Block-handler `ethereum.Block` fields other than `number` | runtime, on access |
 
 ## 8. Implementation plan
 
@@ -198,8 +201,8 @@ issues welcome a 👍 — demand drives prioritization):
 2. Sync ops: `LoadLayer` sync try-entry-points; `getSync` / `getWhereSync` /
    sync effect caller traps in `UserContext.res`; status check in every op
    closure and trap. Internal-only — kept out of `index.d.ts` and docs.
-3. Internal `runSync` replay loop (round reset, allSettled, progress check +
-   fixed cap).
+3. Internal `runSync` replay loop (round reset, allSettled; no termination
+   guard in v1).
 4. Tests (rung 1, `packages/envio-tests`, `fromUserApi`): sync hit after
    `set`; miss→suspend→replay from DB; known-absent → sync `null`;
    `effectSync` incl. `cache: false`; caught suspend → next access aborts;
@@ -210,7 +213,9 @@ issues welcome a 👍 — demand drives prioritization):
 2. Manifest parser (all specVersions) + §7 error collection; network→chain-id
    table; synthesize `human_config` structs (events with ABI param names,
    `field_selection` from `receipt` + superset default, templates →
-   address-less contracts); handler entry → subgraph runtime.
+   address-less contracts); handler entry → subgraph runtime; embed the
+   parsed manifest in the public config JSON under a `subgraph` field
+   (extend `publicConfigSchema` in `Config.res`).
 3. Schema transform + §7 schema errors (interfaces, aggregations); write
    transformed schema under `.envio/`.
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
@@ -230,15 +235,22 @@ classes prove useful standalone.
    at load time from transformed schema + ABIs (entity classes → ALS +
    `getSync`/`set`; contract bindings → effects; template classes → register
    capture; `event.receipt.logs` getter → §7 error).
-3. Registration entry: read normalized manifest JSON from `.envio/`, import
-   mappings, register `onEvent`/`onBlock`/`contractRegister` wrappers around
-   `context.runSync`; per-round log buffering.
+3. Registration entry: read the manifest from the `subgraph` field of the
+   resolved public config JSON (`Config.getPublicConfigJson()` — the CLI
+   passes the parsed manifest through; no normalized copy in `.envio/`),
+   import mappings, register `onEvent`/`onBlock`/`contractRegister` wrappers
+   around `runSync`; per-round log buffering.
 4. Tests: rung 1 with real mapping sources through the shim; value-class unit
    tests against graph-ts fixtures.
 
 **D. End to end.** `scenarios/subgraph_test`: a real small subgraph project
 (e.g. gravatar) with factory + template + eth_call + block handler; run via
 `envio dev` path in CI; plus one fixture per §7 error asserting the message.
+Additionally, add an **"Envio Subgraph"** tool to
+[open-indexer-benchmark](https://github.com/enviodev/open-indexer-benchmark)
+that runs the benchmark's existing Subgraph case unmodified on HyperIndex —
+serving as both a realistic correctness fixture and a public perf
+comparison.
 
 Run after each phase: `cd packages/envio-tests && pnpm rescript && pnpm
 vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
@@ -247,4 +259,5 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 1. Core sync API: internal-only, for the subgraph runtime.
 2. Runtime home: `envio/subgraph` subpath inside the `envio` package (§8 C).
 3. `ens.nameByHash`: best-effort cached effect, `null` on miss/failure.
-4. Replay termination: progress check + fixed ~10k cap, not configurable.
+4. Replay termination guard: dropped for the first iteration (determinism
+   guarantees progress); progress check is possible later hardening.
