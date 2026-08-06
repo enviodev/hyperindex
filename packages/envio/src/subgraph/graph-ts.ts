@@ -315,6 +315,13 @@ export class TypedMap<K, V> {
     const entry = this.getEntry(key);
     return entry ? entry.value : null;
   }
+  mustGetEntry(key: K): TypedMapEntry<K, V> {
+    const entry = this.getEntry(key);
+    if (entry === null) {
+      throw new Error(`TypedMap does not contain an entry for key ${String(key)}`);
+    }
+    return entry;
+  }
   mustGet(key: K): V {
     const value = this.get(key);
     if (value === null) {

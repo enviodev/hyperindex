@@ -202,6 +202,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
+      # The shim has to stay assignable to the types a subgraph's mappings are
+      # compiled against; every known gap is recorded in conformance.ts.
+      - name: graph-ts conformance
+        working-directory: packages/envio
+        run: pnpm check-graph-ts
+
       - name: envio-tests
         working-directory: packages/envio-tests
         run: pnpm test
