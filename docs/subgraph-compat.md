@@ -223,6 +223,44 @@ only at the `store` boundary. Deny-unknown still holds: unknown members on
 generated classes fall through to the shim's `Entity`/`SmartContract` base
 prototypes, where the prototype-tail Proxy (§7) throws.
 
+## 6b. Tokens, RPC & extra settings
+
+subgraph.yaml has no place for provider config — graph-node keeps RPC in its
+own config, not the project. Three channels, by escalating need; none touch
+subgraph.yaml:
+
+| Need | Channel | Behavior |
+|---|---|---|
+| HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
+| RPC for sync fallback + contract calls | `ENVIO_RPC_URL` (comma-separated = ordered fallbacks) | optional; injected into the generated chain config as `for: fallback` and used by the shim's eth_call/`getBalance`/`hasCode`/`ipfs` effects |
+| Everything else | optional overlay file `envio.yaml` next to subgraph.yaml | full envio surface the manifest can't express: rpc entries with `for`/`ws`/`headers`/backoff, `hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`, effect rate limits, IPFS gateway |
+
+- **Precedence:** subgraph.yaml says *what* to index; `envio.yaml` says
+  *how*; env vars carry secrets/URLs. Overlay merges over the generated
+  config and wins; `${ENVIO_*}` interpolation works inside it; the same
+  deny-unknown parsing applies (§7 unknown error for unrecognized keys).
+- **One var for both RPC uses** — sync fallback and contract calls share
+  `ENVIO_RPC_URL` for a single mental model; split per-use only via the
+  overlay. Since a subgraph is single-network, no chain-id suffix is needed
+  (`ENVIO_RPC_URL_<CHAINID>` reserved for the composition future).
+- **Contract calls fail lazily but clearly.** Whether mappings call
+  contracts isn't statically knowable, so the first `ethereum.call` without
+  any RPC configured raises:
+
+  ```
+  This subgraph performs contract calls (Token.try_name()), which need an
+  RPC endpoint — HyperSync serves logs and blocks, not eth_call.
+  Set one in .env or the environment:
+    ENVIO_RPC_URL=https://...
+  or add per-chain RPC config in envio.yaml.
+  ```
+
+- **Missing token error** points at https://envio.dev/app/api-tokens with
+  the `.env` one-liner, same tone as the graph-cli setup error (§6a).
+- Translation pins `address_format: lowercase` (not envio's checksum
+  default): graph-ts renders addresses lowercase, and id/derived-key parity
+  depends on it. Not overridable.
+
 ## 7. Unsupported & unknown errors
 
 Two error kinds, one factory each, shared tail. Translation reports **all**
@@ -324,7 +362,8 @@ refuse instead, so behavior never silently diverges:
    `field_selection` from `receipt` + superset default, templates →
    address-less contracts); handler entry → subgraph runtime; embed the
    parsed manifest in the public config JSON under a `subgraph` field
-   (extend `publicConfigSchema` in `Config.res`).
+   (extend `publicConfigSchema` in `Config.res`); `.env` loading,
+   `ENVIO_RPC_URL` injection, and `envio.yaml` overlay merge (§6b).
 3. Schema transform + §7 schema errors (interfaces, aggregations); write
    transformed schema under `.envio/`.
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
