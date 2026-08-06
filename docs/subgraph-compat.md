@@ -42,7 +42,7 @@ validation on `save()` · **0.0.9** `getBalance`/`hasCode`. Support ≥ 0.0.5.
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
-| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched+cached HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
+| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass (§4) | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
@@ -93,7 +93,7 @@ trips it, so working subgraphs lose nothing.
 | `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it throws as the handler error (envio retries), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
-| Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: true`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts) |
+| Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
@@ -449,8 +449,10 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    real graph-ts declarations; value-class unit tests against graph-ts
    fixtures; `try_` revert → `{reverted: true}` vs transport failure →
    handler error; `Timestamp` micros ↔ date round-trip through the store;
-   `getBlockTimestamp` batching (one range query per round) and
-   `getInBlock` same-batch-earlier-block → `null`. **`SubgraphValidation_test.res`** in
+   `getBlockTimestamp` batching (one range query per round, and one fetch
+   per block across preload + execute despite `cache: false`) and
+   `getInBlock` same-batch-earlier-block → `null`.
+   **`SubgraphValidation_test.res`** in
    `packages/envio-tests`, patterned on `UserApiValidation_test.res` (an
    `expectSubgraphError` helper over a `fromSubgraph(~manifest, ~schema,
    ~mappings, ~files)` entry in `InternalTestIndexer`, asserting exact error
@@ -480,8 +482,10 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 4. Replay termination guard: dropped for the first iteration (determinism
    guarantees progress); progress check is possible later hardening.
 5. Block-handler `block.timestamp`: internal batched HyperSync effect
-   (pattern proven in all-contracts-indexer); `hash` and other fields stay
-   §7 errors — post-hoc fetches can't be made reorg-consistent.
+   (pattern proven in all-contracts-indexer), `cache: false` — read once
+   per block, so persisting it only bloats the effect cache table; `hash`
+   and other fields stay §7 errors — post-hoc fetches can't be made
+   reorg-consistent.
 6. `@entity(immutable: true)`: dropped, documented divergence (§3) — the
    write-once check only ever fires for mappings already broken on
    graph-node.
