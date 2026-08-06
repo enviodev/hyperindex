@@ -271,14 +271,16 @@ refuse instead, so behavior never silently diverges:
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
    snapshot the multi-error report (unsupported + unknown).
 
-**C. Subgraph runtime + graph-ts shim** — lives inside the `envio` package
-as an undocumented subpath export (`envio/subgraph`), source under
-`packages/envio/src/subgraph/`. Rationale: it consumes internal-only core
-APIs (decision above), so shipping in the same package guarantees lock-step
-versions — no peer-dep pinning, no version-skew errors, and nothing extra to
-install in a subgraph project that has no envio in its `package.json` to
-begin with. Split into its own package later only if the graph-ts value
-classes prove useful standalone.
+**C. Subgraph runtime + graph-ts shim** — lives inside the `envio` package,
+source under `packages/envio/src/subgraph/`, **not exposed at all**: no
+subpath export in `package.json`. Nothing outside the package ever imports
+it — `HandlerLoader.res` activates it internally when the resolved public
+config carries the `subgraph` field, the runtime registers its own resolve
+hook for `@graphprotocol/graph-ts`/`generated/*`, user mappings never import
+envio, and `envio-tests` reaches internals in-repo. Same-package shipping
+also guarantees lock-step versions with the internal core APIs it consumes —
+no peer-dep pinning, nothing extra to install in a subgraph project whose
+`package.json` doesn't mention envio.
 1. Value classes (BigInt, BigDecimal, Bytes, Address, TypedMap, JSONValue),
    `crypto`, `json`, `ethereum.encode/decode` — pure, no envio dependency.
 2. Node resolve hook: `@graphprotocol/graph-ts` + `generated/*` → shims built
@@ -315,7 +317,8 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 
 **Decisions**
 1. Core sync API: internal-only, for the subgraph runtime.
-2. Runtime home: `envio/subgraph` subpath inside the `envio` package (§8 C).
+2. Runtime home: inside the `envio` package, fully internal — no subpath
+   export (§8 C).
 3. `ens.nameByHash`: best-effort cached effect, `null` on miss/failure.
 4. Replay termination guard: dropped for the first iteration (determinism
    guarantees progress); progress check is possible later hardening.
