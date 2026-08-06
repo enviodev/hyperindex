@@ -544,3 +544,79 @@ type Gravatar @entity {
         );
     }
 }
+
+#[cfg(test)]
+mod project_tests {
+    use crate::config_parsing::system_config::SystemConfig;
+    use crate::project_paths::ParsedProjectPaths;
+    use std::fs;
+
+    /// A subgraph project has no config.yaml, so `subgraph.yaml` beside it is
+    /// what the CLI keys off — which is what makes `dev`/`start`/`codegen` work
+    /// inside one unchanged.
+    #[test]
+    fn parses_a_subgraph_project_from_disk() {
+        let dir = tempdir::TempDir::new("envio-subgraph").unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("abis")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("abis/Gravity.json"),
+            r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[{"name":"id","type":"uint256","indexed":false}]}]"#,
+        )
+        .unwrap();
+        fs::write(root.join("src/gravity.ts"), "export function handleNewGravatar() {}").unwrap();
+        fs::write(
+            root.join("schema.graphql"),
+            "type Gravatar @entity {\n  id: Bytes!\n  owner: Bytes!\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("subgraph.yaml"),
+            r#"
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Gravity
+    network: mainnet
+    source:
+      address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+      abi: Gravity
+      startBlock: 6175244
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Gravatar
+      abis:
+        - name: Gravity
+          file: ./abis/Gravity.json
+      eventHandlers:
+        - event: NewGravatar(uint256)
+          handler: handleNewGravatar
+      file: ./src/gravity.ts
+"#,
+        )
+        .unwrap();
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let json = config.to_public_config_json(false).unwrap();
+
+        assert_eq!(
+            (
+                config.subgraph.is_some(),
+                config.lowercase_addresses,
+                config.contracts.contains_key("Gravity"),
+                config.schema.entities.contains_key("Gravatar"),
+                json.contains("\"subgraph\""),
+                json.contains("\"mappingFile\": \"./src/gravity.ts\""),
+            ),
+            (true, true, true, true, true, true)
+        );
+    }
+}

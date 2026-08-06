@@ -7,6 +7,8 @@
  * replay loop reruns the mapping once what it asked for has landed.
  */
 
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
@@ -163,15 +165,51 @@ function toEthereumValue(value: unknown): any {
 }
 
 async function loadMapping(root: string, mappingFile: string): Promise<Record<string, any>> {
-  const absolute = path.resolve(root, mappingFile);
+  const url = pathToFileURL(path.resolve(root, mappingFile)).href;
   try {
-    return await import(pathToFileURL(absolute).href);
+    return await import(url);
   } catch (exn) {
     const message = exn instanceof Error ? exn.message : String(exn);
+    // A mapping importing the project's `generated/` is the only thing that
+    // makes codegen necessary, and this is exactly where that shows up.
+    if (/Cannot find (module|package)/.test(message) && message.includes("generated")) {
+      ensureGeneratedCode(root);
+      return await import(url);
+    }
     // An unknown named import fails at Node's ESM link step, before any Proxy
-    // in the shim can see it — rewrap it as the unknown error.
+    // in the shim can see it — rewrap it with the mapping that caused it.
+    throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`);
+  }
+}
+
+/**
+ * `generated/` is usually gitignored, so it's built with the project's own
+ * graph-cli — which makes the output identical to the user's normal workflow
+ * by definition.
+ */
+function ensureGeneratedCode(root: string) {
+  if (existsSync(path.join(root, "generated"))) return;
+
+  const graphCli = path.join(root, "node_modules", ".bin", "graph");
+  if (!existsSync(graphCli)) {
     throw new Error(
-      `Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`,
+      'Envio Subgraph needs the project\'s generated code, but "generated/" is\n' +
+        "missing and @graphprotocol/graph-cli isn't installed.\n" +
+        "Install dependencies and try again:\n" +
+        "  pnpm install\n" +
+        "Or generate manually:\n" +
+        "  pnpm exec graph codegen",
+    );
+  }
+
+  try {
+    execFileSync(graphCli, ["codegen"], { cwd: root, stdio: "inherit" });
+  } catch {
+    throw new Error(
+      'Envio Subgraph ran `graph codegen` to build "generated/", but it failed —\n' +
+        "the error above comes from The Graph's own codegen, so fix it there and\n" +
+        "rerun. If `graph codegen` succeeds on its own but fails through envio,\n" +
+        "please open an issue: https://github.com/enviodev/hyperindex/issues",
     );
   }
 }

@@ -1561,7 +1561,89 @@ impl SystemConfig {
         Ok(config)
     }
 
+    /// A subgraph project has no config.yaml: `subgraph.yaml` next to it is
+    /// what puts the CLI into subgraph mode, so `dev`, `start` and `codegen`
+    /// all work inside one unchanged.
+    fn parse_subgraph_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
+        let root = &project_paths.project_root;
+        let manifest_path = root.join("subgraph.yaml");
+        let manifest = std::fs::read_to_string(&manifest_path)
+            .context(format!("Failed to read {}", manifest_path.display()))?;
+
+        let mut env = EnvState::new(root);
+        let mut env_vars = HashMap::new();
+        for name in [crate::subgraph::RPC_ENV_VAR, crate::subgraph::API_TOKEN_ENV_VAR] {
+            if let Some(value) = env.var(name) {
+                env_vars.insert(name.to_string(), value);
+            }
+        }
+
+        // The manifest names its own schema file, so it's read before the
+        // translation rather than through the usual `schema:` config field.
+        let schema_file = serde_yaml::from_str::<serde_yaml::Value>(&manifest)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("schema")?
+                    .get("file")?
+                    .as_str()
+                    .map(|file| file.to_string())
+            })
+            .unwrap_or_else(|| "./schema.graphql".to_string());
+        let schema_path = root.join(&schema_file);
+        let schema = std::fs::read_to_string(&schema_path)
+            .context(format!("Failed to read {}", schema_path.display()))?;
+
+        // subgraph.yaml carries no name; the project directory supplies one.
+        let name = root
+            .canonicalize()
+            .ok()
+            .as_deref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("subgraph")
+            .to_string();
+
+        // ABI paths in the manifest are project-relative; the translation
+        // itself reads no files, so they're loaded up front. Findings from this
+        // parse are dropped — `parse_subgraph` reports them properly.
+        let mut files = HashMap::new();
+        let mut discard = crate::subgraph::errors::Report::new();
+        if let Some(parsed) = crate::subgraph::manifest::parse(&manifest, &mut discard) {
+            for source in parsed.all_sources() {
+                for abi_file in source.abis.values() {
+                    if let Ok(body) = std::fs::read_to_string(root.join(abi_file)) {
+                        // Manifests spell these with and without a leading
+                        // "./"; the lookup is by the string as written.
+                        files.insert(
+                            abi_file.trim_start_matches("./").to_string(),
+                            body.clone(),
+                        );
+                        files.insert(abi_file.clone(), body);
+                    }
+                }
+            }
+        }
+
+        let root_str = root.to_str().unwrap_or(".").to_string();
+        let mut config = Self::parse_subgraph(
+            &manifest,
+            &schema,
+            &name,
+            &env_vars,
+            &files,
+            &root_str,
+        )?;
+        config.parsed_project_paths = project_paths.clone();
+        Ok(config)
+    }
+
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
+        if !project_paths.config.exists() && project_paths.project_root.join("subgraph.yaml").exists()
+        {
+            return Self::parse_subgraph_from_project_files(project_paths);
+        }
+
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
                 "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
