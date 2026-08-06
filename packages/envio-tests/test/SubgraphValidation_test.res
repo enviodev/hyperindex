@@ -320,3 +320,35 @@ type Token @entity {
     ).toEqual((true, true, true))
   })
 })
+
+describe("subgraph translation: overloaded events", () => {
+  // Envio reads a unique event's parameters out of the ABI, so the bare name is
+  // enough; an overload isn't unique and has to be spelled out.
+  let manifest = manifestWith(`      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+        - event: Transfer(indexed address,indexed address,uint256,bytes)
+          handler: handleTransferData`)->String.replace("      abis: []", `      abis:
+        - name: Token
+          file: ./abis/Token.json`)
+
+  let files = Dict.fromArray([
+    (
+      "./abis/Token.json",
+      `[{"type":"event","name":"Transfer","anonymous":false,"inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"value","type":"uint256","indexed":false}]},{"type":"event","name":"Transfer","anonymous":false,"inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"id","type":"uint256","indexed":false},{"name":"data","type":"bytes","indexed":false}]}]`,
+    ),
+  ])
+
+  it("registers both overloads as distinct events", t => {
+    let {config} = InternalTestIndexer.fromSubgraph(~manifest, ~schema=baseSchema, ~files)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let contract = chain.contracts->Array.getUnsafe(0)
+    let names = contract.events->Array.map(event => event.name)
+    let ids = contract.events->Array.map(event => event.id)
+    // Distinct topic0s: the two overloads resolved to different ABI entries.
+    t.expect((names, ids->Array.getUnsafe(0) === ids->Array.getUnsafe(1))).toEqual((
+      ["Transfer", "Transfer_1"],
+      false,
+    ))
+  })
+})

@@ -1539,7 +1539,7 @@ impl SystemConfig {
     ) -> Result<Self> {
         let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
         let translation =
-            crate::subgraph::translate(manifest_yaml, schema_text, project_name, rpc_env, root)?;
+            crate::subgraph::translate(manifest_yaml, schema_text, project_name, rpc_env, root, files)?;
 
         // Declared eth_calls make the RPC requirement statically known, so a
         // missing endpoint fails here instead of mid-batch.

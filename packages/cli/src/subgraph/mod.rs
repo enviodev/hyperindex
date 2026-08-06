@@ -4,11 +4,12 @@
 //! config and the schema into an envio schema, and points the handler entry at
 //! the subgraph runtime that ships inside the `envio` package.
 
+pub mod abi;
 pub mod errors;
 pub mod manifest;
 pub mod schema;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -166,12 +167,57 @@ fn field_selection_for(receipt: bool) -> FieldSelection {
     }
 }
 
-fn contract_config(source: &DataSource, report: &mut Report) -> ContractConfig {
+fn contract_config(
+    source: &mut DataSource,
+    files: &HashMap<String, String>,
+    report: &mut Report,
+) -> ContractConfig {
+    let abi_path = source.abi.as_ref().and_then(|abi| source.abis.get(abi)).cloned();
+    let abi_json = abi_path.as_ref().and_then(|path| {
+        files
+            .get(path)
+            .or_else(|| files.get(path.trim_start_matches("./")))
+            .cloned()
+    });
+    let source_name = source.name.clone();
+
+    // An overloaded name needs a unique envio name as well as a spelled-out
+    // signature: the generated routing keys off the name, and the runtime has
+    // to register the handler under the same one.
+    let mut resolved: Vec<(String, Option<String>)> = Vec::new();
+    let mut ordinals: HashMap<String, usize> = HashMap::new();
+    for handler in source.event_handlers.iter_mut() {
+        if handler.name.is_empty() {
+            continue;
+        }
+        let base = handler.name.clone();
+        let event = abi::resolve_event(
+            &handler.event,
+            abi_json.as_deref(),
+            &format!(
+                "data source \"{source_name}\" → eventHandlers → \"{}\"",
+                handler.handler
+            ),
+            report,
+        );
+        let is_overload = event != base;
+        let ordinal = ordinals.entry(base.clone()).or_insert(0);
+        let unique = if *ordinal == 0 {
+            base.clone()
+        } else {
+            format!("{base}_{ordinal}")
+        };
+        *ordinal += 1;
+        handler.name = unique.clone();
+        resolved.push((event, is_overload.then_some(unique)));
+    }
+
     let events = source
         .event_handlers
         .iter()
         .filter(|handler| !handler.name.is_empty())
-        .map(|handler| {
+        .zip(resolved)
+        .map(|(handler, (event, name))| {
             if !handler.topics.is_empty() {
                 // Dynamic-typed indexed params appear in topics as keccak
                 // hashes, which can't be decoded back to the values envio
@@ -186,19 +232,15 @@ fn contract_config(source: &DataSource, report: &mut Report) -> ContractConfig {
                 );
             }
             EventConfig {
-                event: handler.name.clone(),
-                name: None,
+                event,
+                name,
                 field_selection: Some(field_selection_for(handler.receipt)),
             }
         })
         .collect();
 
     ContractConfig {
-        abi_file_path: source
-            .abi
-            .as_ref()
-            .and_then(|abi| source.abis.get(abi))
-            .cloned(),
+        abi_file_path: abi_path,
         // Every mapping is loaded by the subgraph runtime, not by envio's
         // per-contract handler resolution.
         handler: None,
@@ -213,6 +255,7 @@ pub fn translate(
     project_name: &str,
     rpc_env: Option<&str>,
     root: &str,
+    files: &HashMap<String, String>,
 ) -> Result<Translation> {
     let mut report = Report::new();
 
@@ -236,10 +279,11 @@ pub fn translate(
     let mut contracts: Vec<GlobalContract<ContractConfig>> = Vec::new();
     let mut chains: BTreeMap<u64, Chain> = BTreeMap::new();
 
-    for source in manifest.data_sources.iter() {
+    let mut manifest = manifest;
+    for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, &mut report),
+            config: contract_config(source, files, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -282,10 +326,10 @@ pub fn translate(
     } else {
         chains.keys().cloned().collect()
     };
-    for source in manifest.templates.iter() {
+    for source in manifest.templates.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, &mut report),
+            config: contract_config(source, files, &mut report),
         });
         let ids = match source.chain_id {
             Some(id) => vec![id],
@@ -413,7 +457,7 @@ type Gravatar @entity {
 
     #[test]
     fn builds_an_evm_config_from_a_manifest() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".").unwrap();
+        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new()).unwrap();
         let config = &translation.human_config;
         let chain = &config.chains[0];
         let contract_names: Vec<&str> = config
@@ -453,7 +497,7 @@ type Gravatar @entity {
 
     #[test]
     fn selects_receipt_fields_only_where_declared() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".").unwrap();
+        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new()).unwrap();
         let gravity = &translation.human_config.contracts.as_ref().unwrap()[0];
         let plain = gravity.config.events[0]
             .field_selection
@@ -489,6 +533,7 @@ type Gravatar @entity {
             "gravatar",
             Some(r#"{"url":"https://rpc.example.test","for":"fallback"}"#),
             ".",
+            &HashMap::new(),
         )
         .unwrap();
         assert_eq!(
@@ -531,6 +576,7 @@ type Gravatar @entity {
             "gravatar",
             None,
             ".",
+            &HashMap::new(),
         )
         .unwrap_err()
         .to_string();

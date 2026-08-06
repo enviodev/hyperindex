@@ -148,7 +148,9 @@ pub enum BlockFilter {
 pub struct EventHandler {
     /// The signature exactly as the manifest spells it, param names optional.
     pub event: String,
-    /// Event name, which is all envio needs when the ABI isn't overloaded.
+    /// The name the runtime registers this handler under. Equal to the event
+    /// name unless the ABI overloads it, when later overloads are suffixed so
+    /// envio's routing can tell them apart.
     pub name: String,
     pub handler: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
