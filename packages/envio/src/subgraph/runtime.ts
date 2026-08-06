@@ -114,78 +114,117 @@ function blockInterval(handler: BlockHandler): { every?: number; once?: boolean 
   return { every: 1 };
 }
 
-// envio runs each handler twice — once to preload, once to execute — over the
-// same payload. Converting it to graph-ts values is the same work both times.
-const graphEvents = new WeakMap<object, any>();
+const ADDRESS_HEX = /^0x[0-9a-fA-F]{40}$/;
+const ANY_HEX = /^0x[0-9a-fA-F]*$/;
 
-function graphEventFor(event: any, dataSourceName: string) {
-  const cached = graphEvents.get(event);
-  if (cached !== undefined) return cached;
-  const converted = makeEvent(event, dataSourceName);
-  graphEvents.set(event, converted);
-  return converted;
+type Converter = (value: unknown) => unknown;
+
+/** How one decoded value becomes its graph-ts counterpart. */
+function converterFor(value: unknown): Converter {
+  if (typeof value === "bigint") return (v) => new (GraphBigInt as any)(v as bigint);
+  if (typeof value === "string" && ADDRESS_HEX.test(value)) {
+    return (v) => Address.fromString(v as string);
+  }
+  if (typeof value === "string" && ANY_HEX.test(value)) {
+    return (v) => Bytes.fromHexString(v as string);
+  }
+  if (Array.isArray(value)) {
+    const each = value.length > 0 ? converterFor(value[0]) : (v: unknown) => v;
+    return (v) => (v as unknown[]).map(each);
+  }
+  return (v) => v;
 }
 
-/** The graph-ts `ethereum.Event` a mapping receives, over an envio event. */
-function makeEvent(event: any, dataSourceName: string) {
-  const params = Object.entries(event.params ?? {}).map(([name, value]) => ({
-    name,
-    value: toEthereumValue(value),
-  }));
+/**
+ * An event's parameter types don't vary between occurrences, so the shape is
+ * inspected once per event kind rather than per event.
+ */
+function convertersFor(cache: Map<string, Converter>, source: Record<string, unknown>) {
+  if (cache.size === 0) {
+    for (const [name, value] of Object.entries(source)) {
+      cache.set(name, converterFor(value));
+    }
+  }
+  return cache;
+}
 
+function convertAll(cache: Map<string, Converter>, source: Record<string, unknown>) {
+  const converters = convertersFor(cache, source);
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(source)) {
+    out[name] = (converters.get(name) ?? ((v: unknown) => v))(value);
+  }
+  return out;
+}
 
-  const block = new (ethereum as any).Block(
-    GraphBigInt.fromI32(event.block.number),
-    () => GraphBigInt.fromI32(event.block.timestamp),
-  );
+/**
+ * The graph-ts `ethereum.Event` a mapping sees, built per event kind so the
+ * refusals and conversions live on a prototype rather than being installed on
+ * every event.
+ *
+ * Everything is deferred: a mapping that reads two parameters shouldn't pay to
+ * convert the block, the transaction and the positional parameter list — and
+ * envio runs each handler twice over the same payload, so anything eager is
+ * paid twice.
+ */
+function makeEventClass(dataSourceName: string, eventName: string) {
+  const paramConverters = new Map<string, Converter>();
+  const transactionConverters = new Map<string, Converter>();
 
-  const wrapped: any = new (ethereum as any).Event(
-    Address.fromString(event.srcAddress),
-    GraphBigInt.fromI32(event.logIndex),
-    undefined as never,
-    block,
-    event.transaction ?? {},
-    params,
-  );
+  class SubgraphEvent {
+    _raw: any;
+    _address: any = undefined;
+    _logIndex: any = undefined;
+    _block: any = undefined;
+    _transaction: any = undefined;
+    _params: any = undefined;
+    _parameters: any = undefined;
 
-  // Known-but-refused: envio has no per-transaction log index, and
-  // `receipt.logs` can't be served from the selected receipt scalars.
-  Object.defineProperty(wrapped, "transactionLogIndex", {
-    get() {
+    constructor(raw: any) {
+      this._raw = raw;
+    }
+
+    get address() {
+      return (this._address ??= Address.fromString(this._raw.srcAddress));
+    }
+    get logIndex() {
+      return (this._logIndex ??= GraphBigInt.fromI32(this._raw.logIndex));
+    }
+    get block() {
+      return (this._block ??= new (ethereum as any).Block(
+        GraphBigInt.fromI32(this._raw.block.number),
+        () => GraphBigInt.fromI32(this._raw.block.timestamp),
+      ));
+    }
+    get transaction() {
+      return (this._transaction ??= convertAll(transactionConverters, this._raw.transaction ?? {}));
+    }
+    /** Read by name, the way a hand-written mapping does. */
+    get params() {
+      return (this._params ??= convertAll(paramConverters, this._raw.params ?? {}));
+    }
+    /** Read positionally, the way `graph codegen`'s param classes do. */
+    get parameters() {
+      return (this._parameters ??= Object.entries(this._raw.params ?? {}).map(([name, value]) => ({
+        name,
+        value: toEthereumValue(value),
+      })));
+    }
+    get transactionLogIndex(): never {
       throw unsupported(
         "event.transactionLogIndex",
-        `data source "${dataSourceName}" → a mapping handler`,
+        `data source "${dataSourceName}" → "${eventName}"`,
       );
-    },
-  });
-
-  // Generated event classes read `event.parameters` positionally; a mapping
-  // that skips codegen reads `event.params` by name. Both carry graph-ts
-  // values, not envio's raw scalars.
-  wrapped.parameters = params;
-  wrapped.params = Object.fromEntries(
-    Object.entries(event.params ?? {}).map(([name, value]) => [name, toGraphValue(value)]),
-  );
-  return wrapped;
-}
-
-/** envio's decoded event params -> the graph-ts values a mapping expects. */
-function toGraphValue(value: unknown): unknown {
-  if (typeof value === "bigint") return new (GraphBigInt as any)(value);
-  if (Array.isArray(value)) return value.map(toGraphValue);
-  if (typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value)) {
-    return Address.fromString(value);
+    }
   }
-  if (typeof value === "string" && /^0x[0-9a-fA-F]*$/.test(value)) {
-    return Bytes.fromHexString(value);
-  }
-  return value;
+
+  return SubgraphEvent;
 }
 
 function toEthereumValue(value: unknown): any {
   const V = (ethereum as any).Value;
   if (typeof value === "bigint") return V.fromBigInt(new (GraphBigInt as any)(value));
-  if (typeof value === "string" && /^0x[0-9a-fA-F]*$/.test(value)) {
+  if (typeof value === "string" && ANY_HEX.test(value)) {
     return V.fromBytes(Bytes.fromHexString(value));
   }
   if (typeof value === "string") return V.fromString(value);
@@ -411,6 +450,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         );
       }
 
+      // Parameter shapes are fixed per event kind, not per data source.
+      const SubgraphEvent = makeEventClass(source.name, handler.name);
+
       const makeScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
         context,
         event,
@@ -430,7 +472,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       indexer.onEvent(
         { contract: source.name, event: handler.name },
         async ({ event, context }: any) => {
-          const graphEvent = graphEventFor(event, source.name);
+          const graphEvent = new SubgraphEvent(event);
           await (context as any).runSync(() =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
           );
@@ -444,7 +486,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         indexer.contractRegister(
           { contract: source.name, event: handler.name },
           ({ event, context }: any) => {
-            const graphEvent = graphEventFor(event, source.name);
+            const graphEvent = new SubgraphEvent(event);
             const scope = makeScope(event, context, "register");
             installRegisterHook((templateName, address) => {
               context.chain[templateName].add(address);

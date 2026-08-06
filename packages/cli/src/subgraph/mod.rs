@@ -16,8 +16,8 @@ use serde::Serialize;
 
 use crate::config_parsing::human_config::{
     evm::{
-        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, HumanConfig,
-        Rpc, RpcSelection, TransactionField,
+        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, For,
+        HumanConfig, Rpc, RpcBlockField, RpcSelection, RpcTransactionField, TransactionField,
     },
     BaseConfig, ChainContract, GlobalContract,
 };
@@ -152,7 +152,7 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
-fn field_selection_for(receipt: bool) -> FieldSelection {
+fn field_selection_for(receipt: bool, rpc_only: bool) -> FieldSelection {
     let mut transaction_fields = DEFAULT_TRANSACTION_FIELDS.to_vec();
     if receipt {
         for field in RECEIPT_TRANSACTION_FIELDS {
@@ -161,15 +161,24 @@ fn field_selection_for(receipt: bool) -> FieldSelection {
             }
         }
     }
+    // An RPC serves a narrower set than HyperSync. Selecting a field it can't
+    // serve is rejected at config time, so a mapping indexing over RPC gets
+    // whatever RPC has rather than failing to start.
+    let mut block_fields = DEFAULT_BLOCK_FIELDS.to_vec();
+    if rpc_only {
+        transaction_fields.retain(|field| RpcTransactionField::try_from(field.clone()).is_ok());
+        block_fields.retain(|field| RpcBlockField::try_from(field.clone()).is_ok());
+    }
     FieldSelection {
         transaction_fields: Some(transaction_fields),
-        block_fields: Some(DEFAULT_BLOCK_FIELDS.to_vec()),
+        block_fields: Some(block_fields),
     }
 }
 
 fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
+    rpc_only: bool,
     report: &mut Report,
 ) -> ContractConfig {
     let abi_path = source.abi.as_ref().and_then(|abi| source.abis.get(abi)).cloned();
@@ -234,7 +243,7 @@ fn contract_config(
             EventConfig {
                 event,
                 name,
-                field_selection: Some(field_selection_for(handler.receipt)),
+                field_selection: Some(field_selection_for(handler.receipt, rpc_only)),
             }
         })
         .collect();
@@ -269,6 +278,15 @@ pub fn translate(
         Some(raw) => Some(parse_rpc_env(raw)?),
         None => None,
     };
+    // Only when RPC is the sync source; a fallback entry leaves HyperSync in
+    // charge of the fields.
+    let rpc_only = match &rpc {
+        Some(RpcSelection::Single(entry)) => entry.source_for == Some(For::Sync),
+        Some(RpcSelection::List(entries)) => {
+            entries.iter().any(|entry| entry.source_for == Some(For::Sync))
+        }
+        _ => false,
+    };
     let rpc_urls = match &rpc {
         Some(RpcSelection::Url(url)) => vec![url.clone()],
         Some(RpcSelection::Single(rpc)) => vec![rpc.url.clone()],
@@ -283,7 +301,7 @@ pub fn translate(
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, &mut report),
+            config: contract_config(source, files, rpc_only, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -333,7 +351,7 @@ pub fn translate(
     for source in manifest.templates.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, &mut report),
+            config: contract_config(source, files, rpc_only, &mut report),
         });
         let ids = match source.chain_id {
             Some(id) => vec![id],
@@ -553,6 +571,49 @@ type Gravatar @entity {
                 with_receipt.contains(&TransactionField::ContractAddress),
             ),
             (false, true, true, true)
+        );
+    }
+
+    #[test]
+    fn narrows_the_field_selection_when_rpc_is_the_sync_source() {
+        let over_rpc = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            Some(r#"{"url":"https://rpc.example.test","for":"sync"}"#),
+            ".",
+            &HashMap::new(),
+        )
+        .unwrap();
+        let over_hypersync = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new())
+            .unwrap();
+
+        let fields = |t: &Translation| {
+            t.human_config.contracts.as_ref().unwrap()[0].config.events[0]
+                .field_selection
+                .as_ref()
+                .unwrap()
+                .transaction_fields
+                .clone()
+                .unwrap()
+        };
+
+        assert_eq!(
+            (
+                fields(&over_rpc).contains(&TransactionField::Gas),
+                fields(&over_rpc).contains(&TransactionField::Nonce),
+                fields(&over_rpc).contains(&TransactionField::Hash),
+                fields(&over_hypersync).contains(&TransactionField::Gas),
+                over_rpc.human_config.contracts.as_ref().unwrap()[0].config.events[0]
+                    .field_selection
+                    .as_ref()
+                    .unwrap()
+                    .block_fields
+                    .as_ref()
+                    .unwrap()
+                    .contains(&BlockField::Size),
+            ),
+            (false, false, true, true, false)
         );
     }
 
