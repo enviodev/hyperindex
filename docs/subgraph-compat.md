@@ -398,7 +398,9 @@ refuse instead, so behavior never silently diverges:
 1. `dev`/`start`/`codegen` detect `subgraph.yaml` when `config.yaml` absent.
 2. Manifest parser (all specVersions) + §7 error collection; network→chain-id
    table; synthesize `human_config` structs (events with ABI param names,
-   `field_selection` from `receipt` + superset default, templates →
+   `field_selection` narrowed to the `event.transaction.*` / `event.block.*`
+   fields the mappings read, widened to the superset when a read is
+   unaccountable and by `receipt`, templates →
    address-less contracts); handler entry → subgraph runtime; embed the
    parsed manifest in the public config JSON under a `subgraph` field
    (extend `publicConfigSchema` in `Config.res`); `.env` loading and

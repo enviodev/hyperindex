@@ -8,6 +8,7 @@ pub mod abi;
 pub mod errors;
 pub mod manifest;
 pub mod schema;
+pub mod usage;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -152,8 +153,11 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
-fn field_selection_for(receipt: bool, rpc_only: bool) -> FieldSelection {
-    let mut transaction_fields = DEFAULT_TRANSACTION_FIELDS.to_vec();
+fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage) -> FieldSelection {
+    let mut transaction_fields = match &usage.transaction {
+        Some(fields) => fields.clone(),
+        None => DEFAULT_TRANSACTION_FIELDS.to_vec(),
+    };
     if receipt {
         for field in RECEIPT_TRANSACTION_FIELDS {
             if !transaction_fields.contains(field) {
@@ -164,7 +168,10 @@ fn field_selection_for(receipt: bool, rpc_only: bool) -> FieldSelection {
     // An RPC serves a narrower set than HyperSync. Selecting a field it can't
     // serve is rejected at config time, so a mapping indexing over RPC gets
     // whatever RPC has rather than failing to start.
-    let mut block_fields = DEFAULT_BLOCK_FIELDS.to_vec();
+    let mut block_fields = match &usage.block {
+        Some(fields) => fields.clone(),
+        None => DEFAULT_BLOCK_FIELDS.to_vec(),
+    };
     if rpc_only {
         transaction_fields.retain(|field| RpcTransactionField::try_from(field.clone()).is_ok());
         block_fields.retain(|field| RpcBlockField::try_from(field.clone()).is_ok());
@@ -179,6 +186,7 @@ fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
     rpc_only: bool,
+    usage: &usage::FieldUsage,
     report: &mut Report,
 ) -> ContractConfig {
     let abi_path = source.abi.as_ref().and_then(|abi| source.abis.get(abi)).cloned();
@@ -243,7 +251,7 @@ fn contract_config(
             EventConfig {
                 event,
                 name,
-                field_selection: Some(field_selection_for(handler.receipt, rpc_only)),
+                field_selection: Some(field_selection_for(handler.receipt, rpc_only, usage)),
             }
         })
         .collect();
@@ -265,8 +273,10 @@ pub fn translate(
     rpc_env: Option<&str>,
     root: &str,
     files: &HashMap<String, String>,
+    mapping_sources: &[String],
 ) -> Result<Translation> {
     let mut report = Report::new();
+    let usage = usage::scan(mapping_sources);
 
     let Some(manifest) = manifest::parse(manifest_yaml, &mut report) else {
         report.into_result()?;
@@ -301,7 +311,7 @@ pub fn translate(
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, rpc_only, &mut report),
+            config: contract_config(source, files, rpc_only, &usage, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -351,7 +361,7 @@ pub fn translate(
     for source in manifest.templates.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, rpc_only, &mut report),
+            config: contract_config(source, files, rpc_only, &usage, &mut report),
         });
         let ids = match source.chain_id {
             Some(id) => vec![id],
@@ -421,6 +431,12 @@ pub type SubgraphRpc = Rpc;
 mod tests {
     use super::*;
 
+    /// Mapping source the usage scan can't account for, so these cases see the
+    /// full selection rather than a narrowed one.
+    fn ambiguous() -> Vec<String> {
+        vec!["helper(event.transaction); helper(event.block);".to_string()]
+    }
+
     const MANIFEST: &str = r#"
 specVersion: 0.0.5
 schema:
@@ -479,7 +495,7 @@ type Gravatar @entity {
 
     #[test]
     fn builds_an_evm_config_from_a_manifest() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new()).unwrap();
+        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
         let config = &translation.human_config;
         let chain = &config.chains[0];
         let contract_names: Vec<&str> = config
@@ -519,7 +535,7 @@ type Gravatar @entity {
 
     #[test]
     fn carries_a_data_source_end_block_onto_its_chain() {
-        let single = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new()).unwrap();
+        let single = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
 
         let bounded_source = MANIFEST.replace(
             "      startBlock: 6175244",
@@ -532,6 +548,7 @@ type Gravatar @entity {
             None,
             ".",
             &HashMap::new(),
+            &ambiguous(),
         )
         .unwrap();
 
@@ -546,7 +563,7 @@ type Gravatar @entity {
 
     #[test]
     fn selects_receipt_fields_only_where_declared() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new()).unwrap();
+        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
         let gravity = &translation.human_config.contracts.as_ref().unwrap()[0];
         let plain = gravity.config.events[0]
             .field_selection
@@ -575,6 +592,27 @@ type Gravatar @entity {
     }
 
     #[test]
+    fn selects_only_what_the_mappings_read() {
+        let mappings = vec![
+            "entity.hash = event.transaction.hash; entity.time = event.block.timestamp;".to_string(),
+        ];
+        let translation =
+            translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &mappings).unwrap();
+        let selection = translation.human_config.contracts.as_ref().unwrap()[0].config.events[0]
+            .field_selection
+            .clone()
+            .unwrap();
+
+        assert_eq!(
+            selection,
+            FieldSelection {
+                transaction_fields: Some(vec![TransactionField::Hash]),
+                block_fields: Some(vec![]),
+            }
+        );
+    }
+
+    #[test]
     fn narrows_the_field_selection_when_rpc_is_the_sync_source() {
         let over_rpc = translate(
             MANIFEST,
@@ -583,9 +621,10 @@ type Gravatar @entity {
             Some(r#"{"url":"https://rpc.example.test","for":"sync"}"#),
             ".",
             &HashMap::new(),
+            &ambiguous(),
         )
         .unwrap();
-        let over_hypersync = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new())
+        let over_hypersync = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous())
             .unwrap();
 
         let fields = |t: &Translation| {
@@ -626,6 +665,7 @@ type Gravatar @entity {
             Some(r#"{"url":"https://rpc.example.test","for":"fallback"}"#),
             ".",
             &HashMap::new(),
+            &ambiguous(),
         )
         .unwrap();
         assert_eq!(
@@ -669,6 +709,7 @@ type Gravatar @entity {
             None,
             ".",
             &HashMap::new(),
+            &ambiguous(),
         )
         .unwrap_err()
         .to_string();

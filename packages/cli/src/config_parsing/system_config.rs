@@ -1536,10 +1536,18 @@ impl SystemConfig {
         env: &HashMap<String, String>,
         files: &HashMap<String, String>,
         root: &str,
+        mapping_sources: &[String],
     ) -> Result<Self> {
         let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
-        let translation =
-            crate::subgraph::translate(manifest_yaml, schema_text, project_name, rpc_env, root, files)?;
+        let translation = crate::subgraph::translate(
+            manifest_yaml,
+            schema_text,
+            project_name,
+            rpc_env,
+            root,
+            files,
+            mapping_sources,
+        )?;
 
         // Declared eth_calls make the RPC requirement statically known, so a
         // missing endpoint fails here instead of mid-batch.
@@ -1625,6 +1633,8 @@ impl SystemConfig {
             }
         }
 
+        let mapping_sources = crate::subgraph::usage::gather(root);
+
         let root_str = root.to_str().unwrap_or(".").to_string();
         let mut config = Self::parse_subgraph(
             &manifest,
@@ -1633,6 +1643,7 @@ impl SystemConfig {
             &env_vars,
             &files,
             &root_str,
+            &mapping_sources,
         )?;
         config.parsed_project_paths = project_paths.clone();
         Ok(config)

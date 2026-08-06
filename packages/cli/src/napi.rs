@@ -122,7 +122,16 @@ pub fn from_subgraph(
     let name = options.name.unwrap_or_else(|| "subgraph".to_string());
 
     let root = options.root.unwrap_or_else(|| ".".to_string());
-    let config = SystemConfig::parse_subgraph(&manifest, &schema, &name, &env, &files, &root)
+    let mapping_sources = crate::subgraph::usage::gather(std::path::Path::new(&root));
+    let config = SystemConfig::parse_subgraph(
+        &manifest,
+        &schema,
+        &name,
+        &env,
+        &files,
+        &root,
+        &mapping_sources,
+    )
         .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
     let config_json = config
