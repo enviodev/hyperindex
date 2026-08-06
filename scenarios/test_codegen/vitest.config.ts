@@ -29,7 +29,7 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
-    globalSetup: ["test/globalSetup.ts"],
+    globalSetup: ["test/GlobalSetup.res.mjs"],
     passWithNoTests: true,
     server: {
       deps: {
