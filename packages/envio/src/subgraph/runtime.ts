@@ -114,6 +114,18 @@ function blockInterval(handler: BlockHandler): { every?: number; once?: boolean 
   return { every: 1 };
 }
 
+// envio runs each handler twice — once to preload, once to execute — over the
+// same payload. Converting it to graph-ts values is the same work both times.
+const graphEvents = new WeakMap<object, any>();
+
+function graphEventFor(event: any, dataSourceName: string) {
+  const cached = graphEvents.get(event);
+  if (cached !== undefined) return cached;
+  const converted = makeEvent(event, dataSourceName);
+  graphEvents.set(event, converted);
+  return converted;
+}
+
 /** The graph-ts `ethereum.Event` a mapping receives, over an envio event. */
 function makeEvent(event: any, dataSourceName: string) {
   const params = Object.entries(event.params ?? {}).map(([name, value]) => ({
@@ -260,8 +272,7 @@ function typeCheckMappings(root: string) {
     throw new Error(
       "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
         "failed — the error above comes from The Graph's own AssemblyScript\n" +
-        "compiler, so fix it there and rerun. To skip this check, set\n" +
-        "  ENVIO_SUBGRAPH_SKIP_TYPECHECK=true",
+        "compiler, so fix it there and rerun.",
     );
   }
 
@@ -380,7 +391,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // wouldn't help.
   ensureGeneratedCode(config.root, { required: false });
 
-  if (config.isDev && process.env.ENVIO_SUBGRAPH_SKIP_TYPECHECK !== "true") {
+  if (config.isDev) {
     typeCheckMappings(config.root);
   }
 
@@ -419,7 +430,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       indexer.onEvent(
         { contract: source.name, event: handler.name },
         async ({ event, context }: any) => {
-          const graphEvent = makeEvent(event, source.name);
+          const graphEvent = graphEventFor(event, source.name);
           await (context as any).runSync(() =>
             runInScope(makeScope(event, context, "handler"), () => fn(graphEvent)),
           );
@@ -433,7 +444,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         indexer.contractRegister(
           { contract: source.name, event: handler.name },
           ({ event, context }: any) => {
-            const graphEvent = makeEvent(event, source.name);
+            const graphEvent = graphEventFor(event, source.name);
             const scope = makeScope(event, context, "register");
             installRegisterHook((templateName, address) => {
               context.chain[templateName].add(address);

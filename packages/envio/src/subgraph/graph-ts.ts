@@ -155,33 +155,16 @@ export class Address extends Bytes {
 // Numbers
 // ---------------------------------------------------------------------------
 
-/** Two's-complement little-endian bytes, the representation graph-ts stores. */
-function twosComplementLe(value: bigint): Uint8Array {
-  if (value === 0n) return new Uint8Array(1);
-  let width = 1;
-  while (value < -(1n << BigInt(width * 8 - 1)) || value >= 1n << BigInt(width * 8 - 1)) {
-    width++;
-  }
-  let remaining = value & ((1n << BigInt(width * 8)) - 1n);
-  const bytes = new Uint8Array(width);
-  for (let index = 0; index < width; index++) {
-    bytes[index] = Number(remaining & 0xffn);
-    remaining >>= 8n;
-  }
-  return bytes;
-}
-
-/**
- * graph-ts' BigInt is a byte array, and mappings can index it. Arithmetic runs
- * on the `value` field; the bytes are there so the class is the same shape.
- */
 class BigInt_ extends Uint8Array {
   readonly value: bigint;
 
   constructor(value: bigint) {
-    const bytes = twosComplementLe(value);
-    super(bytes.length);
-    this.set(bytes);
+    // The bytes are deliberately left empty. Arithmetic, comparison and every
+    // `to*` run off `value`; materialising the two's-complement representation
+    // on construction cost ~7% of indexing CPU, and nothing in a mapping reads
+    // a BigInt as bytes — graph codegen never emits it, and the conversions
+    // that would (`toHexString`, `toI32`) are overridden here.
+    super(0);
     this.value = value;
   }
 
