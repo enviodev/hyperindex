@@ -65,7 +65,7 @@ type Pair @entity {
     (
       "src/factory.ts",
       `
-import { BigInt, Entity, DataSourceTemplate, Value, store } from "@graphprotocol/graph-ts";
+import { BigInt, DataSourceTemplate, Entity, ethereum, Value, store } from "@graphprotocol/graph-ts";
 
 export function handlePairCreated(event: any): void {
   DataSourceTemplate.create("Pair", [event.params.pair.toHexString()]);
@@ -89,8 +89,8 @@ export function handleProbe(event: any): void {
     let entity = new Entity();
     entity.sprinkle();
   } else if (kind === 4) {
-    let existing = store.get("Pair", "0x00");
-    let unused = existing;
+    // Reached in the register pass too, where no create() has happened.
+    ethereum.getBalance(event.address);
   }
 }
 `,
@@ -160,6 +160,12 @@ describe("subgraph runtime", () => {
   it("refuses an unknown entity member", async () => {
     await expect(createTestIndexer().process(probe(3n))).rejects.toThrow(
       /doesn't know the entity member sprinkle/,
+    );
+  });
+
+  it("refuses a host op reached before dataSource.create()", async () => {
+    await expect(createTestIndexer().process(probe(4n))).rejects.toThrow(
+      "before dataSource.create() in a handler that creates templates",
     );
   });
 });

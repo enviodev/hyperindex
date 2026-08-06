@@ -1,0 +1,16 @@
+{
+  "name": "subgraph-test",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "envio": "file:../../packages/envio"
+  }
+}

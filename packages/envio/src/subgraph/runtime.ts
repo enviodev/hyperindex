@@ -224,11 +224,29 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const rpcUrls = config.rpcUrls ?? [];
   const callEffect = makeCallEffect(rpcUrls);
   const hosts = makeHostEffects(rpcUrls);
-  const callSync = (effect: unknown, input: unknown) =>
-    currentScope().context.effectSync(effect, input);
+  /**
+   * The register pass has no effect caller: it runs at fetch time, against a
+   * context that can only register addresses. An effect reached before any
+   * `create()` could have decided which address to register, so it's refused;
+   * once registration has happened, the rest of the mapping only feeds writes
+   * that are no-ops here, so the call is skipped.
+   */
+  const callSync = (effect: unknown, input: unknown, what: string) => {
+    const scope = currentScope();
+    if (scope.mode === "register") {
+      if (scope.registered.size === 0) {
+        throw unsupported(
+          `${what} before dataSource.create() in a handler that creates templates`,
+          `data source "${scope.dataSource.name}" → a mapping handler`,
+        );
+      }
+      return null;
+    }
+    return scope.context.effectSync(effect, input);
+  };
 
   installHosts({
-    ipfsCat: (hash) => callSync(hosts.ipfsCat, hash),
+    ipfsCat: (hash) => callSync(hosts.ipfsCat, hash, "ipfs.cat()"),
     ipfsMap: (hash, callback, userData, flags) => {
       const scope = currentScope();
       const fn = scope.mappingExports[callback];
@@ -237,7 +255,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           `ipfs.map() names the callback "${callback}", which the mapping doesn't export.`,
         );
       }
-      const encoded: string | null = callSync(hosts.ipfsCat, hash);
+      const encoded: string | null = callSync(hosts.ipfsCat, hash, "ipfs.map()");
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
       for (const line of body.split("\n")) {
@@ -246,31 +264,39 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       }
       void flags;
     },
-    arweaveData: (txId) => callSync(hosts.arweaveData, txId),
-    ensName: (hash) => callSync(hosts.ensName, hash),
+    arweaveData: (txId) => callSync(hosts.arweaveData, txId, "arweave.transactionData()"),
+    ensName: (hash) => callSync(hosts.ensName, hash, "ens.nameByHash()"),
     getBalance: (address) =>
       callSync(
         hosts.getBalance,
         JSON.stringify({ address, blockNumber: currentScope().blockNumber }),
+        "ethereum.getBalance()",
       ),
     hasCode: (address) =>
       callSync(
         hosts.hasCode,
         JSON.stringify({ address, blockNumber: currentScope().blockNumber }),
+        "ethereum.hasCode()",
       ),
-    blockTimestamp: (blockNumber) => callSync(hosts.blockTimestamp, blockNumber),
+    blockTimestamp: (blockNumber) =>
+      callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"),
   });
 
   installCallHook((call) => {
     const scope = currentScope();
+    void scope;
     const encoded = JSON.stringify({
-      chainId: scope.dataSource.chainId,
+      chainId: currentScope().dataSource.chainId,
       address: call.contractAddress.toHexString(),
       signature: call.functionSignature,
       args: call.functionParams.map((param: any) => encodeArg(valueToJs(param))),
       blockNumber: scope.blockNumber,
     });
-    const output = JSON.parse(scope.context.effectSync(callEffect, encoded));
+    const raw = callSync(callEffect, encoded, `the contract call ${call.functionSignature}`);
+    if (raw === null) {
+      return { reverted: true, value: null };
+    }
+    const output = JSON.parse(raw);
     return {
       reverted: output.reverted,
       value: output.values === null ? null : output.values.map(decodeArg),

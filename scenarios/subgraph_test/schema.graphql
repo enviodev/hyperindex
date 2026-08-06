@@ -1,0 +1,18 @@
+type Pair @entity(immutable: true) {
+  id: Bytes!
+  token0: Bytes!
+  token1: Bytes!
+  name: String!
+}
+
+type Swap @entity {
+  id: ID!
+  pair: Bytes!
+  sender: Bytes!
+  amount: BigInt!
+}
+
+type Tick @entity {
+  id: ID!
+  height: BigInt!
+}
