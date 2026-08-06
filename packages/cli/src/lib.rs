@@ -23,6 +23,7 @@ mod project_paths;
 mod registration_start_block;
 pub mod scripts;
 mod service_health;
+pub mod subgraph;
 mod svm_hypersync_source;
 mod template_dirs;
 mod transaction_store;
