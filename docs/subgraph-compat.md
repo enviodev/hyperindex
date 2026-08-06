@@ -9,8 +9,9 @@ graph-node GraphQL) are out of scope.
 translates the manifest into an envio config and the schema into an envio
 schema, and points the handler entry at a runtime that imports the user's
 mappings unchanged (AssemblyScript is a TypeScript subset — envio already
-loads TS via `tsx`). Imports of `@graphprotocol/graph-ts` and `generated/*`
-resolve to shims. Each manifest handler becomes an `indexer.onEvent` /
+loads TS via `tsx`). Only `@graphprotocol/graph-ts` is shimmed at runtime;
+the project's `generated/` code — `graph codegen` output — executes as-is on
+top of the shim (§6a). Each manifest handler becomes an `indexer.onEvent` /
 `onBlock` / `contractRegister` wrapper that runs the mapping synchronously;
 ambient APIs (`entity.save()`, `dataSource.address()`) find their envio
 context through AsyncLocalStorage; async host ops (`Entity.load`, eth_calls,
@@ -164,6 +165,44 @@ machinery all read it — no context parameter anywhere in user-visible API,
 matching graph-ts exactly. Execute is sequential today, but ALS keeps the
 design valid under concurrent preload and any future parallelism.
 
+## 6a. Generated code runs as-is (type safety by construction)
+
+Verified against graph-cli's codegen (`graph-tooling`
+`packages/cli/src/codegen/{schema,typescript,template}.ts`): everything
+`graph codegen` emits is implemented **purely in terms of graph-ts APIs** —
+entity classes extend `Entity` (a `TypedMap`), store fields as `Value`s, and
+call `store.get`/`store.set`/`store.get_in_block`/`store.loadRelated`;
+contract bindings extend `ethereum.SmartContract` and go through
+`super.call`/`tryCall`; event classes extend `ethereum.Event`; template
+classes call `DataSource.create`. Consequences:
+
+- **No `generated/*` shim.** The real `graph codegen` output is executed
+  directly through `tsx`; mappings' relative imports resolve from disk. The
+  resolve hook only swaps `@graphprotocol/graph-ts`; the runtime injects the
+  few AS builtin globals generated code uses (`changetype` = identity,
+  `assert`).
+- **Type safety is byte-identical by construction.** Editor and `tsc` see
+  the project's own `generated/` files and the *real* `@graphprotocol/graph-ts`
+  package types (still in the project's dependencies) — exactly what a
+  subgraph developer sees today. Our shim replaces graph-ts at runtime
+  resolution only, never at type level.
+- **Codegen:** if `generated/` is missing (usually gitignored), `envio dev`
+  runs the project's own locally installed graph-cli (`graph codegen`) —
+  output is then identical to the user's normal workflow by definition;
+  clear error with install guidance if it's absent.
+- **Conformance is tested two ways:** (a) golden fixtures — `generated/`
+  outputs of real `graph codegen` across pinned graph-cli versions, executed
+  against the shim in `envio-tests`, since users' local versions vary; (b) a
+  type-level test compiling the shim implementation against the real
+  graph-ts type declarations (`satisfies typeof import("@graphprotocol/graph-ts")`)
+  so the runtime surface can't drift from the types users compile against.
+
+Cost note: entity field access now goes through `TypedMap`/`Value` boxing —
+same data path as graph-node's WASM host, conversion to envio rows happens
+only at the `store` boundary. Deny-unknown still holds: unknown members on
+generated classes fall through to the shim's `Entity`/`SmartContract` base
+prototypes, where the prototype-tail Proxy (§7) throws.
+
 ## 7. Unsupported & unknown errors
 
 Two error kinds, one factory each, shared tail. Translation reports **all**
@@ -207,10 +246,10 @@ refuse instead, so behavior never silently diverges:
 - *Runtime*: every shim surface is strict, via three mechanisms picked by
   path heat and whether the unknown names are enumerable (precedent:
   `UserContext.res` already Proxy-traps invalid context access):
-  1. **Full Proxy** on namespace objects and `generated/*` module surfaces
-     (`store`, `ethereum`, `dataSource`, `json`, `crypto`, `ipfs`, `ens`,
-     `arweave`, `log`) — future graph-ts APIs are unenumerable, so only a
-     `get` trap can catch them; cold path, trap cost is negligible.
+  1. **Full Proxy** on the graph-ts namespace objects (`store`, `ethereum`,
+     `dataSource`, `json`, `crypto`, `ipfs`, `ens`, `arweave`, `log`) —
+     future graph-ts APIs are unenumerable, so only a `get` trap can catch
+     them; cold path, trap cost is negligible.
   2. **Prototype-tail Proxy** on hot classes (value classes, entities, event
      objects): instance → real prototype with all known members (plain
      properties, V8-optimizable) → base object whose Proxy throws the
@@ -283,17 +322,25 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
 `package.json` doesn't mention envio.
 1. Value classes (BigInt, BigDecimal, Bytes, Address, TypedMap, JSONValue),
    `crypto`, `json`, `ethereum.encode/decode` — pure, no envio dependency.
-2. Node resolve hook: `@graphprotocol/graph-ts` + `generated/*` → shims built
-   at load time from transformed schema + ABIs (entity classes → ALS +
-   `getSync`/`set`; contract bindings → effects; template classes → register
-   capture; `event.receipt.logs` getter → §7 error).
+2. Node resolve hook: `@graphprotocol/graph-ts` → the shim (runtime only —
+   types keep resolving to the real package); inject AS builtin globals
+   (`changetype`, `assert`). The shim implements the full graph-ts surface
+   the generated code sits on: `Entity`/`Value`/`TypedMap` + `store` (→ ALS
+   scope + `getSync`/`set`/`deleteUnsafe`/`getWhereSync`),
+   `ethereum.SmartContract.call/tryCall` (→ effects),
+   `DataSourceTemplate.create` (→ register capture), `ethereum.Event` (→
+   envio event conversion; `receipt.logs` getter → §7 error). `generated/`
+   itself is real `graph codegen` output executed as-is (§6a).
 3. Registration entry: read the manifest from the `subgraph` field of the
    resolved public config JSON (`Config.getPublicConfigJson()` — the CLI
    passes the parsed manifest through; no normalized copy in `.envio/`),
    import mappings, register `onEvent`/`onBlock`/`contractRegister` wrappers
    around `runSync`; per-round log buffering.
-4. Tests: rung 1 with real mapping sources through the shim; value-class unit
-   tests against graph-ts fixtures. **`SubgraphValidation_test.res`** in
+4. Tests: rung 1 with real mapping sources + golden `generated/` fixtures
+   (real `graph codegen` output across pinned graph-cli versions) executed
+   through the shim; the `satisfies`-style type conformance check against
+   real graph-ts declarations; value-class unit tests against graph-ts
+   fixtures. **`SubgraphValidation_test.res`** in
    `packages/envio-tests`, patterned on `UserApiValidation_test.res` (an
    `expectSubgraphError` helper over a `fromSubgraph(~manifest, ~schema,
    ~mappings, ~files)` entry in `InternalTestIndexer`, asserting exact error
