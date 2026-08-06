@@ -290,6 +290,7 @@ pub fn translate(
             continue;
         };
         let start_block = source.start_block.unwrap_or(0);
+        let is_first = !chains.contains_key(&chain_id);
         let chain = chains.entry(chain_id).or_insert_with(|| Chain {
             id: chain_id,
             skip: None,
@@ -298,15 +299,18 @@ pub fn translate(
             max_reorg_depth: None,
             block_lag: None,
             start_block,
-            end_block: None,
+            end_block: source.end_block,
             contracts: Some(vec![]),
         });
-        chain.start_block = chain.start_block.min(start_block);
-        chain.end_block = match (chain.end_block, source.end_block) {
-            // A chain stops only once every data source on it has.
-            (Some(current), Some(next)) => Some(current.max(next)),
-            _ => None,
-        };
+        if !is_first {
+            chain.start_block = chain.start_block.min(start_block);
+            // A chain stops only once every data source on it has, so one
+            // open-ended source keeps the whole chain open-ended.
+            chain.end_block = match (chain.end_block, source.end_block) {
+                (Some(current), Some(next)) => Some(current.max(next)),
+                _ => None,
+            };
+        }
         if let Some(chain_contracts) = chain.contracts.as_mut() {
             chain_contracts.push(ChainContract {
                 name: source.name.clone(),
@@ -492,6 +496,33 @@ type Gravatar @entity {
                 "Wallet",
                 Vec::<String>::new(),
             )
+        );
+    }
+
+    #[test]
+    fn carries_a_data_source_end_block_onto_its_chain() {
+        let single = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new()).unwrap();
+
+        let bounded_source = MANIFEST.replace(
+            "      startBlock: 6175244",
+            "      startBlock: 6175244\n      endBlock: 6180000",
+        );
+        let bounded = translate(
+            &bounded_source,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            (
+                single.human_config.chains[0].end_block,
+                bounded.human_config.chains[0].end_block,
+            ),
+            (None, Some(6180000))
         );
     }
 
