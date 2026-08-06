@@ -13,7 +13,13 @@
 import BigNumber from "bignumber.js";
 import { keccak256 as viemKeccak256, toHex, hexToBytes, decodeAbiParameters } from "viem";
 import { currentScope } from "./scope.ts";
-import { strictNamespace, strictPrototypeTail, unsupported, unknown } from "./errors.ts";
+import {
+  refusedGetter,
+  strictNamespace,
+  strictPrototypeTail,
+  unsupported,
+  unknown,
+} from "./errors.ts";
 
 // ---------------------------------------------------------------------------
 // Byte values
@@ -793,11 +799,11 @@ const ethereumImpl = {
   encode(_value: EthereumValue): Bytes | null {
     throw unsupported("ethereum.encode", "a mapping handler");
   },
-  getBalance(_address: Address): BigInt_ {
-    throw unsupported("ethereum.getBalance", "a mapping handler");
+  getBalance(address: Address): BigInt_ {
+    return BigInt_.fromString(hostsOrThrow().getBalance(address.toHexString()));
   },
-  hasCode(_address: Address): CallResult<boolean> {
-    throw unsupported("ethereum.hasCode", "a mapping handler");
+  hasCode(address: Address): CallResult<boolean> {
+    return CallResult.fromValue(hostsOrThrow().hasCode(address.toHexString()));
   },
 };
 
@@ -956,17 +962,90 @@ const jsonImpl = {
 
 export const json = strictNamespace("json", jsonImpl);
 
-const unsupportedNamespace = (name: string, feature: string) =>
-  new Proxy(Object.create(null), {
-    get(_target, prop) {
-      if (typeof prop === "symbol") return undefined;
-      throw unsupported(feature, `${name}.${String(prop)}`);
-    },
-  });
+/**
+ * The host ops that reach outside the chain: each returns synchronously here
+ * and suspends underneath, so the mapping keeps graph-ts' shape.
+ */
+export type Hosts = {
+  ipfsCat: (hash: string) => string | null;
+  ipfsMap: (hash: string, callback: string, userData: Value, flags: string[]) => void;
+  arweaveData: (txId: string) => string | null;
+  ensName: (hash: string) => string | null;
+  getBalance: (address: string) => string;
+  hasCode: (address: string) => boolean;
+  blockTimestamp: (blockNumber: number) => string;
+};
 
-export const ipfs = unsupportedNamespace("ipfs", "IPFS access from mappings");
-export const arweave = unsupportedNamespace("arweave", "Arweave access from mappings");
-export const ens = unsupportedNamespace("ens", "ENS name lookups");
+let hosts: Hosts | null = null;
+
+export function installHosts(installed: Hosts) {
+  hosts = installed;
+}
+
+function hostsOrThrow(): Hosts {
+  if (!hosts) {
+    throw new Error("Envio Subgraph host ops were used before the runtime installed them.");
+  }
+  return hosts;
+}
+
+function decodeBase64(encoded: string | null): Bytes | null {
+  return encoded === null ? null : new Bytes(Buffer.from(encoded, "base64"));
+}
+
+const ipfsImpl = {
+  cat(hash: string): Bytes | null {
+    return decodeBase64(hostsOrThrow().ipfsCat(hash));
+  },
+  map(hash: string, callback: string, userData: Value, flags: string[]): void {
+    hostsOrThrow().ipfsMap(hash, callback, userData, flags);
+  },
+};
+
+export const ipfs = strictNamespace("ipfs", ipfsImpl);
+
+const arweaveImpl = {
+  transactionData(txId: string): Bytes | null {
+    return decodeBase64(hostsOrThrow().arweaveData(txId));
+  },
+};
+
+export const arweave = strictNamespace("arweave", arweaveImpl);
+
+const ensImpl = {
+  nameByHash(hash: string): string | null {
+    return hostsOrThrow().ensName(hash);
+  },
+};
+
+export const ens = strictNamespace("ens", ensImpl);
+
+/** graph-ts hands a block handler an `ethereum.Block`; only `number` is free. */
+export function makeBlockHandlerBlock(blockNumber: number, location: string): EthereumBlock {
+  const block = new EthereumBlock(BigInt_.fromI32(blockNumber), () =>
+    BigInt_.fromString(hostsOrThrow().blockTimestamp(blockNumber)),
+  );
+  // A post-hoc fetch of the rest can't be made reorg-consistent, so the other
+  // fields are refused rather than guessed.
+  for (const field of [
+    "hash",
+    "parentHash",
+    "unclesHash",
+    "author",
+    "stateRoot",
+    "transactionsRoot",
+    "receiptsRoot",
+    "gasUsed",
+    "gasLimit",
+    "difficulty",
+    "totalDifficulty",
+    "size",
+    "baseFeePerGas",
+  ]) {
+    refusedGetter(block, field, `block.${field} in a block handler`, location);
+  }
+  return block;
+}
 
 // AssemblyScript builtins the generated code leans on.
 export function changetype<T>(value: unknown): T {

@@ -25,6 +25,8 @@ export type Scope = {
   registered: Set<string>;
   /** The block a contract call is evaluated against, as graph-node does. */
   blockNumber: number;
+  /** The mapping module, so `ipfs.map` can reach the callback it names. */
+  mappingExports: Record<string, any>;
 };
 
 const storage = new AsyncLocalStorage<Scope>();

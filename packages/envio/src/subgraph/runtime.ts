@@ -17,14 +17,20 @@ import {
   BigInt as GraphBigInt,
   Bytes,
   installCallHook,
+  installHosts,
   installRegisterHook,
   ethereum,
+  json as jsonNamespace,
+  makeBlockHandlerBlock,
   valueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
+import { makeHostEffects } from "./hosts.ts";
 import { unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
+
+const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
 
 type EventHandler = { event: string; name: string; handler: string; receipt: boolean };
 type BlockHandler = { handler: string; filter: { Every: number } | "Once" | any };
@@ -177,7 +183,46 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // One effect for every contract call: envio already batches and dedupes
   // effect calls in preload, and the block number in the input is what keeps
   // a cached result tied to the state the mapping saw.
-  const callEffect = makeCallEffect(config.rpcUrls ?? []);
+  const rpcUrls = config.rpcUrls ?? [];
+  const callEffect = makeCallEffect(rpcUrls);
+  const hosts = makeHostEffects(rpcUrls);
+  const callSync = (effect: unknown, input: unknown) =>
+    currentScope().context.effectSync(effect, input);
+
+  installHosts({
+    ipfsCat: (hash) => callSync(hosts.ipfsCat, hash),
+    ipfsMap: (hash, callback, userData, flags) => {
+      const scope = currentScope();
+      const fn = scope.mappingExports[callback];
+      if (typeof fn !== "function") {
+        throw new Error(
+          `ipfs.map() names the callback "${callback}", which the mapping doesn't export.`,
+        );
+      }
+      const encoded: string | null = callSync(hosts.ipfsCat, hash);
+      if (encoded === null) return;
+      const body = Buffer.from(encoded, "base64").toString("utf8");
+      for (const line of body.split("\n")) {
+        if (line.trim() === "") continue;
+        fn(jsonFromString(line), userData);
+      }
+      void flags;
+    },
+    arweaveData: (txId) => callSync(hosts.arweaveData, txId),
+    ensName: (hash) => callSync(hosts.ensName, hash),
+    getBalance: (address) =>
+      callSync(
+        hosts.getBalance,
+        JSON.stringify({ address, blockNumber: currentScope().blockNumber }),
+      ),
+    hasCode: (address) =>
+      callSync(
+        hosts.hasCode,
+        JSON.stringify({ address, blockNumber: currentScope().blockNumber }),
+      ),
+    blockTimestamp: (blockNumber) => callSync(hosts.blockTimestamp, blockNumber),
+  });
+
   installCallHook((call) => {
     const scope = currentScope();
     const encoded = JSON.stringify({
@@ -229,6 +274,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         },
         registered: new Set(),
         blockNumber: event.block.number,
+        mappingExports: mapping,
       });
 
       indexer.onEvent(
@@ -245,18 +291,16 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // at fetch time — before any entity exists. The same mapping reruns in
       // register mode, where writes and logs are no-ops and reads are null.
       if (templateNames.size > 0) {
-        indexer.onEvent(
+        indexer.contractRegister(
           { contract: source.name, event: handler.name },
-          {
-            contractRegister: ({ event, context }: any) => {
-              const graphEvent = makeEvent(event, source.name);
-              const scope = makeScope(event, context, "register");
-              installRegisterHook((templateName, address) => {
-                context.chain[templateName]?.add(address);
-              });
-              runInScope(scope, () => fn(graphEvent));
-            },
-          } as any,
+          ({ event, context }: any) => {
+            const graphEvent = makeEvent(event, source.name);
+            const scope = makeScope(event, context, "register");
+            installRegisterHook((templateName, address) => {
+              context.chain[templateName].add(address);
+            });
+            runInScope(scope, () => fn(graphEvent));
+          },
         );
       }
     }
@@ -280,14 +324,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             : {}),
         } as any,
         async ({ block, context }: any) => {
-          const graphBlock = new (ethereum as any).Block(
-            GraphBigInt.fromI32(block.number),
-            () => {
-              throw unsupported(
-                "block.timestamp in a block handler",
-                `data source "${source.name}" → "${handler.handler}"`,
-              );
-            },
+          const graphBlock = makeBlockHandlerBlock(
+            block.number,
+            `data source "${source.name}" → "${handler.handler}"`,
           );
           await (context as any).runSync(() =>
             runInScope(
@@ -304,6 +343,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                 },
                 registered: new Set(),
                 blockNumber: block.number,
+                mappingExports: mapping,
               },
               () => fn(graphBlock),
             ),
