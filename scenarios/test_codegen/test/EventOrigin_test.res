@@ -57,7 +57,7 @@ describe("Chains State", () => {
           isPreload: false,
           checkpointId: 0n,
           chains,
-          isResolved: false,
+          sync: UserContext.makeSyncState(),
           config: Config.load(),
         })
 
