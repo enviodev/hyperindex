@@ -187,9 +187,29 @@ classes call `DataSource.create`. Consequences:
   subgraph developer sees today. Our shim replaces graph-ts at runtime
   resolution only, never at type level.
 - **Codegen:** if `generated/` is missing (usually gitignored), `envio dev`
-  runs the project's own locally installed graph-cli (`graph codegen`) —
-  output is then identical to the user's normal workflow by definition;
-  clear error with install guidance if it's absent.
+  runs the project's own locally installed graph-cli (resolved from
+  `node_modules/.bin/graph`) — output is then identical to the user's normal
+  workflow by definition. Both failure modes get explicit messages:
+
+  graph-cli not installed (or `node_modules` missing):
+
+  ```
+  Envio Subgraph needs the project's generated code, but "generated/" is
+  missing and @graphprotocol/graph-cli isn't installed.
+  Install dependencies and try again:
+    pnpm install
+  Or generate manually:
+    pnpm exec graph codegen
+  ```
+
+  `graph codegen` exits non-zero (its output shown verbatim above the tail):
+
+  ```
+  Envio Subgraph ran `graph codegen` to build "generated/", but it failed —
+  the error above comes from The Graph's own codegen, so fix it there and
+  rerun. If `graph codegen` succeeds on its own but fails through envio,
+  please open an issue: https://github.com/enviodev/hyperindex/issues
+  ```
 - **Conformance is tested two ways:** (a) golden fixtures — `generated/`
   outputs of real `graph codegen` across pinned graph-cli versions, executed
   against the shim in `envio-tests`, since users' local versions vary; (b) a
