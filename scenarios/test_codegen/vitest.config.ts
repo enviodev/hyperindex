@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -21,6 +22,10 @@ export default defineConfig({
       concurrent: false,
     },
     pool: "forks",
+    // Vitest defaults to one fewer worker than the machine has; the suite is
+    // not CPU-saturated enough for that to pay off, and the extra worker is
+    // worth ~20% of the wall clock.
+    maxWorkers: availableParallelism(),
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],

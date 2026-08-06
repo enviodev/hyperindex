@@ -175,8 +175,15 @@ describe("MockRpcServer scripted scenarios", () => {
       requestBody(~method="eth_blockNumber", ~params=JSON.Array([])),
       Dict.make(),
     )
-    await Utils.delay(5)
-    let verification = mock.verify()
+    // Wait for the request to actually reach the server rather than for a fixed
+    // delay — under load it can take longer than any constant worth picking.
+    let deadline = Date.now() +. 5000.
+    let verification = ref(mock.verify())
+    while verification.contents.pending->Utils.Array.notEmpty && Date.now() < deadline {
+      await Utils.delay(1)
+      verification := mock.verify()
+    }
+    let verification = verification.contents
     await mock.closeAsync()
     let requestWasRejected = try {
       let _ = await pendingRequest
