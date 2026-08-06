@@ -359,6 +359,9 @@ pub struct SystemConfig {
     // Project uses ReScript when a rescript.json sits at the project root —
     // file existence is the source of truth; no explicit flag in config.yaml.
     pub is_rescript: bool,
+    // Present only in subgraph mode: the translated manifest the runtime reads
+    // back out of the public config to register its wrappers.
+    pub subgraph: Option<crate::subgraph::SubgraphRuntimeConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1223,6 +1226,7 @@ impl SystemConfig {
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
+                    subgraph: None,
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -1370,6 +1374,7 @@ impl SystemConfig {
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
+                    subgraph: None,
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -1516,9 +1521,44 @@ impl SystemConfig {
                     handlers: None,
                     human_config,
                     is_rescript,
+                    subgraph: None,
                 })
             }
         }
+    }
+
+    /// Parses a subgraph project: subgraph.yaml + its schema, translated into
+    /// the envio config the rest of the pipeline already understands.
+    pub fn parse_subgraph(
+        manifest_yaml: &str,
+        schema_text: &str,
+        project_name: &str,
+        env: &HashMap<String, String>,
+        files: &HashMap<String, String>,
+        root: &str,
+    ) -> Result<Self> {
+        let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
+        let translation =
+            crate::subgraph::translate(manifest_yaml, schema_text, project_name, rpc_env, root)?;
+
+        // Declared eth_calls make the RPC requirement statically known, so a
+        // missing endpoint fails here instead of mid-batch.
+        if translation.runtime.manifest.declares_eth_calls && rpc_env.is_none() {
+            return Err(anyhow!(
+                "{}",
+                crate::subgraph::missing_rpc_message("declared eth_calls")
+            ));
+        }
+
+        let source = MemoryConfigSource::new(Some(&translation.schema_text), env, files, false);
+        let schema = source.load_schema(&None)?;
+        let mut config = Self::from_human_config_with_source(
+            HumanConfig::Evm(translation.human_config),
+            schema,
+            &source,
+        )?;
+        config.subgraph = Some(translation.runtime);
+        Ok(config)
     }
 
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {

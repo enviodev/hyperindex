@@ -65,6 +65,66 @@ let ranTestAt: ref<option<string>> = ref(None)
 //
 // Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
 // the source must be escaped.
+// Parses a subgraph project the way `envio dev` does inside one, with the
+// mappings written to disk so the manifest's `file:` paths resolve. `test` is
+// evaluated exactly as in `fromUserApi`.
+let fromSubgraph = (~env=?, ~files=?, ~mappings=Dict.make(), ~test=?, ~manifest, ~schema): parsed => {
+  let site = callSite()
+  let root = pathJoin([tmpDir, `subgraph-${site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")}-${randomUUID()->String.slice(~start=0, ~end=8)}`])
+  mkdirSync(pathJoin([root, "src"]), {"recursive": true})
+  mappings->Dict.forEachWithKey((source, relativePath) => {
+    writeFileSync(pathJoin([root, relativePath]), source)
+  })
+
+  let {config: configJson} = Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)
+  let publicConfigJson = configJson->JSON.parseOrThrow
+  let config = Config.fromPublic(publicConfigJson)
+
+  switch test {
+  | None => ()
+  | Some(test) =>
+    let suiteName = `subgraphTest(${site})`
+    let setup = try {
+      switch ranTestAt.contents {
+      | Some(previous) =>
+        JsError.throwWithMessage(
+          `fromUserApi already ran a test module at ${previous}. The parsed config and handler registry are process-global, so each one needs its own test file.`,
+        )
+      | None => ()
+      }
+      ranTestAt := Some(site)
+      Config.prime(publicConfigJson)
+      HandlerRegister.startRegistration(~config)
+      mkdirSync(tmpDir, {"recursive": true})
+      Ok(writeModule(~kind="test", ~site, ~source=test))
+    } catch {
+    | exn => Error(exn)
+    }
+
+    switch setup {
+    | Ok(testFile) =>
+      let collected = ref(false)
+      // The mappings are registered by `createTestIndexer` itself, through the
+      // same `registerAllHandlers` path production uses.
+      describeAsync(suiteName, async () => {
+        await importModule(testFile)
+        collected := true
+      })
+      Vitest.it(
+        `${suiteName} collected`,
+        t =>
+          t.expect(
+            collected.contents,
+            ~message="test module was not imported during collection",
+          ).toBe(true),
+      )
+    | Error(exn) => Vitest.it(`${suiteName} setup`, _ => throw(exn))
+    }
+  }
+
+  {config: config}
+}
+
 let fromUserApi = (~schema=?, ~env=?, ~files=?, ~handlers=?, ~test=?, ~configYaml): parsed => {
   let withIndexerTypes = handlers->Option.isSome || test->Option.isSome
   let {config: configJson, indexerTypes} =

@@ -208,6 +208,7 @@ pub fn translate(
     schema_text: &str,
     project_name: &str,
     rpc_env: Option<&str>,
+    root: &str,
 ) -> Result<Translation> {
     let mut report = Report::new();
 
@@ -330,7 +331,7 @@ pub fn translate(
         runtime: SubgraphRuntimeConfig {
             manifest,
             schema,
-            root: ".".to_string(),
+            root: root.to_string(),
         },
         human_config,
     })
@@ -401,7 +402,7 @@ type Gravatar @entity {
 
     #[test]
     fn builds_an_evm_config_from_a_manifest() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None).unwrap();
+        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".").unwrap();
         let config = &translation.human_config;
         let chain = &config.chains[0];
         let contract_names: Vec<&str> = config
@@ -441,7 +442,7 @@ type Gravatar @entity {
 
     #[test]
     fn selects_receipt_fields_only_where_declared() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None).unwrap();
+        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".").unwrap();
         let gravity = &translation.human_config.contracts.as_ref().unwrap()[0];
         let plain = gravity.config.events[0]
             .field_selection
@@ -476,6 +477,7 @@ type Gravatar @entity {
             SCHEMA,
             "gravatar",
             Some(r#"{"url":"https://rpc.example.test","for":"fallback"}"#),
+            ".",
         )
         .unwrap();
         assert_eq!(
@@ -517,6 +519,7 @@ type Gravatar @entity {
             "interface Named { id: ID! }\ntype Gravatar @entity { id: ID! }",
             "gravatar",
             None,
+            ".",
         )
         .unwrap_err()
         .to_string();

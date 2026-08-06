@@ -38,6 +38,18 @@ fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
 }
 
+#[derive(Default)]
+#[napi_derive::napi(object)]
+pub struct FromSubgraphOptions {
+    /// Indexer name. subgraph.yaml has no name field, so the project directory
+    /// supplies one.
+    pub name: Option<String>,
+    pub env: Option<HashMap<String, String>>,
+    pub files: Option<HashMap<String, String>>,
+    /// Directory the manifest's mapping paths resolve against.
+    pub root: Option<String>,
+}
+
 #[napi_derive::napi]
 pub fn get_config_json(
     config_path: Option<String>,
@@ -90,6 +102,37 @@ pub fn from_user_api(
         config: config_json,
         indexer_types,
         indexer_code,
+    })
+}
+
+/// Parses a subgraph project the same way `from_user_api` parses an envio one:
+/// subgraph.yaml and its schema in memory, ABI bodies supplied through `files`,
+/// no filesystem or process environment. The returned config carries the
+/// translated manifest under `subgraph`, which is what activates the subgraph
+/// runtime inside the `envio` package.
+#[napi_derive::napi]
+pub fn from_subgraph(
+    manifest: String,
+    schema: String,
+    options: Option<FromSubgraphOptions>,
+) -> napi::Result<FromUserApiResult> {
+    let options = options.unwrap_or_default();
+    let env = options.env.unwrap_or_default();
+    let files = options.files.unwrap_or_default();
+    let name = options.name.unwrap_or_else(|| "subgraph".to_string());
+
+    let root = options.root.unwrap_or_else(|| ".".to_string());
+    let config = SystemConfig::parse_subgraph(&manifest, &schema, &name, &env, &files, &root)
+        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
+
+    let config_json = config
+        .to_public_config_json(false)
+        .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))?;
+
+    Ok(FromUserApiResult {
+        config: config_json,
+        indexer_types: None,
+        indexer_code: None,
     })
 }
 

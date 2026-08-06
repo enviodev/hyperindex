@@ -62,6 +62,11 @@ pub(crate) struct PublicConfigJson<'a> {
     svm: Option<SvmConfig<'a>>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
+    /// Present only in subgraph mode. The runtime that ships inside the `envio`
+    /// package registers its wrappers off this instead of a normalized copy
+    /// under `.envio/`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subgraph: Option<&'a crate::subgraph::SubgraphRuntimeConfig>,
 }
 
 #[derive(Serialize, Debug)]
@@ -893,6 +898,7 @@ impl SystemConfig {
             svm,
             enums: enums_json,
             entities: entities_json,
+            subgraph: cfg.subgraph.as_ref(),
         };
 
         Ok(serde_json::to_string_pretty(&config)? + "\n")

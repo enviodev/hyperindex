@@ -119,6 +119,9 @@ type t = {
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // Set only in subgraph mode: the translated manifest, which is what makes
+  // the subgraph runtime take over handler registration.
+  subgraph: option<JSON.t>,
 }
 
 module EnvioAddresses = {
@@ -613,6 +616,7 @@ let publicConfigSchema = S.schema(s =>
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
     "enums": s.matches(S.option(S.dict(S.array(S.string)))),
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
+    "subgraph": s.matches(S.option(S.json(~validate=false))),
   }
 )
 
@@ -1110,6 +1114,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntities,
     allEntities,
     allEnums,
+    subgraph: publicConfig["subgraph"],
   }
 }
 
