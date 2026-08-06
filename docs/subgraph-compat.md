@@ -38,29 +38,45 @@ validation on `save()` · **0.0.9** `getBalance`/`hasCode`. Support ≥ 0.0.5.
 | Data source (`address`, `abi`, `startBlock`, `endBlock`) | `contracts` + `chains[].contracts`, `start_block`/`end_block` | ✅ |
 | `network: mainnet` | `chains[].id` via name→id table | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
-| `receipt: true` | scalars (`status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`; `receipt.logs` → §7 error on access | ⚠️ |
-| Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR) | ✅ |
+| `receipt: true` | scalars (`status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection` — all but `contractAddress` are HyperSync-only fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
+| Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
-| Block handler's `ethereum.Block` arg | envio `onBlock` provides only `block.number` — other fields (`hash`, `timestamp`, …) → §7 error on access | ⚠️ |
+| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched+cached HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass (§4) | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
-| Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload | ✅ |
+| Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `callHandlers`, block `filter: call`, `graft`, `nonFatalErrors`, composition (1.3.0) | — | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
-Passes through unchanged: `@entity` and `@entity(immutable: true)` (envio's
-parser ignores unknown entity directives), `String`/`Int`/`Boolean`/`Bytes`/
-`BigInt`/`BigDecimal`/`Timestamp`, enums, `@derivedFrom` (identical
-semantics), stored entity references.
+The translator owns schema strictness. Envio's own parser can't be leaned
+on for §7's deny-unknown promise — it silently ignores unrecognized
+directives and doesn't even require `@entity` (every object type becomes a
+table). So validation happens in translation, against a whitelist, before a
+clean envio schema is emitted: an object type without `@entity` → unknown
+error; unknown directives, and unknown arguments on known directives, →
+unknown error (§7).
 
-Rewritten by the translator: `id: Bytes!` → `String` (lowercase 0x-hex at the
-boundary; envio only allows `ID`/`String`/`Int`/`BigInt` ids), `Int8` →
-`BigInt` (Int8 is a 64-bit integer — `i64` in AS; envio's `Int` is 32-bit
-and JS numbers are only safe to 2^53, so `BigInt` is the lossless fit),
-stored entity lists → `[String!]!` id arrays, `_Schema_ @fulltext` stripped.
+Passes through unchanged: `String`/`Int`/`Boolean`/`Bytes`/`BigInt`/
+`BigDecimal`, enums, `@derivedFrom` (identical semantics), stored entity
+references.
+
+Rewritten by the translator: `@entity` stripped (validated first, see
+above); `id: Bytes!` → `String` (lowercase 0x-hex at the boundary; envio
+only allows `ID`/`String`/`Int`/`BigInt` ids), `Int8` → `BigInt` (Int8 is a
+64-bit integer — `i64` in AS; envio's `Int` is 32-bit and JS numbers are
+only safe to 2^53, so `BigInt` is the lossless fit), `Timestamp` → envio's
+`Timestamp` (graph-ts sees an i64 of microseconds, envio stores a Postgres
+timestamp — the shim converts micros ↔ date at the store boundary, keyed
+off the entity schema, §4), stored entity lists → `[String!]!` id arrays,
+`_Schema_ @fulltext` stripped.
+
+**Accepted divergence:** `@entity(immutable: true)` is validated, then
+dropped — graph-node's write-once check is not enforced. It's a safety net
+for buggy mappings: any subgraph that runs cleanly on graph-node never
+trips it, so working subgraphs lose nothing.
 
 §7 error: **interfaces** (`interface X` / `implements`) and
 **timeseries/aggregations** (`@entity(timeseries: true)`, `@aggregation`).
@@ -70,12 +86,14 @@ stored entity lists → `[String!]!` id arrays, `_Schema_ @fulltext` stripped.
 | API | Mapping |
 |---|---|
 | `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides |
-| `Entity.load`, `store.get`, derived loaders, `getInBlock` | sync try-read; miss → suspend (§5). `getInBlock` never suspends: miss = `null` |
+| `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
+| `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary |
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` (log's index within its tx — envio has no per-tx log index) → §7 error on access |
-| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend, only real failures → `{reverted: true}` |
+| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it throws as the handler error (envio retries), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
+| Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: true`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts) |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
@@ -128,8 +146,10 @@ handler at its next context interaction. `Resolved` keeps today's
 "access after the handler resolved" error. The replay loop resets
 `Aborted → Active` each round; the engine sets `Resolved` where it sets
 `isResolved` today. The status must be shared by reference with entity
-sub-proxies (today `entityContextParams` copies `isResolved` by value — this
-refactor fixes that).
+sub-proxies *and actually checked in their traps* — today
+`entityContextParams` copies `isResolved` by value and the entity traps
+never read it (the copy is dead code), so this is new enforcement, not just
+a plumbing fix.
 
 **Why it's fast:** envio runs handlers twice. The preload pass runs all
 wrappers concurrently (`shouldGroup: true`), so first-round misses across the
@@ -226,17 +246,15 @@ prototypes, where the prototype-tail Proxy (§7) throws.
 ## 6b. Tokens, RPC & extra settings
 
 subgraph.yaml has no place for provider config — graph-node keeps RPC in its
-own config, not the project. Three channels, by escalating need; none touch
-subgraph.yaml:
-
-Two env vars, nothing else — no envio-side config file. Every other knob
+own config, not the project. Two env vars, nothing else — no envio-side
+config file, and neither touches subgraph.yaml. Every other knob
 (`hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`,
 effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 
 | Need | Channel | Behavior |
 |---|---|---|
 | HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
-| RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required the moment a mapping performs a contract call — HyperRPC doesn't support `eth_call` |
+| RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required for contract calls — HyperRPC doesn't support `eth_call`. Required at startup when the manifest declares `eth_calls` (1.2.0); otherwise lazily, at the first call |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
   `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
@@ -246,9 +264,19 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   chain config verbatim (bare URLs default to `for: fallback`). The shim's
   call effects (`ethereum.call`/`try_`/`getBalance`/`hasCode`) use the same
   entries in order as a viem fallback transport.
+- **`receipt: true` + RPC: envio's standard behavior, inherited.** The
+  receipt scalars (all but `contractAddress`) aren't servable via RPC —
+  they're outside `RpcTransactionField`. Envio's existing validation already
+  rejects `for: sync` entries when those fields are selected;
+  `for: fallback` entries are accepted as in any envio project, with the
+  same documented degradation: if the fallback ever activates, the receipt
+  scalars can't be served during the fallback window. Subgraph mode adds no
+  special handling.
 - **Contract calls fail lazily but clearly.** Whether mappings call
-  contracts isn't statically knowable, so the first `ethereum.call` without
-  `ENVIO_SUBGRAPH_RPC` raises:
+  contracts isn't statically knowable in general — except declared
+  `eth_calls` (1.2.0), which are declared precisely for this: those
+  manifests get the error below eagerly at startup. Otherwise the first
+  `ethereum.call` without `ENVIO_SUBGRAPH_RPC` raises:
 
   ```
   This subgraph performs contract calls (Token.try_name()), which need an
@@ -259,14 +287,14 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
     ENVIO_SUBGRAPH_RPC={"url":"https://...","for":"fallback","headers":{...}}
   ```
 
-  A subgraph.yaml says *what* to index; these two vars are the only
-  envio-side *how*.
-
 - **Missing token error** points at https://envio.dev/app/api-tokens with
   the `.env` one-liner, same tone as the graph-cli setup error (§6a).
 - Translation pins `address_format: lowercase` (not envio's checksum
   default): graph-ts renders addresses lowercase, and id/derived-key parity
   depends on it. Not overridable.
+
+A subgraph.yaml says *what* to index; these two vars are the only
+envio-side *how*.
 
 ## 7. Unsupported & unknown errors
 
@@ -340,11 +368,12 @@ refuse instead, so behavior never silently diverges:
 | `graft` | translation (manifest) |
 | `features: [nonFatalErrors]` | translation (manifest) |
 | Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
+| Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | GraphQL interfaces | translation (schema) |
 | Timeseries & aggregations | translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
 | `event.transactionLogIndex` | runtime, on access |
-| Block-handler `ethereum.Block` fields other than `number` | runtime, on access |
+| Block-handler `ethereum.Block` fields other than `number`/`timestamp` | runtime, on access |
 
 ## 8. Implementation plan
 
@@ -353,14 +382,17 @@ refuse instead, so behavior never silently diverges:
    (`Active | Aborted(exn) | Resolved`) on `contextParams`, shared by
    reference with entity sub-proxies; `pending` list per handler invocation.
 2. Sync ops: `LoadLayer` sync try-entry-points; `getSync` / `getWhereSync` /
-   sync effect caller traps in `UserContext.res`; status check in every op
-   closure and trap. Internal-only — kept out of `index.d.ts` and docs.
+   sync effect caller traps in `UserContext.res`; a checkpoint-scoped sync
+   read (change record + its checkpoint) for `getInBlock`; status check in
+   every op closure and trap. Internal-only — kept out of `index.d.ts` and
+   docs.
 3. Internal `runSync` replay loop (round reset, allSettled; no termination
    guard in v1).
 4. Tests (rung 1, `packages/envio-tests`, `fromUserApi`): sync hit after
    `set`; miss→suspend→replay from DB; known-absent → sync `null`;
    `effectSync` incl. `cache: false`; caught suspend → next access aborts;
-   pre-grabbed op closure aborts; round cap.
+   pre-grabbed op closure aborts; round cap; checkpoint-scoped read (write
+   in an earlier block of the batch → `null`, current block → hit).
 
 **B. CLI subgraph mode** (`packages/cli`).
 1. `dev`/`start`/`codegen` detect `subgraph.yaml` when `config.yaml` absent.
@@ -370,9 +402,15 @@ refuse instead, so behavior never silently diverges:
    address-less contracts); handler entry → subgraph runtime; embed the
    parsed manifest in the public config JSON under a `subgraph` field
    (extend `publicConfigSchema` in `Config.res`); `.env` loading and
-   `ENVIO_SUBGRAPH_RPC` parsing/injection (§6b).
-3. Schema transform + §7 schema errors (interfaces, aggregations); write
-   transformed schema under `.envio/`.
+   `ENVIO_SUBGRAPH_RPC` parsing/injection (§6b); declared `eth_calls` →
+   eager missing-RPC startup error; topic filters on dynamic-typed params →
+   §7 error.
+3. Schema transform + §7 schema errors: translator-owned strictness
+   (`@entity` required, directive/argument whitelist — envio's parser
+   ignores unknowns, §3) plus interfaces and aggregations; write
+   transformed schema under `.envio/`. The transform records which fields
+   are `Timestamp` so the shim can convert micros ↔ date at the store
+   boundary.
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
    snapshot the multi-error report (unsupported + unknown).
 
@@ -393,9 +431,12 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    (`changetype`, `assert`). The shim implements the full graph-ts surface
    the generated code sits on: `Entity`/`Value`/`TypedMap` + `store` (→ ALS
    scope + `getSync`/`set`/`deleteUnsafe`/`getWhereSync`),
-   `ethereum.SmartContract.call/tryCall` (→ effects),
+   `ethereum.SmartContract.call/tryCall` (→ effects; revert →
+   `{reverted: true}`, transport failure → handler error, §4),
    `DataSourceTemplate.create` (→ register capture), `ethereum.Event` (→
-   envio event conversion; `receipt.logs` getter → §7 error). `generated/`
+   envio event conversion; `receipt.logs` getter → §7 error), the
+   `getBlockTimestamp` effect for block handlers (§4), and `Timestamp`
+   micros ↔ date conversion at the store boundary (§3). `generated/`
    itself is real `graph codegen` output executed as-is (§6a).
 3. Registration entry: read the manifest from the `subgraph` field of the
    resolved public config JSON (`Config.getPublicConfigJson()` — the CLI
@@ -406,7 +447,10 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    (real `graph codegen` output across pinned graph-cli versions) executed
    through the shim; the `satisfies`-style type conformance check against
    real graph-ts declarations; value-class unit tests against graph-ts
-   fixtures. **`SubgraphValidation_test.res`** in
+   fixtures; `try_` revert → `{reverted: true}` vs transport failure →
+   handler error; `Timestamp` micros ↔ date round-trip through the store;
+   `getBlockTimestamp` batching (one range query per round) and
+   `getInBlock` same-batch-earlier-block → `null`. **`SubgraphValidation_test.res`** in
    `packages/envio-tests`, patterned on `UserApiValidation_test.res` (an
    `expectSubgraphError` helper over a `fromSubgraph(~manifest, ~schema,
    ~mappings, ~files)` entry in `InternalTestIndexer`, asserting exact error
@@ -435,3 +479,18 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 3. `ens.nameByHash`: best-effort cached effect, `null` on miss/failure.
 4. Replay termination guard: dropped for the first iteration (determinism
    guarantees progress); progress check is possible later hardening.
+5. Block-handler `block.timestamp`: internal batched HyperSync effect
+   (pattern proven in all-contracts-indexer); `hash` and other fields stay
+   §7 errors — post-hoc fetches can't be made reorg-consistent.
+6. `@entity(immutable: true)`: dropped, documented divergence (§3) — the
+   write-once check only ever fires for mappings already broken on
+   graph-node.
+7. `Timestamp` scalar: kept as envio `Timestamp` (real timestamp column),
+   shim converts i64 micros ↔ date at the store boundary.
+8. `receipt: true` + `ENVIO_SUBGRAPH_RPC`: inherit envio behavior — `for:
+   sync` rejected by existing field validation, `for: fallback` allowed
+   with documented degradation (§6b).
+9. `try_` calls: only contract reverts produce `{reverted: true}`;
+   transport failures throw as the handler error.
+10. Topic filters on dynamic-typed indexed params: §7 unsupported (topics
+    hold keccak hashes, unrecoverable to the values envio filters on).
