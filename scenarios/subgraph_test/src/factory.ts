@@ -12,7 +12,9 @@ export function handlePairCreated(event: PairCreated): void {
   // comes back here carries no generated prototype.
   const previous = Pair.load(event.params.pair);
 
-  const pair = new Pair(event.params.pair);
+  // Load, mutate, save — what a mapping does on a second sighting, and the
+  // path where `changetype` has erased the generated prototype.
+  const pair = previous === null ? new Pair(event.params.pair) : previous;
   pair.token0 = event.params.token0;
   pair.token1 = event.params.token1;
   pair.name = name.reverted

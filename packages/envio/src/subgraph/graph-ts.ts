@@ -755,10 +755,33 @@ export class Entity extends TypedMap<string, Value> {
  * getter would have returned — is what makes that code work here. A name the
  * entity doesn't hold is still refused.
  */
+/**
+ * The entity type a loaded row came from. `changetype` erased the generated
+ * prototype, and with it the `save()` that knows which table to write back to,
+ * so the type is remembered on the instance instead.
+ */
+const ENTITY_TYPE = Symbol("envio.entityType");
+
 const entityTail = new Proxy(Object.create(null), {
   get(_target, prop, receiver) {
     if (typeof prop === "symbol" || PROTOTYPE_PASSTHROUGH.has(prop as string)) {
       return undefined;
+    }
+    if (prop === "save" && receiver instanceof Entity) {
+      const entityType = (receiver as any)[ENTITY_TYPE];
+      if (typeof entityType === "string") {
+        return () => {
+          const id = receiver.get("id");
+          if (id === null) {
+            throw new Error(`Cannot save ${entityType} entity without an ID`);
+          }
+          storeImpl.set(
+            entityType,
+            id.kind === ValueKind.BYTES ? id.toBytes().toHexString() : id.toString(),
+            receiver,
+          );
+        };
+      }
     }
     const stored = receiver instanceof Entity ? receiver.get(prop as string) : null;
     if (stored !== null) {
@@ -831,6 +854,7 @@ function toEntity(entityType: string, row: Record<string, unknown> | undefined |
   const { schema } = currentScope();
   const timestampFields = new Set(schema.timestampFields[entityType] ?? []);
   const entity = new Entity();
+  Object.defineProperty(entity, ENTITY_TYPE, { value: entityType });
   for (const [key, value] of Object.entries(row)) {
     entity.set(
       key,
