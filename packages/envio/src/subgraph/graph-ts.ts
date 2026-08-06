@@ -727,6 +727,22 @@ function toEthereumValue(value: unknown): EthereumValue {
   return toValue(value) as EthereumValue;
 }
 
+/** A graph-ts value as the plain JS an ABI encoder takes. */
+export function valueToJs(value: Value): unknown {
+  switch (value.kind) {
+    case ValueKind.BYTES:
+      return value.toBytes().toHexString();
+    case ValueKind.BIGINT:
+      return value.toBigInt().valueOf();
+    case ValueKind.ARRAY:
+      return value.toArray().map(valueToJs);
+    case ValueKind.NULL:
+      return null;
+    default:
+      return value.data;
+  }
+}
+
 class EthereumBlock {
   constructor(
     public number: BigInt_,

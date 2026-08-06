@@ -80,6 +80,10 @@ pub struct SubgraphRuntimeConfig {
     pub schema: SchemaTranslation,
     /// Project-relative directory the mapping files resolve against.
     pub root: String,
+    /// `ENVIO_SUBGRAPH_RPC` flattened to plain URLs, in order. The shim's call
+    /// effects use them as a viem fallback transport; empty means the mapping's
+    /// first contract call raises the missing-RPC error.
+    pub rpc_urls: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -222,6 +226,12 @@ pub fn translate(
         Some(raw) => Some(parse_rpc_env(raw)?),
         None => None,
     };
+    let rpc_urls = match &rpc {
+        Some(RpcSelection::Url(url)) => vec![url.clone()],
+        Some(RpcSelection::Single(rpc)) => vec![rpc.url.clone()],
+        Some(RpcSelection::List(rpcs)) => rpcs.iter().map(|rpc| rpc.url.clone()).collect(),
+        None => vec![],
+    };
 
     let mut contracts: Vec<GlobalContract<ContractConfig>> = Vec::new();
     let mut chains: BTreeMap<u64, Chain> = BTreeMap::new();
@@ -332,6 +342,7 @@ pub fn translate(
             manifest,
             schema,
             root: root.to_string(),
+            rpc_urls,
         },
         human_config,
     })

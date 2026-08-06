@@ -11,14 +11,17 @@ import { registerHooks } from "node:module";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
-import { runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
+import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
   BigInt as GraphBigInt,
   Bytes,
+  installCallHook,
   installRegisterHook,
   ethereum,
+  valueToJs,
 } from "./graph-ts.ts";
+import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
 import { unsupported } from "./errors.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
@@ -44,6 +47,7 @@ type SubgraphConfig = {
   templates: DataSource[];
   declaresEthCalls: boolean;
   root: string;
+  rpcUrls: string[];
 } & SubgraphSchema;
 
 let hooksInstalled = false;
@@ -168,6 +172,27 @@ async function loadMapping(root: string, mappingFile: string): Promise<Record<st
 
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook();
+  resetClients();
+
+  // One effect for every contract call: envio already batches and dedupes
+  // effect calls in preload, and the block number in the input is what keeps
+  // a cached result tied to the state the mapping saw.
+  const callEffect = makeCallEffect(config.rpcUrls ?? []);
+  installCallHook((call) => {
+    const scope = currentScope();
+    const encoded = JSON.stringify({
+      chainId: scope.dataSource.chainId,
+      address: call.contractAddress.toHexString(),
+      signature: call.functionSignature,
+      args: call.functionParams.map((param: any) => encodeArg(valueToJs(param))),
+      blockNumber: scope.blockNumber,
+    });
+    const output = JSON.parse(scope.context.effectSync(callEffect, encoded));
+    return {
+      reverted: output.reverted,
+      value: output.values === null ? null : output.values.map(decodeArg),
+    };
+  });
 
   const schema: SubgraphSchema = {
     timestampFields: config.timestampFields ?? {},
@@ -203,6 +228,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           network: source.network ?? "",
         },
         registered: new Set(),
+        blockNumber: event.block.number,
       });
 
       indexer.onEvent(
@@ -277,6 +303,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                   network: source.network ?? "",
                 },
                 registered: new Set(),
+                blockNumber: block.number,
               },
               () => fn(graphBlock),
             ),

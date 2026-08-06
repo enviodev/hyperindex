@@ -25,6 +25,20 @@ export function unknown(thing: string, location: string): Error {
   );
 }
 
+const RPC_ENV_VAR = "ENVIO_SUBGRAPH_RPC";
+
+/** §6b: contract calls need an endpoint HyperSync and HyperRPC don't serve. */
+export function missingRpcMessage(callSite: string): string {
+  return (
+    `This subgraph performs contract calls (${callSite}), which need an\n` +
+    `RPC endpoint — HyperSync and HyperRPC serve logs and blocks, not eth_call.\n` +
+    `Set one in .env or the environment:\n` +
+    `  ${RPC_ENV_VAR}=https://...\n` +
+    `Advanced (matches envio's rpc config; single entry or array):\n` +
+    `  ${RPC_ENV_VAR}={"url":"https://...","for":"fallback","headers":{...}}`
+  );
+}
+
 /**
  * Names a trap must answer for rather than refuse. AS-compiled mappings never
  * feature-detect, so nothing legitimate reaches these — but `console.log`,

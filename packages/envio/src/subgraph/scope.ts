@@ -23,6 +23,8 @@ export type Scope = {
   };
   /** Addresses already registered this round, so replays stay idempotent. */
   registered: Set<string>;
+  /** The block a contract call is evaluated against, as graph-node does. */
+  blockNumber: number;
 };
 
 const storage = new AsyncLocalStorage<Scope>();
