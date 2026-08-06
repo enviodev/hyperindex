@@ -950,6 +950,18 @@ describe("ChainState cold start", () => {
 })
 
 describe("ChainState density from the ready buffer", () => {
+  it("clamps a sparse-chain target span before converting it to an int", t => {
+    // 100k items at this density implies ~2.86b blocks, beyond signed int32.
+    // Converting before clamping wraps the target negative and stalls fetching.
+    let cs = makeFetchingChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=30_000_000,
+      ~latestFetchedBlock=29_000_000,
+      ~chainDensity=Some(0.000035),
+    )
+    t.expect(cs->ChainState.targetBlock(~chainTargetItems=100_000.)).toBe(30_000_000)
+  })
+
   it("a dense ready buffer overrides a stale-low processing EMA", t => {
     // 100 ready items over the 101-block span (-1 committed progress ->
     // frontier 100) prove ~1 item/block even though the EMA says 0.001.

@@ -549,10 +549,12 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
   switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
-    Pervasives.min(
-      fetchCeiling,
-      bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
+    let remainingBlocks = fetchCeiling - bufferBlockNumber
+    let targetRange = Pervasives.min(
+      Math.ceil(chainTargetItems /. density),
+      remainingBlocks->Int.toFloat,
     )
+    bufferBlockNumber + targetRange->Float.toInt
   | _ => Pervasives.min(bufferBlockNumber + coldTargetRange, fetchCeiling)
   }
 }
