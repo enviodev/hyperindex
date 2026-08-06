@@ -78,7 +78,7 @@ stripped.
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
 | `dataSource.context()` | persisted in an internal entity table |
 | `ipfs.cat/map`, `arweave.*` | effect + gateway, `cache: true`, suspend |
-| `ens.nameByHash` | no rainbow table — optional effect or §7 error (open) |
+| `ens.nameByHash` | best-effort effect against public ENS data, `cache: true`; `null` on miss/failure (graph-node also returns `null` when its rainbow table lacks the hash) |
 
 **Register pass.** `dataSource.create` must reach envio's `contractRegister`,
 which runs at fetch time — before any entities exist. For each
@@ -110,14 +110,23 @@ graph-ts host ops are synchronous; envio's are async. Bridge:
    (~10k) turns non-determinism into a clear error. Resolved values are
    memoized in the scope against in-memory eviction between rounds.
 
-**Abort hardening.** Suspending sets `abortedWith: Some(err)` on the internal
-per-event context (next to the existing `isResolved` guard in
-`UserContext.res`). While set, every context trap access *and* every op
-closure (including ones grabbed before the abort) re-throws the stored
-suspend error — so even a caught suspend stops the handler at its next
-context interaction. The replay loop clears the flag each round. Requires the
-abort state to be shared by reference with entity sub-proxies (today
-`entityContextParams` copies `isResolved` by value — fixed together).
+**Abort hardening.** The context's lifecycle collapses into a single status
+field on the internal per-event context params, replacing the existing
+`isResolved` boolean:
+
+```rescript
+type contextStatus = Active | Aborted(exn) | Resolved
+```
+
+Suspending sets `Aborted(suspendError)`. While aborted, every context trap
+access *and* every op closure (including ones grabbed before the abort)
+re-throws the stored suspend error — so even a caught suspend stops the
+handler at its next context interaction. `Resolved` keeps today's
+"access after the handler resolved" error. The replay loop resets
+`Aborted → Active` each round; the engine sets `Resolved` where it sets
+`isResolved` today. The status must be shared by reference with entity
+sub-proxies (today `entityContextParams` copies `isResolved` by value — this
+refactor fixes that).
 
 **Why it's fast:** envio runs handlers twice. The preload pass runs all
 wrappers concurrently (`shouldGroup: true`), so first-round misses across the
@@ -128,15 +137,23 @@ with zero replays in the common case. Writes are sync
 (`InMemoryTable.Entity.set`), so read-own-writes holds within a round;
 replayed writes are idempotent by determinism.
 
-**Envio-core additions needed** (shims can't reach the in-memory tables):
+**Envio-core additions needed** (shims can't reach the in-memory tables).
+All of these are **internal-only**: not in `index.d.ts`, not documented,
+reserved for the subgraph runtime — free to change between releases since
+the runtime ships in the same package (§8).
 
-- an exported, identifiable suspend error;
+- an identifiable suspend error;
 - sync siblings in `UserContext.res` traps — `getSync`, `getWhereSync`, a
   sync effect caller: `hasInMemory ? getUnsafeInMemory : (schedule; push
   pending; abort; throw)`. Effect cache keys are already computed
   synchronously;
-- the replay loop itself as `context.runSync(fn)` so core owns round reset
-  (clear `abortedWith` + pending), settle-and-rethrow, and the round cap.
+- the replay loop itself as an internal `runSync(context, fn)` so core owns
+  round reset (`Aborted → Active`, clear pending), settle-and-rethrow, and
+  termination: a **progress check** (suspending on a key that was already
+  resolved this handler = non-determinism or eviction loop → immediate clear
+  error) plus a fixed high round cap (~10k) as backstop. Neither is
+  user-configurable — configurability would only mask non-deterministic
+  mappings.
 
 ## 6. AsyncLocalStorage scope
 
@@ -175,12 +192,14 @@ issues welcome a 👍 — demand drives prioritization):
 ## 8. Implementation plan
 
 **A. Envio core** (`packages/envio`) — independent, start here.
-1. Suspend error type + `abortedWith`/`pending` on `contextParams`; share
-   state by reference with entity sub-proxies (fixes stale `isResolved` copy).
+1. Suspend error type; replace `isResolved` with the `status` field
+   (`Active | Aborted(exn) | Resolved`) on `contextParams`, shared by
+   reference with entity sub-proxies; `pending` list per handler invocation.
 2. Sync ops: `LoadLayer` sync try-entry-points; `getSync` / `getWhereSync` /
-   sync effect caller traps in `UserContext.res`; abort check in every op
-   closure and trap.
-3. `context.runSync(fn)` replay loop (round reset, allSettled, cap).
+   sync effect caller traps in `UserContext.res`; status check in every op
+   closure and trap. Internal-only — kept out of `index.d.ts` and docs.
+3. Internal `runSync` replay loop (round reset, allSettled, progress check +
+   fixed cap).
 4. Tests (rung 1, `packages/envio-tests`, `fromUserApi`): sync hit after
    `set`; miss→suspend→replay from DB; known-absent → sync `null`;
    `effectSync` incl. `cache: false`; caught suspend → next access aborts;
@@ -197,7 +216,14 @@ issues welcome a 👍 — demand drives prioritization):
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
    snapshot the multi-error report.
 
-**C. Subgraph runtime + graph-ts shim** (new package).
+**C. Subgraph runtime + graph-ts shim** — lives inside the `envio` package
+as an undocumented subpath export (`envio/subgraph`), source under
+`packages/envio/src/subgraph/`. Rationale: it consumes internal-only core
+APIs (decision above), so shipping in the same package guarantees lock-step
+versions — no peer-dep pinning, no version-skew errors, and nothing extra to
+install in a subgraph project that has no envio in its `package.json` to
+begin with. Split into its own package later only if the graph-ts value
+classes prove useful standalone.
 1. Value classes (BigInt, BigDecimal, Bytes, Address, TypedMap, JSONValue),
    `crypto`, `json`, `ethereum.encode/decode` — pure, no envio dependency.
 2. Node resolve hook: `@graphprotocol/graph-ts` + `generated/*` → shims built
@@ -217,9 +243,8 @@ issues welcome a 👍 — demand drives prioritization):
 Run after each phase: `cd packages/envio-tests && pnpm rescript && pnpm
 vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 
-**Unresolved questions**
-1. Naming/visibility of the core sync API: `getSync`/`runSync` as documented
-   public API, or internal-only for the subgraph package at first?
-2. Shim package home & npm name (`packages/envio-subgraph`?).
-3. `ens.nameByHash`: §7 error or best-effort effect?
-4. Round-cap value — fixed or configurable?
+**Decisions**
+1. Core sync API: internal-only, for the subgraph runtime.
+2. Runtime home: `envio/subgraph` subpath inside the `envio` package (§8 C).
+3. `ens.nameByHash`: best-effort cached effect, `null` on miss/failure.
+4. Replay termination: progress check + fixed ~10k cap, not configurable.
