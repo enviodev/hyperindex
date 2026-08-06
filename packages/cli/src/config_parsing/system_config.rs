@@ -3991,3 +3991,64 @@ type Foo {
         }
     }
 }
+
+#[cfg(test)]
+mod schema_file_test {
+    use super::SystemConfig;
+    use crate::project_paths::ParsedProjectPaths;
+    use tempdir::TempDir;
+
+    const CONFIG: &str = r#"
+name: no-schema
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+"#;
+
+    fn parse_project(files: &[(&str, &str)]) -> anyhow::Result<SystemConfig> {
+        let dir = TempDir::new("envio_schema_file").expect("tempdir");
+        for (name, contents) in files {
+            std::fs::write(dir.path().join(name), contents).expect("write");
+        }
+        let paths = ParsedProjectPaths::new(dir.path().to_str().expect("utf8 path"), "config.yaml")
+            .expect("project paths");
+        SystemConfig::parse_from_project_files(&paths)
+    }
+
+    // An indexer whose handlers only call effects or register contracts has no
+    // entities to declare, so the absent default file means "no entities".
+    #[test]
+    fn treats_an_absent_default_schema_as_no_entities() {
+        let config = parse_project(&[("config.yaml", CONFIG)]).expect("config without a schema");
+        assert!(config.get_entities().is_empty());
+    }
+
+    // A path the config names explicitly is a claim that the file exists, so a
+    // typo there must still fail loudly rather than silently drop every entity.
+    #[test]
+    fn still_requires_a_schema_the_config_names() {
+        let config = format!("{CONFIG}schema: ./missing.graphql\n");
+        let error = format!(
+            "{:#}",
+            parse_project(&[("config.yaml", &config)]).expect_err("named schema must exist")
+        );
+        assert!(error.contains("missing.graphql"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_default_schema_when_it_is_there() {
+        let config = parse_project(&[
+            ("config.yaml", CONFIG),
+            ("schema.graphql", "type Account { id: ID! }"),
+        ])
+        .expect("config with a schema");
+        assert_eq!(config.get_entity_names(), vec!["Account".to_string()]);
+    }
+}

@@ -73,10 +73,10 @@ let makeTransferItem = (~block, ~from, ~to, ~value, ~handler: Internal.handler) 
 )
 
 let materializerHandler = (config: Config.t) =>
-  switch Materialization.buildHandlers(config)->Array.find(((contractName, eventName, _)) =>
+  switch Materialization.buildHandlers(config)->Array.find(({contractName, eventName}) =>
     contractName === "ERC20" && eventName === "Transfer"
   ) {
-  | Some((_, _, handler)) => handler
+  | Some({handler}) => handler
   | None => JsError.throwWithMessage("No materialization handler was built for ERC20.Transfer")
   }
 

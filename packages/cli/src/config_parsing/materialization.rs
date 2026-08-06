@@ -18,7 +18,7 @@
 
 use super::{
     abi_compat::AbiType,
-    entity_parsing::Schema,
+    entity_parsing::{GqlScalar, Schema, UserDefinedFieldType},
     system_config::{Contract, Event, EventKind, FieldSelection, SelectedField},
 };
 use crate::{type_schema::TypeIdent, utils::text::Capitalize};
@@ -118,6 +118,13 @@ pub struct TableConfig {
                        Only meaningful with `disable_default_cross_chain: true`."
     )]
     pub cross_chain: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Read the events from every address that emits them, rather than only the \
+                       contract's configured addresses. Needed when the contract has no `address` \
+                       in config.yaml."
+    )]
+    pub wildcard: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         with = "Option<BTreeMap<String, Queries>>",
@@ -558,6 +565,8 @@ pub struct Materialization {
     pub table: String,
     pub contract_name: String,
     pub event_name: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub wildcard: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter: Option<CFilter>,
     id: CExpr,
@@ -611,22 +620,29 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
     }
 }
 
+/// Params are typed by the one ABI-to-scalar mapping the rest of the pipeline
+/// uses, so a param can't type differently depending on whether a table or a
+/// contract import looked at it.
 fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
-    Ok(match abi {
-        AbiType::Bool => Ty::new(Scalar::Boolean),
-        AbiType::Uint(_) | AbiType::Int(_) => Ty::new(Scalar::BigInt),
-        AbiType::Address | AbiType::String | AbiType::Bytes | AbiType::FixedBytes(_) => {
-            Ty::new(Scalar::String)
-        }
-        AbiType::Tuple(_) => Ty::new(Scalar::Json),
-        AbiType::Function => return Err(anyhow!("ABI type `function` isn't supported")),
-        AbiType::Array(inner) | AbiType::FixedArray(inner, _) => match inner.as_ref() {
-            AbiType::Tuple(_) | AbiType::Array(_) | AbiType::FixedArray(_, _) => {
-                Ty::new(Scalar::Json)
-            }
-            inner => ty_from_abi(inner)?.array(),
-        },
-    })
+    fn from_gql(gql: &UserDefinedFieldType) -> Result<Ty> {
+        Ok(match gql {
+            UserDefinedFieldType::NonNullType(inner) => from_gql(inner)?,
+            UserDefinedFieldType::ListType(inner) => from_gql(inner)?.array(),
+            UserDefinedFieldType::Single(scalar) => Ty::new(match scalar {
+                GqlScalar::Boolean => Scalar::Boolean,
+                GqlScalar::BigInt(_) => Scalar::BigInt,
+                GqlScalar::BigDecimal(_) => Scalar::BigDecimal,
+                GqlScalar::Int => Scalar::Int,
+                GqlScalar::Float => Scalar::Float,
+                GqlScalar::Json => Scalar::Json,
+                GqlScalar::ID | GqlScalar::String | GqlScalar::Bytes => Scalar::String,
+                other => return Err(anyhow!("ABI params can't produce the `{other}` type")),
+            }),
+        })
+    }
+    from_gql(&UserDefinedFieldType::from_dyn_sol_type(
+        &abi.to_dyn_sol_type(),
+    )?)
 }
 
 /// Walk into a tuple param by component name.
@@ -1790,6 +1806,7 @@ fn compile_table(
             // the plan has to match or its registration finds no contract.
             contract_name: branch.contract_name.capitalize(),
             event_name: branch.event_name.clone(),
+            wildcard: table.wildcard.unwrap_or(false),
             filter: branch.filter.clone(),
             id: id.ok_or_else(|| anyhow!("every table must select an `id`"))?,
             fields,
@@ -2774,5 +2791,57 @@ tables:
                 .expect_err("fuel + tables must error")
         );
         assert!(error.contains("unknown field `tables`"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod abi_type_test {
+    use super::test::parse;
+
+    // Param typing goes through the shared ABI mapping, so every shape a
+    // contract import can produce is selectable here too.
+    #[test]
+    fn types_every_param_shape_the_shared_mapping_supports() {
+        let yaml = r#"
+name: t
+disable_default_cross_chain: true
+contracts:
+  - name: Shapes
+    events:
+      - event: "E(address a, uint256 n, bool b, bytes32 h, uint256[] list, (address x, uint256 y) pair, uint256[][] grid)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Shapes
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  rows:
+    from: evm.events
+    select:
+      id: params.a
+      n: params.n
+      b: params.b
+      h: params.h
+      list: params.list
+      pair: params.pair
+      grid: params.grid
+"#;
+        let config = parse(yaml).expect("every param shape should be selectable");
+        let public: serde_json::Value =
+            serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
+                .expect("valid json");
+        assert_eq!(
+            public["entities"][0]["properties"],
+            serde_json::json!([
+                {"name": "id", "type": "string"},
+                {"name": "n", "type": "bigint"},
+                {"name": "b", "type": "boolean"},
+                {"name": "h", "type": "string"},
+                {"name": "list", "type": "bigint", "isArray": true},
+                {"name": "pair", "type": "json"},
+                {"name": "grid", "type": "json"}
+            ])
+        );
     }
 }

@@ -297,13 +297,18 @@ let startRegistration = (~config: Config.t) => {
     // registered before any user handler — including ones queued by modules
     // imported pre-start — so a handler reading a materialized table always
     // sees the current event's contribution.
-    Materialization.buildHandlers(config)->Array.forEach(((contractName, eventName, handler)) =>
+    Materialization.buildHandlers(config)->Array.forEach(({
+      contractName,
+      eventName,
+      wildcard,
+      handler,
+    }) =>
       r->addOnEventRegistration(
         ~contractName,
         ~eventName,
         ~handler=Some(handler),
         ~contractRegister=None,
-        ~eventOptions=None,
+        ~eventOptions=wildcard ? Some({wildcard: true}) : None,
       )
     )
     // Replay pre-registered callbacks in source (FIFO) order, then clear. For

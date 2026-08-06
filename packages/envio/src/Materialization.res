@@ -11,48 +11,16 @@
 // the previous balance — and removes the row entirely if the contribution that
 // created it is rolled back.
 
+open MaterializationPlan
+
 @get_index external field: (unknown, string) => unknown = ""
 
-type numeric =
-  | @as("int") Int | @as("float") Float | @as("bigint") BigInt | @as("bigdecimal") BigDecimal
-
-let numericSchema = S.enum([Int, Float, BigInt, BigDecimal])
-
-// A compiled expression: the plan JSON is walked once at startup and turned into
-// a closure, so per-event work is just the closure call.
+// Plans are compiled to closures once at startup, so per-event work is a call.
 type eval = unknown => unknown
+type predicate = unknown => bool
 
 let throwInvalid = (message): 'a =>
   JsError.throwWithMessage(`Invalid indexer config: ${message} Run \`envio codegen\` again.`)
-
-let decodeField = (json: JSON.t, name) =>
-  switch json->JSON.Decode.object {
-  | Some(fields) => fields->Dict.get(name)
-  | None => None
-  }
-
-let requireField = (json: JSON.t, name) =>
-  switch json->decodeField(name) {
-  | Some(value) => value
-  | None => throwInvalid(`a materialization expression is missing \`${name}\`.`)
-  }
-
-let requireString = (json: JSON.t, name) =>
-  switch json->requireField(name) {
-  | String(value) => value
-  | _ => throwInvalid(`a materialization expression has a non-string \`${name}\`.`)
-  }
-
-let requireArray = (json: JSON.t, name) =>
-  switch json->requireField(name) {
-  | Array(items) => items
-  | _ => throwInvalid(`a materialization expression has a non-array \`${name}\`.`)
-  }
-
-let parseNumeric = (json: JSON.t, name) =>
-  try json->requireField(name)->S.parseJsonOrThrow(numericSchema) catch {
-  | S.Raised(_) => throwInvalid(`\`${name}\` is not a known numeric type.`)
-  }
 
 let bigIntOfString = value =>
   switch BigInt.fromString(value) {
@@ -99,106 +67,73 @@ let negate = (numeric: numeric, value: unknown): unknown =>
 // what `String` does for all of them.
 let toText: unknown => string = %raw(`String`)
 
-let rec compileExpr = (json: JSON.t): eval => {
-  switch json->requireString("kind") {
-  | "path" =>
-    let path =
-      json
-      ->requireArray("path")
-      ->Array.map(segment =>
-        switch segment {
-        | String(segment) => segment
-        | _ => throwInvalid("a materialization path segment is not a string.")
-        }
-      )
-    switch path {
-    | [only] => event => event->field(only)
-    | path => event => path->Array.reduce(event, field)
-    }
-  | "string" =>
-    let value = json->requireString("value")->(Utils.magic: string => unknown)
+let rec compileExpr = (expr: expr): eval =>
+  switch expr {
+  | Path([only]) => event => event->field(only)
+  | Path(path) => event => path->Array.reduce(event, field)
+  | LitString(value) =>
+    let value = value->(Utils.magic: string => unknown)
     _ => value
-  | "bool" =>
-    let value = json->requireField("value")->(Utils.magic: JSON.t => unknown)
+  | LitBool(value) =>
+    let value = value->(Utils.magic: bool => unknown)
     _ => value
-  | "int" | "float" =>
-    let value = json->requireField("value")->(Utils.magic: JSON.t => unknown)
+  | LitNumber(value) =>
+    let value = value->(Utils.magic: float => unknown)
     _ => value
-  | "bigint" =>
-    let value = json->requireString("value")->bigIntOfString->(Utils.magic: bigint => unknown)
+  | LitBigInt(text) =>
+    let value = text->bigIntOfString->(Utils.magic: bigint => unknown)
     _ => value
-  | "bigdecimal" =>
-    let value =
-      json->requireString("value")->bigDecimalOfString->(Utils.magic: BigDecimal.t => unknown)
+  | LitBigDecimal(text) =>
+    let value = text->bigDecimalOfString->(Utils.magic: BigDecimal.t => unknown)
     _ => value
-  | "null" => _ => %raw(`null`)
-  | "negate" =>
-    let numeric = json->parseNumeric("type")
-    let inner = json->requireField("expr")->compileExpr
+  | LitNull => _ => %raw(`null`)
+  | Negate(numeric, inner) =>
+    let inner = inner->compileExpr
     event => numeric->negate(inner(event))
-  | "concat" =>
-    let separator = switch json->decodeField("separator") {
-    | Some(String(separator)) => separator
-    | _ => ""
-    }
-    let parts = json->requireArray("values")->Array.map(compileExpr)
+  | Concat(separator, values) =>
+    let separator = separator->Option.getOr("")
+    let parts = values->Array.map(compileExpr)
     event =>
       parts
       ->Array.map(part => part(event)->toText)
       ->Array.joinUnsafe(separator)
       ->(Utils.magic: string => unknown)
-  | kind => throwInvalid(`\`${kind}\` is not a known materialization expression.`)
   }
-}
 
-type predicate = unknown => bool
-
-let compareUnsafe: (string, unknown, unknown) => bool = %raw(`function (op, a, b) {
-  switch (op) {
-    case "eq": return a == b;
-    case "ne": return a != b;
-    case "gt": return a > b;
-    case "gte": return a >= b;
-    case "lt": return a < b;
-    case "lte": return a <= b;
+// The operator is fixed when the plan is compiled, so the comparison is picked
+// once here rather than re-dispatched on every event.
+let compileComparison = (op: comparison): ((unknown, unknown) => bool) =>
+  switch op {
+  | Eq => %raw(`(a, b) => a == b`)
+  | Ne => %raw(`(a, b) => a != b`)
+  | Gt => %raw(`(a, b) => a > b`)
+  | Gte => %raw(`(a, b) => a >= b`)
+  | Lt => %raw(`(a, b) => a < b`)
+  | Lte => %raw(`(a, b) => a <= b`)
   }
-}`)
 
-let rec compileFilter = (json: JSON.t): predicate => {
-  switch json->requireString("kind") {
-  | "and" =>
-    let parts = json->requireArray("filters")->Array.map(compileFilter)
+let rec compileFilter = (filter: filter): predicate =>
+  switch filter {
+  | And(filters) =>
+    let parts = filters->Array.map(compileFilter)
     event => parts->Array.every(part => part(event))
-  | "or" =>
-    let parts = json->requireArray("filters")->Array.map(compileFilter)
+  | Or(filters) =>
+    let parts = filters->Array.map(compileFilter)
     event => parts->Array.some(part => part(event))
-  | "cmp" =>
-    let op = json->requireString("op")
-    switch op {
-    | "eq" | "ne" | "gt" | "gte" | "lt" | "lte" => ()
-    | op => throwInvalid(`\`${op}\` is not a known filter operator.`)
-    }
-    let left =
-      JSON.Object(
-        Dict.fromArray([("kind", JSON.String("path")), ("path", json->requireField("path"))]),
-      )->compileExpr
-    let right = json->requireField("value")->compileExpr
-    event => compareUnsafe(op, left(event), right(event))
-  | "in" =>
-    let negated = json->decodeField("negated") == Some(JSON.Boolean(true))
-    let left =
-      JSON.Object(
-        Dict.fromArray([("kind", JSON.String("path")), ("path", json->requireField("path"))]),
-      )->compileExpr
-    let values = json->requireArray("values")->Array.map(compileExpr)
+  | Cmp(path, op, value) =>
+    let left = Path(path)->compileExpr
+    let right = value->compileExpr
+    let compare = op->compileComparison
+    event => compare(left(event), right(event))
+  | In({path, negated, values}) =>
+    let left = Path(path)->compileExpr
+    let candidates = values->Array.map(compileExpr)
+    let equals = Eq->compileComparison
     event => {
       let value = left(event)
-      let found = values->Array.some(candidate => compareUnsafe("eq", value, candidate(event)))
-      found !== negated
+      candidates->Array.some(candidate => equals(value, candidate(event))) !== negated
     }
-  | kind => throwInvalid(`\`${kind}\` is not a known materialization filter.`)
   }
-}
 
 type write = {
   table: string,
@@ -209,37 +144,21 @@ type write = {
   sumFields: array<(string, numeric, eval)>,
 }
 
-type plan = {
-  contractName: string,
-  eventName: string,
-  write: write,
-}
-
-let compilePlan = (json: JSON.t): plan => {
-  let table = json->requireString("table")
+let compileWrite = (plan: MaterializationPlan.t): write => {
   let setFields = []
   let sumFields = []
-  json
-  ->requireArray("fields")
-  ->Array.forEach(field => {
-    let name = field->requireString("name")
-    let expr = field->requireField("expr")->compileExpr
-    switch field->requireString("op") {
-    | "set" => setFields->Array.push((name, expr))
-    | "sum" => sumFields->Array.push((name, field->parseNumeric("type"), expr))
-    | op => throwInvalid(`\`${op}\` is not a known materialization field operation.`)
+  plan.fields->Array.forEach(field =>
+    switch field {
+    | Set({name, expr}) => setFields->Array.push((name, expr->compileExpr))
+    | Sum({name, numeric, expr}) => sumFields->Array.push((name, numeric, expr->compileExpr))
     }
-  })
+  )
   {
-    contractName: json->requireString("contractName"),
-    eventName: json->requireString("eventName"),
-    write: {
-      table,
-      filter: json->decodeField("filter")->Option.map(compileFilter),
-      id: json->requireField("id")->compileExpr,
-      setFields,
-      sumFields,
-    },
+    table: plan.table,
+    filter: plan.filter->Option.map(compileFilter),
+    id: plan.id->compileExpr,
+    setFields,
+    sumFields,
   }
 }
 
@@ -285,44 +204,64 @@ let runWrite = async (write: write, ~event: unknown, ~context: Internal.handlerC
   }
 }
 
+// What `HandlerRegister` needs to install one materializer handler.
+type registration = {
+  contractName: string,
+  eventName: string,
+  wildcard: bool,
+  handler: Internal.handler,
+}
+
 type eventPlans = {
   contractName: string,
   eventName: string,
+  wildcard: bool,
   writes: array<write>,
 }
 
-// One handler per (contract, event), running every plan that event feeds in
-// config order. Sequential on the execute pass on purpose: two plans writing
-// the same id must see each other's contribution. The preload pass runs them
-// concurrently instead — `set` is a noop there, so ordering buys nothing and
-// concurrency lets the `_sum` reads land in one batched load.
-let buildHandlers = (config: Config.t): array<(string, string, Internal.handler)> => {
+// One handler per (contract, event, wildcard), running every plan that event
+// feeds in config order. Sequential on the execute pass on purpose: two plans
+// writing the same id must see each other's contribution. The preload pass runs
+// them concurrently instead — `set` is a noop there, so ordering buys nothing
+// and concurrency lets the `_sum` reads land in one batched load.
+let buildHandlers = (config: Config.t): array<registration> => {
   let plansByEvent: dict<eventPlans> = Dict.make()
-  config.materializations->Array.forEach(materialization => {
-    let {contractName, eventName, write} = materialization->compilePlan
-    let key = `${contractName}.${eventName}`
+  config.materializations->Array.forEach(plan => {
+    // A wildcard and an address-bound table on one event need separate
+    // registrations, or the wildcard's rows would be limited to the configured
+    // addresses (or vice versa).
+    let key = `${plan.contractName}.${plan.eventName}.${plan.wildcard ? "wildcard" : "addresses"}`
+    let write = plan->compileWrite
     switch plansByEvent->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(plans) => plans.writes->Array.push(write)
-    | None => plansByEvent->Dict.set(key, {contractName, eventName, writes: [write]})
+    | None =>
+      plansByEvent->Dict.set(
+        key,
+        {
+          contractName: plan.contractName,
+          eventName: plan.eventName,
+          wildcard: plan.wildcard,
+          writes: [write],
+        },
+      )
     }
   })
 
   plansByEvent
   ->Dict.valuesToArray
-  ->Array.map(({contractName, eventName, writes}) => {
+  ->Array.map(({contractName, eventName, wildcard, writes}) => {
     let handler: Internal.handler = async args => {
       let event = args.event->(Utils.magic: Internal.event => unknown)
       if args.context.isPreload {
-        let _ =
-          await writes
-          ->Array.map(write => write->runWrite(~event, ~context=args.context))
-          ->Promise.all
+        let _ = await writes
+        ->Array.map(write => write->runWrite(~event, ~context=args.context))
+        ->Promise.all
       } else {
         for index in 0 to writes->Array.length - 1 {
           await writes->Array.getUnsafe(index)->runWrite(~event, ~context=args.context)
         }
       }
     }
-    (contractName, eventName, handler)
+    {contractName, eventName, wildcard, handler}
   })
 }

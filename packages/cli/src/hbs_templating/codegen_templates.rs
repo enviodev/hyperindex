@@ -1400,7 +1400,7 @@ type indexerContract = {
         let mut all_contract_names = BTreeSet::new();
         for chain_config in &chain_configs {
             for contract in &chain_config.codegen_contracts {
-                all_contract_names.insert(contract.name.original.clone());
+                all_contract_names.insert(contract.name.capitalized.clone());
             }
         }
 
@@ -2126,7 +2126,14 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                        // The runtime keys contracts by their capitalized
+                        // name, so the literal a user writes must match that,
+                        // not the raw spelling in config.yaml.
+                        format!(
+                            "  \"{}\": {{\n{}\n  }};",
+                            name.capitalize(),
+                            event_entries.join("\n")
+                        )
                     })
                     .collect()
             } else {
@@ -2154,7 +2161,14 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                        // The runtime keys contracts by their capitalized
+                        // name, so the literal a user writes must match that,
+                        // not the raw spelling in config.yaml.
+                        format!(
+                            "  \"{}\": {{\n{}\n  }};",
+                            name.capitalize(),
+                            event_entries.join("\n")
+                        )
                     })
                     .collect()
             } else {
@@ -2238,7 +2252,14 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                        // The runtime keys contracts by their capitalized
+                        // name, so the literal a user writes must match that,
+                        // not the raw spelling in config.yaml.
+                        format!(
+                            "  \"{}\": {{\n{}\n  }};",
+                            name.capitalize(),
+                            event_entries.join("\n")
+                        )
                     })
                     .collect()
             } else {
@@ -2397,7 +2418,7 @@ type testIndexer = {{
                     if !instruction_entries.is_empty() {
                         program_entries.push(format!(
                             "        \"{name}\": {{\n{body}\n        }};",
-                            name = contract.name,
+                            name = contract.name.capitalize(),
                             body = instruction_entries.join("\n"),
                         ));
                     }

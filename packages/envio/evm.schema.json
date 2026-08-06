@@ -782,6 +782,13 @@
               "null"
             ]
           },
+          "wildcard": {
+            "description": "Read the events from every address that emits them, rather than only the contract's configured addresses. Needed when the contract has no `address` in config.yaml.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "with": {
             "description": "Table-local intermediate relations, like SQL CTEs. A list of queries is a UNION ALL; every branch must produce the same columns.",
             "type": [

@@ -1730,11 +1730,12 @@ impl UserDefinedFieldType {
             DynSolType::Tuple(_) => Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json)))),
             DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
                 match inner.as_ref() {
-                    DynSolType::Tuple(_) => {
+                    // A nested array has no column shape of its own, so it
+                    // flows through as JSON like a tuple does — the handler
+                    // assigns the decoded value directly and the row stores it
+                    // without inventing per-dimension columns.
+                    DynSolType::Tuple(_) | DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
                         Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json))))
-                    }
-                    DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
-                        Err(anyhow!("Unhandled contract import type 'array of array'"))
                     }
                     // Primitive-element arrays map to `[Scalar!]!`.
                     DynSolType::Bool
@@ -3371,6 +3372,71 @@ type TestEntity @storage(clickhouse: {orderBy: ["price"]}) {
 }
             "#,
             "field `price` is a BigInt/BigDecimal",
+        );
+    }
+}
+
+#[cfg(test)]
+mod dyn_sol_type_test {
+    use super::{FieldType, UserDefinedFieldType};
+    use alloy_dyn_abi::DynSolType;
+
+    fn render(signature: &str) -> String {
+        UserDefinedFieldType::from_dyn_sol_type(&DynSolType::parse(signature).expect("parses"))
+            .map(|ty| ty.to_string())
+            .unwrap_or_else(|error| format!("error: {error}"))
+    }
+
+    // The one place ABI params become GraphQL types. `tables` reads this too,
+    // so a shape it accepts and this rejects would type the same param two
+    // different ways depending on which path saw it.
+    #[test]
+    fn maps_every_event_param_shape() {
+        assert_eq!(
+            [
+                "uint256",
+                "int128",
+                "bool",
+                "address",
+                "bytes",
+                "string",
+                "bytes32",
+                "uint256[]",
+                "address[3]",
+                "(address,uint256)",
+                "(address,uint256)[]",
+                // Nested arrays have no column shape of their own, so they
+                // land as JSON like tuples rather than failing the import.
+                "uint256[][]",
+                "(address,uint256)[][]",
+            ]
+            .map(render),
+            [
+                "BigInt!",
+                "BigInt!",
+                "Boolean!",
+                "String!",
+                "String!",
+                "String!",
+                "String!",
+                "[BigInt!]!",
+                "[String!]!",
+                "Json!",
+                "Json!",
+                "Json!",
+                "Json!",
+            ]
+            .map(String::from)
+        );
+    }
+
+    #[test]
+    fn rejects_a_function_param() {
+        assert_eq!(
+            FieldType::from_dyn_sol_type(&DynSolType::Function)
+                .expect_err("function has no column type")
+                .to_string(),
+            "Unsupported contract import type 'function'"
         );
     }
 }
