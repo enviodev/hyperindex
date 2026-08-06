@@ -229,11 +229,14 @@ subgraph.yaml has no place for provider config — graph-node keeps RPC in its
 own config, not the project. Three channels, by escalating need; none touch
 subgraph.yaml:
 
+Two env vars, nothing else — no envio-side config file. Every other knob
+(`hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`,
+effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
+
 | Need | Channel | Behavior |
 |---|---|---|
 | HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
 | RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required the moment a mapping performs a contract call — HyperRPC doesn't support `eth_call` |
-| Everything else | optional overlay file `envio.yaml` next to subgraph.yaml | envio surface the manifest can't express: `hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`, effect rate limits, IPFS gateway |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
   `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
@@ -243,11 +246,6 @@ subgraph.yaml:
   chain config verbatim (bare URLs default to `for: fallback`). The shim's
   call effects (`ethereum.call`/`try_`/`getBalance`/`hasCode`) use the same
   entries in order as a viem fallback transport.
-- **Precedence:** subgraph.yaml says *what* to index; `ENVIO_SUBGRAPH_RPC` +
-  `envio.yaml` say *how*; env vars carry secrets. Overlay merges over the
-  generated config and wins; `${ENVIO_*}` interpolation works inside it;
-  the same deny-unknown parsing applies (§7 unknown error for unrecognized
-  keys).
 - **Contract calls fail lazily but clearly.** Whether mappings call
   contracts isn't statically knowable, so the first `ethereum.call` without
   `ENVIO_SUBGRAPH_RPC` raises:
@@ -260,6 +258,9 @@ subgraph.yaml:
   Advanced (matches envio's rpc config; single entry or array):
     ENVIO_SUBGRAPH_RPC={"url":"https://...","for":"fallback","headers":{...}}
   ```
+
+  A subgraph.yaml says *what* to index; these two vars are the only
+  envio-side *how*.
 
 - **Missing token error** points at https://envio.dev/app/api-tokens with
   the `.env` one-liner, same tone as the graph-cli setup error (§6a).
@@ -368,9 +369,8 @@ refuse instead, so behavior never silently diverges:
    `field_selection` from `receipt` + superset default, templates →
    address-less contracts); handler entry → subgraph runtime; embed the
    parsed manifest in the public config JSON under a `subgraph` field
-   (extend `publicConfigSchema` in `Config.res`); `.env` loading,
-   `ENVIO_SUBGRAPH_RPC` parsing/injection, and `envio.yaml` overlay merge
-   (§6b).
+   (extend `publicConfigSchema` in `Config.res`); `.env` loading and
+   `ENVIO_SUBGRAPH_RPC` parsing/injection (§6b).
 3. Schema transform + §7 schema errors (interfaces, aggregations); write
    transformed schema under `.envio/`.
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
