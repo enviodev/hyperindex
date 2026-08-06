@@ -14,9 +14,9 @@ import BigNumber from "bignumber.js";
 import { keccak256 as viemKeccak256, toHex, hexToBytes, decodeAbiParameters } from "viem";
 import { currentScope } from "./scope.ts";
 import {
+  PROTOTYPE_PASSTHROUGH,
   refusedGetter,
   strictNamespace,
-  strictPrototypeTail,
   unsupported,
   unknown,
 } from "./errors.ts";
@@ -460,6 +460,46 @@ export class Value {
   displayData(): string {
     return String(this.data);
   }
+  displayKind(): string {
+    return ValueKind[this.kind] ?? String(this.kind);
+  }
+}
+
+/** A stored `Value` as the scalar a generated entity getter would return. */
+function valueToNative(value: Value): unknown {
+  switch (value.kind) {
+    case ValueKind.NULL:
+      return null;
+    case ValueKind.BYTES:
+      return value.toBytes();
+    case ValueKind.BIGINT:
+      return value.toBigInt();
+    case ValueKind.BIGDECIMAL:
+      return value.toBigDecimal();
+    case ValueKind.INT8:
+    case ValueKind.TIMESTAMP:
+      return value.toI64();
+    case ValueKind.ARRAY:
+      return value.toArray().map(valueToNative);
+    default:
+      return value.data;
+  }
+}
+
+function nativeToValue(native: unknown): Value {
+  if (native === null || native === undefined) return Value.fromNull();
+  if (native instanceof Value) return native;
+  if (native instanceof Bytes || native instanceof ByteArray) {
+    return Value.fromBytes(Bytes.fromByteArray(native));
+  }
+  if (native instanceof BigInt_) return Value.fromBigInt(native);
+  if (native instanceof BigDecimal) return Value.fromBigDecimal(native);
+  if (typeof native === "string") return Value.fromString(native);
+  if (typeof native === "boolean") return Value.fromBoolean(native);
+  if (typeof native === "bigint") return Value.fromI64(native);
+  if (typeof native === "number") return Value.fromI32(native);
+  if (Array.isArray(native)) return Value.fromArray(native.map(nativeToValue));
+  return Value.fromString(String(native));
 }
 
 export class Entity extends TypedMap<string, Value> {
@@ -512,10 +552,47 @@ export class Entity extends TypedMap<string, Value> {
   }
 }
 
-// Unknown members on a generated entity class fall through the whole chain —
-// instance -> generated prototype -> Entity -> TypedMap -> this trap. Known
-// lookups are plain properties found before it, so they cost nothing.
-Object.setPrototypeOf(TypedMap.prototype, strictPrototypeTail("entity"));
+/**
+ * Tail of the entity prototype chain: instance -> generated prototype ->
+ * Entity -> TypedMap -> here.
+ *
+ * `graph codegen` emits `changetype<Pair | null>(store.get(...))`, and
+ * `changetype` erases its type argument, so a loaded entity reaches the mapping
+ * without the generated prototype that carries `pair.token0`. Falling through to
+ * the stored field — typed by the `Value` kind, which is what the generated
+ * getter would have returned — is what makes that code work here. A name the
+ * entity doesn't hold is still refused.
+ */
+const entityTail = new Proxy(Object.create(null), {
+  get(_target, prop, receiver) {
+    if (typeof prop === "symbol" || PROTOTYPE_PASSTHROUGH.has(prop as string)) {
+      return undefined;
+    }
+    const stored = receiver instanceof Entity ? receiver.get(prop as string) : null;
+    if (stored !== null) {
+      return valueToNative(stored);
+    }
+    throw unknown(`the entity member ${String(prop)}`, "a mapping handler");
+  },
+  set(_target, prop, value, receiver) {
+    // `entries` is TypedMap's own storage, and its class-field initializer is a
+    // plain assignment — which walks the prototype chain and lands here before
+    // the instance has the property. Routing it into `set()` would leave the
+    // map with nowhere to store anything.
+    if (typeof prop === "symbol" || prop === "entries" || !(receiver instanceof Entity)) {
+      return Reflect.defineProperty(receiver as object, prop, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    receiver.set(prop as string, nativeToValue(value));
+    return true;
+  },
+});
+
+Object.setPrototypeOf(TypedMap.prototype, entityTail);
 
 // ---------------------------------------------------------------------------
 // store
@@ -645,9 +722,10 @@ class SmartContractCall {
 }
 
 export class CallResult<T> {
+  // Generated bindings signal a revert with a bare `new ethereum.CallResult()`.
   constructor(
-    public reverted: boolean,
-    private _value: T | null,
+    public reverted: boolean = true,
+    private _value: T | null = null,
   ) {}
   get value(): T {
     if (this.reverted) {

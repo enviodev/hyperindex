@@ -56,6 +56,22 @@ describe("an unmodified subgraph project", () => {
                 pair,
               },
             },
+            {
+              contract: "Factory",
+              event: "PairCreated",
+              srcAddress: factory,
+              params: {
+                token0: Addresses.mockAddresses[1],
+                token1: Addresses.mockAddresses[2],
+                pair,
+              },
+            },
+            {
+              contract: "Pair",
+              event: "Swap",
+              srcAddress: pair,
+              params: { sender: Addresses.mockAddresses[4], amount: 500n },
+            },
           ],
         },
       },
@@ -65,7 +81,18 @@ describe("an unmodified subgraph project", () => {
       id: pair.toLowerCase(),
       token0: Addresses.mockAddresses[1].toLowerCase(),
       token1: Addresses.mockAddresses[2].toLowerCase(),
-      name: "Uniswap",
+      // The second event read the first back through the generated `load()`.
+      name: "Uniswap+Uniswap",
     });
+
+    const swaps = await indexer.Swap.getWhere({ pair: { _eq: pair.toLowerCase() } });
+    expect(swaps).toEqual([
+      {
+        id: pair.toLowerCase() + "-2",
+        pair: pair.toLowerCase(),
+        sender: Addresses.mockAddresses[4].toLowerCase(),
+        amount: 500n,
+      },
+    ]);
   });
 });

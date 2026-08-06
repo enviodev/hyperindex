@@ -8,7 +8,8 @@
   },
   "devDependencies": {
     "@types/node": "24.12.2",
-    "vitest": "4.1.0"
+    "vitest": "4.1.0",
+    "@graphprotocol/graph-ts": "0.38.1"
   },
   "dependencies": {
     "envio": "file:../../packages/envio"

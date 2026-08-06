@@ -1,38 +1,30 @@
-import {
-  Address,
-  BigInt,
-  DataSourceTemplate,
-  Entity,
-  ethereum,
-  store,
-} from "@graphprotocol/graph-ts";
+import { PairCreated, Factory } from "../generated/Factory/Factory";
+import { Pair as PairTemplate } from "../generated/templates";
+import { Pair, Tick } from "../generated/schema";
+import { ethereum } from "@graphprotocol/graph-ts";
 
-// What `graph codegen` emits for a contract binding: a SmartContract subclass
-// whose methods go through call/tryCall.
-class Factory extends ethereum.SmartContract {
-  static bind(address: Address): Factory {
-    return new Factory("Factory", address);
-  }
-
-  try_name(): any {
-    return this.tryCall("name", "name():(string)", []);
-  }
-}
-
-export function handlePairCreated(event: any): void {
-  DataSourceTemplate.create("Pair", [event.params.pair.toHexString()]);
+export function handlePairCreated(event: PairCreated): void {
+  PairTemplate.create(event.params.pair);
 
   const name = Factory.bind(event.address).try_name();
 
-  const pair = new Entity();
-  pair.setBytes("token0", event.params.token0);
-  pair.setBytes("token1", event.params.token1);
-  pair.setString("name", name.reverted ? "unknown" : name.value[0].toString());
-  store.set("Pair", event.params.pair.toHexString(), pair);
+  // `graph codegen` emits `changetype<Pair | null>(store.get(...))`, so what
+  // comes back here carries no generated prototype.
+  const previous = Pair.load(event.params.pair);
+
+  const pair = new Pair(event.params.pair);
+  pair.token0 = event.params.token0;
+  pair.token1 = event.params.token1;
+  pair.name = name.reverted
+    ? "unknown"
+    : previous === null
+      ? name.value
+      : previous.name + "+" + name.value;
+  pair.save();
 }
 
-export function handleBlock(block: any): void {
-  const tick = new Entity();
-  tick.setBigInt("height", block.number);
-  store.set("Tick", block.number.toString(), tick);
+export function handleBlock(block: ethereum.Block): void {
+  const tick = new Tick(block.number.toString());
+  tick.height = block.number;
+  tick.save();
 }

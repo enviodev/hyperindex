@@ -5,14 +5,14 @@ type Pair @entity(immutable: true) {
   name: String!
 }
 
-type Swap @entity {
+type Swap @entity(immutable: false) {
   id: ID!
   pair: Bytes!
   sender: Bytes!
   amount: BigInt!
 }
 
-type Tick @entity {
+type Tick @entity(immutable: false) {
   id: ID!
   height: BigInt!
 }

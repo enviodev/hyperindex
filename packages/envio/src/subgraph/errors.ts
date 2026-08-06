@@ -60,6 +60,8 @@ function isPassthrough(prop: PropertyKey): boolean {
   return typeof prop === "symbol" || PASSTHROUGH.has(prop as string);
 }
 
+export const PROTOTYPE_PASSTHROUGH = PASSTHROUGH;
+
 /**
  * Full Proxy for a graph-ts namespace object. Future graph-ts APIs are
  * unenumerable, so only a `get` trap can catch them; these are cold paths, so
@@ -72,22 +74,6 @@ export function strictNamespace<T extends object>(name: string, target: T): T {
         return Reflect.get(target, prop, receiver);
       }
       throw unknown(`the graph-ts API ${name}.${String(prop)}`, `a mapping handler`);
-    },
-  });
-}
-
-/**
- * Base of a hot class's prototype chain: instance -> real prototype with every
- * known member as a plain property (V8-optimizable) -> this Proxy. Known
- * lookups never reach the trap; unknown names fall through it and throw.
- */
-export function strictPrototypeTail(className: string): object {
-  return new Proxy(Object.create(null), {
-    get(_target, prop) {
-      if (isPassthrough(prop)) {
-        return undefined;
-      }
-      throw unknown(`the ${className} member ${String(prop)}`, `a mapping handler`);
     },
   });
 }

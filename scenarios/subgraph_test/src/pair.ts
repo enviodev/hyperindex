@@ -1,9 +1,10 @@
-import { Entity, store } from "@graphprotocol/graph-ts";
+import { Swap as SwapEvent } from "../generated/templates/Pair/Pair";
+import { Swap } from "../generated/schema";
 
-export function handleSwap(event: any): void {
-  const swap = new Entity();
-  swap.setBytes("pair", event.address);
-  swap.setBytes("sender", event.params.sender);
-  swap.setBigInt("amount", event.params.amount);
-  store.set("Swap", event.transaction.hash + "-" + event.logIndex.toString(), swap);
+export function handleSwap(event: SwapEvent): void {
+  const swap = new Swap(event.address.toHexString() + "-" + event.logIndex.toString());
+  swap.pair = event.address;
+  swap.sender = event.params.sender;
+  swap.amount = event.params.amount;
+  swap.save();
 }

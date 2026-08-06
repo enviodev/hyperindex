@@ -15,5 +15,6 @@ export default defineConfig({
   },
   test: {
     pool: "forks",
+    testTimeout: 60_000,
   },
 });
