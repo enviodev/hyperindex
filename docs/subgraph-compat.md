@@ -204,12 +204,30 @@ refuse instead, so behavior never silently diverges:
 - *Schema*: unknown directives, unknown arguments on known directives
   (e.g. `@entity(...)` beyond `immutable`/`timeseries`), and unknown type
   names that aren't schema-defined raise the unknown error.
-- *Runtime*: every shim surface is a strict object — `@graphprotocol/graph-ts`
-  namespaces (`store`, `ethereum`, `dataSource`, `json`, `crypto`, `ipfs`,
-  `ens`, `arweave`, `log`), generated entity/contract classes, and event
-  objects are wrapped so accessing or importing anything unimplemented
-  throws the unknown error naming the symbol (e.g.
-  `graph-ts → ethereum.someNewApi`) instead of returning `undefined`.
+- *Runtime*: every shim surface is strict, via three mechanisms picked by
+  path heat and whether the unknown names are enumerable (precedent:
+  `UserContext.res` already Proxy-traps invalid context access):
+  1. **Full Proxy** on namespace objects and `generated/*` module surfaces
+     (`store`, `ethereum`, `dataSource`, `json`, `crypto`, `ipfs`, `ens`,
+     `arweave`, `log`) — future graph-ts APIs are unenumerable, so only a
+     `get` trap can catch them; cold path, trap cost is negligible.
+  2. **Prototype-tail Proxy** on hot classes (value classes, entities, event
+     objects): instance → real prototype with all known members (plain
+     properties, V8-optimizable) → base object whose Proxy throws the
+     unknown error. Known lookups never reach the trap — zero overhead;
+     unknown names fall through the chain and throw.
+  3. **Plain throwing getters** for known-but-refused fields
+     (`receipt.logs`, `transactionLogIndex`, block fields beyond `number`) —
+     enumerable names need no Proxy and throw the *unsupported* error,
+     keeping the unsupported/unknown distinction crisp.
+
+  Traps must return `undefined` for symbols and a small allowlist (`then`,
+  `toJSON`, `constructor`, `valueOf`, `Symbol.toPrimitive`, inspect) so
+  `console.log`/`await`/`JSON.stringify` don't explode; safe because
+  AS-compiled mappings never feature-detect. Unknown *named imports* fail at
+  Node's ESM link step before any Proxy runs — the registration entry
+  catches mapping-module import errors and rewraps the missing-export name
+  into the unknown-error template.
 
 | Feature | Detected |
 |---|---|
