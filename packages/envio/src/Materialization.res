@@ -285,29 +285,42 @@ let runWrite = async (write: write, ~event: unknown, ~context: Internal.handlerC
   }
 }
 
+type eventPlans = {
+  contractName: string,
+  eventName: string,
+  writes: array<write>,
+}
+
 // One handler per (contract, event), running every plan that event feeds in
-// config order. Sequential on purpose: two plans writing the same id must see
-// each other's contribution.
+// config order. Sequential on the execute pass on purpose: two plans writing
+// the same id must see each other's contribution. The preload pass runs them
+// concurrently instead — `set` is a noop there, so ordering buys nothing and
+// concurrency lets the `_sum` reads land in one batched load.
 let buildHandlers = (config: Config.t): array<(string, string, Internal.handler)> => {
-  let writesByEvent: dict<array<write>> = Dict.make()
-  let order = []
+  let plansByEvent: dict<eventPlans> = Dict.make()
   config.materializations->Array.forEach(materialization => {
     let {contractName, eventName, write} = materialization->compilePlan
     let key = `${contractName}.${eventName}`
-    switch writesByEvent->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(writes) => writes->Array.push(write)
-    | None =>
-      writesByEvent->Dict.set(key, [write])
-      order->Array.push((contractName, eventName, key))
+    switch plansByEvent->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(plans) => plans.writes->Array.push(write)
+    | None => plansByEvent->Dict.set(key, {contractName, eventName, writes: [write]})
     }
   })
 
-  order->Array.map(((contractName, eventName, key)) => {
-    let writes = writesByEvent->Dict.getUnsafe(key)
+  plansByEvent
+  ->Dict.valuesToArray
+  ->Array.map(({contractName, eventName, writes}) => {
     let handler: Internal.handler = async args => {
       let event = args.event->(Utils.magic: Internal.event => unknown)
-      for index in 0 to writes->Array.length - 1 {
-        await writes->Array.getUnsafe(index)->runWrite(~event, ~context=args.context)
+      if args.context.isPreload {
+        let _ =
+          await writes
+          ->Array.map(write => write->runWrite(~event, ~context=args.context))
+          ->Promise.all
+      } else {
+        for index in 0 to writes->Array.length - 1 {
+          await writes->Array.getUnsafe(index)->runWrite(~event, ~context=args.context)
+        }
       }
     }
     (contractName, eventName, handler)

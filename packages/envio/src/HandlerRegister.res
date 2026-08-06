@@ -293,15 +293,10 @@ let startRegistration = (~config: Config.t) => {
       finished: false,
     }
     EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
-    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
-    // multiple handlers on one event this replay order is the dispatch order, so
-    // it must not reverse (which `Array.pop` would).
-    let queued = preRegistered->Array.copy
-    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
-    queued->Array.forEach(fn => fn(r))
     // Materialized tables create their own fetch demand, so their handlers are
-    // registered before any user module — the events they read then look no
-    // different from events a handler asked for.
+    // registered before any user handler — including ones queued by modules
+    // imported pre-start — so a handler reading a materialized table always
+    // sees the current event's contribution.
     Materialization.buildHandlers(config)->Array.forEach(((contractName, eventName, handler)) =>
       r->addOnEventRegistration(
         ~contractName,
@@ -311,6 +306,12 @@ let startRegistration = (~config: Config.t) => {
         ~eventOptions=None,
       )
     )
+    // Replay pre-registered callbacks in source (FIFO) order, then clear. For
+    // multiple handlers on one event this replay order is the dispatch order, so
+    // it must not reverse (which `Array.pop` would).
+    let queued = preRegistered->Array.copy
+    preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
+    queued->Array.forEach(fn => fn(r))
   }
 }
 

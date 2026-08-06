@@ -5,8 +5,8 @@ _Please refer to the [documentation website](https://docs.envio.dev) for a thoro
 The `accounts` and `approvals` tables are declared under `tables` in
 `config.yaml`, which owns both their schema and their writes. Each column's type
 is inferred from the events it reads, so this indexer has no `schema.graphql` and
-no handlers. To write a table from handler code instead, declare its `fields`
-rather than a `select`.
+no handlers. Tables written from handler code are declared in `schema.graphql`
+instead.
 
 ### Run
 

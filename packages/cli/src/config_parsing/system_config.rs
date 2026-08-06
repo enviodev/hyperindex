@@ -1059,14 +1059,12 @@ impl SystemConfig {
         let base_config = human_config.get_base_config();
         let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
         let storage = Storage::resolve(base_config.storage.as_ref())?;
-        if let Some(tables) = &base_config.tables {
+        if let HumanConfig::Evm(EvmConfig {
+            tables: Some(tables),
+            ..
+        }) = &human_config
+        {
             materialization::validate_table_names(tables)?;
-            if !matches!(human_config, HumanConfig::Evm(_)) {
-                return Err(anyhow!(
-                    "`tables` is only supported for EVM configs — `evm.events` is currently the \
-                     only source a table can be materialized from."
-                ));
-            }
             if default_cross_chain {
                 return Err(anyhow!(
                     "`tables` needs `disable_default_cross_chain: true` at the top of \
@@ -1555,7 +1553,11 @@ impl SystemConfig {
         // Compiled here, after the contracts are built: a materialized table's
         // types come from the events it reads. The tables it declares become
         // entities, so every schema validation below sees them too.
-        if let Some(tables) = config.human_config.get_base_config().tables.clone() {
+        let tables = match &config.human_config {
+            HumanConfig::Evm(evm_config) => evm_config.tables.clone(),
+            _ => None,
+        };
+        if let Some(tables) = tables {
             let contracts: BTreeMap<String, &Contract> = config
                 .contracts
                 .iter()
@@ -2935,46 +2937,45 @@ impl FieldSelection {
         use human_config::evm::{BlockField, TransactionField};
         use strum::IntoEnumIterator;
 
-        let all = Self::all_evm();
-        let mut selection = self.clone();
-        for name in block_fields {
-            if has_rpc_sync_src {
-                let field = BlockField::iter()
+        // Resolve names to the config enums and reuse the same validation an
+        // explicit `field_selection` goes through, RPC availability included.
+        let block_fields = block_fields
+            .iter()
+            .map(|name| {
+                BlockField::iter()
                     .find(|field| &field.to_string() == name)
-                    .ok_or_else(|| anyhow!("Unknown block field {name}"))?;
-                if RpcBlockField::try_from(field).is_err() {
-                    return Err(anyhow!(
-                        "`block.{name}` is unavailable when indexing via RPC"
-                    ));
-                }
-            }
-            if !selection.block_fields.iter().any(|f| &f.name == name) {
-                let field = all
-                    .block_fields
-                    .iter()
-                    .find(|f| &f.name == name)
-                    .ok_or_else(|| anyhow!("Unknown block field {name}"))?;
-                selection.block_fields.push(field.clone());
+                    .ok_or_else(|| anyhow!("Unknown block field {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let transaction_fields = transaction_fields
+            .iter()
+            .map(|name| {
+                TransactionField::iter()
+                    .find(|field| &field.to_string() == name)
+                    .ok_or_else(|| anyhow!("Unknown transaction field {name}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let added = Self::try_from_config_field_selection(
+            human_config::evm::FieldSelection {
+                block_fields: Some(block_fields),
+                transaction_fields: Some(transaction_fields),
+            },
+            has_rpc_sync_src,
+        )?;
+
+        let mut selection = self.clone();
+        for field in added.block_fields {
+            if !selection.block_fields.iter().any(|f| f.name == field.name) {
+                selection.block_fields.push(field);
             }
         }
-        for name in transaction_fields {
-            if has_rpc_sync_src {
-                let field = TransactionField::iter()
-                    .find(|field| &field.to_string() == name)
-                    .ok_or_else(|| anyhow!("Unknown transaction field {name}"))?;
-                if RpcTransactionField::try_from(field).is_err() {
-                    return Err(anyhow!(
-                        "`transaction.{name}` is unavailable when indexing via RPC"
-                    ));
-                }
-            }
-            if !selection.transaction_fields.iter().any(|f| &f.name == name) {
-                let field = all
-                    .transaction_fields
-                    .iter()
-                    .find(|f| &f.name == name)
-                    .ok_or_else(|| anyhow!("Unknown transaction field {name}"))?;
-                selection.transaction_fields.push(field.clone());
+        for field in added.transaction_fields {
+            if !selection
+                .transaction_fields
+                .iter()
+                .any(|f| f.name == field.name)
+            {
+                selection.transaction_fields.push(field);
             }
         }
         selection.block_fields.sort();

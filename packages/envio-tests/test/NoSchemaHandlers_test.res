@@ -29,7 +29,6 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
   // The preload pass runs the handler too, so a side effect on the global has to
   // skip it the way any non-entity side effect would.
   if (context.isPreload) return;
-  context.log.info(\`transfer of \${event.params.value}\`);
   globalThis.transferred.push(event.params.value);
 });
 `,

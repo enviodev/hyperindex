@@ -179,11 +179,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let prop = prop->(Utils.magic: unknown => string)
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
-    // The materializer reaches its entities through `Internal.materializerProp`,
-    // which builds the context with `isMaterializer` — so the guard closes the
-    // ordinary `context.<Table>` accessor only.
-    let isMaterialized =
-      params.config.materializedTables->Dict.has(params.entityConfig.name) && !params.isMaterializer
 
     let set = params.isPreload
       ? noopSet
@@ -204,6 +199,15 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         }
 
     switch prop {
+    // The materializer reaches its entities through `Internal.materializerProp`,
+    // which builds the context with `isMaterializer` — so the guard closes the
+    // write operations of the ordinary `context.<Table>` accessor only.
+    | "set" | "getOrCreate" | "deleteUnsafe"
+      if params.config.materializedTables->Dict.has(params.entityConfig.name) &&
+      !params.isMaterializer =>
+      (
+        (_: unknown) => throwMaterializedReadOnly(params.entityConfig, prop)
+      )->(Utils.magic: (unknown => unit) => unknown)
     | "get" =>
       if isClickHouseOnly {
         ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
@@ -273,11 +277,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         (
           (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
         )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
-      } else if isMaterialized {
-        (
-          (_entity: Internal.entity) =>
-            throwMaterializedReadOnly(params.entityConfig, "getOrCreate")
-        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
       } else {
         (
           (entity: Internal.entity) =>
@@ -302,18 +301,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
             })
         )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
       }
-    | "set" =>
-      if isMaterialized {
-        ((_entity: Internal.entity) => throwMaterializedReadOnly(params.entityConfig, "set"))->(
-          Utils.magic: (Internal.entity => unit) => unknown
-        )
-      } else {
-        set->(Utils.magic: (Internal.entity => unit) => unknown)
-      }
+    | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
-      if isMaterialized {
-        (_entityId: EntityId.t) => throwMaterializedReadOnly(params.entityConfig, "deleteUnsafe")
-      } else if params.isPreload {
+      if params.isPreload {
         noopDeleteUnsafe
       } else {
         entityId => {

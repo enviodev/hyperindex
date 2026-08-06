@@ -127,8 +127,8 @@ describe("Materialized ERC-20 tables", () => {
     ]);
   });
 
-  // The old handler wrote the sender then the receiver, so a self-transfer
-  // raced two writes against one row. Summing contributions cancels instead.
+  // A self-transfer contributes a debit and a credit to one row; summing
+  // cancels them instead of the two writes racing.
   it("nets a self-transfer to zero", async (t) => {
     const indexer = createTestIndexer();
     await process(indexer, [transfer(alice, alice, 7n)]);
@@ -140,22 +140,28 @@ describe("Materialized ERC-20 tables", () => {
     const indexer = createTestIndexer();
     await process(indexer, [approval(alice, bob, 100n)]);
 
-    const expectedAccounts: (Accounts & { chainId: number })[] = [
-      { id: alice, balance: 0n, chainId: 1 },
-      { id: bob, balance: 0n, chainId: 1 },
-    ];
-    t.expect(await indexer.Accounts.getAll()).toEqual(expectedAccounts);
-
-    const expectedApprovals: (Approvals & { chainId: number })[] = [
-      {
-        id: \`\${alice}-\${bob}\`,
-        amount: 100n,
-        owner_id: alice,
-        spender_id: bob,
-        chainId: 1,
-      },
-    ];
-    t.expect(await indexer.Approvals.getAll()).toEqual(expectedApprovals);
+    const expected: {
+      accounts: (Accounts & { chainId: number })[];
+      approvals: (Approvals & { chainId: number })[];
+    } = {
+      accounts: [
+        { id: alice, balance: 0n, chainId: 1 },
+        { id: bob, balance: 0n, chainId: 1 },
+      ],
+      approvals: [
+        {
+          id: \`\${alice}-\${bob}\`,
+          amount: 100n,
+          owner_id: alice,
+          spender_id: bob,
+          chainId: 1,
+        },
+      ],
+    };
+    t.expect({
+      accounts: await indexer.Accounts.getAll(),
+      approvals: await indexer.Approvals.getAll(),
+    }).toEqual(expected);
   });
 
   it("overwrites an approval by id and leaves the balance alone", async (t) => {

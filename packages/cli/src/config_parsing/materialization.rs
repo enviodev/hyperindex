@@ -125,12 +125,11 @@ pub struct TableConfig {
                        UNION ALL; every branch must produce the same columns."
     )]
     pub with: Option<IndexMap<String, Queries>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "What the table is materialized from: `evm.events`, or the name of one of \
                        its own `with` relations."
     )]
-    pub from: Option<String>,
+    pub from: String,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
     pub filter: Option<RawFilter>,
     #[schemars(
@@ -432,7 +431,18 @@ impl Typed {
                 Scalar::Float => CExpr::LitFloat {
                     value: text.parse().context("number literal out of float range")?,
                 },
-                Scalar::Int | Scalar::NumLit => expr,
+                // A literal that never met a wider sibling becomes an Int
+                // column, so it has to fit one.
+                Scalar::Int | Scalar::NumLit => {
+                    let value: i64 = text.parse().expect("came from an i64 literal");
+                    if i32::try_from(value).is_err() {
+                        return Err(anyhow!(
+                            "the literal {value} is outside the Int (32-bit) range. Unify it with \
+                             a BigInt expression (e.g. a uint256 param) so the column widens."
+                        ));
+                    }
+                    expr
+                }
                 _ => {
                     return Err(anyhow!(
                         "a number literal can't be used where {} is expected",
@@ -1269,19 +1279,41 @@ fn evaluate(
     table_names: &[String],
 ) -> Result<Residual> {
     match condition {
+        // A sibling discriminator narrows what the other conjuncts are typed
+        // against, so a path that doesn't resolve on THIS candidate is only an
+        // error if the candidate isn't already excluded — `eventName: Approval`
+        // next to `params.owner` must not fail on the Transfer candidate.
         Condition::And(parts) => {
-            let parts = parts
-                .iter()
-                .map(|part| evaluate(part, contract_name, event_name, shape, demand, table_names))
-                .collect::<Result<Vec<_>>>()?;
-            Ok(residual_and(parts))
+            let mut resolved = Vec::with_capacity(parts.len());
+            let mut first_error = None;
+            for part in parts {
+                match evaluate(part, contract_name, event_name, shape, demand, table_names) {
+                    Ok(Residual::False) => return Ok(Residual::False),
+                    Ok(part) => resolved.push(part),
+                    Err(error) => first_error = first_error.or(Some(error)),
+                }
+            }
+            match first_error {
+                Some(error) => Err(error),
+                None => Ok(residual_and(resolved)),
+            }
         }
+        // Dually, a disjunct that errors can't matter once another one is
+        // already `true` for this candidate.
         Condition::Or(parts) => {
-            let parts = parts
-                .iter()
-                .map(|part| evaluate(part, contract_name, event_name, shape, demand, table_names))
-                .collect::<Result<Vec<_>>>()?;
-            Ok(residual_or(parts))
+            let mut resolved = Vec::with_capacity(parts.len());
+            let mut first_error = None;
+            for part in parts {
+                match evaluate(part, contract_name, event_name, shape, demand, table_names) {
+                    Ok(Residual::True) => return Ok(Residual::True),
+                    Ok(part) => resolved.push(part),
+                    Err(error) => first_error = first_error.or(Some(error)),
+                }
+            }
+            match first_error {
+                Some(error) => Err(error),
+                None => Ok(residual_or(resolved)),
+            }
         }
         Condition::Cmp { path, op, value } => {
             if let Some(known) = known_discriminator(path, contract_name, event_name) {
@@ -1503,12 +1535,7 @@ fn compile_table(
     demand: &mut DemandByEvent,
 ) -> Result<(TableSchema, Vec<Materialization>)> {
     let select = &table.select;
-    let from = table.from.as_deref().ok_or_else(|| {
-        anyhow!(
-            "a table needs `from` to say what it is materialized from, e.g. `from: \
-             {EVM_EVENTS_SOURCE}`"
-        )
-    })?;
+    let from = table.from.as_str();
     if !select.contains_key("id") {
         return Err(anyhow!("every table must select an `id`"));
     }
@@ -1517,15 +1544,25 @@ fn compile_table(
     // relation means one branch per union arm; reading the source directly is
     // the single-branch case with no columns to substitute.
     let (branches, relation_columns) = match table.with.as_ref().and_then(|with| with.get(from)) {
-        Some(queries) => compile_relation(
-            from,
-            queries,
-            table_names,
-            contracts,
-            block_field_types,
-            transaction_field_types,
-            demand,
-        )?,
+        Some(queries) => {
+            // No defined meaning yet, and dropping it silently would
+            // materialize rows the user asked to exclude.
+            if table.filter.is_some() {
+                return Err(anyhow!(
+                    "`where` is not supported on a table reading a `with` relation. Put the \
+                     filter on the relation's queries instead."
+                ));
+            }
+            compile_relation(
+                from,
+                queries,
+                table_names,
+                contracts,
+                block_field_types,
+                transaction_field_types,
+                demand,
+            )?
+        }
         None => {
             // A relation is only reachable through `from`, so declaring one and
             // then reading something else leaves it dead — almost always a typo.
@@ -1726,6 +1763,11 @@ fn compile_table(
                 Selected::DerivedFrom { .. } => continue,
             };
             if field_name == "id" {
+                if op == "sum" {
+                    return Err(anyhow!(
+                        "`select.id` can't be a `_sum` — the id is the key contributions group by"
+                    ));
+                }
                 id = Some(expr);
                 continue;
             }
@@ -1744,7 +1786,9 @@ fn compile_table(
         }
         materializations.push(Materialization {
             table: table_name.to_string(),
-            contract_name: branch.contract_name.clone(),
+            // The runtime's chain configs carry capitalized contract names, so
+            // the plan has to match or its registration finds no contract.
+            contract_name: branch.contract_name.capitalize(),
             event_name: branch.event_name.clone(),
             filter: branch.filter.clone(),
             id: id.ok_or_else(|| anyhow!("every table must select an `id`"))?,
@@ -2022,8 +2066,10 @@ fn resolve_event_branches(
 /// names verbatim — so a table name has to be a usable GraphQL type name.
 pub fn validate_table_names(tables: &Tables) -> Result<()> {
     for name in tables.0.keys() {
+        // No leading underscore: `capitalize` leaves `_` unchanged, so it
+        // would reach codegen as an invalid ReScript module name.
         let mut chars = name.chars();
-        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
             && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
         if !valid {
             return Err(anyhow!(
@@ -2371,6 +2417,83 @@ tables:
         assert!(config.field_selection.transaction_fields.is_empty());
     }
 
+    // The discriminators in an AND narrow which paths the rest of the filter is
+    // typed against, so `params.owner` must not error on the Transfer candidate
+    // the `eventName: Approval` conjunct already excluded.
+    #[test]
+    fn narrows_param_filters_by_the_sibling_discriminator() {
+        let yaml = ERC20_YAML.replace(
+            "  approvals:\n    from: evm.events\n    where:\n      contractName: ERC20\n      \
+             eventName: Approval",
+            "  approvals:\n    from: evm.events\n    where:\n      contractName: ERC20\n      \
+             eventName: Approval\n      params:\n        owner:\n          _ne:\n            \
+             _literal: \"0x0000000000000000000000000000000000000000\"",
+        );
+        let config = parse(&yaml).expect("param filter narrowed by discriminator should compile");
+        let approval_plans: Vec<_> = config
+            .materializations
+            .iter()
+            .filter(|m| m.table == "approvals")
+            .collect();
+        assert_eq!(
+            serde_json::to_value(&approval_plans[0].filter).expect("serializable"),
+            serde_json::json!({
+                "kind": "cmp",
+                "path": ["params", "owner"],
+                "op": "ne",
+                "value": {"kind": "string", "value": "0x0000000000000000000000000000000000000000"}
+            })
+        );
+    }
+
+    // `where` on a table reading a relation has no defined meaning yet; dropping
+    // it silently would materialize rows the user asked to exclude.
+    #[test]
+    fn rejects_an_outer_where_on_a_relation_fed_table() {
+        let yaml = ERC20_YAML.replace(
+            "    from: balance_changes\n    select:",
+            "    from: balance_changes\n    where:\n      chainId: 1\n    select:",
+        );
+        let error = parse_error(&yaml);
+        assert!(
+            error.contains("`where` is not supported on a table reading a `with` relation"),
+            "{error}"
+        );
+    }
+
+    // The id is the grouping key a reducer folds into, so reducing the id
+    // itself has no meaning.
+    #[test]
+    fn rejects_a_sum_id() {
+        let yaml = ERC20_YAML.replace(
+            "    select:\n      id: account",
+            "    select:\n      id:\n        _sum: delta",
+        );
+        let error = parse_error(&yaml);
+        assert!(error.contains("`select.id` can't be a `_sum`"), "{error}");
+    }
+
+    // An unwidened integer literal becomes an Int column, so a literal outside
+    // i32 has to fail at codegen rather than on the first Postgres insert.
+    #[test]
+    fn rejects_an_int_literal_out_of_i32_range() {
+        let yaml = ERC20_YAML.replace("      amount: params.value", "      amount: 5000000000");
+        let error = parse_error(&yaml);
+        assert!(error.contains("outside the Int (32-bit) range"), "{error}");
+    }
+
+    // `capitalize` leaves `_` unchanged, so a leading underscore would reach
+    // codegen as an invalid ReScript module name.
+    #[test]
+    fn rejects_a_leading_underscore_table_name() {
+        let yaml = ERC20_YAML.replace("  approvals:", "  _approvals:").replace(
+            "        _derived_from: approvals.owner",
+            "        _derived_from: _approvals.owner",
+        );
+        let error = parse_error(&yaml);
+        assert!(error.contains("is not a valid identifier"), "{error}");
+    }
+
     // Shared rows across chains would make the same id on two chains collide,
     // which for a token indexer silently merges balances.
     #[test]
@@ -2612,5 +2735,44 @@ tables:
             serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
                 .expect("valid json");
         assert_eq!(public["entities"][0]["crossChain"], serde_json::json!(true));
+    }
+}
+
+#[cfg(test)]
+mod ecosystem_test {
+    use crate::config_parsing::system_config::SystemConfig;
+    use std::collections::HashMap;
+
+    // `tables` lives on the EVM config only; a fuel/svm config using it must be
+    // rejected loudly, not silently ignored (serde's deny_unknown_fields does
+    // not fire through `#[serde(flatten)]`).
+    #[test]
+    fn rejects_tables_on_a_non_evm_config() {
+        let yaml = r#"
+ecosystem: fuel
+name: t
+contracts:
+  - name: Greeter
+    abi_file_path: ./abi.json
+    events:
+      - name: NewGreeting
+chains:
+  - id: 0
+    start_block: 0
+    contracts:
+      - name: Greeter
+        address: "0xdeadbeef"
+tables:
+  rows:
+    from: evm.events
+    select:
+      id: params.x
+"#;
+        let error = format!(
+            "{:#}",
+            SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
+                .expect_err("fuel + tables must error")
+        );
+        assert!(error.contains("unknown field `tables`"), "{error}");
     }
 }

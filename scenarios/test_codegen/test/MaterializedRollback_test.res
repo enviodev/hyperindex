@@ -64,7 +64,10 @@ let makeTransferItem = (~block, ~from, ~to, ~value, ~handler: Internal.handler) 
           "chainId": 1,
           "params": {"from": from, "to": to, "value": value},
         }->(Utils.magic: {..} => Internal.event)
-      handler({event, context: args.context->Utils.magic})
+      handler({
+        event,
+        context: args.context->(Utils.magic: MockIndexer.handlerContext => Internal.handlerContext),
+      })
     },
   }: MockIndexer.Source.itemMock
 )
