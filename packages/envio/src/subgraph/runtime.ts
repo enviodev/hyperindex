@@ -8,7 +8,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { registerHooks } from "node:module";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
@@ -56,6 +63,7 @@ type SubgraphConfig = {
   declaresEthCalls: boolean;
   root: string;
   rpcUrls: string[];
+  isDev: boolean;
 } & SubgraphSchema;
 
 let hooksInstalled = false;
@@ -224,6 +232,54 @@ function ensureGeneratedCode(root: string, { required }: { required: boolean }) 
   }
 }
 
+/**
+ * `graph build` compiles the mappings with `asc` against the real
+ * `@graphprotocol/graph-ts`. That is the type check a subgraph project already
+ * has, and running it in `envio dev` keeps the feedback loop the developer
+ * knows — a type error reads the same here as it does on Graph Node.
+ *
+ * Only in dev, and only when something it reads has changed: it is an
+ * AssemblyScript compile, not something to pay on every restart.
+ */
+function typeCheckMappings(root: string) {
+  const graphCli = path.join(root, "node_modules", ".bin", "graph");
+  if (!existsSync(graphCli)) return;
+
+  const inputs = ["subgraph.yaml", "schema.graphql", "src", "abis"]
+    .map((entry) => path.join(root, entry))
+    .filter((entry) => existsSync(entry))
+    .map((entry) => fingerprint(entry))
+    .join("|");
+
+  const stamp = path.join(root, ".envio", "graph-build.stamp");
+  if (existsSync(stamp) && readFileSync(stamp, "utf8") === inputs) return;
+
+  try {
+    execFileSync(graphCli, ["build"], { cwd: root, stdio: "inherit" });
+  } catch {
+    throw new Error(
+      "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
+        "failed — the error above comes from The Graph's own AssemblyScript\n" +
+        "compiler, so fix it there and rerun. To skip this check, set\n" +
+        "  ENVIO_SUBGRAPH_SKIP_TYPECHECK=true",
+    );
+  }
+
+  mkdirSync(path.dirname(stamp), { recursive: true });
+  writeFileSync(stamp, inputs);
+}
+
+function fingerprint(entry: string): string {
+  const stats = statSync(entry);
+  if (!stats.isDirectory()) {
+    return `${entry}:${stats.mtimeMs}:${stats.size}`;
+  }
+  return readdirSync(entry)
+    .sort()
+    .map((child) => fingerprint(path.join(entry, child)))
+    .join(",");
+}
+
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetClients();
@@ -323,6 +379,10 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // the life of the process, so generating after the import has already failed
   // wouldn't help.
   ensureGeneratedCode(config.root, { required: false });
+
+  if (config.isDev && process.env.ENVIO_SUBGRAPH_SKIP_TYPECHECK !== "true") {
+    typeCheckMappings(config.root);
+  }
 
   const sources = [...config.dataSources, ...config.templates];
   const templateNames = new Set(config.templates.map((template) => template.name));

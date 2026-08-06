@@ -39,6 +39,18 @@ export class ByteArray extends Uint8Array {
   static fromBigInt(value: BigInt_): ByteArray {
     return ByteArray.fromHexString(toHex(value.valueOf(), { size: 32 }));
   }
+  static fromUint8Array(bytes: Uint8Array): ByteArray {
+    return new ByteArray(bytes);
+  }
+  static fromU32(value: number): ByteArray {
+    return ByteArray.fromI32(value);
+  }
+  static fromI64(value: bigint): ByteArray {
+    return ByteArray.fromHexString(toHex(value, { size: 8 }));
+  }
+  static fromU64(value: bigint): ByteArray {
+    return ByteArray.fromI64(value);
+  }
   static empty(): ByteArray {
     return new ByteArray(0);
   }
@@ -72,6 +84,18 @@ export class ByteArray extends Uint8Array {
   equals(other: ByteArray): boolean {
     return this.toHexString() === other.toHexString();
   }
+  notEqual(other: ByteArray): boolean {
+    return !this.equals(other);
+  }
+  concatI32(other: number): ByteArray {
+    return this.concat(ByteArray.fromI32(other));
+  }
+  toI64(): bigint {
+    return BigInt(this.toHexString());
+  }
+  toU64(): bigint {
+    return this.toI64();
+  }
 }
 
 export class Bytes extends ByteArray {
@@ -81,11 +105,23 @@ export class Bytes extends ByteArray {
   static fromUTF8(input: string): Bytes {
     return new Bytes(ByteArray.fromUTF8(input));
   }
-  static fromByteArray(bytes: ByteArray): Bytes {
-    return new Bytes(bytes);
+  static fromByteArray(byteArray: ByteArray): Bytes {
+    return new Bytes(byteArray);
   }
   static fromI32(value: number): Bytes {
     return new Bytes(ByteArray.fromI32(value));
+  }
+  static fromUint8Array(bytes: Uint8Array): Bytes {
+    return new Bytes(bytes);
+  }
+  static fromU32(value: number): Bytes {
+    return new Bytes(ByteArray.fromU32(value));
+  }
+  static fromI64(value: bigint): Bytes {
+    return new Bytes(ByteArray.fromI64(value));
+  }
+  static fromU64(value: bigint): Bytes {
+    return new Bytes(ByteArray.fromU64(value));
   }
   static fromBigInt(value: BigInt_): Bytes {
     return new Bytes(ByteArray.fromBigInt(value));
@@ -119,11 +155,40 @@ export class Address extends Bytes {
 // Numbers
 // ---------------------------------------------------------------------------
 
-class BigInt_ {
+/** Two's-complement little-endian bytes, the representation graph-ts stores. */
+function twosComplementLe(value: bigint): Uint8Array {
+  if (value === 0n) return new Uint8Array(1);
+  let width = 1;
+  while (value < -(1n << BigInt(width * 8 - 1)) || value >= 1n << BigInt(width * 8 - 1)) {
+    width++;
+  }
+  let remaining = value & ((1n << BigInt(width * 8)) - 1n);
+  const bytes = new Uint8Array(width);
+  for (let index = 0; index < width; index++) {
+    bytes[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return bytes;
+}
+
+/**
+ * graph-ts' BigInt is a byte array, and mappings can index it. Arithmetic runs
+ * on the `value` field; the bytes are there so the class is the same shape.
+ */
+class BigInt_ extends Uint8Array {
   readonly value: bigint;
 
   constructor(value: bigint) {
+    const bytes = twosComplementLe(value);
+    super(bytes.length);
+    this.set(bytes);
     this.value = value;
+  }
+
+  // Inherited TypedArray operations (`map`, `slice`, `subarray`) would
+  // otherwise call this constructor with a length.
+  static get [Symbol.species](): Uint8ArrayConstructor {
+    return Uint8Array;
   }
 
   static fromI32(value: number): BigInt_ {
@@ -147,14 +212,19 @@ class BigInt_ {
   static fromUnsignedBytes(bytes: ByteArray): BigInt_ {
     return BigInt_.fromByteArray(bytes);
   }
-  static fromSignedBytes(bytes: ByteArray): BigInt_ {
+  static fromSignedBytes(bytes: Bytes): BigInt_ {
     return BigInt_.fromByteArray(bytes);
   }
   static zero(): BigInt_ {
     return new BigInt_(0n);
   }
+  static compare(a: BigInt_, b: BigInt_): number {
+    return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+  }
 
-  valueOf(): bigint {
+  // Uint8Array.valueOf returns the array itself; graph-ts BigInt has no
+  // valueOf at all, so widening keeps both callers honest.
+  valueOf(): any {
     return this.value;
   }
   toString(): string {
@@ -224,6 +294,39 @@ class BigInt_ {
   isZero(): boolean {
     return this.value === 0n;
   }
+  isI32(): boolean {
+    return this.value >= -2147483648n && this.value <= 2147483647n;
+  }
+  toU64(): bigint {
+    return this.value;
+  }
+  sqrt(): BigInt_ {
+    if (this.value < 0n) {
+      throw new Error("BigInt.sqrt of a negative value");
+    }
+    let guess = this.value;
+    let next = (guess + 1n) / 2n;
+    while (next < guess) {
+      guess = next;
+      next = (guess + this.value / guess) / 2n;
+    }
+    return new BigInt_(guess);
+  }
+  divDecimal(other: BigDecimal): BigDecimal {
+    return this.toBigDecimal().div(other);
+  }
+  bitAnd(other: BigInt_): BigInt_ {
+    return new BigInt_(this.value & other.value);
+  }
+  bitOr(other: BigInt_): BigInt_ {
+    return new BigInt_(this.value | other.value);
+  }
+  leftShift(bits: number): BigInt_ {
+    return new BigInt_(this.value << BigInt(bits));
+  }
+  rightShift(bits: number): BigInt_ {
+    return new BigInt_(this.value >> BigInt(bits));
+  }
 }
 
 export { BigInt_ as BigInt };
@@ -246,6 +349,9 @@ export class BigDecimal {
   }
   static zero(): BigDecimal {
     return new BigDecimal(new BigNumber(0));
+  }
+  static compare(a: BigDecimal, b: BigDecimal): number {
+    return a.value.comparedTo(b.value);
   }
 
   toString(): string {
@@ -283,6 +389,22 @@ export class BigDecimal {
   }
   ge(other: BigDecimal): boolean {
     return this.value.isGreaterThanOrEqualTo(other.value);
+  }
+  neg(): BigDecimal {
+    return new BigDecimal(this.value.negated());
+  }
+  truncate(decimals: number): BigDecimal {
+    return new BigDecimal(this.value.decimalPlaces(decimals, BigNumber.ROUND_DOWN));
+  }
+  // graph-ts stores a decimal as `digits * 10 ** exp`.
+  get digits(): BigInt_ {
+    const [coefficient, exponent] = this.value.toFixed().split(".");
+    const scaled = (coefficient ?? "0") + (exponent ?? "");
+    return BigInt_.fromString(scaled === "" || scaled === "-" ? "0" : scaled);
+  }
+  get exp(): BigInt_ {
+    const fraction = this.value.toFixed().split(".")[1] ?? "";
+    return BigInt_.fromI32(-fraction.length);
   }
 }
 
@@ -404,6 +526,39 @@ export class Value {
   static fromI32Array(values: number[]): Value {
     return Value.fromArray(values.map(Value.fromI32));
   }
+  static fromI64Array(values: bigint[]): Value {
+    return Value.fromArray(values.map(Value.fromI64));
+  }
+  static fromAddressArray(values: Address[]): Value {
+    return Value.fromArray(values.map(Value.fromAddress));
+  }
+  static fromMatrix(values: Value[][]): Value {
+    return Value.fromArray(values.map(Value.fromArray));
+  }
+  static fromStringMatrix(values: string[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromString)));
+  }
+  static fromBytesMatrix(values: Bytes[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromBytes)));
+  }
+  static fromAddressMatrix(values: Address[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromAddress)));
+  }
+  static fromBigIntMatrix(values: BigInt_[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromBigInt)));
+  }
+  static fromBooleanMatrix(values: boolean[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromBoolean)));
+  }
+  static fromI32Matrix(values: number[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromI32)));
+  }
+  static fromI64Matrix(values: bigint[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromI64)));
+  }
+  static fromTimestampMatrix(values: bigint[][]): Value {
+    return Value.fromMatrix(values.map((row) => row.map(Value.fromTimestamp)));
+  }
 
   // The accessors are deliberately lenient about kind: envio stores a
   // subgraph's `Bytes` as lowercase hex text, so a value read back from the
@@ -463,6 +618,36 @@ export class Value {
   }
   toArray(): Value[] {
     return this.data as Value[];
+  }
+  toMatrix(): Value[][] {
+    return this.toArray().map((row) => row.toArray());
+  }
+  toI64Array(): bigint[] {
+    return this.toArray().map((value) => value.toI64());
+  }
+  toTimestampArray(): bigint[] {
+    return this.toArray().map((value) => value.toTimestamp());
+  }
+  toAddressMatrix(): Address[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toAddress()));
+  }
+  toStringMatrix(): string[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toString()));
+  }
+  toBytesMatrix(): Bytes[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toBytes()));
+  }
+  toBigIntMatrix(): BigInt_[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toBigInt()));
+  }
+  toBooleanMatrix(): boolean[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toBoolean()));
+  }
+  toI32Matrix(): number[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toI32()));
+  }
+  toI64Matrix(): bigint[][] {
+    return this.toMatrix().map((row) => row.map((value) => value.toI64()));
   }
   displayData(): string {
     return String(this.data);
@@ -549,8 +734,8 @@ export class Entity extends TypedMap<string, Value> {
   unset(key: string): void {
     this.set(key, Value.fromNull());
   }
-  merge(entities: Entity[]): Entity {
-    for (const entity of entities) {
+  merge(sources: Entity[]): this {
+    for (const entity of sources) {
       for (const entry of entity.entries) {
         this.set(entry.key, entry.value);
       }
@@ -850,6 +1035,76 @@ class EthereumTransaction {
   }
 }
 
+/** graph-ts' own tag for an ABI value's Solidity type. */
+export enum EthereumValueKind {
+  ADDRESS = 0,
+  FIXED_BYTES = 1,
+  BYTES = 2,
+  INT = 3,
+  UINT = 4,
+  BOOL = 5,
+  STRING = 6,
+  FIXED_ARRAY = 7,
+  ARRAY = 8,
+  TUPLE = 9,
+}
+
+class EthereumEventParam {
+  constructor(
+    public name: string,
+    public value: EthereumValue,
+  ) {}
+}
+
+/**
+ * Only reachable through `event.receipt.logs`, which the runtime refuses on
+ * access — envio's receipt selection carries the scalars, not the log list.
+ * Declared so a mapping that names the type still compiles the way it does
+ * against graph-ts.
+ */
+class EthereumLog {
+  constructor(
+    public address: Address,
+    public topics: Bytes[],
+    public data: Bytes,
+    public blockHash: Bytes,
+    public blockNumber: Bytes,
+    public transactionHash: Bytes,
+    public transactionIndex: BigInt_,
+    public logIndex: BigInt_,
+    public transactionLogIndex: BigInt_,
+    public logType: string,
+    public removed: { inner: boolean } | null,
+  ) {}
+}
+
+class EthereumTransactionReceipt {
+  constructor(
+    public transactionHash: Bytes,
+    public transactionIndex: BigInt_,
+    public blockHash: Bytes,
+    public blockNumber: BigInt_,
+    public cumulativeGasUsed: BigInt_,
+    public gasUsed: BigInt_,
+    public contractAddress: Address,
+    public logs: EthereumLog[],
+    public status: BigInt_,
+    public root: Bytes,
+    public logsBloom: Bytes,
+  ) {}
+}
+
+class EthereumCall {
+  constructor(
+    public to: Address,
+    public from: Address,
+    public block: EthereumBlock,
+    public transaction: EthereumTransaction,
+    public inputValues: EthereumEventParam[],
+    public outputValues: EthereumEventParam[],
+  ) {}
+}
+
 class EthereumEvent {
   constructor(
     public address: Address,
@@ -863,13 +1118,25 @@ class EthereumEvent {
 
 const ethereumImpl = {
   Value: EthereumValue,
+  ValueKind: EthereumValueKind,
   SmartContract,
   SmartContractCall,
   CallResult,
   Block: EthereumBlock,
   Transaction: EthereumTransaction,
+  TransactionReceipt: EthereumTransactionReceipt,
+  Log: EthereumLog,
   Event: EthereumEvent,
+  EventParam: EthereumEventParam,
+  Call: EthereumCall,
   Tuple: Array,
+  call(call: SmartContractCall): Value[] | null {
+    const contract = new SmartContract(call.contractName, call.contractAddress);
+    const result = callContract(contract, call.functionSignature, call.functionParams, true);
+    return (result as CallResult<EthereumValue[]>).reverted
+      ? null
+      : (result as CallResult<EthereumValue[]>).value;
+  },
   decode(types: string, data: Bytes): EthereumValue | null {
     try {
       const decoded = decodeAbiParameters(
@@ -918,7 +1185,7 @@ export class DataSourceTemplate {
     registered.add(key);
     registerHook?.(name, address);
   }
-  static createWithContext(name: string, params: string[], _context: DataSourceContext): void {
+  static createWithContext(name: string, params: string[], context: DataSourceContext): void {
     DataSourceTemplate.create(name, params);
   }
 }
@@ -935,6 +1202,11 @@ const dataSourceImpl = {
   context(): DataSourceContext {
     return new DataSourceContext();
   },
+  // The address a template was created with, which is the only string param
+  // an EVM template ever carries.
+  stringParam(): string {
+    return currentScope().dataSource.address;
+  },
   create: DataSourceTemplate.create,
   createWithContext: DataSourceTemplate.createWithContext,
 };
@@ -950,7 +1222,30 @@ function interpolate(message: string, args: string[]): string {
   return message.replace(/\{\}/g, () => args[index++] ?? "{}");
 }
 
+export enum LogLevel {
+  CRITICAL = 0,
+  ERROR = 1,
+  WARNING = 2,
+  INFO = 3,
+  DEBUG = 4,
+}
+
 const logImpl = {
+  Level: LogLevel,
+  log(level: LogLevel, msg: string) {
+    switch (level) {
+      case LogLevel.CRITICAL:
+        return logImpl.critical(msg);
+      case LogLevel.ERROR:
+        return logImpl.error(msg);
+      case LogLevel.WARNING:
+        return logImpl.warning(msg);
+      case LogLevel.DEBUG:
+        return logImpl.debug(msg);
+      default:
+        return logImpl.info(msg);
+    }
+  },
   debug(message: string, args: string[] = []) {
     currentScope().context.log?.debug(interpolate(message, args));
   },
@@ -999,6 +1294,12 @@ export class JSONValue {
   toBool(): boolean {
     return Boolean(this.data);
   }
+  isNull(): boolean {
+    return this.kind === JSONValueKind.NULL;
+  }
+  toU64(): bigint {
+    return this.toI64();
+  }
   toI64(): bigint {
     return BigInt(this.data);
   }
@@ -1035,6 +1336,25 @@ const jsonImpl = {
   },
   fromString(input: string): JSONValue {
     return fromJson(JSON.parse(input));
+  },
+  toI64(value: JSONValue): bigint {
+    return value.toI64();
+  },
+  toU64(value: JSONValue): bigint {
+    return value.toI64();
+  },
+  toF64(value: JSONValue): number {
+    return value.toF64();
+  },
+  toBigInt(value: JSONValue): BigInt_ {
+    return value.toBigInt();
+  },
+  try_fromString(input: string) {
+    try {
+      return { isOk: true, isError: false, value: jsonImpl.fromString(input), error: null };
+    } catch {
+      return { isOk: false, isError: true, value: null, error: true };
+    }
   },
   try_fromBytes(bytes: Bytes) {
     try {
@@ -1084,6 +1404,9 @@ const ipfsImpl = {
   },
   map(hash: string, callback: string, userData: Value, flags: string[]): void {
     hostsOrThrow().ipfsMap(hash, callback, userData, flags);
+  },
+  mapJSON(hash: string, callback: string, userData: Value): void {
+    hostsOrThrow().ipfsMap(hash, callback, userData, ["json"]);
   },
 };
 

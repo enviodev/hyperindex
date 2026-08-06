@@ -44,6 +44,20 @@ fn parse_version(raw: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
+/// Networks The Graph indexes that aren't EVM chains at all. Recognising them
+/// by name is what turns "unknown network" into an answer.
+const NON_EVM_NETWORKS: &[(&str, &str)] = &[
+    ("near-mainnet", "NEAR"),
+    ("near-testnet", "NEAR"),
+    ("cosmoshub-4", "Cosmos"),
+    ("osmosis-1", "Cosmos"),
+    ("injective-mainnet", "Cosmos"),
+    ("arweave-mainnet", "Arweave"),
+    ("starknet-mainnet", "Starknet"),
+    ("starknet-testnet", "Starknet"),
+    ("solana-mainnet-beta", "Solana"),
+];
+
 /// The Graph's network names mostly match envio's kebab-cased `Network`, but a
 /// few of the oldest ones don't.
 fn network_to_chain_id(network: &str) -> Option<u64> {
@@ -51,7 +65,6 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
         "mainnet" => Some(1),
         "matic" => Some(137),
         "poa-core" => Some(99),
-        "near-mainnet" | "near-testnet" => None,
         _ => Network::from_str(network).ok().map(|n| n.get_network_id()),
     }
 }
@@ -345,6 +358,13 @@ fn parse_data_source(
             report.unsupported("substreams data sources", where_("kind"));
             return None;
         }
+        "near" | "cosmos" | "arweave" | "starknet" => {
+            report.unsupported(
+                format!("{kind_raw} subgraphs — Envio Subgraph indexes EVM chains"),
+                where_("kind"),
+            );
+            return None;
+        }
         "subgraph" => {
             report.unsupported("subgraph composition", where_("kind"));
             return None;
@@ -360,7 +380,17 @@ fn parse_data_source(
         (Some(network), DataSourceKind::Contract) => match network_to_chain_id(network) {
             Some(id) => Some(id),
             None => {
-                report.unknown(format!("the network \"{network}\""), where_("network"));
+                match NON_EVM_NETWORKS
+                    .iter()
+                    .find(|(name, _)| name == network)
+                    .map(|(_, ecosystem)| *ecosystem)
+                {
+                    Some(ecosystem) => report.unsupported(
+                        format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
+                        where_("network"),
+                    ),
+                    None => report.unknown(format!("the network \"{network}\""), where_("network")),
+                }
                 None
             }
         },
@@ -787,6 +817,34 @@ dataSources:
                 rendered.contains("doesn't know the data source kind \"ethereum/teapot\""),
             ),
             (3, true, true, true)
+        );
+    }
+
+    #[test]
+    fn refuses_non_evm_networks_by_name() {
+        let yaml = GRAVITY
+            .replace("network: mainnet", "network: near-mainnet")
+            .replace("kind: ethereum/contract", "kind: near");
+        let (_, report) = parse_ok(&yaml);
+        let rendered = report.to_string();
+        assert_eq!(
+            (
+                rendered.contains("doesn't support near subgraphs — Envio Subgraph indexes EVM chains"),
+                rendered.contains("doesn't know"),
+            ),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn refuses_a_non_evm_network_on_an_ethereum_data_source() {
+        let yaml = GRAVITY.replace("network: mainnet", "network: arweave-mainnet");
+        assert!(
+            parse_ok(&yaml)
+                .1
+                .to_string()
+                .contains("doesn't support Arweave subgraphs"),
+            "expected an Arweave finding"
         );
     }
 

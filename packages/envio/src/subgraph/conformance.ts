@@ -18,70 +18,56 @@
 import type * as GraphTs from "./graph-ts-types/index.js";
 import * as Shim from "./graph-ts.ts";
 
-// @ts-expect-error graph-ts' BigInt extends Uint8Array, so it carries the
-// TypedArray statics (`of`, `from`, `compare`, BYTES_PER_ELEMENT). The shim
-// wraps a JS bigint instead, which no mapping can tell apart — mappings only
-// ever construct one through `BigInt.from*`.
+// @ts-expect-error graph-ts' BigInt extends Uint8Array and is constructed
+// from a byte length; this one is constructed from the value it holds. No
+// mapping calls `new BigInt(...)` — they go through `BigInt.from*` — and
+// every other member matches. The five below are the same difference,
+// reached through a BigInt in their own signatures.
 const _BigInt: typeof GraphTs.BigInt = Shim.BigInt;
 
-// @ts-expect-error missing `compare`.
+// @ts-expect-error constructor takes a BigInt (see above).
 const _BigDecimal: typeof GraphTs.BigDecimal = Shim.BigDecimal;
 
-// @ts-expect-error missing `fromUint8Array`, `fromU32`, `fromI64`, `fromU64`.
 const _Bytes: typeof GraphTs.Bytes = Shim.Bytes;
 
-// @ts-expect-error missing `fromU32`, `fromI64`, `fromU64`.
 const _ByteArray: typeof GraphTs.ByteArray = Shim.ByteArray;
 
-// @ts-expect-error missing `fromUint8Array`, `fromU32`, `fromI64`, `fromU64`.
 const _Address: typeof GraphTs.Address = Shim.Address;
 
 const _TypedMap: typeof GraphTs.TypedMap = Shim.TypedMap;
 
 const _TypedMapEntry: typeof GraphTs.TypedMapEntry = Shim.TypedMapEntry;
 
-// @ts-expect-error `merge` returns the shim's Entity.
 const _Entity: typeof GraphTs.Entity = Shim.Entity;
 
-// @ts-expect-error missing `fromI64Array`, `fromAddressArray`, `fromMatrix`,
-// `fromBooleanMatrix` and 7 more array/matrix constructors.
 const _Value: typeof GraphTs.Value = Shim.Value;
 
 const _ValueKind: typeof GraphTs.ValueKind = Shim.ValueKind;
 
-// @ts-expect-error `store.get` returns the shim's Entity.
 const _store: typeof GraphTs.store = Shim.store;
 
-// @ts-expect-error missing `call`, `ValueKind`, `TransactionReceipt`, `Log`
-// and 2 more. `TransactionReceipt`/`Log` back `event.receipt.logs`, which the
-// runtime refuses on access.
+// @ts-expect-error `ethereum.Value` carries a BigInt (see above).
 const _ethereum: typeof GraphTs.ethereum = Shim.ethereum;
 
-// @ts-expect-error missing `stringParam`.
 const _dataSource: typeof GraphTs.dataSource = Shim.dataSource;
 
-// @ts-expect-error `createWithContext` takes the shim's DataSourceContext.
 const _DataSourceTemplate: typeof GraphTs.DataSourceTemplate = Shim.DataSourceTemplate;
 
-// @ts-expect-error `merge` returns the shim's Entity (inherited).
 const _DataSourceContext: typeof GraphTs.DataSourceContext = Shim.DataSourceContext;
 
-// @ts-expect-error missing `log` and `Level`.
+// @ts-expect-error `log` formats a BigInt (see above).
 const _log: typeof GraphTs.log = Shim.log;
 
-// @ts-expect-error `keccak256` takes the shim's ByteArray.
 const _crypto: typeof GraphTs.crypto = Shim.crypto;
 
-// @ts-expect-error missing `toI64`, `toU64`, `toF64`, `toBigInt`,
-// `try_fromString`.
+// @ts-expect-error `json.toBigInt` returns a BigInt (see above).
 const _json: typeof GraphTs.json = Shim.json;
 
-// @ts-expect-error the shim's JSONValue carries its own TypedMap.
+// @ts-expect-error `JSONValue.toBigInt` returns a BigInt (see above).
 const _JSONValue: typeof GraphTs.JSONValue = Shim.JSONValue;
 
 const _JSONValueKind: typeof GraphTs.JSONValueKind = Shim.JSONValueKind;
 
-// @ts-expect-error missing `mapJSON`.
 const _ipfs: typeof GraphTs.ipfs = Shim.ipfs;
 
 const _ens: typeof GraphTs.ens = Shim.ens;

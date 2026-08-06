@@ -80,8 +80,8 @@ let autoLoadFromSrcHandlers = async (~handlers: string) => {
 // The subgraph runtime lives in this package but is never exported: it's
 // reached only from here, when the resolved config carries a translated
 // manifest.
-let registerSubgraph: JSON.t => promise<unit> = %raw(`(subgraph) =>
-  import("./subgraph/runtime.ts").then((m) => m.registerSubgraph(subgraph))`)
+let registerSubgraph: (JSON.t, ~isDev: bool) => promise<unit> = %raw(`(subgraph, isDev) =>
+  import("./subgraph/runtime.ts").then((m) => m.registerSubgraph({ ...subgraph, isDev }))`)
 
 let registerAllHandlers = async (~config: Config.t): HandlerRegister.registrationsByChainId => {
   HandlerRegister.startRegistration(~config)
@@ -89,7 +89,7 @@ let registerAllHandlers = async (~config: Config.t): HandlerRegister.registratio
   switch config.subgraph {
   // A subgraph project's `src/` holds AssemblyScript mappings, not envio
   // handlers, so the usual auto-load would import them without a scope.
-  | Some(subgraph) => await registerSubgraph(subgraph)
+  | Some(subgraph) => await registerSubgraph(subgraph, ~isDev=config.isDev)
   | None =>
     // Auto-load all .js files from src/handlers directory
     await autoLoadFromSrcHandlers(~handlers=config.handlers)
