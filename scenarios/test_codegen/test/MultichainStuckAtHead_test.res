@@ -9,10 +9,10 @@ open Vitest
 // v3.3.0 because sourceState.knownHeight (written only by the subscription
 // callback there) lagged fetchState.knownHeight (raised by getLogs
 // responses). After that, no getHeight request was ever made again
-// ("envio_source_request_total" for getHeight stayed flat,
-// "heightSubscription" stayed 1) and the chain waited for a new block
-// forever. Since v3.3.1 executeQuery syncs sourceState.knownHeight from
-// response heights, which keeps the gap from opening for a single source.
+// ("envio_source_request_total" for getHeight stayed flat) and the chain
+// waited for a new block forever. Since v3.3.1 executeQuery syncs
+// sourceState.knownHeight from response heights, which keeps the gap from
+// opening for a single source.
 describe("Multichain: chain with height subscription stuck at head", () => {
   Async.it(
     "polling fallback takes over when the subscription goes quiet after a partial height advance",

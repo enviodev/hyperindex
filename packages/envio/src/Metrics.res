@@ -445,15 +445,15 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=chains,
     ~value=m => m.endBlock->Option.map(Int.toFloat),
   )
-  b->series(
+  b->seriesOpt(
     ~name="envio_source_request_total",
-    ~help="The number of requests made to data sources.",
+    ~help="The number of requests made to data sources. Heights pushed by a subscription stream are counted here too, under the heightPush and heightPushIgnored methods.",
     ~kind="counter",
     ~entries=sourceRequests,
-    ~value=s => s.count->Int.toFloat,
+    ~value=s => s.count > 0 ? Some(s.count->Int.toFloat) : None,
   )
-  // Skips a method's seconds line when it has no timing (e.g. heightSubscription,
-  // which only ever records a count).
+  // Skips a method's seconds line when it has no timing (e.g. heightPush, which
+  // only ever records a count).
   b->seriesOpt(
     ~name="envio_source_request_seconds_total",
     ~help="Cumulative time spent on data source requests.",
