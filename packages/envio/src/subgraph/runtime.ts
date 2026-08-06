@@ -59,12 +59,14 @@ type SubgraphConfig = {
 } & SubgraphSchema;
 
 let hooksInstalled = false;
+let projectRoot: string | null = null;
 
 /**
  * Mappings resolve `@graphprotocol/graph-ts` to the shim; everything else,
  * including the project's own `generated/`, resolves normally and runs as-is.
  */
-function installResolveHook() {
+function installResolveHook(root: string) {
+  projectRoot = pathToFileURL(path.resolve(root) + path.sep).href;
   if (hooksInstalled) return;
   hooksInstalled = true;
 
@@ -76,7 +78,15 @@ function installResolveHook() {
       ) {
         return { url: SHIM_URL, shortCircuit: true };
       }
-      return nextResolve(specifier, context);
+      const resolved = nextResolve(specifier, context);
+      // A subgraph project's package.json has no `type`, so its mappings and
+      // its `generated/` would load as CommonJS and reach the shim — a real ES
+      // module — through `require()`, which Node refuses inside a cycle. They
+      // are ES modules; saying so is what lets them import it.
+      if (projectRoot && resolved?.url?.startsWith(projectRoot)) {
+        return { ...resolved, format: "module" };
+      }
+      return resolved;
     },
   });
 
@@ -170,11 +180,10 @@ async function loadMapping(root: string, mappingFile: string): Promise<Record<st
     return await import(url);
   } catch (exn) {
     const message = exn instanceof Error ? exn.message : String(exn);
-    // A mapping importing the project's `generated/` is the only thing that
-    // makes codegen necessary, and this is exactly where that shows up.
+    // Only reachable when codegen couldn't run up front, so this reports why
+    // rather than retrying: Node caches a failed resolution for the process.
     if (/Cannot find (module|package)/.test(message) && message.includes("generated")) {
-      ensureGeneratedCode(root);
-      return await import(url);
+      ensureGeneratedCode(root, { required: true });
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
@@ -187,11 +196,12 @@ async function loadMapping(root: string, mappingFile: string): Promise<Record<st
  * graph-cli — which makes the output identical to the user's normal workflow
  * by definition.
  */
-function ensureGeneratedCode(root: string) {
+function ensureGeneratedCode(root: string, { required }: { required: boolean }) {
   if (existsSync(path.join(root, "generated"))) return;
 
   const graphCli = path.join(root, "node_modules", ".bin", "graph");
   if (!existsSync(graphCli)) {
+    if (!required) return;
     throw new Error(
       'Envio Subgraph needs the project\'s generated code, but "generated/" is\n' +
         "missing and @graphprotocol/graph-cli isn't installed.\n" +
@@ -215,7 +225,7 @@ function ensureGeneratedCode(root: string) {
 }
 
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
-  installResolveHook();
+  installResolveHook(config.root);
   resetClients();
 
   // One effect for every contract call: envio already batches and dedupes
@@ -308,6 +318,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     bytesIdEntities: config.bytesIdEntities ?? [],
     entityListFields: config.entityListFields ?? {},
   };
+
+  // Before any mapping is imported: Node caches a failed module resolution for
+  // the life of the process, so generating after the import has already failed
+  // wouldn't help.
+  ensureGeneratedCode(config.root, { required: false });
 
   const sources = [...config.dataSources, ...config.templates];
   const templateNames = new Set(config.templates.map((template) => template.name));
