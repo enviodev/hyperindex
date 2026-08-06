@@ -164,10 +164,12 @@ machinery all read it — no context parameter anywhere in user-visible API,
 matching graph-ts exactly. Execute is sequential today, but ALS keeps the
 design valid under concurrent preload and any future parallelism.
 
-## 7. Unsupported-feature error
+## 7. Unsupported & unknown errors
 
-One factory owns the wording; translation reports **all** findings at once,
-not just the first:
+Two error kinds, one factory each, shared tail. Translation reports **all**
+findings at once, not just the first.
+
+**Unsupported** — a feature we recognize and deliberately don't implement:
 
 ```
 Envio Subgraph doesn't support <feature> yet.
@@ -178,6 +180,36 @@ If you're up to date and need this feature, please open an issue (existing
 issues welcome a 👍 — demand drives prioritization):
   https://github.com/enviodev/hyperindex/issues
 ```
+
+**Unknown** — something we don't recognize at all (a newer subgraph feature,
+a newer graph-ts API, or a typo). Nothing unknown is ever ignored:
+
+```
+Envio Subgraph doesn't know <thing>.
+  Found in <location>.
+This may be a feature newer than this envio version understands, or a typo.
+First, make sure you're on the latest envio version:
+  pnpm add -D envio@latest
+If you're up to date and this is a real subgraph feature, please open an
+issue so we can add it: https://github.com/enviodev/hyperindex/issues
+```
+
+**Deny-unknown everywhere.** graph-node ignores what it doesn't expect; we
+refuse instead, so behavior never silently diverges:
+
+- *Manifest*: `deny_unknown_fields` on every subgraph.yaml struct; unknown
+  `kind`, unknown `features` entries, unknown block-handler filter kinds,
+  and `specVersion`/`apiVersion` above the supported range all raise the
+  unknown error with the YAML path as location.
+- *Schema*: unknown directives, unknown arguments on known directives
+  (e.g. `@entity(...)` beyond `immutable`/`timeseries`), and unknown type
+  names that aren't schema-defined raise the unknown error.
+- *Runtime*: every shim surface is a strict object — `@graphprotocol/graph-ts`
+  namespaces (`store`, `ethereum`, `dataSource`, `json`, `crypto`, `ipfs`,
+  `ens`, `arweave`, `log`), generated entity/contract classes, and event
+  objects are wrapped so accessing or importing anything unimplemented
+  throws the unknown error naming the symbol (e.g.
+  `graph-ts → ethereum.someNewApi`) instead of returning `undefined`.
 
 | Feature | Detected |
 |---|---|
@@ -219,7 +251,7 @@ issues welcome a 👍 — demand drives prioritization):
 3. Schema transform + §7 schema errors (interfaces, aggregations); write
    transformed schema under `.envio/`.
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
-   snapshot the multi-error report.
+   snapshot the multi-error report (unsupported + unknown).
 
 **C. Subgraph runtime + graph-ts shim** — lives inside the `envio` package
 as an undocumented subpath export (`envio/subgraph`), source under
@@ -241,7 +273,15 @@ classes prove useful standalone.
    import mappings, register `onEvent`/`onBlock`/`contractRegister` wrappers
    around `runSync`; per-round log buffering.
 4. Tests: rung 1 with real mapping sources through the shim; value-class unit
-   tests against graph-ts fixtures.
+   tests against graph-ts fixtures. **`SubgraphValidation_test.res`** in
+   `packages/envio-tests`, patterned on `UserApiValidation_test.res` (an
+   `expectSubgraphError` helper over a `fromSubgraph(~manifest, ~schema,
+   ~mappings, ~files)` entry in `InternalTestIndexer`, asserting exact error
+   messages): one case per §7 row — every unsupported feature (manifest,
+   schema, runtime-access) and every unknown-rejection path (unknown manifest
+   field/kind/feature name, too-new specVersion/apiVersion, unknown schema
+   directive/argument/type, unknown graph-ts namespace member, unknown
+   entity field, unknown event property).
 
 **D. End to end.** `scenarios/subgraph_test`: a real small subgraph project
 (e.g. gravatar) with factory + template + eth_call + block handler; run via
