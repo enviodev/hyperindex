@@ -232,27 +232,33 @@ subgraph.yaml:
 | Need | Channel | Behavior |
 |---|---|---|
 | HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
-| RPC for sync fallback + contract calls | `ENVIO_RPC_URL` (comma-separated = ordered fallbacks) | optional; injected into the generated chain config as `for: fallback` and used by the shim's eth_call/`getBalance`/`hasCode`/`ipfs` effects |
-| Everything else | optional overlay file `envio.yaml` next to subgraph.yaml | full envio surface the manifest can't express: rpc entries with `for`/`ws`/`headers`/backoff, `hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`, effect rate limits, IPFS gateway |
+| RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required the moment a mapping performs a contract call — HyperRPC doesn't support `eth_call` |
+| Everything else | optional overlay file `envio.yaml` next to subgraph.yaml | envio surface the manifest can't express: `hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`, effect rate limits, IPFS gateway |
 
-- **Precedence:** subgraph.yaml says *what* to index; `envio.yaml` says
-  *how*; env vars carry secrets/URLs. Overlay merges over the generated
-  config and wins; `${ENVIO_*}` interpolation works inside it; the same
-  deny-unknown parsing applies (§7 unknown error for unrecognized keys).
-- **One var for both RPC uses** — sync fallback and contract calls share
-  `ENVIO_RPC_URL` for a single mental model; split per-use only via the
-  overlay. Since a subgraph is single-network, no chain-id suffix is needed
-  (`ENVIO_RPC_URL_<CHAINID>` reserved for the composition future).
+- **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
+  `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
+  `url`, `for`, `ws`, `headers`, backoff/interval tuning) | `[<url>|{...}]`
+  (JSON array mixing both). Parsed with the same schema and deny-unknown
+  rules as config.yaml's `rpc` field, then injected into the generated
+  chain config verbatim (bare URLs default to `for: fallback`). The shim's
+  call effects (`ethereum.call`/`try_`/`getBalance`/`hasCode`) use the same
+  entries in order as a viem fallback transport.
+- **Precedence:** subgraph.yaml says *what* to index; `ENVIO_SUBGRAPH_RPC` +
+  `envio.yaml` say *how*; env vars carry secrets. Overlay merges over the
+  generated config and wins; `${ENVIO_*}` interpolation works inside it;
+  the same deny-unknown parsing applies (§7 unknown error for unrecognized
+  keys).
 - **Contract calls fail lazily but clearly.** Whether mappings call
   contracts isn't statically knowable, so the first `ethereum.call` without
-  any RPC configured raises:
+  `ENVIO_SUBGRAPH_RPC` raises:
 
   ```
   This subgraph performs contract calls (Token.try_name()), which need an
-  RPC endpoint — HyperSync serves logs and blocks, not eth_call.
+  RPC endpoint — HyperSync and HyperRPC serve logs and blocks, not eth_call.
   Set one in .env or the environment:
-    ENVIO_RPC_URL=https://...
-  or add per-chain RPC config in envio.yaml.
+    ENVIO_SUBGRAPH_RPC=https://...
+  Advanced (matches envio's rpc config; single entry or array):
+    ENVIO_SUBGRAPH_RPC={"url":"https://...","for":"fallback","headers":{...}}
   ```
 
 - **Missing token error** points at https://envio.dev/app/api-tokens with
@@ -363,7 +369,8 @@ refuse instead, so behavior never silently diverges:
    address-less contracts); handler entry → subgraph runtime; embed the
    parsed manifest in the public config JSON under a `subgraph` field
    (extend `publicConfigSchema` in `Config.res`); `.env` loading,
-   `ENVIO_RPC_URL` injection, and `envio.yaml` overlay merge (§6b).
+   `ENVIO_SUBGRAPH_RPC` parsing/injection, and `envio.yaml` overlay merge
+   (§6b).
 3. Schema transform + §7 schema errors (interfaces, aggregations); write
    transformed schema under `.envio/`.
 4. Tests: Rust unit tests over manifest/schema fixtures per specVersion,
