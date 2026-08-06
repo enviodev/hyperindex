@@ -8,6 +8,7 @@
 import { createPublicClient, fallback, http } from "viem";
 import * as Sury from "rescript-schema";
 import { createEffect } from "../Envio.res.mjs";
+import { configureBlockTimestamps, requestBlockTimestamp } from "./blocks.ts";
 import { missingRpcMessage } from "./errors.ts";
 
 const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
@@ -29,6 +30,8 @@ async function fetchBase64(url: string): Promise<string | null> {
 export type HostEffects = ReturnType<typeof makeHostEffects>;
 
 export function makeHostEffects(rpcUrls: string[]) {
+  configureBlockTimestamps(rpcUrls);
+
   let client: ReturnType<typeof createPublicClient> | null = null;
   const clientOrThrow = (callSite: string) => {
     if (rpcUrls.length === 0) {
@@ -135,11 +138,9 @@ export function makeHostEffects(rpcUrls: string[]) {
       cache: false,
       crossChain: false,
     },
-    async ({ input }: { input: number }) => {
-      const block = await clientOrThrow("block.timestamp in a block handler").getBlock({
-        blockNumber: BigInt(input),
-      });
-      return block.timestamp.toString();
+    async ({ input, context }: { input: number; context: { chain: { id: number } } }) => {
+      const timestamp = await requestBlockTimestamp(context.chain.id, input);
+      return timestamp.toString();
     },
   );
 
