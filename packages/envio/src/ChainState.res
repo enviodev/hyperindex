@@ -549,13 +549,16 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
   switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
-    // Clamped in float space: at low densities chainTargetItems /. density
-    // exceeds the int range, and truncating it first wraps negative — the
-    // target collapses below the frontier and the chain stops querying.
-    Pervasives.min(
-      fetchCeiling->Int.toFloat,
-      bufferBlockNumber->Int.toFloat +. Math.ceil(chainTargetItems /. density),
-    )->Float.toInt
+    // Decided by comparison so no unbounded value is ever converted to int:
+    // at low densities chainTargetItems /. density exceeds the int range, and
+    // truncating it wraps negative — the target collapses below the frontier
+    // and the chain stops querying. The division only runs when its result is
+    // provably below the ceiling-bounded range.
+    if density *. (fetchCeiling - bufferBlockNumber)->Int.toFloat <= chainTargetItems {
+      fetchCeiling
+    } else {
+      bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt
+    }
   | _ => Pervasives.min(bufferBlockNumber + coldTargetRange, fetchCeiling)
   }
 }

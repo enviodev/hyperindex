@@ -103,11 +103,11 @@ let fail = (run, ~seed, ~message) =>
 let tick = (run: run, ~waterfall=5000.) => {
   let buffer = run.fetchState->FetchState.bufferBlockNumber
   let ceiling = run.knownHeight
-  let target =
-    Pervasives.min(
-      ceiling->Int.toFloat,
-      buffer->Int.toFloat +. Math.ceil(waterfall /. run.density),
-    )->Float.toInt
+  let target = if run.density *. (ceiling - buffer)->Int.toFloat <= waterfall {
+    ceiling
+  } else {
+    buffer + Math.ceil(waterfall /. run.density)->Float.toInt
+  }
   let rangeCost = run.density *. (target - buffer)->Int.toFloat
   let budget = Pervasives.min(waterfall, Math.ceil(rangeCost) +. run.pendingBudget)
   switch run.fetchState->FetchState.getNextQuery(
