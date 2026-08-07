@@ -62,6 +62,9 @@ class Token extends ethereum.SmartContract {
   try_flaky(): any {
     return this.tryCall("flaky", "flaky():(uint256)", []);
   }
+  try_oddName(): any {
+    return this.tryCall("oddName", "oddName():(string)", []);
+  }
 }
 
 export function handlePing(event: any): void {
@@ -71,6 +74,15 @@ export function handlePing(event: any): void {
   if (nonce === 2) {
     // A transport failure must not be mistaken for a revert.
     token.try_flaky();
+    return;
+  }
+
+  if (nonce === 3) {
+    let odd = token.try_oddName();
+    let probe = new Entity();
+    probe.setString("name", odd.reverted ? "reverted" : odd.value[0].toString());
+    probe.setBoolean("reverted", odd.reverted);
+    store.set("Probe", "odd", probe);
     return;
   }
 
@@ -98,6 +110,12 @@ const NAME_RESULT =
 
 const NAME_SELECTOR = "0x06fdde03";
 const BOOM_SELECTOR = "0xa169ce09";
+const ODD_NAME_SELECTOR = "0x4d9386ad";
+
+// A bytes32 name from a pre-ERC20 token, which can't be decoded as the string
+// the signature declares.
+const ODD_NAME_RESULT =
+  "0x656e76696f000000000000000000000000000000000000000000000000000000";
 
 let server: Server;
 
@@ -113,6 +131,7 @@ beforeAll(async () => {
 
       if (request.method !== "eth_call") return reply("0x1");
       if (data.startsWith(NAME_SELECTOR)) return reply(NAME_RESULT);
+      if (data.startsWith(ODD_NAME_SELECTOR)) return reply(ODD_NAME_RESULT);
       if (data.startsWith(BOOM_SELECTOR)) {
         return res.end(
           JSON.stringify({
@@ -147,6 +166,22 @@ describe("contract calls", () => {
     t.expect(await indexer.Probe.getOrThrow("probe")).toEqual({
       id: "probe",
       name: "envio",
+      reverted: true,
+    });
+  });
+
+  it("reports output it cannot decode as a reverted call", async (t) => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Ping", params: { nonce: 3n } }] },
+      },
+    });
+
+    t.expect(await indexer.Probe.getOrThrow("odd")).toEqual({
+      id: "odd",
+      name: "reverted",
       reverted: true,
     });
   });

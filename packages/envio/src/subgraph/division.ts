@@ -37,15 +37,20 @@ export function loadTypeScript(root: string): any | null {
 }
 
 export function integerDivision(a: unknown, b: unknown): unknown {
-  if (
-    typeof a === "number" &&
-    typeof b === "number" &&
-    Number.isInteger(a) &&
-    Number.isInteger(b)
-  ) {
-    return Math.trunc(a / b);
+  const left = typeof a === "object" && a !== null ? (a as any).valueOf() : a;
+  const right = typeof b === "object" && b !== null ? (b as any).valueOf() : b;
+
+  const integral = (v: unknown) => typeof v === "bigint" || (typeof v === "number" && Number.isInteger(v));
+  if (integral(left) && integral(right)) {
+    // Only i64 / i64 stays 64-bit; anything narrower is an i32 in AssemblyScript
+    // and must come back as a number, or the bigint spreads through every
+    // arithmetic that follows.
+    if (typeof left === "bigint" && typeof right === "bigint") {
+      return left / right;
+    }
+    return Math.trunc(Number(left) / Number(right));
   }
-  return (a as number) / (b as number);
+  return (left as number) / (right as number);
 }
 
 export const DIVIDE_HELPER = "__envio_idiv";

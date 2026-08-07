@@ -157,12 +157,21 @@ export function makeCallEffect(rpcUrls: string[]) {
         args: input.args.map(decodeArg),
       });
 
+      let result;
       try {
-        const result = await clientFor(rpcUrls).call({
+        result = await clientFor(rpcUrls).call({
           to: input.address as `0x${string}`,
           data,
           blockNumber: BigInt(input.blockNumber),
         });
+      } catch (error) {
+        if (isRevert(error)) {
+          return JSON.stringify({ reverted: true, values: null });
+        }
+        throw error;
+      }
+
+      try {
         const decoded = decodeFunctionResult({
           abi,
           functionName: name,
@@ -170,11 +179,11 @@ export function makeCallEffect(rpcUrls: string[]) {
         });
         const values = Array.isArray(decoded) ? decoded : [decoded];
         return JSON.stringify({ reverted: false, values: values.map(encodeArg) });
-      } catch (error) {
-        if (isRevert(error)) {
-          return JSON.stringify({ reverted: true, values: null });
-        }
-        throw error;
+      } catch {
+        // Output the declared signature can't decode counts as a failed call,
+        // which is what lets a mapping retry through a different ABI — the
+        // bytes32-vs-string ERC20 name is the case every token subgraph hits.
+        return JSON.stringify({ reverted: true, values: null });
       }
     },
   );

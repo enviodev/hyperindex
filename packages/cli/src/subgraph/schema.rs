@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphql_parser::schema::{Definition, Directive, Document, Type, TypeDefinition, Value};
+use serde::Serialize;
 
 use super::errors::Report;
 
@@ -57,6 +58,23 @@ pub struct SchemaTranslation {
     /// Fields holding one entity's id. graph-ts calls the field `owner`; envio's
     /// column is `owner_id`, so the shim renames it at the store boundary.
     pub entity_ref_fields: BTreeMap<String, Vec<String>>,
+    /// What each field is declared as in the *subgraph* schema, which is what a
+    /// mapping expects to read back — the envio column is often a different
+    /// type, and guessing from the stored value can't tell `Bytes` from
+    /// `String` or `Int8` from `Int`.
+    pub entity_field_types: BTreeMap<String, BTreeMap<String, FieldType>>,
+}
+
+/// A field as the subgraph schema declares it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldType {
+    /// The subgraph scalar, an enum name, or `Entity` for a relation.
+    pub kind: String,
+    /// The entity a relation points at, so its id type can be looked up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub list: bool,
 }
 
 fn directive_name<'a, 'b>(directive: &'a Directive<'b, String>) -> &'a str {
@@ -160,6 +178,24 @@ fn render_fields(
         }
 
         let (base, wrappers) = unwrap_type(&field.field_type);
+
+        translation
+            .entity_field_types
+            .entry(owner.to_string())
+            .or_default()
+            .insert(
+                field.name.clone(),
+                FieldType {
+                    kind: if map_scalar(&base).is_some() || enum_names.contains(&base) {
+                        base.clone()
+                    } else {
+                        "Entity".to_string()
+                    },
+                    target: (map_scalar(&base).is_none() && !enum_names.contains(&base))
+                        .then(|| base.clone()),
+                    list: is_list(&wrappers),
+                },
+            );
 
         if let Some(derived_field) = derived_from {
             fields.push(format!(

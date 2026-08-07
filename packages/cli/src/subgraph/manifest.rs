@@ -179,6 +179,11 @@ pub struct EventHandler {
     /// `topic1`/`topic2`/`topic3` values, keyed by indexed-parameter position.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<usize, Vec<String>>,
+    /// Each parameter's ABI type, keyed by the name envio decodes it under.
+    /// The manifest's own signature carries types without names, so it can't
+    /// be matched against decoded params; this is filled in from the ABI.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -540,6 +545,7 @@ fn parse_data_source(
                     handler,
                     receipt: false,
                     topics: BTreeMap::new(),
+                    params: BTreeMap::new(),
                 });
             }
 
@@ -698,6 +704,7 @@ fn parse_event_handler(
         handler,
         receipt,
         topics,
+        params: BTreeMap::new(),
     })
 }
 

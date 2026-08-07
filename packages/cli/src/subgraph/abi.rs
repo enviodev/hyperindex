@@ -6,6 +6,8 @@
 //! unique name needs. An overloaded name isn't unique, so that one has to be
 //! spelled out in the human-readable form envio parses.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use super::errors::Report;
@@ -104,6 +106,82 @@ fn human_readable(name: &str, inputs: &[Value]) -> String {
     format!("{name}({})", params.join(", "))
 }
 
+fn event_name(manifest_signature: &str) -> String {
+    manifest_signature
+        .split('(')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// The ABI entries declaring an event of this name, in ABI order.
+fn candidates<'a>(name: &str, abi_json: Option<&'a str>) -> Vec<Value> {
+    let Some(abi_json) = abi_json else {
+        return vec![];
+    };
+    let Ok(abi) = serde_json::from_str::<Value>(abi_json) else {
+        return vec![];
+    };
+    let Some(entries) = abi.as_array() else {
+        return vec![];
+    };
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.get("type").and_then(Value::as_str) == Some("event")
+                && entry.get("name").and_then(Value::as_str) == Some(name)
+        })
+        .cloned()
+        .collect()
+}
+
+fn inputs_of(entry: &Value) -> Vec<Value> {
+    entry
+        .get("inputs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The ABI entry a manifest signature names, matching on argument types when
+/// the name is overloaded.
+fn matching_entry(manifest_signature: &str, abi_json: Option<&str>) -> Option<Value> {
+    let found = candidates(&event_name(manifest_signature), abi_json);
+    if found.len() <= 1 {
+        return found.into_iter().next();
+    }
+    let wanted = manifest_arg_types(manifest_signature);
+    found.into_iter().find(|candidate| {
+        let inputs = inputs_of(candidate);
+        inputs.len() == wanted.len()
+            && inputs
+                .iter()
+                .zip(wanted.iter())
+                .all(|(input, want)| &solidity_type(input) == want)
+    })
+}
+
+/// Each parameter's ABI type, keyed by the name envio decodes it under.
+pub fn param_types(manifest_signature: &str, abi_json: Option<&str>) -> BTreeMap<String, String> {
+    let Some(entry) = matching_entry(manifest_signature, abi_json) else {
+        return BTreeMap::new();
+    };
+    inputs_of(&entry)
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            let name = input
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| format!("arg{index}"));
+            (name, solidity_type(input))
+        })
+        .collect()
+}
+
 /// What to put in the generated config's `event:` field.
 pub fn resolve_event(
     manifest_signature: &str,
@@ -111,58 +189,12 @@ pub fn resolve_event(
     location: &str,
     report: &mut Report,
 ) -> String {
-    let name = manifest_signature
-        .split('(')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    let Some(abi_json) = abi_json else {
-        return name;
-    };
-    let Ok(abi) = serde_json::from_str::<Value>(abi_json) else {
-        return name;
-    };
-    let Some(entries) = abi.as_array() else {
-        return name;
-    };
-
-    let candidates: Vec<&Value> = entries
-        .iter()
-        .filter(|entry| {
-            entry.get("type").and_then(Value::as_str) == Some("event")
-                && entry.get("name").and_then(Value::as_str) == Some(name.as_str())
-        })
-        .collect();
-
-    if candidates.len() <= 1 {
+    let name = event_name(manifest_signature);
+    if candidates(&name, abi_json).len() <= 1 {
         return name;
     }
-
-    let wanted = manifest_arg_types(manifest_signature);
-    let matched = candidates.iter().find(|candidate| {
-        let inputs = candidate
-            .get("inputs")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        inputs.len() == wanted.len()
-            && inputs
-                .iter()
-                .zip(wanted.iter())
-                .all(|(input, want)| &solidity_type(input) == want)
-    });
-
-    match matched {
-        Some(entry) => {
-            let inputs = entry
-                .get("inputs")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            human_readable(&name, &inputs)
-        }
+    match matching_entry(manifest_signature, abi_json) {
+        Some(entry) => human_readable(&name, &inputs_of(&entry)),
         None => {
             report.unknown(
                 format!("which overload of \"{name}\" \"{manifest_signature}\" refers to"),
@@ -195,6 +227,30 @@ mod tests {
         let mut report = Report::new();
         let resolved = resolve_event(signature, Some(ABI), "data source \"Token\"", &mut report);
         (resolved, report)
+    }
+
+    #[test]
+    fn reads_param_types_for_a_unique_name() {
+        assert_eq!(
+            param_types("Approval(indexed address)", Some(ABI)),
+            BTreeMap::from([("owner".to_string(), "address".to_string())])
+        );
+    }
+
+    #[test]
+    fn reads_param_types_of_the_matching_overload() {
+        assert_eq!(
+            param_types(
+                "Transfer(indexed address,indexed address,uint256,bytes)",
+                Some(ABI)
+            ),
+            BTreeMap::from([
+                ("from".to_string(), "address".to_string()),
+                ("to".to_string(), "address".to_string()),
+                ("id".to_string(), "uint256".to_string()),
+                ("data".to_string(), "bytes".to_string()),
+            ])
+        );
     }
 
     #[test]

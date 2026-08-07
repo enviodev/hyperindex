@@ -44,7 +44,14 @@ const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
 
 const jsonFromString = (line: string) => (jsonNamespace as any).fromString(line);
 
-type EventHandler = { event: string; name: string; handler: string; receipt: boolean };
+type EventHandler = {
+  event: string;
+  name: string;
+  handler: string;
+  receipt: boolean;
+  /** Each parameter's ABI type, keyed by the name envio decodes it under. */
+  params?: Record<string, string>;
+};
 type BlockHandler = { handler: string; filter: { Every: number } | "Once" | any };
 type DataSource = {
   kind: string;
@@ -140,8 +147,33 @@ const ANY_HEX = /^0x[0-9a-fA-F]*$/;
 
 type Converter = (value: unknown) => unknown;
 
-/** How one decoded value becomes its graph-ts counterpart. */
-function converterFor(value: unknown): Converter {
+/**
+ * An ABI type as graph codegen types it. Anything that fits in 32 bits is an
+ * `i32` in a mapping, and everything wider is a `BigInt` — which the value
+ * alone can't tell you, since envio decodes every integer width as a bigint.
+ */
+const SMALL_INT = /^u?int(8|16|24|32)?$/;
+
+function converterForAbiType(abiType: string): Converter {
+  const type = abiType.trim();
+  if (type.endsWith("]")) {
+    const each = converterForAbiType(type.slice(0, type.lastIndexOf("[")));
+    return (v) => (Array.isArray(v) ? v.map(each) : v);
+  }
+  if (type === "address") return (v) => Address.fromString(v as string);
+  if (type === "bool") return (v) => v;
+  if (type === "string") return (v) => v;
+  if (type.startsWith("bytes")) return (v) => Bytes.fromHexString(v as string);
+  // `int`/`uint` with no width are 256-bit.
+  if (SMALL_INT.test(type) && type !== "int" && type !== "uint") {
+    return (v) => (typeof v === "bigint" ? Number(v) : v);
+  }
+  if (/^u?int/.test(type)) return (v) => new (GraphBigInt as any)(v as bigint);
+  return (v) => v;
+}
+
+/** Falls back to the value's own shape for a type the signature didn't carry. */
+function converterForValue(value: unknown): Converter {
   if (typeof value === "bigint") return (v) => new (GraphBigInt as any)(v as bigint);
   if (typeof value === "string" && ADDRESS_HEX.test(value)) {
     return (v) => Address.fromString(v as string);
@@ -150,7 +182,7 @@ function converterFor(value: unknown): Converter {
     return (v) => Bytes.fromHexString(v as string);
   }
   if (Array.isArray(value)) {
-    const each = value.length > 0 ? converterFor(value[0]) : (v: unknown) => v;
+    const each = value.length > 0 ? converterForValue(value[0]) : (v: unknown) => v;
     return (v) => (v as unknown[]).map(each);
   }
   return (v) => v;
@@ -158,19 +190,28 @@ function converterFor(value: unknown): Converter {
 
 /**
  * An event's parameter types don't vary between occurrences, so the shape is
- * inspected once per event kind rather than per event.
+ * resolved once per event kind rather than per event.
  */
-function convertersFor(cache: Map<string, Converter>, source: Record<string, unknown>) {
+function convertersFor(
+  cache: Map<string, Converter>,
+  source: Record<string, unknown>,
+  types: Map<string, string>,
+) {
   if (cache.size === 0) {
     for (const [name, value] of Object.entries(source)) {
-      cache.set(name, converterFor(value));
+      const abiType = types.get(name);
+      cache.set(name, abiType ? converterForAbiType(abiType) : converterForValue(value));
     }
   }
   return cache;
 }
 
-function convertAll(cache: Map<string, Converter>, source: Record<string, unknown>) {
-  const converters = convertersFor(cache, source);
+function convertAll(
+  cache: Map<string, Converter>,
+  source: Record<string, unknown>,
+  types: Map<string, string>,
+) {
+  const converters = convertersFor(cache, source, types);
   const out: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(source)) {
     out[name] = (converters.get(name) ?? ((v: unknown) => v))(value);
@@ -188,7 +229,11 @@ function convertAll(cache: Map<string, Converter>, source: Record<string, unknow
  * envio runs each handler twice over the same payload, so anything eager is
  * paid twice.
  */
-function makeEventClass(dataSourceName: string, eventName: string) {
+function makeEventClass(
+  dataSourceName: string,
+  eventName: string,
+  declared: Map<string, string>,
+) {
   const paramConverters = new Map<string, Converter>();
   const transactionConverters = new Map<string, Converter>();
 
@@ -218,11 +263,11 @@ function makeEventClass(dataSourceName: string, eventName: string) {
       ));
     }
     get transaction() {
-      return (this._transaction ??= convertAll(transactionConverters, this._raw.transaction ?? {}));
+      return (this._transaction ??= convertAll(transactionConverters, this._raw.transaction ?? {}, new Map()));
     }
     /** Read by name, the way a hand-written mapping does. */
     get params() {
-      return (this._params ??= convertAll(paramConverters, this._raw.params ?? {}));
+      return (this._params ??= convertAll(paramConverters, this._raw.params ?? {}, declared));
     }
     /** Read positionally, the way `graph codegen`'s param classes do. */
     get parameters() {
@@ -553,6 +598,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityListFields: config.entityListFields ?? {},
     entityFields: config.entityFields ?? {},
     entityRefFields: config.entityRefFields ?? {},
+    entityFieldTypes: config.entityFieldTypes ?? {},
   };
 
   // Before any mapping is imported: Node caches a failed module resolution for
@@ -595,7 +641,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       if (typeof fn !== "function") continue;
 
       // Parameter shapes are fixed per event kind, not per data source.
-      const SubgraphEvent = makeEventClass(source.name, handler.name);
+      const SubgraphEvent = makeEventClass(source.name, handler.name, new Map(Object.entries(handler.params ?? {})));
 
       const makeScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
         context,

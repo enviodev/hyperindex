@@ -226,6 +226,7 @@ fn contract_config(
         };
         *ordinal += 1;
         handler.name = unique.clone();
+        handler.params = abi::param_types(&handler.event, abi_json.as_deref());
         resolved.push((event, is_overload.then_some(unique)));
     }
 

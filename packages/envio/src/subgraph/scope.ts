@@ -9,6 +9,8 @@ export type SubgraphSchema = {
   entityListFields: Record<string, string[]>;
   entityFields: Record<string, string[]>;
   entityRefFields: Record<string, string[]>;
+  /** Each field as the subgraph schema declares it, which is what a mapping reads. */
+  entityFieldTypes: Record<string, Record<string, { kind: string; target?: string; list: boolean }>>;
 };
 
 export type Scope = {

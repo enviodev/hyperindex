@@ -855,6 +855,7 @@ function toEntity(entityType: string, row: Record<string, unknown> | undefined |
   const { schema } = currentScope();
   const timestampFields = new Set(schema.timestampFields[entityType] ?? []);
   const refFields = new Set(schema.entityRefFields[entityType] ?? []);
+  const declared = schema.entityFieldTypes[entityType] ?? {};
   const entity = new Entity();
   Object.defineProperty(entity, ENTITY_TYPE, { value: entityType });
   for (const [column, value] of Object.entries(row)) {
@@ -866,19 +867,54 @@ function toEntity(entityType: string, row: Record<string, unknown> | undefined |
       key,
       timestampFields.has(key)
         ? Value.fromTimestamp(BigInt((value as Date).getTime()) * 1000n)
-        : toValue(value),
+        : toValue(value, declaredKind(schema, declared[key])),
     );
   }
   return entity;
 }
 
-function toValue(value: unknown): Value {
+/**
+ * What a mapping expects a field to read back as. A relation carries the id of
+ * the entity it points at, so its type is that entity's own `id` type — which is
+ * how `Token.load(pool.token0)` gets `Bytes` rather than a string.
+ */
+function declaredKind(
+  schema: { entityFieldTypes: Record<string, Record<string, { kind: string; target?: string; list?: boolean }>> },
+  field: { kind: string; target?: string; list?: boolean } | undefined,
+): string | undefined {
+  if (!field) return undefined;
+  // For a list, this is the element's kind — a list of entity ids carries the
+  // ids themselves, so each one is the target entity's id type.
+  if (field.kind !== "Entity") return field.kind;
+  const target = field.target ? schema.entityFieldTypes[field.target] : undefined;
+  return target?.id?.kind;
+}
+
+function toValue(value: unknown, kind?: string): Value {
   if (value === null || value === undefined) return Value.fromNull();
+  if (Array.isArray(value)) return Value.fromArray(value.map((item) => toValue(item, kind)));
+  switch (kind) {
+    case "Bytes":
+      return typeof value === "string" ? Value.fromBytes(Bytes.fromHexString(value)) : Value.fromNull();
+    case "BigInt":
+    case "Int8":
+      return Value.fromBigInt(BigInt_.fromString(String(value)));
+    case "BigDecimal":
+      return Value.fromBigDecimal(
+        value instanceof BigNumber ? new BigDecimal(value) : BigDecimal.fromString(String(value)),
+      );
+    case "Int":
+      return Value.fromI32(Number(value));
+    case "Boolean":
+      return Value.fromBoolean(Boolean(value));
+    default:
+      break;
+  }
   if (typeof value === "string") return Value.fromString(value);
   if (typeof value === "boolean") return Value.fromBoolean(value);
   if (typeof value === "number") return Value.fromI32(value);
   if (typeof value === "bigint") return Value.fromBigInt(new BigInt_(value));
-  if (Array.isArray(value)) return Value.fromArray(value.map(toValue));
+  if (Array.isArray(value)) return Value.fromArray(value.map((item) => toValue(item)));
   if (value instanceof BigNumber) return Value.fromBigDecimal(new BigDecimal(value));
   return Value.fromString(String(value));
 }
