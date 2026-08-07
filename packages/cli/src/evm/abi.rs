@@ -2,6 +2,7 @@ use alloy_json_abi::JsonAbi;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -53,7 +54,12 @@ fn strip_unknown_keys(text: &str) -> Option<String> {
         Value::Object(object) => object.get_mut("abi")?.as_array_mut()?,
         _ => return None,
     };
-    for item in items {
+    // A contract has one constructor, one fallback and one receive; an ABI
+    // concatenated from a proxy and its implementation lists them twice, and the
+    // parser has nowhere to put the second.
+    let mut seen = HashSet::new();
+    let mut kept = Vec::with_capacity(items.len());
+    for mut item in std::mem::take(items) {
         let object = item.as_object_mut()?;
         keep(object, ITEM_KEYS);
         for key in ["inputs", "outputs"] {
@@ -61,7 +67,14 @@ fn strip_unknown_keys(text: &str) -> Option<String> {
                 strip_params(params);
             }
         }
+        let kind = object.get("type").and_then(Value::as_str).unwrap_or("");
+        if matches!(kind, "constructor" | "fallback" | "receive") && !seen.insert(kind.to_string())
+        {
+            continue;
+        }
+        kept.push(item);
     }
+    *items = kept;
     serde_json::to_string(&parsed).ok()
 }
 
@@ -116,6 +129,28 @@ mod tests {
                 abi.events().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             ),
             (vec!["admin"], vec!["Failure"])
+        );
+    }
+
+    // Compound V2's ABIs, generated when the proxy and the implementation were
+    // concatenated, list the constructor twice.
+    #[test]
+    fn reads_an_abi_that_names_its_constructor_twice() {
+        let abi = parse(
+            r#"[
+              {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor", "signature": "constructor"},
+              {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor", "signature": "constructor"},
+              {"anonymous": false, "inputs": [], "name": "Failure", "type": "event"}
+            ]"#,
+        )
+        .unwrap();
+
+        let AbiOrNestedAbi::Abi(abi) = abi else {
+            panic!("expected a flat ABI");
+        };
+        assert_eq!(
+            abi.events().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["Failure"]
         );
     }
 
