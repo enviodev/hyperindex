@@ -220,6 +220,72 @@ function convertAll(
 }
 
 /**
+ * graph-ts' `ethereum.Block`, `Transaction` and `TransactionReceipt`, paired
+ * with the name envio decodes each field under and the graph-ts type it has to
+ * arrive as. The names diverge in both directions — graph-ts' `author` is
+ * envio's `miner`, its `gasLimit` on a transaction is envio's `gas` — so a
+ * mapping reading the graph-ts name gets `undefined` unless it's translated.
+ */
+type ShapeField = [graphName: string, rawName: string, kind: "bytes" | "address" | "bigint"];
+
+const BLOCK_SHAPE: ShapeField[] = [
+  ["hash", "hash", "bytes"],
+  ["parentHash", "parentHash", "bytes"],
+  ["unclesHash", "sha3Uncles", "bytes"],
+  ["author", "miner", "address"],
+  ["stateRoot", "stateRoot", "bytes"],
+  ["transactionsRoot", "transactionsRoot", "bytes"],
+  ["receiptsRoot", "receiptsRoot", "bytes"],
+  ["number", "number", "bigint"],
+  ["gasUsed", "gasUsed", "bigint"],
+  ["gasLimit", "gasLimit", "bigint"],
+  ["timestamp", "timestamp", "bigint"],
+  ["difficulty", "difficulty", "bigint"],
+  ["totalDifficulty", "totalDifficulty", "bigint"],
+  ["size", "size", "bigint"],
+  ["baseFeePerGas", "baseFeePerGas", "bigint"],
+];
+
+const TRANSACTION_SHAPE: ShapeField[] = [
+  ["hash", "hash", "bytes"],
+  ["index", "transactionIndex", "bigint"],
+  ["from", "from", "address"],
+  ["to", "to", "address"],
+  ["value", "value", "bigint"],
+  ["gasLimit", "gas", "bigint"],
+  ["gasPrice", "gasPrice", "bigint"],
+  ["input", "input", "bytes"],
+  ["nonce", "nonce", "bigint"],
+];
+
+/** envio carries the receipt scalars on the transaction, not beside it. */
+const RECEIPT_SHAPE: ShapeField[] = [
+  ["transactionHash", "hash", "bytes"],
+  ["transactionIndex", "transactionIndex", "bigint"],
+  ["cumulativeGasUsed", "cumulativeGasUsed", "bigint"],
+  ["gasUsed", "gasUsed", "bigint"],
+  ["contractAddress", "contractAddress", "address"],
+  ["status", "status", "bigint"],
+  ["root", "root", "bytes"],
+  ["logsBloom", "logsBloom", "bytes"],
+];
+
+function graphValue(kind: ShapeField[2], value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  if (kind === "bytes") return Bytes.fromHexString(value as string);
+  if (kind === "address") return Address.fromString(value as string);
+  return new (GraphBigInt as any)(typeof value === "bigint" ? value : BigInt(value as number));
+}
+
+function shaped(fields: ShapeField[], raw: Record<string, unknown> | undefined) {
+  const out: Record<string, unknown> = {};
+  for (const [graphName, rawName, kind] of fields) {
+    out[graphName] = graphValue(kind, raw?.[rawName]);
+  }
+  return out;
+}
+
+/**
  * The graph-ts `ethereum.Event` a mapping sees, built per event kind so the
  * refusals and conversions live on a prototype rather than being installed on
  * every event.
@@ -233,9 +299,9 @@ function makeEventClass(
   dataSourceName: string,
   eventName: string,
   declared: Map<string, string>,
+  hasReceipt: boolean,
 ) {
   const paramConverters = new Map<string, Converter>();
-  const transactionConverters = new Map<string, Converter>();
 
   class SubgraphEvent {
     _raw: any;
@@ -245,6 +311,7 @@ function makeEventClass(
     _transaction: any = undefined;
     _params: any = undefined;
     _parameters: any = undefined;
+    _receipt: any = undefined;
 
     constructor(raw: any) {
       this._raw = raw;
@@ -257,21 +324,37 @@ function makeEventClass(
       return (this._logIndex ??= GraphBigInt.fromI32(this._raw.logIndex));
     }
     get block() {
-      return (this._block ??= new (ethereum as any).Block(
-        GraphBigInt.fromI32(this._raw.block.number),
-        () => GraphBigInt.fromI32(this._raw.block.timestamp),
-      ));
+      return (this._block ??= shaped(BLOCK_SHAPE, this._raw.block));
     }
     get transaction() {
-      return (this._transaction ??= convertAll(transactionConverters, this._raw.transaction ?? {}, new Map()));
+      return (this._transaction ??= shaped(TRANSACTION_SHAPE, this._raw.transaction));
+    }
+    get receipt() {
+      if (!hasReceipt) return null;
+      return (this._receipt ??= Object.defineProperty(
+        shaped(RECEIPT_SHAPE, this._raw.transaction),
+        "logs",
+        {
+          get: () => {
+            throw unsupported(
+              "event.receipt.logs",
+              `data source "${dataSourceName}" -> "${eventName}"`,
+            );
+          },
+        },
+      ));
     }
     /** Read by name, the way a hand-written mapping does. */
     get params() {
       return (this._params ??= convertAll(paramConverters, this._raw.params ?? {}, declared));
     }
-    /** Read positionally, the way `graph codegen`'s param classes do. */
+    /**
+     * Read positionally, the way `graph codegen`'s param classes do. Built off
+     * the converted params so an array or a bytes value carries the type the
+     * ABI declares rather than one guessed from its JS shape.
+     */
     get parameters() {
-      return (this._parameters ??= Object.entries(this._raw.params ?? {}).map(([name, value]) => ({
+      return (this._parameters ??= Object.entries(this.params).map(([name, value]) => ({
         name,
         value: toEthereumValue(value),
       })));
@@ -289,13 +372,16 @@ function makeEventClass(
 
 function toEthereumValue(value: unknown): any {
   const V = (ethereum as any).Value;
+  if (value === null || value === undefined) return V.fromNull();
+  if (Array.isArray(value)) return V.fromArray(value.map(toEthereumValue));
+  if (value instanceof Address || value instanceof Bytes) return V.fromBytes(value);
+  if (value instanceof GraphBigInt) return V.fromBigInt(value);
   if (typeof value === "bigint") return V.fromBigInt(new (GraphBigInt as any)(value));
+  if (typeof value === "boolean") return V.fromBoolean(value);
+  if (typeof value === "number") return V.fromI32(value);
   if (typeof value === "string" && ANY_HEX.test(value)) {
     return V.fromBytes(Bytes.fromHexString(value));
   }
-  if (typeof value === "string") return V.fromString(value);
-  if (typeof value === "boolean") return V.fromBoolean(value);
-  if (typeof value === "number") return V.fromI32(value);
   return V.fromString(String(value));
 }
 
@@ -641,7 +727,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       if (typeof fn !== "function") continue;
 
       // Parameter shapes are fixed per event kind, not per data source.
-      const SubgraphEvent = makeEventClass(source.name, handler.name, new Map(Object.entries(handler.params ?? {})));
+      const SubgraphEvent = makeEventClass(
+        source.name,
+        handler.name,
+        new Map(Object.entries(handler.params ?? {})),
+        handler.receipt ?? false,
+      );
 
       const makeScope = (event: any, context: any, mode: Scope["mode"]): Scope => ({
         context,
