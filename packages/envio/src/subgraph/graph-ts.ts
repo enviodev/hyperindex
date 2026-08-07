@@ -1193,11 +1193,43 @@ export class DataSourceTemplate {
     registerHook?.(name, address);
   }
   static createWithContext(name: string, params: string[], context: DataSourceContext): void {
+    // The created data source would have to carry the context to every event it
+    // ever sees, and there is nowhere to keep it — `dataSource.context()` in the
+    // template's handlers would quietly come back empty.
+    if (context.entries.length > 0) {
+      throw unsupported(
+        `${name}.createWithContext() with a non-empty context`,
+        "a mapping handler",
+      );
+    }
     DataSourceTemplate.create(name, params);
   }
 }
 
 export class DataSourceContext extends Entity {}
+
+/** A manifest `context` entry, typed the way graph-node types it. */
+function contextValue(kind: string, data: string, key: string): Value {
+  switch (kind) {
+    case "Bool":
+    case "Boolean":
+      return Value.fromBoolean(data === "true");
+    case "String":
+      return Value.fromString(data);
+    case "Int":
+      return Value.fromI32(Number(data));
+    case "Int8":
+      return Value.fromI64(BigInt(data));
+    case "BigInt":
+      return Value.fromBigInt(BigInt_.fromString(data));
+    case "BigDecimal":
+      return Value.fromBigDecimal(BigDecimal.fromString(data));
+    case "Bytes":
+      return Value.fromBytes(Bytes.fromHexString(data));
+    default:
+      throw unknown(`the context value type ${kind} on "${key}"`, "a mapping handler");
+  }
+}
 
 const dataSourceImpl = {
   address(): Address {
@@ -1207,7 +1239,11 @@ const dataSourceImpl = {
     return currentScope().dataSource.network;
   },
   context(): DataSourceContext {
-    return new DataSourceContext();
+    const context = new DataSourceContext();
+    for (const [key, entry] of Object.entries(currentScope().dataSource.context ?? {})) {
+      context.set(key, contextValue(entry.type, entry.data, key));
+    }
+    return context;
   },
   // The address a template was created with, which is the only string param
   // an EVM template ever carries.
@@ -1462,8 +1498,20 @@ export function makeBlockHandlerBlock(blockNumber: number, location: string): Et
   return block;
 }
 
-// AssemblyScript builtins the generated code leans on.
+/**
+ * AssemblyScript reinterprets the pointer and the layouts match, so nothing
+ * happens at runtime — which leaves the value with whatever prototype it was
+ * built with. A helper that returns `changetype<ByteArray>(new Uint8Array(n))`
+ * then reaches the mapping without any of ByteArray's methods; ENS's
+ * `byteArrayFromHex` is written that way, and so is every subgraph that copied
+ * it. A plain Uint8Array can only have been meant as one of graph-ts' byte
+ * types, so it is retagged as the most derived one — `Bytes` adds no instance
+ * members over `ByteArray`, so this satisfies both spellings.
+ */
 export function changetype<T>(value: unknown): T {
+  if (value instanceof Uint8Array && Object.getPrototypeOf(value) === Uint8Array.prototype) {
+    Object.setPrototypeOf(value, Bytes.prototype);
+  }
   return value as T;
 }
 

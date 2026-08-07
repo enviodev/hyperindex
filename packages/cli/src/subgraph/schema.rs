@@ -1,20 +1,19 @@
 //! schema.graphql (subgraph flavour) -> schema.graphql (envio flavour).
 //!
 //! The translator owns strictness. Envio's own parser can't be leaned on for
-//! the deny-unknown promise: it ignores unrecognised directives and doesn't even
-//! require `@entity`. So everything is validated here, against a whitelist,
-//! before a clean envio schema is emitted.
+//! the deny-unknown promise: it doesn't even require `@entity`. So the schema is
+//! validated here, against a whitelist, before a clean envio schema is emitted.
+//!
+//! Directives are the exception: graph-node ignores one it doesn't define, and
+//! subgraphs use that for documentation-only tags, so an unrecognised directive
+//! is dropped rather than refused. A directive can't change what is indexed —
+//! only the manifest and the field types can, and those stay strict.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphql_parser::schema::{Definition, Directive, Document, Type, TypeDefinition, Value};
 
 use super::errors::Report;
-
-/// Directives a subgraph schema may carry. Anything else is a typo or newer
-/// than this translator.
-const KNOWN_TYPE_DIRECTIVES: &[&str] = &["entity", "aggregation", "fulltext", "subgraphId"];
-const KNOWN_FIELD_DIRECTIVES: &[&str] = &["derivedFrom", "aggregate"];
 
 /// `@entity` arguments graph-node accepts.
 const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries"];
@@ -144,8 +143,6 @@ fn render_fields(
                         );
                     }
                 }
-            } else if !KNOWN_FIELD_DIRECTIVES.contains(&name) {
-                report.unknown(format!("the schema directive @{name}"), location.clone());
             }
         }
 
@@ -275,12 +272,6 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
             // folds it into each implementor — but its fields go through the
             // same scalar mapping on the way there.
             Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
-                for directive in &interface.directives {
-                    report.unknown(
-                        format!("the schema directive @{}", directive_name(directive)),
-                        format!("schema.graphql → interface {}", interface.name),
-                    );
-                }
                 let fields = render_fields(
                     &interface.name,
                     &interface.fields,
@@ -320,11 +311,6 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                         report.unsupported(
                             "timeseries and aggregations",
                             format!("schema.graphql → type {} @aggregation", object.name),
-                        );
-                    } else if !KNOWN_TYPE_DIRECTIVES.contains(&name) {
-                        report.unknown(
-                            format!("the schema directive @{name}"),
-                            format!("schema.graphql → type {}", object.name),
                         );
                     }
                 }
@@ -405,16 +391,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     format!("schema.graphql → input {}", input.name),
                 );
             }
-            Definition::DirectiveDefinition(directive) => {
-                if !KNOWN_TYPE_DIRECTIVES.contains(&directive.name.as_str())
-                    && !KNOWN_FIELD_DIRECTIVES.contains(&directive.name.as_str())
-                {
-                    report.unknown(
-                        format!("the schema directive @{}", directive.name),
-                        "schema.graphql",
-                    );
-                }
-            }
+            Definition::DirectiveDefinition(_) => {}
             Definition::SchemaDefinition(_) | Definition::TypeExtension(_) => {}
         }
     }
@@ -545,6 +522,26 @@ type Transfer implements DomainEvent @entity {
         );
     }
 
+    // graph-node ignores a directive it doesn't define, so subgraphs carry
+    // documentation-only ones — Messari tags every entity with @dailySnapshot
+    // and @regularPolling. Refusing them refuses a comment.
+    #[test]
+    fn ignores_schema_directives_graph_node_ignores() {
+        let (translation, report) = translate_ok(
+            r#"
+type Token @entity @regularPolling {
+  id: ID!
+  total: BigInt! @colour(value: "blue")
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            translation.text.as_str(),
+            "type Token {\n  id: ID!\n  total: BigInt!\n}"
+        );
+    }
+
     #[test]
     fn refuses_timeseries_and_unknowns() {
         let (_, report) = translate_ok(
@@ -560,7 +557,6 @@ type Loose {
 
 type Odd @entity {
   id: ID!
-  weird: String! @secretIndex
   missing: NotAType!
 }
 "#,
@@ -570,10 +566,9 @@ type Odd @entity {
             (
                 rendered.contains("doesn't support timeseries and aggregations"),
                 rendered.contains("doesn't know the object type Loose without @entity"),
-                rendered.contains("doesn't know the schema directive @secretIndex"),
                 rendered.contains("doesn't know the type NotAType"),
             ),
-            (true, true, true, true)
+            (true, true, true)
         );
     }
 

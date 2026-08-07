@@ -26,6 +26,7 @@ import {
   assemblyScriptPrimitives,
   BigInt as GraphBigInt,
   Bytes,
+  changetype,
   installCallHook,
   installHosts,
   installRegisterHook,
@@ -55,6 +56,7 @@ type DataSource = {
   mappingFile: string;
   eventHandlers: EventHandler[];
   blockHandlers: BlockHandler[];
+  context?: Record<string, { type: string; data: string }>;
   isTemplate: boolean;
 };
 type SubgraphConfig = {
@@ -101,7 +103,7 @@ function installResolveHook(root: string) {
 
   // AssemblyScript builtins the generated code uses as globals.
   const globals = globalThis as any;
-  globals.changetype ??= (value: unknown) => value;
+  globals.changetype ??= changetype;
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;
@@ -334,6 +336,102 @@ function fingerprint(entry: string): string {
     .join(",");
 }
 
+type Effect = {
+  name: string;
+  handler: (args: { input: unknown; context: unknown; cacheKey: string; checkpointId: bigint }) => Promise<unknown>;
+};
+
+const REGISTER_SUSPEND = Symbol("envio.subgraph.register.suspend");
+
+/**
+ * Results the register pass has already fetched, across events and blocks.
+ *
+ * A host op's input carries the block it is evaluated at, so an entry can never
+ * go stale — and a factory calling `symbol()` on the same token for every pair
+ * it creates asks the same question hundreds of times. envio's own effect cache
+ * is out of reach here: it hangs off the processing context, and this runs at
+ * fetch time.
+ */
+const registerCache = new Map<string, { value?: unknown; error?: unknown }>();
+const REGISTER_CACHE_LIMIT = 20_000;
+
+async function runRegisterHost(effect: Effect, input: unknown): Promise<unknown> {
+  return effect.handler({
+    input,
+    // Only `blockTimestamp` reads the context, and only for the chain id, which
+    // the input already carries for every other host op.
+    context: { chain: { id: 0 } },
+    cacheKey: "",
+    checkpointId: 0n,
+  });
+}
+
+/**
+ * The register pass's half of the sync bridge (§5).
+ *
+ * `contractRegister` runs at fetch time with a context that can only register
+ * addresses — no in-memory store, so no effects. But a factory mapping routinely
+ * reads a contract *before* deciding what to create, so the answer has to arrive
+ * somehow: the op is started, the mapping is suspended, and the round is
+ * replayed once it lands. Same shape as the handler pass, with the results
+ * memoised here instead of in envio's effect tables.
+ */
+function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
+  const key = `${effect.name} ${typeof input === "string" ? input : JSON.stringify(input)}`;
+  const resolved = scope.resolved ?? new Map();
+  scope.resolved = resolved;
+
+  const hit = resolved.get(key) ?? registerCache.get(key);
+  if (hit) {
+    if ("error" in hit) throw hit.error;
+    return hit.value;
+  }
+
+  const awaiting = scope.awaiting ?? [];
+  scope.awaiting = awaiting;
+  awaiting.push(
+    runRegisterHost(effect, input).then(
+      (value) => {
+        resolved.set(key, { value });
+        if (registerCache.size >= REGISTER_CACHE_LIMIT) registerCache.clear();
+        registerCache.set(key, { value });
+      },
+      // A failure is remembered for this event only: a transport error that
+      // fails the batch must not poison every later block too.
+      (error) => resolved.set(key, { error }),
+    ),
+  );
+  throw REGISTER_SUSPEND;
+}
+
+const maxRegisterRounds = 100;
+
+async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
+  for (let round = 1; round <= maxRegisterRounds; round++) {
+    scope.awaiting = undefined;
+    let suspended = false;
+    try {
+      runInScope(scope, fn);
+    } catch (error) {
+      if (error !== REGISTER_SUSPEND) throw error;
+      suspended = true;
+    }
+    const awaiting = scope.awaiting;
+    if (!suspended) return;
+    if (!awaiting || awaiting.length === 0) {
+      throw new Error(
+        "Envio Subgraph suspended the register pass with nothing to wait for. " +
+          "Please open an issue: https://github.com/enviodev/hyperindex/issues",
+      );
+    }
+    await Promise.all(awaiting);
+  }
+  throw new Error(
+    `Envio Subgraph replayed a mapping's dataSource.create() pass ${maxRegisterRounds} times ` +
+      "without it settling. This usually means the mapping isn't deterministic across reruns.",
+  );
+}
+
 export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   installResolveHook(config.root);
   resetClients();
@@ -344,23 +442,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const rpcUrls = config.rpcUrls ?? [];
   const callEffect = makeCallEffect(rpcUrls);
   const hosts = makeHostEffects(rpcUrls);
-  /**
-   * The register pass has no effect caller: it runs at fetch time, against a
-   * context that can only register addresses. An effect reached before any
-   * `create()` could have decided which address to register, so it's refused;
-   * once registration has happened, the rest of the mapping only feeds writes
-   * that are no-ops here, so the call is skipped.
-   */
   const callSync = (effect: unknown, input: unknown, what: string) => {
     const scope = currentScope();
+    void what;
     if (scope.mode === "register") {
-      if (scope.registered.size === 0) {
-        throw unsupported(
-          `${what} before dataSource.create() in a handler that creates templates`,
-          `data source "${scope.dataSource.name}" → a mapping handler`,
-        );
-      }
-      return null;
+      return registerHostSync(scope, effect as Effect, input);
     }
     return scope.context.effectSync(effect, input);
   };
@@ -400,6 +486,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       ),
     blockTimestamp: (blockNumber) =>
       callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"),
+  });
+
+  // Reads the scope rather than closing over one context: register passes for
+  // the items in a batch run concurrently, and this hook is process-wide.
+  installRegisterHook((templateName, address) => {
+    currentScope().context.chain[templateName].add(address);
   });
 
   installCallHook((call) => {
@@ -467,6 +559,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           address: event.srcAddress,
           chainId: event.chainId,
           network: source.network ?? "",
+          context: source.context ?? {},
         },
         registered: new Set(),
         blockNumber: event.block.number,
@@ -489,13 +582,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       if (templateNames.size > 0) {
         indexer.contractRegister(
           { contract: source.name, event: handler.name },
-          ({ event, context }: any) => {
+          async ({ event, context }: any) => {
             const graphEvent = new SubgraphEvent(event);
-            const scope = makeScope(event, context, "register");
-            installRegisterHook((templateName, address) => {
-              context.chain[templateName].add(address);
-            });
-            runInScope(scope, () => fn(graphEvent));
+            await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
           },
         );
       }
@@ -536,6 +625,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                   address: source.address ?? "",
                   chainId: source.chainId ?? 0,
                   network: source.network ?? "",
+                  context: source.context ?? {},
                 },
                 registered: new Set(),
                 blockNumber: block.number,

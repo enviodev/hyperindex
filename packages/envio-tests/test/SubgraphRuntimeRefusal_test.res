@@ -89,7 +89,7 @@ export function handleProbe(event: any): void {
     let entity = new Entity();
     entity.sprinkle();
   } else if (kind === 4) {
-    // Reached in the register pass too, where no create() has happened.
+    // Reached in the register pass too, before any create() has happened.
     ethereum.getBalance(event.address);
   }
 }
@@ -163,9 +163,11 @@ describe("subgraph runtime", () => {
     );
   });
 
-  it("refuses a host op reached before dataSource.create()", async () => {
+  // The register pass runs the same host ops as the handler pass, so it hits
+  // the same missing-endpoint error rather than a rule of its own.
+  it("names the missing RPC from the register pass", async () => {
     await expect(createTestIndexer().process(probe(4n))).rejects.toThrow(
-      "before dataSource.create() in a handler that creates templates",
+      "This subgraph performs contract calls",
     );
   });
 });

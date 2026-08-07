@@ -222,8 +222,10 @@ describe("subgraph translation: unknown things", () => {
     )
   })
 
-  it("refuses an unknown schema directive", t => {
-    translate(
+  // graph-node ignores a directive it doesn't define, so subgraphs carry
+  // documentation-only ones and refusing them would refuse a comment.
+  it("ignores an unknown schema directive", t => {
+    let message = translate(
       ~manifest=manifestWith(plainEventHandler),
       ~schema=`
 type Token @entity {
@@ -231,11 +233,8 @@ type Token @entity {
   total: BigInt! @secretIndex
 }
 `,
-    )->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't know the schema directive @secretIndex.",
-      ~location="schema.graphql → Token.total",
     )
+    t.expect(message->String.includes("@secretIndex"), ~message).toEqual(false)
   })
 
   it("refuses an unknown @entity argument", t => {

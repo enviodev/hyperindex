@@ -45,22 +45,28 @@ by name. Newer than 0.0.9 is a §7 error.
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
-| Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass (§4) | ✅ |
+| Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
+| `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` with a non-empty context → §7 error (nowhere to keep it per created address) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
 | `callHandlers`, block `filter: call`, `graft`, composition (1.3.0) | — | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
 The translator owns schema strictness. Envio's own parser can't be leaned
-on for §7's deny-unknown promise — it silently ignores unrecognized
-directives and doesn't even require `@entity` (every object type becomes a
-table). So validation happens in translation, against a whitelist, before a
-clean envio schema is emitted: an object type without `@entity` → unknown
-error; unknown directives, and unknown arguments on known directives, →
-unknown error (§7).
+on for §7's deny-unknown promise — it doesn't even require `@entity` (every
+object type becomes a table). So validation happens in translation, against a
+whitelist, before a clean envio schema is emitted: an object type without
+`@entity` → unknown error; unknown arguments on known directives → unknown
+error (§7).
+
+**Accepted divergence:** an unrecognized *directive* is dropped rather than
+refused. graph-node ignores one it doesn't define, and subgraphs use that for
+documentation-only tags — Messari marks every entity `@dailySnapshot`. A
+directive can't change what is indexed; the manifest and the field types can,
+and those stay strict.
 
 Passes through unchanged: `String`/`Int`/`Boolean`/`Bytes`/`BigInt`/
 `BigDecimal`, enums, `@derivedFrom` (identical semantics), stored entity

@@ -126,6 +126,13 @@ impl<'a> Obj<'a> {
         }
     }
 
+    fn keys(&self) -> Vec<String> {
+        self.map
+            .iter()
+            .filter_map(|(key, _)| key.as_str().map(|key| key.to_string()))
+            .collect()
+    }
+
     /// Reports every key that wasn't read. Call once per mapping, last.
     fn finish(self, report: &mut Report) {
         for (key, _) in self.map.iter() {
@@ -205,8 +212,23 @@ pub struct DataSource {
     pub entities: Vec<String>,
     pub event_handlers: Vec<EventHandler>,
     pub block_handlers: Vec<BlockHandler>,
+    /// Values the manifest attaches to this data source, read back by
+    /// `dataSource.context()`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub context: BTreeMap<String, ContextValue>,
     /// Templates carry no address and are instantiated by `dataSource.create`.
     pub is_template: bool,
+}
+
+/// One `context` entry. graph-node types it in the manifest and hands the
+/// mapping a `Value` of that type; the data is carried as written and converted
+/// by the shim, which already owns every graph-ts scalar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextValue {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub data: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -532,6 +554,8 @@ fn parse_data_source(
         );
     }
 
+    let context = parse_context(&mut obj, &where_, report);
+
     obj.finish(report);
 
     Some(DataSource {
@@ -549,8 +573,72 @@ fn parse_data_source(
         entities,
         event_handlers,
         block_handlers,
+        context,
         is_template,
     })
+}
+
+/// graph-node's context value types. Anything else is newer than this parser.
+const CONTEXT_TYPES: &[&str] = &[
+    "Bool",
+    "Boolean",
+    "String",
+    "Int",
+    "Int8",
+    "BigInt",
+    "BigDecimal",
+    "Bytes",
+];
+
+fn parse_context(
+    obj: &mut Obj<'_>,
+    where_: &impl Fn(&str) -> String,
+    report: &mut Report,
+) -> BTreeMap<String, ContextValue> {
+    let mut context = BTreeMap::new();
+    let Some(raw) = obj.get("context") else {
+        return context;
+    };
+    let Some(mut entries) = Obj::new(raw, &obj.child_path("context"), report) else {
+        return context;
+    };
+
+    for key in entries.keys() {
+        let path = entries.child_path(&key);
+        let Some(value) = entries.get(&key) else {
+            continue;
+        };
+        let Some(mut entry) = Obj::new(value, &path, report) else {
+            continue;
+        };
+        let kind = entry.string("type").unwrap_or_default();
+        if !CONTEXT_TYPES.contains(&kind.as_str()) {
+            report.unknown(
+                format!("the context value type \"{kind}\""),
+                where_(&format!("context → {key}")),
+            );
+            entry.finish(report);
+            continue;
+        }
+        let data = match entry.get("data") {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Number(number)) => number.to_string(),
+            Some(Value::Bool(flag)) => flag.to_string(),
+            _ => {
+                report.unknown(
+                    format!("the context value \"{key}\""),
+                    where_(&format!("context → {key}")),
+                );
+                entry.finish(report);
+                continue;
+            }
+        };
+        entry.finish(report);
+        context.insert(key, ContextValue { kind, data });
+    }
+
+    entries.finish(report);
+    context
 }
 
 fn parse_event_handler(
@@ -874,6 +962,60 @@ dataSources:
 "#;
         let (_, report) = parse_ok(yaml);
         assert_eq!(report.findings().len(), 0, "{report}");
+    }
+
+    #[test]
+    fn reads_a_data_source_context() {
+        let yaml = r#"
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Vault
+    network: mainnet
+    context:
+      storeEventsFrom:
+        type: BigInt
+        data: '25144091'
+      poolKind:
+        type: String
+        data: weighted
+    source:
+      address: "0x1"
+      abi: Vault
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      eventHandlers:
+        - event: Swap(indexed address,uint256)
+          handler: handleSwap
+      file: ./src/vault.ts
+"#;
+        let (manifest, report) = parse_ok(yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            manifest.unwrap().data_sources[0].context,
+            BTreeMap::from([
+                (
+                    "poolKind".to_string(),
+                    ContextValue {
+                        kind: "String".to_string(),
+                        data: "weighted".to_string(),
+                    }
+                ),
+                (
+                    "storeEventsFrom".to_string(),
+                    ContextValue {
+                        kind: "BigInt".to_string(),
+                        data: "25144091".to_string(),
+                    }
+                ),
+            ])
+        );
     }
 
     #[test]

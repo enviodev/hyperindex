@@ -20,9 +20,19 @@ export type Scope = {
     address: string;
     chainId: number;
     network: string;
+    /** The manifest's `context` entries, as `dataSource.context()` serves them. */
+    context: Record<string, { type: string; data: string }>;
   };
   /** Addresses already registered this round, so replays stay idempotent. */
   registered: Set<string>;
+  /**
+   * Host results the register pass has resolved, keyed by effect and input.
+   * The register pass has no envio context to run effects through, so it
+   * replays the mapping itself and answers from here (§5, register mode).
+   */
+  resolved?: Map<string, { value?: unknown; error?: unknown }>;
+  /** Lookups the current register round is waiting on. */
+  awaiting?: Promise<unknown>[];
   /** The block a contract call is evaluated against, as graph-node does. */
   blockNumber: number;
   /** The mapping module, so `ipfs.map` can reach the callback it names. */
