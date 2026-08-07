@@ -359,10 +359,37 @@ pub fn translate(
         chains.keys().cloned().collect()
     };
     for source in manifest.templates.iter_mut() {
-        contracts.push(GlobalContract {
-            name: source.name.clone(),
-            config: contract_config(source, files, rpc_only, &usage, &mut report),
-        });
+        let config = contract_config(source, files, rpc_only, &usage, &mut report);
+
+        // graph-node keeps `dataSources` and `templates` in separate namespaces,
+        // so a name can appear in both — Balancer's FXPoolDeployer is a fixed
+        // deployment and a template over the same mapping and ABI. envio has one
+        // namespace, and one contract with a static address plus dynamically
+        // registered ones is exactly what that describes, so the two are folded
+        // together and only the events are unioned.
+        match contracts
+            .iter_mut()
+            .find(|contract| contract.name == source.name)
+        {
+            Some(existing) => {
+                for event in config.events {
+                    if !existing
+                        .config
+                        .events
+                        .iter()
+                        .any(|known| known.event == event.event)
+                    {
+                        existing.config.events.push(event);
+                    }
+                }
+                continue;
+            }
+            None => contracts.push(GlobalContract {
+                name: source.name.clone(),
+                config,
+            }),
+        }
+
         let ids = match source.chain_id {
             Some(id) => vec![id],
             None => template_chain_ids.clone(),
@@ -588,6 +615,45 @@ type Gravatar @entity {
                 with_receipt.contains(&TransactionField::ContractAddress),
             ),
             (false, true, true, true)
+        );
+    }
+
+    // Balancer names FXPoolDeployer both a data source and a template over the
+    // same mapping: one fixed deployment, plus the ones it announces.
+    #[test]
+    fn folds_a_template_into_the_data_source_it_shares_a_name_with() {
+        // The template renamed onto the data source's name, sharing its ABI.
+        let manifest = MANIFEST
+            .replace("    name: Wallet", "    name: Gravity")
+            .replace("      abi: Wallet", "      abi: Gravity")
+            .replace("        - name: Wallet", "        - name: Gravity")
+            .replace("./abis/Wallet.json", "./abis/Gravity.json");
+        let translation =
+            translate(&manifest, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous())
+                .unwrap();
+        let contracts = translation.human_config.contracts.as_ref().unwrap();
+
+        assert_eq!(
+            contracts
+                .iter()
+                .map(|contract| (
+                    contract.name.clone(),
+                    contract
+                        .config
+                        .events
+                        .iter()
+                        .map(|event| event.event.clone())
+                        .collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                "Gravity".to_string(),
+                vec![
+                    "NewGravatar".to_string(),
+                    "UpdatedGravatar".to_string(),
+                    "Deposit".to_string(),
+                ]
+            )]
         );
     }
 

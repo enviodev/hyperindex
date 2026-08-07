@@ -36,6 +36,7 @@ import {
   valueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
+import { DIVIDE_HELPER, integerDivision, loadTypeScript, rewriteDivision } from "./division.ts";
 import { makeHostEffects } from "./hosts.ts";
 import { unsupported } from "./errors.ts";
 
@@ -78,6 +79,9 @@ let projectRoot: string | null = null;
  */
 function installResolveHook(root: string) {
   projectRoot = pathToFileURL(path.resolve(root) + path.sep).href;
+  // Loaded here rather than from inside the hook: requiring a module while a
+  // load hook is on the stack re-enters the loader.
+  loadTypeScript(path.resolve(root));
   if (hooksInstalled) return;
   hooksInstalled = true;
 
@@ -99,11 +103,22 @@ function installResolveHook(root: string) {
       }
       return resolved;
     },
+    load(url: string, context: any, nextLoad: any) {
+      const loaded = nextLoad(url, context);
+      if (!projectRoot || !url.startsWith(projectRoot) || url.includes("/node_modules/")) {
+        return loaded;
+      }
+      const source = loaded?.source;
+      if (typeof source !== "string" && !(source instanceof Uint8Array)) return loaded;
+      const text = typeof source === "string" ? source : Buffer.from(source).toString("utf8");
+      return { ...loaded, source: rewriteDivision(text) };
+    },
   });
 
   // AssemblyScript builtins the generated code uses as globals.
   const globals = globalThis as any;
   globals.changetype ??= changetype;
+  globals[DIVIDE_HELPER] ??= integerDivision;
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;
@@ -550,12 +565,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
     for (const handler of source.eventHandlers) {
       const fn = mapping[handler.handler];
-      if (typeof fn !== "function") {
-        throw new Error(
-          `Envio Subgraph can't find the handler "${handler.handler}" exported by ` +
-            `${source.mappingFile} for data source "${source.name}".`,
-        );
-      }
+      // `graph build` doesn't check that a named handler is exported — Aave's
+      // mainnet manifest names one its mappings renamed years ago — so a
+      // subgraph that deploys today would be refused here for a stale line the
+      // event it names never reaches.
+      if (typeof fn !== "function") continue;
 
       // Parameter shapes are fixed per event kind, not per data source.
       const SubgraphEvent = makeEventClass(source.name, handler.name);
@@ -603,12 +617,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
     for (const handler of source.blockHandlers) {
       const fn = mapping[handler.handler];
-      if (typeof fn !== "function") {
-        throw new Error(
-          `Envio Subgraph can't find the block handler "${handler.handler}" exported by ` +
-            `${source.mappingFile} for data source "${source.name}".`,
-        );
-      }
+      if (typeof fn !== "function") continue;
       const interval = blockInterval(handler);
       indexer.onBlock(
         {
