@@ -118,7 +118,7 @@ fn read_after(source: &str, property_end: usize) -> Option<&str> {
 }
 
 /// Every `.<property>` occurrence that isn't part of a longer identifier.
-fn occurrences<'a>(source: &'a str, property: &str) -> Vec<usize> {
+fn occurrences(source: &str, property: &str) -> Vec<usize> {
     let needle = format!(".{property}");
     let mut found = Vec::new();
     let mut from = 0;

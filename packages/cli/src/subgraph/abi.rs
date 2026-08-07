@@ -116,7 +116,7 @@ fn event_name(manifest_signature: &str) -> String {
 }
 
 /// The ABI entries declaring an event of this name, in ABI order.
-fn candidates<'a>(name: &str, abi_json: Option<&'a str>) -> Vec<Value> {
+fn candidates(name: &str, abi_json: Option<&str>) -> Vec<Value> {
     let Some(abi_json) = abi_json else {
         return vec![];
     };
