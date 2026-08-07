@@ -169,7 +169,7 @@ let respond = (run: run, ~rng, ~index) => {
   run->log(`r p${q.partitionId}@${q.fromBlock->Int.toString}->${latest->Int.toString}`)
 }
 
-let checkInvariants = (run: run, ~seed) => {
+let checkInvariants = (run: run, ~seed, ~rng) => {
   run
   ->partitions
   ->Array.forEach(p => {
@@ -185,11 +185,14 @@ let checkInvariants = (run: run, ~seed) => {
     })
   })
   // With nothing in flight and a partition behind the head, a production tick
-  // must dispatch. Roll back the dispatch bookkeeping right after: the check
-  // must not perturb the run, so respond to what it started.
+  // must dispatch. Land whatever the probe started so the check leaves the run
+  // with an empty in-flight set and later ops keep their intended coverage.
   if run.inFlight->Utils.Array.isEmpty && run->minFrontier < run.knownHeight {
     if run->tick === 0 {
       run->fail(~seed, ~message="chain is frozen: behind the head with budget but no query")
+    }
+    while !(run.inFlight->Utils.Array.isEmpty) {
+      run->respond(~rng, ~index=0)
     }
   }
 }
@@ -261,7 +264,7 @@ let runSeed = (~seed, ~ops) => {
         )
       run->log(`rollback->${target->Int.toString}`)
     }
-    run->checkInvariants(~seed)
+    run->checkInvariants(~seed, ~rng)
   }
 
   // Drain: land every response, then keep ticking and responding until the
