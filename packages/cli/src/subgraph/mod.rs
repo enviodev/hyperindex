@@ -217,7 +217,6 @@ fn contract_config(
             ),
             report,
         );
-        let is_overload = event != base;
         let ordinal = ordinals.entry(base.clone()).or_insert(0);
         let unique = if *ordinal == 0 {
             base.clone()
@@ -227,7 +226,11 @@ fn contract_config(
         *ordinal += 1;
         handler.name = unique.clone();
         handler.params = abi::param_types(&handler.event, abi_json.as_deref());
-        resolved.push((event, is_overload.then_some(unique)));
+        // The generated config needs the same unique name whenever one was
+        // minted, overloaded or not — two handlers can name the same event, and
+        // the runtime registers under the name the config carries.
+        let renamed = unique != base;
+        resolved.push((event, renamed.then_some(unique)));
     }
 
     let events = source

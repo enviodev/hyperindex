@@ -566,6 +566,16 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
     if exn->isSuspend {
       true
     } else {
+      // The body threw its own error after scheduling a read. Those ops are
+      // nobody's result now, and an unhandled rejection would replace the
+      // error the handler actually raised.
+      switch params.sync.pending {
+      | None => ()
+      | Some(pending) => {
+          params.sync.pending = None
+          pending->Array.forEach(promise => promise->Utils.Promise.silentCatch->ignore)
+        }
+      }
       throw(exn)
     }
   }

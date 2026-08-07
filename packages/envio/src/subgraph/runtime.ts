@@ -197,11 +197,17 @@ function convertersFor(
   source: Record<string, unknown>,
   types: Map<string, string>,
 ) {
-  if (cache.size === 0) {
-    for (const [name, value] of Object.entries(source)) {
-      const abiType = types.get(name);
-      cache.set(name, abiType ? converterForAbiType(abiType) : converterForValue(value));
+  for (const [name, value] of Object.entries(source)) {
+    if (cache.has(name)) continue;
+    const abiType = types.get(name);
+    if (abiType) {
+      cache.set(name, converterForAbiType(abiType));
+      continue;
     }
+    // A null carries no shape, and `to` is null on a contract creation. Caching
+    // what it implies would pin the identity converter for every later event.
+    if (value === null || value === undefined) continue;
+    cache.set(name, converterForValue(value));
   }
   return cache;
 }

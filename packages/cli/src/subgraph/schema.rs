@@ -265,6 +265,18 @@ fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interf
     if translation.bytes_id_entities.contains(interface) {
         translation.bytes_id_entities.insert(entity.to_string());
     }
+    // An implementor gets the interface's columns without restating them, so it
+    // needs their declared types too — otherwise the runtime is back to
+    // guessing a Bytes id from a lowercase hex string.
+    if let Some(inherited) = translation.entity_field_types.get(interface).cloned() {
+        let own = translation
+            .entity_field_types
+            .entry(entity.to_string())
+            .or_default();
+        for (field, field_type) in inherited {
+            own.entry(field).or_insert(field_type);
+        }
+    }
     for map in [
         &mut translation.timestamp_fields,
         &mut translation.entity_list_fields,

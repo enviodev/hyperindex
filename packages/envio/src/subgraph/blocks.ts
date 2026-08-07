@@ -62,11 +62,20 @@ export function requestBlockTimestamp(chainId: number, blockNumber: number): Pro
 }
 
 async function answer(chainId: number, blocks: Map<number, Waiter[]>) {
-  const wanted = [...blocks.keys()];
   let timestamps = new Map<number, bigint>();
 
+  // A batch can hold thousands of blocks, and one argument per block would
+  // overflow the call stack inside the try, where it would read as a HyperSync
+  // failure and fall back to one round trip per block.
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (const blockNumber of blocks.keys()) {
+    if (blockNumber < lowest) lowest = blockNumber;
+    if (blockNumber > highest) highest = blockNumber;
+  }
+
   try {
-    timestamps = await fromHyperSync(chainId, Math.min(...wanted), Math.max(...wanted));
+    timestamps = await fromHyperSync(chainId, lowest, highest);
   } catch (error) {
     if (rpcUrls.length === 0) {
       const message = error instanceof Error ? error.message : String(error);

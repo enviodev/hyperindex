@@ -181,6 +181,11 @@ export class Address extends Bytes {
     return new Address(ByteArray.fromHexString(address.toLowerCase()));
   }
   static fromBytes(bytes: Bytes): Address {
+    if (bytes.length !== 20) {
+      throw new Error(
+        `Envio Subgraph: Address.fromBytes needs 20 bytes, got ${bytes.length}.`,
+      );
+    }
     return new Address(bytes);
   }
   static zero(): Address {
@@ -826,6 +831,12 @@ const entityTail = new Proxy(Object.create(null), {
         return null;
       }
     }
+    // Only an entity read is a schema field access. A plain TypedMap — what
+    // JSONValue.toObject() hands back — has to keep ordinary JS semantics, or
+    // every host probe for `toJSON` or `then` raises from unrelated code.
+    if (!(receiver instanceof Entity)) {
+      return undefined;
+    }
     throw unknown(`the entity member ${String(prop)}`, "a mapping handler");
   },
   set(_target, prop, value, receiver) {
@@ -1262,8 +1273,10 @@ const ethereumImpl = {
   getBalance(address: Address): BigInt_ {
     return BigInt_.fromString(hostsOrThrow().getBalance(address.toHexString()));
   },
-  hasCode(address: Address): CallResult<boolean> {
-    return CallResult.fromValue(hostsOrThrow().hasCode(address.toHexString()));
+  // graph-ts declares a Wrapped, which carries its value on `inner` rather than
+  // on `value` the way a CallResult does.
+  hasCode(address: Address): { inner: boolean } {
+    return { inner: hostsOrThrow().hasCode(address.toHexString()) };
   },
 };
 
@@ -1639,8 +1652,11 @@ function integerNamespace(name: string, bits: number, signed: boolean) {
 function bigIntegerNamespace(name: string, signed: boolean) {
   const min = signed ? -(2n ** 63n) : 0n;
   const max = signed ? 2n ** 63n - 1n : 2n ** 64n - 1n;
-  const cast = (value: unknown) =>
-    typeof value === "bigint" ? value : BigInt(Math.trunc(Number(value)) || 0);
+  const cast = (value: unknown) => {
+    const raw = typeof value === "bigint" ? value : BigInt(Math.trunc(Number(value)) || 0);
+    // AssemblyScript truncates a cast to the target width rather than widening.
+    return signed ? BigInt.asIntN(64, raw) : BigInt.asUintN(64, raw);
+  };
   return strictNamespace(name, Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max }));
 }
 
@@ -1649,7 +1665,9 @@ function floatNamespace(name: string, single: boolean) {
   return strictNamespace(
     name,
     Object.assign(cast, {
-      MIN_VALUE: single ? 1.4012984643248171e-45 : Number.MIN_VALUE,
+      // AssemblyScript's MIN_VALUE is the most negative finite value, not the
+      // smallest positive one JavaScript names.
+      MIN_VALUE: single ? -3.4028234663852886e38 : -Number.MAX_VALUE,
       MAX_VALUE: single ? 3.4028234663852886e38 : Number.MAX_VALUE,
       EPSILON: single ? 1.1920928955078125e-7 : Number.EPSILON,
       MIN_SAFE_INTEGER: single ? -16777215 : Number.MIN_SAFE_INTEGER,

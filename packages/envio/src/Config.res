@@ -1251,6 +1251,13 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
+      // A subgraph names its endpoint through ENVIO_SUBGRAPH_RPC, and those
+      // URLs usually carry a provider key. Rotating one must not read as an
+      // incompatible config either.
+      switch obj->Dict.get("subgraph") {
+      | Some(Object(subgraph)) => subgraph->Utils.Dict.deleteInPlace("rpcUrls")
+      | _ => ()
+      }
     }
   | _ => ()
   }
