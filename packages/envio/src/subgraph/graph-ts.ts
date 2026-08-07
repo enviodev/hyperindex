@@ -769,8 +769,9 @@ export class Entity extends TypedMap<string, Value> {
     this.set(key, Value.fromNull());
   }
   merge(sources: Entity[]): this {
-    for (const entity of sources) {
-      for (const entry of entity.entries) {
+    // graph-ts assigns right to left, so the leftmost source wins a key.
+    for (let index = sources.length - 1; index >= 0; index--) {
+      for (const entry of sources[index].entries) {
         this.set(entry.key, entry.value);
       }
     }
@@ -1020,7 +1021,59 @@ export const store = strictNamespace("store", storeImpl);
 // ethereum
 // ---------------------------------------------------------------------------
 
-export class EthereumValue extends Value {}
+/**
+ * `ethereum.Value` names its factories after Solidity types rather than store
+ * ones, and `graph codegen` emits those names for every contract-call argument.
+ * They tag the same store kinds underneath — an ABI value's Solidity type is
+ * already carried by the call signature.
+ */
+export class EthereumValue extends Value {
+  static fromSignedBigInt(value: BigInt_): Value {
+    return Value.fromBigInt(value);
+  }
+  static fromUnsignedBigInt(value: BigInt_): Value {
+    return Value.fromBigInt(value);
+  }
+  static fromFixedBytes(value: Bytes): Value {
+    return Value.fromBytes(value);
+  }
+  static fromTuple(values: Value[]): Value {
+    return Value.fromArray(values);
+  }
+  static fromFixedSizedArray(values: Value[]): Value {
+    return Value.fromArray(values);
+  }
+  static fromTupleArray(values: Value[][]): Value {
+    return Value.fromArray(values.map(EthereumValue.fromTuple));
+  }
+  static fromAddressArray(values: Address[]): Value {
+    return Value.fromArray(values.map(Value.fromAddress));
+  }
+  static fromFixedBytesArray(values: Bytes[]): Value {
+    return Value.fromArray(values.map(Value.fromBytes));
+  }
+  static fromSignedBigIntArray(values: BigInt_[]): Value {
+    return Value.fromArray(values.map(Value.fromBigInt));
+  }
+  static fromUnsignedBigIntArray(values: BigInt_[]): Value {
+    return Value.fromArray(values.map(Value.fromBigInt));
+  }
+  toTuple(): Value[] {
+    return this.toArray();
+  }
+  toTupleArray(): Value[][] {
+    return this.toArray().map(value => value.toArray());
+  }
+  toFixedBytes(): Bytes {
+    return this.toBytes();
+  }
+  toAddressArray(): Address[] {
+    return this.toArray().map(value => value.toAddress());
+  }
+  toFixedBytesArray(): Bytes[] {
+    return this.toArray().map(value => value.toBytes());
+  }
+}
 
 class SmartContractCall {
   constructor(
@@ -1693,3 +1746,105 @@ export const assemblyScriptPrimitives: Record<string, unknown> = {
   f32: floatNamespace("f32", true),
   f64: floatNamespace("f64", false),
 };
+
+// ---------------------------------------------------------------------------
+// Host namespaces the generated declarations re-export
+//
+// A mapping importing one of these fails at ESM link time if it isn't exported,
+// which is a missing-export error naming nothing useful. Exporting them means an
+// unsupported one refuses by name like everything else.
+// ---------------------------------------------------------------------------
+
+const typeConversionImpl = {
+  bytesToString: (bytes: Uint8Array) => new TextDecoder().decode(bytes),
+  bytesToHex: (bytes: Uint8Array) => new ByteArray(bytes).toHexString(),
+  bigIntToString: (value: Uint8Array) => new BigInt_(fromLittleEndian(value, true)).toString(),
+  bigIntToHex: (value: Uint8Array) => new BigInt_(fromLittleEndian(value, true)).toHexString(),
+  stringToH160: (value: string) => Address.fromString(value) as Bytes,
+  bytesToBase58: (_: Uint8Array): string => {
+    throw unsupported("typeConversion.bytesToBase58", "a mapping handler");
+  },
+};
+
+export const typeConversion = strictNamespace("typeConversion", typeConversionImpl);
+
+const bigIntImpl = {
+  plus: (x: BigInt_, y: BigInt_) => x.plus(y),
+  minus: (x: BigInt_, y: BigInt_) => x.minus(y),
+  times: (x: BigInt_, y: BigInt_) => x.times(y),
+  dividedBy: (x: BigInt_, y: BigInt_) => x.div(y),
+  dividedByDecimal: (x: BigInt_, y: BigDecimal) => x.toBigDecimal().div(y),
+  mod: (x: BigInt_, y: BigInt_) => x.mod(y),
+  pow: (x: BigInt_, exp: number) => x.pow(exp),
+  fromString: (value: string) => BigInt_.fromString(value),
+  bitOr: (x: BigInt_, y: BigInt_) => x.bitOr(y),
+  bitAnd: (x: BigInt_, y: BigInt_) => x.bitAnd(y),
+  leftShift: (x: BigInt_, bits: number) => x.leftShift(bits),
+  rightShift: (x: BigInt_, bits: number) => x.rightShift(bits),
+};
+
+export const bigInt = strictNamespace("bigInt", bigIntImpl);
+
+const bigDecimalImpl = {
+  plus: (x: BigDecimal, y: BigDecimal) => x.plus(y),
+  minus: (x: BigDecimal, y: BigDecimal) => x.minus(y),
+  times: (x: BigDecimal, y: BigDecimal) => x.times(y),
+  dividedBy: (x: BigDecimal, y: BigDecimal) => x.div(y),
+  equals: (x: BigDecimal, y: BigDecimal) => x.equals(y),
+  toString: (value: BigDecimal) => value.toString(),
+  fromString: (value: string) => BigDecimal.fromString(value),
+};
+
+export const bigDecimal = strictNamespace("bigDecimal", bigDecimalImpl);
+
+export function concat(a: ByteArray, b: ByteArray): ByteArray {
+  return a.concat(b);
+}
+
+export function parseCSV(csv: string): string[] {
+  return csv.split(",").map(field => field.trim());
+}
+
+/** Restores the multihash prefix an IPFS hash loses when stored in a bytes32. */
+export function addQm(a: ByteArray): ByteArray {
+  return ByteArray.fromHexString("0x1220").concat(a);
+}
+
+export enum YAMLValueKind {
+  NULL = 0,
+  BOOL = 1,
+  NUMBER = 2,
+  STRING = 3,
+  ARRAY = 4,
+  OBJECT = 5,
+  TAGGED = 6,
+}
+
+export class YAMLValue {
+  constructor(_kind: YAMLValueKind, _data: unknown) {
+    throw unsupported("the yaml API", "a mapping handler");
+  }
+}
+
+export class YAMLTaggedValue {
+  constructor(_tag: string, _value: YAMLValue) {
+    throw unsupported("the yaml API", "a mapping handler");
+  }
+}
+
+const yamlImpl = {
+  fromBytes: (_: Bytes): YAMLValue => {
+    throw unsupported("yaml.fromBytes", "a mapping handler");
+  },
+  try_fromBytes: (_: Bytes): unknown => {
+    throw unsupported("yaml.try_fromBytes", "a mapping handler");
+  },
+  fromString: (_: string): YAMLValue => {
+    throw unsupported("yaml.fromString", "a mapping handler");
+  },
+  try_fromString: (_: string): unknown => {
+    throw unsupported("yaml.try_fromString", "a mapping handler");
+  },
+};
+
+export const yaml = strictNamespace("yaml", yamlImpl);

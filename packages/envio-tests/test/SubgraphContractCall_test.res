@@ -45,7 +45,7 @@ type Probe @entity {
     (
       "src/token.ts",
       `
-import { Address, Entity, ethereum, store } from "@graphprotocol/graph-ts";
+import { Address, BigInt, Entity, ethereum, store } from "@graphprotocol/graph-ts";
 
 // What graph codegen emits for a contract binding: a SmartContract subclass
 // whose methods go through call/tryCall.
@@ -65,6 +65,13 @@ class Token extends ethereum.SmartContract {
   try_oddName(): any {
     return this.tryCall("oddName", "oddName():(string)", []);
   }
+  // What graph codegen emits for a function taking an integer: the argument
+  // goes through the ethereum-specific Value factories.
+  try_slot(index: BigInt): any {
+    return this.tryCall("slot", "slot(uint256):(uint256)", [
+      ethereum.Value.fromUnsignedBigInt(index),
+    ]);
+  }
 }
 
 export function handlePing(event: any): void {
@@ -74,6 +81,15 @@ export function handlePing(event: any): void {
   if (nonce === 2) {
     // A transport failure must not be mistaken for a revert.
     token.try_flaky();
+    return;
+  }
+
+  if (nonce === 4) {
+    let slot = token.try_slot(BigInt.fromI32(7));
+    let probe = new Entity();
+    probe.setString("name", slot.reverted ? "reverted" : slot.value[0].toString());
+    probe.setBoolean("reverted", slot.reverted);
+    store.set("Probe", "slot", probe);
     return;
   }
 
@@ -111,6 +127,9 @@ const NAME_RESULT =
 const NAME_SELECTOR = "0x06fdde03";
 const BOOM_SELECTOR = "0xa169ce09";
 const ODD_NAME_SELECTOR = "0x4d9386ad";
+const SLOT_SELECTOR = "0xb2025e4f";
+const SLOT_RESULT =
+  "0x000000000000000000000000000000000000000000000000000000000000002a";
 
 // A bytes32 name from a pre-ERC20 token, which can't be decoded as the string
 // the signature declares.
@@ -132,6 +151,7 @@ beforeAll(async () => {
       if (request.method !== "eth_call") return reply("0x1");
       if (data.startsWith(NAME_SELECTOR)) return reply(NAME_RESULT);
       if (data.startsWith(ODD_NAME_SELECTOR)) return reply(ODD_NAME_RESULT);
+      if (data.startsWith(SLOT_SELECTOR)) return reply(SLOT_RESULT);
       if (data.startsWith(BOOM_SELECTOR)) {
         return res.end(
           JSON.stringify({
@@ -183,6 +203,22 @@ describe("contract calls", () => {
       id: "odd",
       name: "reverted",
       reverted: true,
+    });
+  });
+
+  it("passes an integer argument through the ethereum Value factories", async (t) => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Ping", params: { nonce: 4n } }] },
+      },
+    });
+
+    t.expect(await indexer.Probe.getOrThrow("slot")).toEqual({
+      id: "slot",
+      name: "42",
+      reverted: false,
     });
   });
 
