@@ -770,6 +770,16 @@ const entityTail = new Proxy(Object.create(null), {
     if (stored !== null) {
       return valueToNative(stored);
     }
+    // graph-node's store returns every column; envio's returns what the mapping
+    // wrote, so a field nothing has set is simply absent. It is still a field,
+    // and reading it is a null check — ENS opens with one.
+    const entityType = (receiver as any)?.[ENTITY_TYPE];
+    if (typeof entityType === "string") {
+      const declared = currentScope().schema.entityFields[entityType];
+      if (declared?.includes(prop as string)) {
+        return null;
+      }
+    }
     throw unknown(`the entity member ${String(prop)}`, "a mapping handler");
   },
   set(_target, prop, value, receiver) {
@@ -800,9 +810,13 @@ Object.setPrototypeOf(TypedMap.prototype, entityTail);
 function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const { schema } = currentScope();
   const timestampFields = new Set(schema.timestampFields[entityType] ?? []);
+  // graph-ts holds a relation as the related entity's id under the field's own
+  // name; envio's column for it is `<field>_id`.
+  const refFields = new Set(schema.entityRefFields[entityType] ?? []);
   const row: Record<string, unknown> = {};
   for (const entry of entity.entries) {
-    row[entry.key] = timestampFields.has(entry.key)
+    const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
+    row[column] = timestampFields.has(entry.key)
       ? new Date(Number(entry.value.toTimestamp() / 1000n))
       : fromValue(entry.value);
   }
@@ -836,9 +850,14 @@ function toEntity(entityType: string, row: Record<string, unknown> | undefined |
   }
   const { schema } = currentScope();
   const timestampFields = new Set(schema.timestampFields[entityType] ?? []);
+  const refFields = new Set(schema.entityRefFields[entityType] ?? []);
   const entity = new Entity();
   Object.defineProperty(entity, ENTITY_TYPE, { value: entityType });
-  for (const [key, value] of Object.entries(row)) {
+  for (const [column, value] of Object.entries(row)) {
+    const key =
+      column.endsWith("_id") && refFields.has(column.slice(0, -3))
+        ? column.slice(0, -3)
+        : column;
     entity.set(
       key,
       timestampFields.has(key)

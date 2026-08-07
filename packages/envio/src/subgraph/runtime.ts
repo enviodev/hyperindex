@@ -519,6 +519,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     timestampFields: config.timestampFields ?? {},
     bytesIdEntities: config.bytesIdEntities ?? [],
     entityListFields: config.entityListFields ?? {},
+    entityFields: config.entityFields ?? {},
+    entityRefFields: config.entityRefFields ?? {},
   };
 
   // Before any mapping is imported: Node caches a failed module resolution for

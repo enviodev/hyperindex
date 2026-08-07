@@ -99,7 +99,8 @@ query and is dropped; stored, it is an error.
 
 | API | Mapping |
 |---|---|
-| `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides |
+| `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
+| A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
 | `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary |

@@ -50,6 +50,13 @@ pub struct SchemaTranslation {
     pub bytes_id_entities: BTreeSet<String>,
     /// Fields holding a list of entity ids, which graph-ts sees as `[String]`.
     pub entity_list_fields: BTreeMap<String, Vec<String>>,
+    /// Every field each entity declares. envio's store returns what a mapping
+    /// wrote; graph-node's returns every column, so the shim answers `null` for
+    /// a declared field the stored row doesn't carry.
+    pub entity_fields: BTreeMap<String, Vec<String>>,
+    /// Fields holding one entity's id. graph-ts calls the field `owner`; envio's
+    /// column is `owner_id`, so the shim renames it at the store boundary.
+    pub entity_ref_fields: BTreeMap<String, Vec<String>>,
 }
 
 fn directive_name<'a, 'b>(directive: &'a Directive<'b, String>) -> &'a str {
@@ -121,6 +128,12 @@ fn render_fields(
     report: &mut Report,
 ) -> Vec<String> {
     let mut fields = Vec::new();
+    let declared = translation.entity_fields.entry(owner.to_string()).or_default();
+    for field in source {
+        if !declared.contains(&field.name) {
+            declared.push(field.name.clone());
+        }
+    }
     for field in source {
         let location = format!("schema.graphql → {}.{}", owner, field.name);
 
@@ -191,6 +204,11 @@ fn render_fields(
                     .push(field.name.clone());
                 "String".to_string()
             } else {
+                translation
+                    .entity_ref_fields
+                    .entry(owner.to_string())
+                    .or_default()
+                    .push(field.name.clone());
                 base.clone()
             }
         } else {
@@ -214,6 +232,8 @@ fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interf
     for map in [
         &mut translation.timestamp_fields,
         &mut translation.entity_list_fields,
+        &mut translation.entity_fields,
+        &mut translation.entity_ref_fields,
     ] {
         let Some(inherited) = map.get(interface).cloned() else {
             continue;
