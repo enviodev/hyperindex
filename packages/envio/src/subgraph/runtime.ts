@@ -254,10 +254,18 @@ function toEthereumValue(value: unknown): any {
   return V.fromString(String(value));
 }
 
-async function loadMapping(root: string, mappingFile: string): Promise<Record<string, any>> {
+async function loadMapping(
+  root: string,
+  mappingFile: string,
+  scope: Scope,
+): Promise<Record<string, any>> {
   const url = pathToFileURL(path.resolve(root, mappingFile)).href;
   try {
-    return await import(url);
+    // graph-node instantiates the module once per data source, with a host
+    // context already in place, so a mapping may read `dataSource.network()`
+    // at module top level — Balancer's constants do. The import runs inside a
+    // scope carrying that data source for the same reason.
+    return await runInScope(scope, () => import(url));
   } catch (exn) {
     const message = exn instanceof Error ? exn.message : String(exn);
     // Only reachable when codegen couldn't run up front, so this reports why
@@ -561,7 +569,22 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
   for (const source of sources) {
     if (source.kind !== "contract") continue;
-    const mapping = await loadMapping(config.root, source.mappingFile);
+    const mapping = await loadMapping(config.root, source.mappingFile, {
+      context: null,
+      event: null,
+      mode: "handler",
+      schema,
+      dataSource: {
+        name: source.name,
+        address: source.address ?? "",
+        chainId: source.chainId ?? 0,
+        network: source.network ?? "",
+        context: source.context ?? {},
+      },
+      registered: new Set(),
+      blockNumber: source.startBlock ?? 0,
+      mappingExports: {},
+    });
 
     for (const handler of source.eventHandlers) {
       const fn = mapping[handler.handler];

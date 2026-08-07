@@ -174,8 +174,12 @@ class BigInt_ extends Uint8Array {
     return Uint8Array;
   }
 
-  static fromI32(value: number): BigInt_ {
-    return new BigInt_(BigInt(Math.trunc(value)));
+  // graph codegen types a small uint as `i32`, so a mapping hands one straight
+  // to `fromI32` — but envio decodes every integer ABI type as a bigint, so what
+  // arrives is already a BigInt.
+  static fromI32(value: number | bigint | BigInt_): BigInt_ {
+    const raw = typeof value === "object" ? (value as BigInt_).valueOf() : value;
+    return new BigInt_(typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw as number)));
   }
   static fromU32(value: number): BigInt_ {
     return BigInt_.fromI32(value);
