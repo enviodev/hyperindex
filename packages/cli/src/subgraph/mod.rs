@@ -704,7 +704,7 @@ type Gravatar @entity {
         );
         let error = translate(
             &manifest,
-            "interface Named { id: ID! }\ntype Gravatar @entity { id: ID! }",
+            "type Gravatar @entity { id: ID! bad: NotAType! }",
             "gravatar",
             None,
             ".",
@@ -717,7 +717,7 @@ type Gravatar @entity {
         assert_eq!(
             (
                 error.contains("doesn't support call handlers"),
-                error.contains("doesn't support GraphQL interfaces"),
+                error.contains("doesn't know the type NotAType"),
             ),
             (true, true)
         );

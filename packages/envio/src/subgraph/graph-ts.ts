@@ -1466,3 +1466,63 @@ export function makeBlockHandlerBlock(blockNumber: number, location: string): Et
 export function changetype<T>(value: unknown): T {
   return value as T;
 }
+
+/**
+ * AssemblyScript's primitives are namespaces as well as types: `i32.MAX_VALUE`
+ * reads a bound, `i32(x)` truncates to one. Both are ordinary source in a
+ * mapping and neither exists in JavaScript.
+ *
+ * The 64-bit pair carries values a double can't hold, so it works in bigints;
+ * everything else stays a number, which is what the rest of the shim converts.
+ */
+function integerNamespace(name: string, bits: number, signed: boolean) {
+  const min = signed ? -(2 ** (bits - 1)) : 0;
+  const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+  const cast = (value: number) => {
+    const truncated = Math.trunc(Number(value)) || 0;
+    const span = 2 ** bits;
+    const wrapped = ((truncated % span) + span) % span;
+    return wrapped > max ? wrapped - span : wrapped;
+  };
+  return strictNamespace(name, Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max }));
+}
+
+function bigIntegerNamespace(name: string, signed: boolean) {
+  const min = signed ? -(2n ** 63n) : 0n;
+  const max = signed ? 2n ** 63n - 1n : 2n ** 64n - 1n;
+  const cast = (value: unknown) =>
+    typeof value === "bigint" ? value : BigInt(Math.trunc(Number(value)) || 0);
+  return strictNamespace(name, Object.assign(cast, { MIN_VALUE: min, MAX_VALUE: max }));
+}
+
+function floatNamespace(name: string, single: boolean) {
+  const cast = (value: unknown) => (single ? Math.fround(Number(value)) : Number(value));
+  return strictNamespace(
+    name,
+    Object.assign(cast, {
+      MIN_VALUE: single ? 1.4012984643248171e-45 : Number.MIN_VALUE,
+      MAX_VALUE: single ? 3.4028234663852886e38 : Number.MAX_VALUE,
+      EPSILON: single ? 1.1920928955078125e-7 : Number.EPSILON,
+      MIN_SAFE_INTEGER: single ? -16777215 : Number.MIN_SAFE_INTEGER,
+      MAX_SAFE_INTEGER: single ? 16777215 : Number.MAX_SAFE_INTEGER,
+      NaN: Number.NaN,
+      POSITIVE_INFINITY: Number.POSITIVE_INFINITY,
+      NEGATIVE_INFINITY: Number.NEGATIVE_INFINITY,
+    }),
+  );
+}
+
+export const assemblyScriptPrimitives: Record<string, unknown> = {
+  i8: integerNamespace("i8", 8, true),
+  u8: integerNamespace("u8", 8, false),
+  i16: integerNamespace("i16", 16, true),
+  u16: integerNamespace("u16", 16, false),
+  i32: integerNamespace("i32", 32, true),
+  u32: integerNamespace("u32", 32, false),
+  isize: integerNamespace("isize", 32, true),
+  usize: integerNamespace("usize", 32, false),
+  i64: bigIntegerNamespace("i64", true),
+  u64: bigIntegerNamespace("u64", false),
+  f32: floatNamespace("f32", true),
+  f64: floatNamespace("f64", false),
+};

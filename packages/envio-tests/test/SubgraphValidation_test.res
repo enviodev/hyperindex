@@ -92,15 +92,15 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses non-fatal errors", t => {
+  it("refuses an unknown feature", t => {
     let manifest =
       manifestWith(plainEventHandler)->String.replace(
         "dataSources:",
-        "features:\n  - nonFatalErrors\ndataSources:",
+        "features:\n  - teleportation\ndataSources:",
       )
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
-      ~headline=`Envio Subgraph doesn't support the "nonFatalErrors" feature yet.`,
+      ~headline=`Envio Subgraph doesn't know the feature "teleportation".`,
       ~location="features[0]",
     )
   })
@@ -130,23 +130,22 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses GraphQL interfaces", t => {
-    translate(
+  it("carries GraphQL interfaces through", t => {
+    let message = translate(
       ~manifest=manifestWith(plainEventHandler),
       ~schema=`
 interface Named {
   id: ID!
+  name: String!
 }
 
 type Token implements Named @entity {
   id: ID!
+  name: String!
 }
 `,
-    )->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support GraphQL interfaces yet.",
-      ~location="schema.graphql → interface Named",
     )
+    t.expect(message->String.includes("interface"), ~message).toEqual(false)
   })
 
   it("refuses timeseries entities", t => {
@@ -297,25 +296,22 @@ describe("subgraph translation: reporting", () => {
         - function: approve(address,uint256)
           handler: handleApprove`)->String.replace(
         "dataSources:",
-        "features:\n  - nonFatalErrors\ndataSources:",
+        "features:\n  - teleportation\ndataSources:",
       )
     let message = translate(
       ~manifest,
       ~schema=`
-interface Named {
-  id: ID!
-}
-
 type Token @entity {
   id: ID!
+  weird: NotAType!
 }
 `,
     )
     t.expect(
       (
-        message->String.includes(`doesn't support the "nonFatalErrors" feature`),
+        message->String.includes(`doesn't know the feature "teleportation"`),
         message->String.includes("doesn't support call handlers"),
-        message->String.includes("doesn't support GraphQL interfaces"),
+        message->String.includes("doesn't know the type NotAType"),
       ),
     ).toEqual((true, true, true))
   })

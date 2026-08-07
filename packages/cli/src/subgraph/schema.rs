@@ -111,6 +111,125 @@ fn is_list(wrappers: &[Wrapper]) -> bool {
     wrappers.contains(&Wrapper::List)
 }
 
+/// Field lines for one type, with the subgraph scalars mapped to what envio
+/// stores and the conversions the shim needs recorded against `owner`.
+fn render_fields(
+    owner: &str,
+    source: &[graphql_parser::schema::Field<'_, String>],
+    entity_names: &BTreeSet<String>,
+    enum_names: &BTreeSet<String>,
+    translation: &mut SchemaTranslation,
+    report: &mut Report,
+) -> Vec<String> {
+    let mut fields = Vec::new();
+    for field in source {
+        let location = format!("schema.graphql → {}.{}", owner, field.name);
+
+        let mut derived_from = None;
+        for directive in &field.directives {
+            let name = directive_name(directive);
+            if name == "derivedFrom" {
+                derived_from = directive
+                    .arguments
+                    .iter()
+                    .find_map(|(key, value)| match (key.as_str(), value) {
+                        ("field", Value::String(field)) => Some(field.clone()),
+                        _ => None,
+                    });
+                for (arg, _) in &directive.arguments {
+                    if arg != "field" {
+                        report.unknown(
+                            format!("the @derivedFrom argument \"{arg}\""),
+                            location.clone(),
+                        );
+                    }
+                }
+            } else if !KNOWN_FIELD_DIRECTIVES.contains(&name) {
+                report.unknown(format!("the schema directive @{name}"), location.clone());
+            }
+        }
+
+        let (base, wrappers) = unwrap_type(&field.field_type);
+
+        if let Some(derived_field) = derived_from {
+            fields.push(format!(
+                "  {}: {} @derivedFrom(field: \"{}\")",
+                field.name,
+                render_type(&base, &wrappers),
+                derived_field
+            ));
+            continue;
+        }
+
+        let rendered_base = if let Some(scalar) = map_scalar(&base) {
+            if field.name == "id" {
+                if base == "Bytes" {
+                    translation.bytes_id_entities.insert(owner.to_string());
+                }
+                // envio only allows ID/String/Int/BigInt ids.
+                match scalar {
+                    "ID" | "String" | "Int" | "BigInt" => scalar.to_string(),
+                    _ => "String".to_string(),
+                }
+            } else {
+                if base == "Timestamp" {
+                    translation
+                        .timestamp_fields
+                        .entry(owner.to_string())
+                        .or_default()
+                        .push(field.name.clone());
+                }
+                scalar.to_string()
+            }
+        } else if enum_names.contains(&base) {
+            base.clone()
+        } else if entity_names.contains(&base) {
+            if is_list(&wrappers) {
+                // A stored list of entities is a list of ids on both sides;
+                // envio has no list-of-relations type.
+                translation
+                    .entity_list_fields
+                    .entry(owner.to_string())
+                    .or_default()
+                    .push(field.name.clone());
+                "String".to_string()
+            } else {
+                base.clone()
+            }
+        } else {
+            report.unknown(format!("the type {base}"), location.clone());
+            continue;
+        };
+
+        fields.push(format!(
+            "  {}: {}",
+            field.name,
+            render_type(&rendered_base, &wrappers)
+        ));
+    }
+    fields
+}
+
+fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interface: &str) {
+    if translation.bytes_id_entities.contains(interface) {
+        translation.bytes_id_entities.insert(entity.to_string());
+    }
+    for map in [
+        &mut translation.timestamp_fields,
+        &mut translation.entity_list_fields,
+    ] {
+        let Some(inherited) = map.get(interface).cloned() else {
+            continue;
+        };
+        let own = map.entry(entity.to_string()).or_default();
+        for field in inherited {
+            if !own.contains(&field) {
+                own.push(field);
+            }
+        }
+    }
+}
+
 /// Translates a subgraph schema, reporting everything it refuses.
 pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
     let document: Document<'_, String> = match graphql_parser::parse_schema(schema_text) {
@@ -135,6 +254,11 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
             Definition::TypeDefinition(TypeDefinition::Object(object)) => {
                 entity_names.insert(object.name.clone());
             }
+            // An interface names a shape shared by entities, so a field may
+            // point at it the same way it points at an entity.
+            Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
+                entity_names.insert(interface.name.clone());
+            }
             Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                 enum_names.insert(enum_type.name.clone());
             }
@@ -143,14 +267,33 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
     }
 
     let mut out = String::new();
+    let mut implementors: Vec<(String, Vec<String>)> = Vec::new();
 
     for definition in &document.definitions {
         match definition {
+            // The interface carries no table of its own — the entity parser
+            // folds it into each implementor — but its fields go through the
+            // same scalar mapping on the way there.
             Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
-                report.unsupported(
-                    "GraphQL interfaces",
-                    format!("schema.graphql → interface {}", interface.name),
+                for directive in &interface.directives {
+                    report.unknown(
+                        format!("the schema directive @{}", directive_name(directive)),
+                        format!("schema.graphql → interface {}", interface.name),
+                    );
+                }
+                let fields = render_fields(
+                    &interface.name,
+                    &interface.fields,
+                    &entity_names,
+                    &enum_names,
+                    &mut translation,
+                    report,
                 );
+                out.push_str(&format!(
+                    "interface {} {{\n{}\n}}\n\n",
+                    interface.name,
+                    fields.join("\n")
+                ));
             }
             Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                 let variants: Vec<&str> = enum_type
@@ -216,109 +359,27 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                 // write-once check only ever fires for mappings that are
                 // already broken, so a working subgraph loses nothing.
 
-                if !object.implements_interfaces.is_empty() {
-                    report.unsupported(
-                        "GraphQL interfaces",
-                        format!(
-                            "schema.graphql → type {} implements {}",
-                            object.name,
-                            object.implements_interfaces.join(", ")
-                        ),
-                    );
-                }
+                let fields = render_fields(
+                    &object.name,
+                    &object.fields,
+                    &entity_names,
+                    &enum_names,
+                    &mut translation,
+                    report,
+                );
 
-                let mut fields = Vec::new();
-                for field in &object.fields {
-                    let location = format!("schema.graphql → {}.{}", object.name, field.name);
+                implementors.push((object.name.clone(), object.implements_interfaces.clone()));
 
-                    let mut derived_from = None;
-                    for directive in &field.directives {
-                        let name = directive_name(directive);
-                        if name == "derivedFrom" {
-                            derived_from = directive.arguments.iter().find_map(|(key, value)| {
-                                match (key.as_str(), value) {
-                                    ("field", Value::String(field)) => Some(field.clone()),
-                                    _ => None,
-                                }
-                            });
-                            for (arg, _) in &directive.arguments {
-                                if arg != "field" {
-                                    report.unknown(
-                                        format!("the @derivedFrom argument \"{arg}\""),
-                                        location.clone(),
-                                    );
-                                }
-                            }
-                        } else if !KNOWN_FIELD_DIRECTIVES.contains(&name) {
-                            report.unknown(
-                                format!("the schema directive @{name}"),
-                                location.clone(),
-                            );
-                        }
-                    }
-
-                    let (base, wrappers) = unwrap_type(&field.field_type);
-
-                    if let Some(derived_field) = derived_from {
-                        fields.push(format!(
-                            "  {}: {} @derivedFrom(field: \"{}\")",
-                            field.name,
-                            render_type(&base, &wrappers),
-                            derived_field
-                        ));
-                        continue;
-                    }
-
-                    let rendered_base = if let Some(scalar) = map_scalar(&base) {
-                        if field.name == "id" {
-                            if base == "Bytes" {
-                                translation.bytes_id_entities.insert(object.name.clone());
-                            }
-                            // envio only allows ID/String/Int/BigInt ids.
-                            match scalar {
-                                "ID" | "String" | "Int" | "BigInt" => scalar.to_string(),
-                                _ => "String".to_string(),
-                            }
-                        } else {
-                            if base == "Timestamp" {
-                                translation
-                                    .timestamp_fields
-                                    .entry(object.name.clone())
-                                    .or_default()
-                                    .push(field.name.clone());
-                            }
-                            scalar.to_string()
-                        }
-                    } else if enum_names.contains(&base) {
-                        base.clone()
-                    } else if entity_names.contains(&base) {
-                        if is_list(&wrappers) {
-                            // A stored list of entities is a list of ids on
-                            // both sides; envio has no list-of-relations type.
-                            translation
-                                .entity_list_fields
-                                .entry(object.name.clone())
-                                .or_default()
-                                .push(field.name.clone());
-                            "String".to_string()
-                        } else {
-                            base.clone()
-                        }
-                    } else {
-                        report.unknown(format!("the type {base}"), location.clone());
-                        continue;
-                    };
-
-                    fields.push(format!(
-                        "  {}: {}",
-                        field.name,
-                        render_type(&rendered_base, &wrappers)
-                    ));
-                }
+                let implements = if object.implements_interfaces.is_empty() {
+                    String::new()
+                } else {
+                    format!(" implements {}", object.implements_interfaces.join(" & "))
+                };
 
                 out.push_str(&format!(
-                    "type {} {{\n{}\n}}\n\n",
+                    "type {}{} {{\n{}\n}}\n\n",
                     object.name,
+                    implements,
                     fields.join("\n")
                 ));
             }
@@ -355,6 +416,15 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                 }
             }
             Definition::SchemaDefinition(_) | Definition::TypeExtension(_) => {}
+        }
+    }
+
+    // The shim's conversions are keyed by entity, and a field the entity
+    // inherits rather than restates is still its field. Applied after the walk
+    // so the interface need not be declared before its implementors.
+    for (entity, interfaces) in &implementors {
+        for interface in interfaces {
+            inherit_conversions(&mut translation, entity, interface);
         }
     }
 
@@ -429,19 +499,56 @@ enum Status {
         );
     }
 
+    // Carried through for the entity parser to fold into each implementor; the
+    // subgraph scalars still have to be mapped on the way.
     #[test]
-    fn refuses_interfaces_timeseries_and_unknowns() {
+    fn carries_interfaces_through_with_their_scalars_mapped() {
+        let (translation, report) = translate_ok(
+            r#"
+interface DomainEvent {
+  id: ID!
+  domain: Domain!
+  txHash: Bytes!
+}
+
+type Domain @entity {
+  id: ID!
+  events: [DomainEvent!]! @derivedFrom(field: "domain")
+}
+
+type Transfer implements DomainEvent @entity {
+  id: ID!
+  domain: Domain!
+  txHash: Bytes!
+  owner: Bytes!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            translation.text.as_str(),
+            "interface DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain!\n  \
+               txHash: String!\n\
+             }\n\n\
+             type Domain {\n  \
+               id: ID!\n  \
+               events: [DomainEvent!]! @derivedFrom(field: \"domain\")\n\
+             }\n\n\
+             type Transfer implements DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain!\n  \
+               txHash: String!\n  \
+               owner: String!\n\
+             }"
+        );
+    }
+
+    #[test]
+    fn refuses_timeseries_and_unknowns() {
         let (_, report) = translate_ok(
             r#"
-interface Named {
-  id: ID!
-}
-
-type Token implements Named @entity {
-  id: ID!
-  name: String!
-}
-
 type Stats @entity(timeseries: true) {
   id: Int8!
   amount: BigInt!
@@ -461,14 +568,12 @@ type Odd @entity {
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered.contains("doesn't support GraphQL interfaces"),
-                rendered.contains("type Token implements Named"),
                 rendered.contains("doesn't support timeseries and aggregations"),
                 rendered.contains("doesn't know the object type Loose without @entity"),
                 rendered.contains("doesn't know the schema directive @secretIndex"),
                 rendered.contains("doesn't know the type NotAType"),
             ),
-            (true, true, true, true, true, true)
+            (true, true, true, true)
         );
     }
 

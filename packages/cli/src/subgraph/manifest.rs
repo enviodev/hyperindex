@@ -16,8 +16,9 @@ use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
 pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 3, 0);
-/// graph-ts versions the runtime shim implements.
-pub const MIN_API_VERSION: (u32, u32, u32) = (0, 0, 5);
+/// The newest graph-ts the runtime shim implements. There is no floor: older
+/// versions expose a subset of the same API, and anything genuinely missing from
+/// one is refused by name when the mapping reaches for it.
 pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 9);
 
 /// Manifest `features` entries graph-node knows about. Anything else is a typo
@@ -270,16 +271,13 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
         None => String::new(),
     };
 
+    // A `features` entry declares what the subgraph is allowed to reach for, not
+    // what it reaches for — Uniswap V3 and Lido both list grafting and never
+    // graft. Whatever a feature enables is refused where the manifest or schema
+    // actually uses it.
     for (idx, feature) in root.seq("features").iter().enumerate() {
         let location = format!("features[{idx}]");
         match feature.as_str() {
-            Some("nonFatalErrors") => {
-                report.unsupported("the \"nonFatalErrors\" feature", location)
-            }
-            Some("grafting") => report.unsupported("grafting", location),
-            Some("aggregations") => {
-                report.unsupported("timeseries and aggregations", location)
-            }
             Some(name) if KNOWN_FEATURES.contains(&name) => {}
             Some(name) => report.unknown(format!("the feature \"{name}\""), location),
             None => report.unknown("the feature entry", location),
@@ -441,10 +439,6 @@ fn parse_data_source(
             match parse_version(&api_version) {
                 Some(version) if version > MAX_API_VERSION => report.unknown(
                     format!("the graph-ts apiVersion \"{api_version}\""),
-                    where_("mapping → apiVersion"),
-                ),
-                Some(version) if version < MIN_API_VERSION => report.unsupported(
-                    format!("graph-ts apiVersion \"{api_version}\" (0.0.5 is the oldest supported)"),
                     where_("mapping → apiVersion"),
                 ),
                 Some(_) => {}
@@ -785,13 +779,12 @@ dataSources:
         assert_eq!(
             (
                 report.findings().len(),
-                rendered.contains("doesn't support the \"nonFatalErrors\" feature"),
                 rendered.contains("doesn't support grafting"),
                 rendered.contains("doesn't support call handlers"),
                 rendered.contains("doesn't support block handlers with `filter: call`"),
                 rendered.contains("data source \"Token\" → callHandlers → \"handleApprove\""),
             ),
-            (4, true, true, true, true, true)
+            (3, true, true, true, true)
         );
     }
 
@@ -846,6 +839,69 @@ dataSources:
                 .contains("doesn't support Arweave subgraphs"),
             "expected an Arweave finding"
         );
+    }
+
+    // `features` is a declaration, not a use: Uniswap V3 and Lido both list
+    // grafting without a `graft` block, and nothing in the subgraph reaches for
+    // it. What the manifest actually does is refused where it does it.
+    #[test]
+    fn accepts_declared_features_that_the_manifest_never_uses() {
+        let yaml = r#"
+specVersion: 1.3.0
+schema:
+  file: ./schema.graphql
+features:
+  - nonFatalErrors
+  - grafting
+  - aggregations
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "0x1"
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+      file: ./src/token.ts
+"#;
+        let (_, report) = parse_ok(yaml);
+        assert_eq!(report.findings().len(), 0, "{report}");
+    }
+
+    #[test]
+    fn accepts_an_old_api_version() {
+        let yaml = r#"
+specVersion: 0.0.4
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "0x1"
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.3
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+      file: ./src/token.ts
+"#;
+        let (_, report) = parse_ok(yaml);
+        assert_eq!(report.findings().len(), 0, "{report}");
     }
 
     #[test]

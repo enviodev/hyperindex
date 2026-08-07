@@ -29,7 +29,9 @@ composition.
 
 apiVersion (graph-ts): **0.0.5** modern baseline · **0.0.6** `tx.nonce`,
 `block.baseFeePerGas` · **0.0.7** `event.receipt` · **0.0.8** field
-validation on `save()` · **0.0.9** `getBalance`/`hasCode`. Support ≥ 0.0.5.
+validation on `save()` · **0.0.9** `getBalance`/`hasCode`. No floor: older
+versions expose a subset, and what a mapping actually reaches for is refused
+by name. Newer than 0.0.9 is a §7 error.
 
 ## 2. Manifest → envio config
 
@@ -47,7 +49,8 @@ validation on `save()` · **0.0.9** `getBalance`/`hasCode`. Support ≥ 0.0.5.
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
-| `callHandlers`, block `filter: call`, `graft`, `nonFatalErrors`, composition (1.3.0) | — | ❌ §7 error |
+| `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
+| `callHandlers`, block `filter: call`, `graft`, composition (1.3.0) | — | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
@@ -78,8 +81,13 @@ dropped — graph-node's write-once check is not enforced. It's a safety net
 for buggy mappings: any subgraph that runs cleanly on graph-node never
 trips it, so working subgraphs lose nothing.
 
-§7 error: **interfaces** (`interface X` / `implements`) and
-**timeseries/aggregations** (`@entity(timeseries: true)`, `@aggregation`).
+**Interfaces** carry through to the entity parser, which folds each one into
+the entities that implement it — the interface itself has no table. A field
+*typed* as an interface points at several tables at once: derived, it is only a
+query and is dropped; stored, it is an error.
+
+§7 error: **timeseries/aggregations** (`@entity(timeseries: true)`,
+`@aggregation`).
 
 ## 4. Mappings (graph-ts) → envio runtime
 
@@ -366,10 +374,8 @@ refuse instead, so behavior never silently diverges:
 | `callHandlers` | translation (manifest) |
 | `blockHandlers` with `filter: call` | translation (manifest) |
 | `graft` | translation (manifest) |
-| `features: [nonFatalErrors]` | translation (manifest) |
 | Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
-| GraphQL interfaces | translation (schema) |
 | Timeseries & aggregations | translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
 | `event.transactionLogIndex` | runtime, on access |
@@ -409,7 +415,7 @@ refuse instead, so behavior never silently diverges:
    §7 error.
 3. Schema transform + §7 schema errors: translator-owned strictness
    (`@entity` required, directive/argument whitelist — envio's parser
-   ignores unknowns, §3) plus interfaces and aggregations; write
+   ignores unknowns, §3) plus aggregations; write
    transformed schema under `.envio/`. The transform records which fields
    are `Timestamp` so the shim can convert micros ↔ date at the store
    boundary.

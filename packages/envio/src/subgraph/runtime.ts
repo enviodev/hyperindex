@@ -23,6 +23,7 @@ import { indexer } from "../Api.res.mjs";
 import { currentScope, runInScope, type Scope, type SubgraphSchema } from "./scope.ts";
 import {
   Address,
+  assemblyScriptPrimitives,
   BigInt as GraphBigInt,
   Bytes,
   installCallHook,
@@ -105,6 +106,9 @@ function installResolveHook(root: string) {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;
   };
+  for (const [name, namespace] of Object.entries(assemblyScriptPrimitives)) {
+    globals[name] ??= namespace;
+  }
 }
 
 function blockInterval(handler: BlockHandler): { every?: number; once?: boolean } {
