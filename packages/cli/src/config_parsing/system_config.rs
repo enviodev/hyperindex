@@ -1549,13 +1549,20 @@ impl SystemConfig {
             mapping_sources,
         )?;
 
-        // Declared eth_calls make the RPC requirement statically known, so a
-        // missing endpoint fails here instead of mid-batch.
-        if translation.runtime.manifest.declares_eth_calls && rpc_env.is_none() {
-            return Err(anyhow!(
-                "{}",
-                crate::subgraph::missing_rpc_message("declared eth_calls")
-            ));
+        // subgraph.yaml has nowhere to name an endpoint, so a project that calls
+        // contracts without one is misconfigured rather than broken. Saying so
+        // here makes it a config error the user can act on, instead of a
+        // handler failure mid-batch with a stack through the runtime.
+        if rpc_env.is_none() {
+            let call_site = translation
+                .runtime
+                .manifest
+                .declares_eth_calls
+                .then(|| "declared eth_calls".to_string())
+                .or_else(|| crate::subgraph::usage::rpc_call_site(mapping_sources));
+            if let Some(call_site) = call_site {
+                return Err(anyhow!("{}", crate::subgraph::missing_rpc_message(&call_site)));
+            }
         }
 
         let source = MemoryConfigSource::new(Some(&translation.schema_text), env, files, false);

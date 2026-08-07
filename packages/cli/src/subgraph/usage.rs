@@ -135,6 +135,50 @@ fn occurrences<'a>(source: &'a str, property: &str) -> Vec<usize> {
     found
 }
 
+/// The graph-ts APIs that need an `eth_call`, which HyperSync and HyperRPC
+/// don't serve. `getBalance` and `hasCode` are unambiguous; a contract call is
+/// recognised by the binding idiom `graph codegen` emits, `Contract.bind(...)`
+/// on a capitalised name — the generated class declares `static bind(`, which
+/// has no receiver and so doesn't match.
+///
+/// Timid in the same way as the field scan, but in the opposite direction:
+/// missing a call only restores today's behaviour of failing mid-batch, while a
+/// false positive would demand an endpoint from a subgraph that never calls
+/// anything.
+pub fn rpc_call_site(sources: &[String]) -> Option<String> {
+    for source in sources {
+        for host in ["ethereum.getBalance", "ethereum.hasCode"] {
+            if source.contains(host) {
+                return Some(host.to_string());
+            }
+        }
+    }
+    for source in sources {
+        if let Some(receiver) = bind_receiver(source) {
+            return Some(format!("{receiver}.bind(...)"));
+        }
+    }
+    None
+}
+
+/// The name a `.bind(` is called on, when it reads as a contract binding.
+fn bind_receiver(source: &str) -> Option<&str> {
+    let mut from = 0;
+    while let Some(offset) = source[from..].find(".bind(") {
+        let dot = from + offset;
+        from = dot + ".bind(".len();
+        let start = source[..dot]
+            .rfind(|c: char| !is_ident_char(c))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let name = &source[start..dot];
+        if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Some(name);
+        }
+    }
+    None
+}
+
 pub fn scan(sources: &[String]) -> FieldUsage {
     let mut transaction = Some(Vec::new());
     let mut block = Some(Vec::new());
@@ -258,5 +302,42 @@ mod tests {
             "helper(event.transaction)".to_string(),
         ]);
         assert_eq!(usage.transaction, None);
+    }
+
+    #[test]
+    fn finds_the_binding_a_mapping_calls_through() {
+        assert_eq!(
+            rpc_call_site(&["let pair = PairContract.bind(event.address)".to_string()]),
+            Some("PairContract.bind(...)".to_string())
+        );
+    }
+
+    #[test]
+    fn finds_the_host_calls_that_need_an_endpoint() {
+        assert_eq!(
+            rpc_call_site(&["ethereum.hasCode(address)".to_string()]),
+            Some("ethereum.hasCode".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_a_mapping_that_calls_nothing() {
+        assert_eq!(
+            rpc_call_site(&["store.set(\"Domain\", id, domain)".to_string()]),
+            None
+        );
+    }
+
+    #[test]
+    fn ignores_the_generated_declaration_and_plain_js_binds() {
+        // `static bind(` has no receiver, and a lowercase one is a function
+        // being bound rather than a contract.
+        assert_eq!(
+            rpc_call_site(&[
+                "static bind(address: Address): Token {".to_string(),
+                "const run = handler.bind(this)".to_string(),
+            ]),
+            None
+        );
     }
 }

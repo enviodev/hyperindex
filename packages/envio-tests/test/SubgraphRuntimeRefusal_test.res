@@ -89,8 +89,11 @@ export function handleProbe(event: any): void {
     let entity = new Entity();
     entity.sprinkle();
   } else if (kind === 4) {
-    // Reached in the register pass too, before any create() has happened.
-    ethereum.getBalance(event.address);
+    // Aliased, so the startup scan can't see it — the runtime guard is what
+    // catches a call the static scan misses. Reached in the register pass too,
+    // before any create() has happened.
+    let host: any = ethereum;
+    host.getBalance(event.address);
   }
 }
 `,
