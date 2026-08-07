@@ -25,6 +25,48 @@ import {
 // Byte values
 // ---------------------------------------------------------------------------
 
+/**
+ * graph-ts stores every integer as a little-endian byte array, signed values in
+ * two's complement — so the byte order and the sign both have to be spelled out
+ * here rather than borrowed from a hex string, which reads big-endian.
+ */
+/** An AssemblyScript i64 literal reaches the shim as a plain JS number. */
+function asBigInt(value: bigint | number): bigint {
+  return typeof value === "bigint" ? value : BigInt(Math.trunc(value));
+}
+
+function toLittleEndian(value: bigint, size: number): Uint8Array {
+  const out = new Uint8Array(size);
+  let rest = BigInt.asUintN(size * 8, value);
+  for (let index = 0; index < size; index++) {
+    out[index] = Number(rest & 0xffn);
+    rest >>= 8n;
+  }
+  return out;
+}
+
+function fromLittleEndian(bytes: Uint8Array, signed: boolean): bigint {
+  let magnitude = 0n;
+  for (let index = bytes.length - 1; index >= 0; index--) {
+    magnitude = (magnitude << 8n) | BigInt(bytes[index]);
+  }
+  return signed ? BigInt.asIntN(bytes.length * 8, magnitude) : magnitude;
+}
+
+/** The smallest byte count that still holds `value` in two's complement. */
+function byteWidth(value: bigint): number {
+  let size = 1;
+  while (BigInt.asIntN(size * 8, value) !== value) size++;
+  return size;
+}
+
+function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint {
+  if (value < min || value > max) {
+    throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
+  }
+  return value;
+}
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
     const normalized = hex.startsWith("0x") ? hex : "0x" + hex;
@@ -34,10 +76,10 @@ export class ByteArray extends Uint8Array {
     return new ByteArray(new TextEncoder().encode(input));
   }
   static fromI32(value: number): ByteArray {
-    return ByteArray.fromHexString(toHex(value, { size: 4 }));
+    return new ByteArray(toLittleEndian(BigInt(Math.trunc(value)), 4));
   }
   static fromBigInt(value: BigInt_): ByteArray {
-    return ByteArray.fromHexString(toHex(value.valueOf(), { size: 32 }));
+    return new ByteArray(toLittleEndian(value.valueOf() as bigint, byteWidth(value.valueOf() as bigint)));
   }
   static fromUint8Array(bytes: Uint8Array): ByteArray {
     return new ByteArray(bytes);
@@ -45,8 +87,8 @@ export class ByteArray extends Uint8Array {
   static fromU32(value: number): ByteArray {
     return ByteArray.fromI32(value);
   }
-  static fromI64(value: bigint): ByteArray {
-    return ByteArray.fromHexString(toHex(value, { size: 8 }));
+  static fromI64(value: bigint | number): ByteArray {
+    return new ByteArray(toLittleEndian(asBigInt(value), 8));
   }
   static fromU64(value: bigint): ByteArray {
     return ByteArray.fromI64(value);
@@ -67,13 +109,13 @@ export class ByteArray extends Uint8Array {
     throw unsupported("ByteArray.toBase58", "a mapping handler");
   }
   toU32(): number {
-    return Number(BigInt(this.toHexString()));
+    return Number(fitted(fromLittleEndian(this, false), 0n, 4294967295n, "u32"));
   }
   toI32(): number {
-    return this.toU32();
+    return Number(fitted(fromLittleEndian(this, true), -2147483648n, 2147483647n, "i32"));
   }
   toBigInt(): BigInt_ {
-    return BigInt_.fromString(this.toHexString());
+    return new BigInt_(fromLittleEndian(this, true));
   }
   concat(other: ByteArray): ByteArray {
     const out = new ByteArray(this.length + other.length);
@@ -91,10 +133,10 @@ export class ByteArray extends Uint8Array {
     return this.concat(ByteArray.fromI32(other));
   }
   toI64(): bigint {
-    return BigInt(this.toHexString());
+    return fitted(fromLittleEndian(this, true), -(2n ** 63n), 2n ** 63n - 1n, "i64");
   }
   toU64(): bigint {
-    return this.toI64();
+    return fitted(fromLittleEndian(this, false), 0n, 2n ** 64n - 1n, "u64");
   }
 }
 
@@ -194,13 +236,13 @@ class BigInt_ extends Uint8Array {
     return new BigInt_(BigInt(value));
   }
   static fromByteArray(bytes: ByteArray): BigInt_ {
-    return BigInt_.fromString(bytes.toHexString());
+    return BigInt_.fromSignedBytes(bytes as Bytes);
   }
   static fromUnsignedBytes(bytes: ByteArray): BigInt_ {
-    return BigInt_.fromByteArray(bytes);
+    return new BigInt_(fromLittleEndian(bytes, false));
   }
   static fromSignedBytes(bytes: Bytes): BigInt_ {
-    return BigInt_.fromByteArray(bytes);
+    return new BigInt_(fromLittleEndian(bytes, true));
   }
   static zero(): BigInt_ {
     return new BigInt_(0n);
@@ -224,10 +266,10 @@ class BigInt_ extends Uint8Array {
     return toHex(this.value);
   }
   toI32(): number {
-    return Number(this.value);
+    return Number(fitted(this.value, -2147483648n, 2147483647n, "i32"));
   }
   toU32(): number {
-    return Number(this.value);
+    return Number(fitted(this.value, 0n, 4294967295n, "u32"));
   }
   toI64(): bigint {
     return this.value;

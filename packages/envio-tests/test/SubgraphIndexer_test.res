@@ -98,8 +98,8 @@ describe("gravatar subgraph", () => {
       },
     });
 
-    t.expect(await indexer.Gravatar.getOrThrow("0x00000001")).toEqual({
-      id: "0x00000001",
+    t.expect(await indexer.Gravatar.getOrThrow("0x01000000")).toEqual({
+      id: "0x01000000",
       owner: owner.toLowerCase(),
       displayName: "one",
       updates: 2n,
