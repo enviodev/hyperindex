@@ -413,7 +413,16 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
     try {
       runInScope(scope, fn);
     } catch (error) {
-      if (error !== REGISTER_SUSPEND) throw error;
+      if (error !== REGISTER_SUSPEND) {
+        // This pass exists to collect `dataSource.create()` calls, and it runs
+        // against a context that reads null for everything — so a handler that
+        // assumes its entities exist throws here even though it is perfectly
+        // correct. Nothing was registered, so there is nothing this pass could
+        // have been for; the same mapping runs again with a real store, and any
+        // error that is genuinely the mapping's surfaces there.
+        if (scope.registered.size === 0) return;
+        throw error;
+      }
       suspended = true;
     }
     const awaiting = scope.awaiting;

@@ -99,8 +99,12 @@ export function handlePairCreated(event: any): void {
 import { Entity, store } from "@graphprotocol/graph-ts";
 
 export function handleSync(event: any): void {
+  // The register pass reads null for everything, so a template handler that
+  // assumes its entity exists throws there. It creates nothing, so there is
+  // nothing that pass could have collected.
+  let existing = store.get("Pair", event.address.toHexString())!;
   let entity = new Entity();
-  entity.setString("symbol", "synced");
+  entity.setString("symbol", "synced-" + existing.symbol);
   store.set("Pair", event.address.toHexString(), entity);
 }
 `,
@@ -176,7 +180,7 @@ describe("a contract call before dataSource.create()", () => {
     });
 
     t.expect(await indexer.Pair.getAll()).toEqual([
-      { id: pair.toLowerCase(), symbol: "synced" },
+      { id: pair.toLowerCase(), symbol: "synced-UNI-V2" },
     ]);
   });
 });
