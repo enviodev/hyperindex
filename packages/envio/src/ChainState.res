@@ -1216,10 +1216,6 @@ let rollback = (
         ~message="Missing events-processed diff for rolled-back chain",
       )
 
-    // Reorg-detection state lives in the block store now; its rollback below
-    // (with `~keepHashes` gating on `isReorgChain`) subsumes the old
-    // reorgDetection rewind, and progress metrics render from the mutable
-    // counters at scrape time.
     switch cs.safeCheckpointTracking {
     | Some(safeCheckpointTracking) =>
       cs.safeCheckpointTracking = Some(

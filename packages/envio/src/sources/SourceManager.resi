@@ -17,7 +17,6 @@ let make: (
   ~reducedPollingInterval: int=?,
   ~recoveryTimeout: float=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
-  ~maxRetries: option<int>=?,
 ) => t
 
 let getActiveSource: t => Source.t

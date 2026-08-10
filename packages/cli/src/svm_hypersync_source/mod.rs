@@ -40,7 +40,9 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
 use crate::block_store::BlockStore;
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
-use crate::request_stats::{error_with_request_stats, RequestStat, QUERY_BLOCK_HASHES_METHOD};
+use crate::request_stats::{
+    error_with_request_stats, source_behind_head_err, RequestStat, QUERY_BLOCK_HASHES_METHOD,
+};
 use crate::transaction_store::TransactionStore;
 use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
 use config::SvmClientConfig;
@@ -318,12 +320,10 @@ impl SvmHyperSyncClient {
                 .map_err(map_err)
                 .map_err(|error| error_with_request_stats(error, &request_stats))?;
             if next_slot <= cursor {
-                let error = map_err(anyhow::anyhow!(
-                    "Slot #{cursor} is not yet available on the queried HyperSync replica. \
-                     Replicas may briefly trail the chain head - this is expected, and indexing \
-                     continues after an automatic retry."
+                return Err(error_with_request_stats(
+                    source_behind_head_err(cursor),
+                    &request_stats,
                 ));
-                return Err(error_with_request_stats(error, &request_stats));
             }
             aggregate.append_page(&page_store);
             aggregate

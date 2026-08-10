@@ -964,6 +964,12 @@ impl BlockStore {
         let mut rows = vec![simple_types::Block {
             number: Some(u64::try_from(guard.block_number).context("guard block_number negative")?),
             hash: Some(Hash::decode_hex(&guard.hash).context("decoding guard hash")?),
+            // The guard carries the head block's timestamp, and the head is
+            // often outside the queried range's returned blocks — keeping it
+            // makes the row materialisable rather than hash-only.
+            timestamp: Some(
+                Quantity::try_from(guard.timestamp).context("guard timestamp negative")?,
+            ),
             ..Default::default()
         }];
         if guard.first_block_number > 0 {

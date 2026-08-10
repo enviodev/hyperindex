@@ -8,7 +8,9 @@ use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache};
 use crate::block_store::BlockStore;
-use crate::request_stats::{error_with_request_stats, RequestStat, QUERY_BLOCK_HASHES_METHOD};
+use crate::request_stats::{
+    error_with_request_stats, source_behind_head_err, RequestStat, QUERY_BLOCK_HASHES_METHOD,
+};
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -188,16 +190,11 @@ impl EvmHyperSyncClient {
                 block_hash_page(response, self.enable_checksum_addresses)
                     .map_err(map_err)
                     .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            // Surfaced as an error so SourceManager owns the retry: it logs,
-            // backs off, and can fail over to another source, none of which an
-            // in-process loop could do.
             if next_block <= cursor {
-                let error = map_err(anyhow::anyhow!(
-                    "Block #{cursor} is not yet available on the queried HyperSync replica. \
-                     Replicas may briefly trail the chain head - this is expected, and indexing \
-                     continues after an automatic retry."
+                return Err(error_with_request_stats(
+                    source_behind_head_err(cursor),
+                    &request_stats,
                 ));
-                return Err(error_with_request_stats(error, &request_stats));
             }
             aggregate.append_page(&page_store);
             if next_block > to_block {

@@ -2,6 +2,18 @@ use napi_derive::napi;
 
 pub(crate) const QUERY_BLOCK_HASHES_METHOD: &str = "getBlockHashes";
 
+/// Marks the queried block as not yet available on the backend instance that
+/// served the request, with the block number following the prefix. ReScript maps
+/// it back to `Source.SourceBehindHead` so SourceManager owns the retry — it
+/// logs, backs off, and can fail over, none of which an in-process loop could
+/// do. Keep in sync with `HyperSync.res`.
+pub(crate) const SOURCE_BEHIND_HEAD_PREFIX: &str = "SOURCE_BEHIND_HEAD:";
+
+/// Build the marker error for a block the backend instance hasn't reached.
+pub(crate) fn source_behind_head_err(block_number: i64) -> napi::Error {
+    napi::Error::from_reason(format!("{SOURCE_BEHIND_HEAD_PREFIX}{block_number}"))
+}
+
 /// Marks a napi error's reason as a structured native-failure envelope (the
 /// `{message, requestStats}` JSON follows). ReScript decodes the timings only
 /// when the reason starts with this exact prefix, so an unrelated error message

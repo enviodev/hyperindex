@@ -99,7 +99,7 @@ describe("native request failures", () => {
     t.expect(failure.requestStats).toEqual([
       {Source.method: "getBlockHashes", seconds: 0.25},
     ])
-    switch exn->HyperSync.mapRateLimitedExn {
+    switch exn->HyperSync.mapNativeFailureExn {
     | Source.RateLimited({resetMs}) => t.expect(resetMs).toEqual(2500)
     | _ => t.expect(false, ~message="Expected a mapped rate-limit exception").toEqual(true)
     }
@@ -1510,37 +1510,27 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
-  Async.it("Gives up with the source error once maxRetries is exhausted", async t => {
+  Async.it("Retries a source that hasn't reached the queried block yet", async t => {
     let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(
-      ~isRealtime=false,
-      ~sources=[sourceMock.source],
-      ~maxRetries=Some(1),
-    )
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
     let p = sourceManager->SourceManager.executeQuery(
-      ~query=mockQuery(),
+      ~query={...mockQuery(), fromBlock: 10},
       ~isRealtime=false,
       ~knownHeight=100,
     )
-    let failure = Source.GetItemsError(
-      FailedGettingItems({
-        exn: JsError.make("Connection refused")->(Utils.magic: JsError.t => exn),
-        attemptedToBlock: 100,
-        retry: WithBackoff({message: "Failed to fetch", backoffMillis: 0}),
-      }),
+
+    // Every ecosystem's source raises this instead of building its own backoff,
+    // so the retry cadence lives in one place.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({blockNumber: 10}),
     )
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(failure)
-    await Utils.delay(50)
+    await Utils.delay(200)
+
     switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.reject(failure)
-    | _ => JsError.throwWithMessage("Expected a retry call after the first failure")
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
     }
-    try {
-      let _ = await p
-      JsError.throwWithMessage("Should not have resolved")
-    } catch {
-    | JsExn(e) => t.expect(e->JsExn.message).toEqual(Some("Connection refused"))
-    }
+    t.expect((await p).parsedQueueItems).toEqual([])
   })
 
   Async.it("Rethrows unknown errors", async t => {
@@ -1642,7 +1632,7 @@ describe("SourceManager.executeQuery", () => {
       )
 
       // Retries 0, 1, 2 on sync (primary)
-      for idx in 0 to 2 {
+      for _idx in 0 to 2 {
         switch syncMock.getItemsOrThrowCalls {
         | [call] => {
             handledGetItemsOrThrowCalls->Array.push({
@@ -1656,9 +1646,7 @@ describe("SourceManager.executeQuery", () => {
         | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
         }
         await Promise.resolve()
-        if idx !== 2 {
-          await Utils.delay(0)
-        }
+        await Utils.delay(0)
       }
 
       // Retry 3 on fallback (sync failed, fallback is recovered secondary)

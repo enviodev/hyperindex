@@ -112,33 +112,23 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | HyperSync.GetLogs.Error(error) =>
+    | HyperSync.GetLogs.Error(WrongInstance) =>
+      throw(Source.SourceBehindHead({blockNumber: fromBlock}))
+    | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
-              let backoffMillis = switch retry {
-              | 0 => 100
-              | _ => 500 * retry
-              }
-              WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
-              })
-            },
+            retry: ImpossibleForTheQuery({
+              message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
+                  ", ",
+                )}`,
+            }),
           }),
         ),
       )
-    | Source.RateLimited(_) as exn => throw(exn)
+    | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)
     | exn =>
       throw(
         Source.GetItemsError(
@@ -229,7 +219,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     } catch {
     | exn => {
         let failure = exn->Source.unpackNativeRequestFailure
-        (Error(failure->HyperSync.mapRateLimitedFailure), failure.requestStats)
+        (Error(failure->HyperSync.mapNativeFailure), failure.requestStats)
       }
     }
     {Source.result, requestStats}

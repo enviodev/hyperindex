@@ -210,7 +210,7 @@ let make = (
     } catch {
     | exn => {
         let failure = exn->Source.unpackNativeRequestFailure
-        (Error(failure->HyperSync.mapRateLimitedFailure), failure.requestStats)
+        (Error(failure->HyperSync.mapNativeFailure), failure.requestStats)
       }
     }
     {Source.result, requestStats}

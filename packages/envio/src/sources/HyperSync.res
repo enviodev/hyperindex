@@ -1,21 +1,29 @@
-let mapRateLimitedFailure = (failure: Source.nativeRequestFailure) => {
+// A napi error carries nothing but a message, so the native clients signal the
+// recoverable conditions SourceManager knows how to retry as a `PREFIX:<int>`
+// marker. Keep in sync with `request_stats.rs`.
+let rateLimitedPrefix = "RATE_LIMITED:"
+let behindHeadPrefix = "SOURCE_BEHIND_HEAD:"
+
+let markerValue = (msg, ~prefix) =>
+  msg->String.slice(~start=prefix->String.length, ~end=msg->String.length)->Int.fromString
+
+let mapNativeFailure = (failure: Source.nativeRequestFailure) => {
   switch failure.message {
-  | Some(msg) if msg->String.startsWith("RATE_LIMITED:") =>
-    let resetMs =
-      msg
-      ->String.slice(~start=13, ~end=msg->String.length)
-      ->Int.fromString
-      ->Option.getOr(1000)
-    Source.RateLimited({resetMs: resetMs})
+  | Some(msg) if msg->String.startsWith(rateLimitedPrefix) =>
+    Source.RateLimited({resetMs: msg->markerValue(~prefix=rateLimitedPrefix)->Option.getOr(1000)})
+  | Some(msg) if msg->String.startsWith(behindHeadPrefix) =>
+    Source.SourceBehindHead({
+      blockNumber: msg->markerValue(~prefix=behindHeadPrefix)->Option.getOr(0),
+    })
   | _ => failure.cause
   }
 }
 
-let mapRateLimitedExn = exn => exn->Source.unpackNativeRequestFailure->mapRateLimitedFailure
+let mapNativeFailureExn = exn => exn->Source.unpackNativeRequestFailure->mapNativeFailure
 
-let reraiseIfRateLimited = exn =>
-  switch exn->mapRateLimitedExn {
-  | Source.RateLimited(_) as exn => throw(exn)
+let reraiseIfRecoverable = exn =>
+  switch exn->mapNativeFailureExn {
+  | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)
   | _ => ()
   }
 
@@ -86,7 +94,7 @@ module GetLogs = {
     ) {
     | res => res
     | exception exn =>
-      reraiseIfRateLimited(exn)
+      reraiseIfRecoverable(exn)
       switch extractMissingParams(exn) {
       | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
       | None => throw(exn)

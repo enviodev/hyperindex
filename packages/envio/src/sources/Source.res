@@ -109,6 +109,12 @@ exception InconsistentResponse({
   missingBlockNumbers: array<int>,
 })
 
+// The queried block hasn't reached the backend instance that served the
+// request. Load-balanced backends drift from each other around the head, so
+// this is expected there and resolves by retrying — SourceManager owns the
+// backoff and the decision to fail over, identically for every ecosystem.
+exception SourceBehindHead({blockNumber: int})
+
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
