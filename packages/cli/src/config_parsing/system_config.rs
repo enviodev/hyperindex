@@ -1608,6 +1608,14 @@ impl SystemConfig {
             }
         }
 
+        // Fuel has no per-ecosystem name validation of its own, and the
+        // capitalization invariant matters for every ecosystem, so it is checked
+        // here on the built contract map.
+        validation::validate_capitalized_names(
+            &config.contracts.keys().cloned().collect::<Vec<_>>(),
+            "contract",
+        )?;
+
         validate_entity_storage(&config.storage, &config.schema)?;
         validate_relationship_storage(&config.storage, &config.schema)?;
         validate_db_column_names(&config.storage, &config.schema)?;

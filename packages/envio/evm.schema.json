@@ -789,6 +789,17 @@
               "null"
             ]
           },
+          "storage": {
+            "description": "Which backends store this table, overriding the `storage` defaults in config.yaml. The `clickhouse` option takes a boolean or a table options object (which implies the backend is enabled).",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TableStorage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "with": {
             "description": "Table-local intermediate relations, like SQL CTEs. A list of queries is a UNION ALL; every branch must produce the same columns.",
             "type": [
@@ -824,6 +835,70 @@
           "select"
         ]
       }
+    },
+    "TableStorage": {
+      "description": "Per-table backend selection, mirroring the `@storage` directive an entity in\nschema.graphql carries.",
+      "type": "object",
+      "properties": {
+        "postgres": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "clickhouse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClickHouseStorage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ClickHouseStorage": {
+      "description": "A boolean, or table options that imply the backend is enabled.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/ClickHouseOptions"
+        }
+      ]
+    },
+    "ClickHouseOptions": {
+      "type": "object",
+      "properties": {
+        "partition_by": {
+          "description": "Raw ClickHouse expression emitted as `PARTITION BY <expr>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order_by": {
+          "description": "Table fields that lead the history table's sorting key, replacing the                        default `id` prefix.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ttl": {
+          "description": "Raw ClickHouse expression emitted as `TTL <expr>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "Queries": {
       "anyOf": [

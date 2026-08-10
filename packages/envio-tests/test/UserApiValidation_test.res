@@ -98,18 +98,17 @@ chains:
 })
 
 describe("EVM config YAML", () => {
-  [("greeter", "Greeter"), ("Greeter", "Greeter")]->Array.forEach(
-    ((inputName, expectedName)) => {
-      it(`normalizes contract name ${inputName}`, t => {
-        let contract =
-          parseAddressConfig(
-            ~contractName=inputName,
-            "0x0000000000000000000000000000000000000001",
-          )->firstContract
-        t.expect(contract.name).toBe(expectedName)
-      })
-    },
-  )
+  // Uncapitalized names are rejected at parse time now — see
+  // CapitalizedContractName_test — so the only name that reaches here is the
+  // capitalized one the runtime keys contracts by.
+  it("carries the contract name through to the chain config", t => {
+    let contract =
+      parseAddressConfig(
+        ~contractName="Greeter",
+        "0x0000000000000000000000000000000000000001",
+      )->firstContract
+    t.expect(contract.name).toBe("Greeter")
+  })
 
   it("preserves a full 20-byte address through the complete YAML pipeline", t => {
     let address = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"

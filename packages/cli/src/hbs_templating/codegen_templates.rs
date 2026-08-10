@@ -1400,7 +1400,7 @@ type indexerContract = {
         let mut all_contract_names = BTreeSet::new();
         for chain_config in &chain_configs {
             for contract in &chain_config.codegen_contracts {
-                all_contract_names.insert(contract.name.capitalized.clone());
+                all_contract_names.insert(contract.name.original.clone());
             }
         }
 
@@ -2126,14 +2126,7 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        // The runtime keys contracts by their capitalized
-                        // name, so the literal a user writes must match that,
-                        // not the raw spelling in config.yaml.
-                        format!(
-                            "  \"{}\": {{\n{}\n  }};",
-                            name.capitalize(),
-                            event_entries.join("\n")
-                        )
+                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
                     })
                     .collect()
             } else {
@@ -2161,14 +2154,7 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        // The runtime keys contracts by their capitalized
-                        // name, so the literal a user writes must match that,
-                        // not the raw spelling in config.yaml.
-                        format!(
-                            "  \"{}\": {{\n{}\n  }};",
-                            name.capitalize(),
-                            event_entries.join("\n")
-                        )
+                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
                     })
                     .collect()
             } else {
@@ -2252,14 +2238,7 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        // The runtime keys contracts by their capitalized
-                        // name, so the literal a user writes must match that,
-                        // not the raw spelling in config.yaml.
-                        format!(
-                            "  \"{}\": {{\n{}\n  }};",
-                            name.capitalize(),
-                            event_entries.join("\n")
-                        )
+                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
                     })
                     .collect()
             } else {
@@ -2418,7 +2397,7 @@ type testIndexer = {{
                     if !instruction_entries.is_empty() {
                         program_entries.push(format!(
                             "        \"{name}\": {{\n{body}\n        }};",
-                            name = contract.name.capitalize(),
+                            name = contract.name,
                             body = instruction_entries.join("\n"),
                         ));
                     }
@@ -3655,10 +3634,27 @@ type GlobalCounter @crossChain {
         assert!(indexer_code.contains("Entities.name<'entity, 'id, 'getWhereFilter>) =>"));
     }
 
+    // The runtime keys contracts by the capitalized name and codegen emits
+    // modules from it, so an uncapitalized name would leave the two sides to
+    // agree by luck. Rejected at parse time, naming the rename.
     #[test]
-    fn internal_config_json_code_with_lowercase_contract_name() {
-        let json = get_internal_config_json_helper("lowercase-contract-name.yaml");
-        insta::assert_snapshot!(json);
+    fn rejects_an_uncapitalized_contract_name() {
+        let project_root = get_test_path_string_helper();
+        let project_paths =
+            ParsedProjectPaths::new(&project_root, "configs/lowercase-contract-name.yaml")
+                .expect("Parsed paths");
+        assert_eq!(
+            format!(
+                "{:#}",
+                SystemConfig::parse_from_project_files(&project_paths)
+                    .expect_err("an uncapitalized contract name must be rejected")
+            ),
+            concat!(
+                "The config has contract names that don't start with a capital letter: ",
+                "\"contract1\". They name the generated types and the `contract` you write in ",
+                "handlers, so they must be capitalized — rename to \"Contract1\"."
+            )
+        );
     }
 
     #[test]

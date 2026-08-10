@@ -4,6 +4,7 @@ use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
 };
+use crate::utils::text::Capitalize;
 use anyhow::{anyhow, Context};
 use regex::Regex;
 use std::collections::HashSet;
@@ -83,6 +84,39 @@ fn is_valid_identifier(s: &str) -> bool {
 }
 
 // Check if all names in the config file are valid.
+/// Contract/program names are capitalized everywhere downstream: the runtime
+/// keys each chain's contracts by the capitalized name, and codegen emits
+/// modules and `contract:` literals from it. Requiring the capital up front
+/// keeps that one spelling instead of leaving the two sides to agree by luck.
+pub fn validate_capitalized_names(
+    names_from_config: &[String],
+    part_of_config: &str,
+) -> anyhow::Result<()> {
+    let uncapitalized: Vec<&String> = names_from_config
+        .iter()
+        .filter(|name| !name.starts_with(|c: char| c.is_ascii_uppercase()))
+        .collect();
+    if uncapitalized.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "The config has {part_of_config} names that don't start with a capital letter: {}. They \
+         name the generated types and the `{}` you write in handlers, so they must be capitalized \
+         — rename to {}.",
+        uncapitalized
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        part_of_config,
+        uncapitalized
+            .iter()
+            .map(|name| format!("\"{}\"", name.to_string().capitalize()))
+            .collect::<Vec<_>>()
+            .join(", "),
+    ))
+}
+
 pub fn validate_names_valid_rescript(
     names_from_config: &Vec<String>,
     part_of_config: String,
@@ -219,6 +253,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     }
 
     validate_names_valid_rescript(&contract_names, "contract".to_string())?;
+    validate_capitalized_names(&contract_names, "contract")?;
 
     Ok(())
 }
@@ -363,6 +398,7 @@ pub fn validate_deserialized_svm_config_yaml(
         ));
     }
     validate_names_valid_rescript(&all_program_names, "program".to_string())?;
+    validate_capitalized_names(&all_program_names, "program")?;
 
     Ok(())
 }

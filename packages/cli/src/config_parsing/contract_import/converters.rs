@@ -1,11 +1,16 @@
-use crate::{config_parsing::chain_helpers::HypersyncChain, evm::address::Address};
+use crate::{
+    config_parsing::chain_helpers::HypersyncChain, evm::address::Address, utils::text::Capitalize,
+};
 use alloy_json_abi::Event;
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
 
-/// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
+/// Normalizes a contract name into the identifier the generated code needs:
+/// spaces, hyphens and dots become underscores, and the first letter is
+/// capitalized (config parsing requires that, and explorer names don't always
+/// come that way).
 pub fn normalize_contract_name(name: String) -> String {
-    name.replace([' ', '-', '.'], "_")
+    name.replace([' ', '-', '.'], "_").capitalize()
 }
 
 ///The hierarchy is based on how you would add items to

@@ -127,6 +127,13 @@ pub struct TableConfig {
     pub wildcard: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
+        description = "Which backends store this table, overriding the `storage` defaults in \
+                       config.yaml. The `clickhouse` option takes a boolean or a table options \
+                       object (which implies the backend is enabled)."
+    )]
+    pub storage: Option<TableStorage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
         with = "Option<BTreeMap<String, Queries>>",
         description = "Table-local intermediate relations, like SQL CTEs. A list of queries is a \
                        UNION ALL; every branch must produce the same columns."
@@ -145,6 +152,72 @@ pub struct TableConfig {
                        numbers, booleans and null are literals."
     )]
     pub select: IndexMap<String, RawYaml>,
+}
+
+/// Per-table backend selection, mirroring the `@storage` directive an entity in
+/// schema.graphql carries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TableStorage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postgres: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clickhouse: Option<ClickHouseStorage>,
+}
+
+/// A boolean, or table options that imply the backend is enabled.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ClickHouseStorage {
+    Enabled(bool),
+    Options(ClickHouseOptions),
+}
+
+// Hand-rolled rather than `#[serde(untagged)]`: the derive swallows the inner
+// error, so a typo like `{partiton_by: ...}` would surface as "did not match any
+// variant" instead of the precise unknown-field error.
+impl<'de> Deserialize<'de> for ClickHouseStorage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ClickHouseStorage;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a boolean or a ClickHouse table options object")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(ClickHouseStorage::Enabled(v))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                ClickHouseOptions::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(ClickHouseStorage::Options)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClickHouseOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Raw ClickHouse expression emitted as `PARTITION BY <expr>`.")]
+    pub partition_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Table fields that lead the history table's sorting key, replacing the                        default `id` prefix."
+    )]
+    pub order_by: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Raw ClickHouse expression emitted as `TTL <expr>`.")]
+    pub ttl: Option<String>,
 }
 
 /// One or many queries. A bare mapping is the single-branch shorthand.
@@ -1433,17 +1506,67 @@ fn known_discriminator<'a>(
 struct TableSchema {
     name: String,
     cross_chain: bool,
+    storage: Option<TableStorage>,
     /// `(field name as written, GraphQL type, derived-from target)`
     fields: Vec<(String, String, Option<String>)>,
 }
 
+/// GraphQL string literal. `partition_by`/`ttl` are raw ClickHouse expressions
+/// that reach the schema through this, so quotes and backslashes are escaped
+/// rather than left to break the parse.
+fn sdl_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 impl TableSchema {
+    /// Directives the table shares with an entity in schema.graphql. Emitting
+    /// them means the existing directive parsing and its cross-entity
+    /// validations apply unchanged.
+    fn directives(&self) -> String {
+        let mut directives = String::new();
+        if self.cross_chain {
+            directives.push_str(" @crossChain");
+        }
+        if let Some(storage) = &self.storage {
+            let mut args = Vec::new();
+            if let Some(postgres) = storage.postgres {
+                args.push(format!("postgres: {postgres}"));
+            }
+            match &storage.clickhouse {
+                Some(ClickHouseStorage::Enabled(enabled)) => {
+                    args.push(format!("clickhouse: {enabled}"))
+                }
+                Some(ClickHouseStorage::Options(options)) => {
+                    let mut inner = Vec::new();
+                    if let Some(partition_by) = &options.partition_by {
+                        inner.push(format!("partitionBy: {}", sdl_string(partition_by)));
+                    }
+                    if let Some(order_by) = &options.order_by {
+                        inner.push(format!(
+                            "orderBy: [{}]",
+                            order_by
+                                .iter()
+                                .map(|field| sdl_string(field))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                    if let Some(ttl) = &options.ttl {
+                        inner.push(format!("ttl: {}", sdl_string(ttl)));
+                    }
+                    args.push(format!("clickhouse: {{{}}}", inner.join(", ")));
+                }
+                None => (),
+            }
+            if !args.is_empty() {
+                directives.push_str(&format!(" @storage({})", args.join(", ")));
+            }
+        }
+        directives
+    }
+
     fn to_sdl(&self) -> String {
-        let mut sdl = format!(
-            "type {}{} {{\n",
-            self.name,
-            if self.cross_chain { " @crossChain" } else { "" }
-        );
+        let mut sdl = format!("type {}{} {{\n", self.name, self.directives());
         for (name, gql_type, derived_from) in &self.fields {
             match derived_from {
                 Some(field) => sdl.push_str(&format!(
@@ -1802,9 +1925,7 @@ fn compile_table(
         }
         materializations.push(Materialization {
             table: table_name.to_string(),
-            // The runtime's chain configs carry capitalized contract names, so
-            // the plan has to match or its registration finds no contract.
-            contract_name: branch.contract_name.capitalize(),
+            contract_name: branch.contract_name.clone(),
             event_name: branch.event_name.clone(),
             wildcard: table.wildcard.unwrap_or(false),
             filter: branch.filter.clone(),
@@ -1851,6 +1972,7 @@ fn compile_table(
         TableSchema {
             name: table_name.to_string(),
             cross_chain: table.cross_chain.unwrap_or(false),
+            storage: table.storage.clone(),
             fields,
         },
         materializations,
@@ -2191,7 +2313,7 @@ tables:
         SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
     }
 
-    fn parse_error(yaml: &str) -> String {
+    pub(super) fn parse_error(yaml: &str) -> String {
         format!("{:#}", parse(yaml).expect_err("expected a config error"))
     }
 
@@ -2843,5 +2965,110 @@ tables:
                 {"name": "grid", "type": "json"}
             ])
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_test {
+    use super::test::{parse, parse_error};
+
+    fn config_with(storage: &str) -> String {
+        format!(
+            r#"
+name: t
+disable_default_cross_chain: true
+storage:
+  postgres: true
+  clickhouse: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  transfers:
+    from: evm.events
+{storage}
+    select:
+      id: transaction.hash
+      timestamp: block.timestamp
+      total:
+        _sum: params.value
+"#
+        )
+    }
+
+    fn storage_json(yaml: &str) -> serde_json::Value {
+        let config = parse(&config_with(yaml)).expect("storage config should compile");
+        let public: serde_json::Value =
+            serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
+                .expect("valid json");
+        public["entities"][0]["storage"].clone()
+    }
+
+    // A table picks its backends the same way an entity's `@storage` directive
+    // does, including the ClickHouse table options.
+    #[test]
+    fn selects_backends_per_table() {
+        assert_eq!(
+            [
+                "    storage:\n      postgres: false\n      clickhouse: true",
+                "    storage:\n      postgres: true",
+                r#"    storage:
+      postgres: false
+      clickhouse:
+        partition_by: "toYYYYMM(timestamp)"
+        order_by: [timestamp]
+        ttl: "timestamp + INTERVAL 2 YEAR""#,
+            ]
+            .map(storage_json),
+            [
+                serde_json::json!({"postgres": false, "clickhouse": true}),
+                serde_json::json!({"postgres": true}),
+                serde_json::json!({
+                    "postgres": false,
+                    "clickhouse": {
+                        "partitionBy": "toYYYYMM(timestamp)",
+                        "orderBy": ["timestamp"],
+                        "ttl": "timestamp + INTERVAL 2 YEAR"
+                    }
+                }),
+            ]
+        );
+    }
+
+    // The options are raw ClickHouse expressions interpolated into the schema,
+    // so a quote in one has to survive rather than break the parse.
+    #[test]
+    fn escapes_quotes_in_a_clickhouse_expression() {
+        assert_eq!(
+            storage_json(
+                "    storage:\n      clickhouse:\n        partition_by: \"concat(id, \\\"x\\\")\""
+            ),
+            serde_json::json!({"clickhouse": {"partitionBy": "concat(id, \"x\")"}})
+        );
+    }
+
+    // Cross-table validation is the schema's, so a table can't opt into a
+    // backend config.yaml never enabled.
+    #[test]
+    fn rejects_a_backend_the_config_did_not_enable() {
+        let yaml = config_with("    storage:\n      clickhouse: true")
+            .replace("storage:\n  postgres: true\n  clickhouse: true\n", "");
+        let error = parse_error(&yaml);
+        assert!(error.contains("clickhouse"), "{error}");
+    }
+
+    #[test]
+    fn rejects_an_unknown_clickhouse_option() {
+        let error = parse_error(&config_with(
+            "    storage:\n      clickhouse:\n        partiton_by: \"x\"",
+        ));
+        assert!(error.contains("partiton_by"), "{error}");
     }
 }
