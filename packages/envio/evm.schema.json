@@ -841,9 +841,13 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "type": [
-            "boolean",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostgresStorage"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "clickhouse": {
@@ -858,6 +862,89 @@
         }
       },
       "additionalProperties": false
+    },
+    "PostgresStorage": {
+      "description": "A boolean, or table options that imply the backend is enabled.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/PostgresOptions"
+        }
+      ]
+    },
+    "PostgresOptions": {
+      "type": "object",
+      "properties": {
+        "indexes": {
+          "description": "Secondary indexes on this table. An entry is a field name, a list of field                        names for a composite index, or `{field, direction}` to sort a field                        descending. `id` is already the primary key.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Index"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Index": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IndexDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "field"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "direction": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/IndexDirection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "field"
+            ]
+          }
+        }
+      ]
+    },
+    "IndexDirection": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
     },
     "ClickHouseStorage": {
       "description": "A boolean, or table options that imply the backend is enabled.",

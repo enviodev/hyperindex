@@ -160,9 +160,185 @@ pub struct TableConfig {
 #[serde(deny_unknown_fields)]
 pub struct TableStorage {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub postgres: Option<bool>,
+    pub postgres: Option<PostgresStorage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clickhouse: Option<ClickHouseStorage>,
+}
+
+/// A boolean, or table options that imply the backend is enabled.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PostgresStorage {
+    Enabled(bool),
+    Options(PostgresOptions),
+}
+
+// Hand-rolled for the same reason as `ClickHouseStorage`: the untagged derive
+// would swallow the inner unknown-field error.
+impl<'de> Deserialize<'de> for PostgresStorage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = PostgresStorage;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a boolean or a Postgres options object")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(PostgresStorage::Enabled(v))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                PostgresOptions::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(PostgresStorage::Options)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PostgresOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Secondary indexes on this table. An entry is a field name, a list of field                        names for a composite index, or `{field, direction}` to sort a field                        descending. `id` is already the primary key."
+    )]
+    pub indexes: Option<Vec<Index>>,
+}
+
+/// One index: a single field, or an ordered list of fields.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Index {
+    Single(IndexField),
+    Composite(Vec<IndexField>),
+}
+
+impl<'de> Deserialize<'de> for Index {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Index;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a field name, a list of field names, or {field, direction}")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(Index::Single(IndexField {
+                    field: v.to_string(),
+                    direction: None,
+                }))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                Vec::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))
+                    .map(Index::Composite)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                IndexField::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(Index::Single)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl JsonSchema for Index {
+    fn schema_name() -> Cow<'static, str> {
+        "Index".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> JsonSchemaSchema {
+        let field = IndexField::json_schema(gen);
+        json_schema!({
+            "anyOf": [field, {"type": "array", "items": field}]
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct IndexField {
+    pub field: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<IndexDirection>,
+}
+
+// A bare string is the ascending shorthand; the object form adds a direction.
+// A string micro-syntax (`"amount:desc"`) was avoided on purpose — the rest of
+// this config keeps structure in YAML rather than inside a string.
+impl<'de> Deserialize<'de> for IndexField {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Object {
+            field: String,
+            direction: Option<IndexDirection>,
+        }
+
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = IndexField;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a field name or {field, direction}")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(IndexField {
+                    field: v.to_string(),
+                    direction: None,
+                })
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let object =
+                    Object::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(IndexField {
+                    field: object.field,
+                    direction: object.direction,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IndexDirection {
+    Asc,
+    Desc,
+}
+
+impl Index {
+    fn fields(&self) -> Vec<&IndexField> {
+        match self {
+            Index::Single(field) => vec![field],
+            Index::Composite(fields) => fields.iter().collect(),
+        }
+    }
 }
 
 /// A boolean, or table options that imply the backend is enabled.
@@ -1529,8 +1705,14 @@ impl TableSchema {
         }
         if let Some(storage) = &self.storage {
             let mut args = Vec::new();
-            if let Some(postgres) = storage.postgres {
-                args.push(format!("postgres: {postgres}"));
+            match &storage.postgres {
+                // The options form implies the backend is enabled, matching how
+                // the `clickhouse` arg of the directive behaves.
+                Some(PostgresStorage::Enabled(enabled)) => {
+                    args.push(format!("postgres: {enabled}"))
+                }
+                Some(PostgresStorage::Options(_)) => args.push("postgres: true".to_string()),
+                None => (),
             }
             match &storage.clickhouse {
                 Some(ClickHouseStorage::Enabled(enabled)) => {
@@ -1560,6 +1742,23 @@ impl TableSchema {
             }
             if !args.is_empty() {
                 directives.push_str(&format!(" @storage({})", args.join(", ")));
+            }
+            if let Some(PostgresStorage::Options(options)) = &storage.postgres {
+                for index in options.indexes.iter().flatten() {
+                    let fields = index
+                        .fields()
+                        .iter()
+                        .map(|field| match field.direction {
+                            // The directive spells a directed field as a
+                            // two-element list, ascending being the bare name.
+                            Some(IndexDirection::Desc) => {
+                                format!("[{}, \"DESC\"]", sdl_string(&field.field))
+                            }
+                            Some(IndexDirection::Asc) | None => sdl_string(&field.field),
+                        })
+                        .collect::<Vec<_>>();
+                    directives.push_str(&format!(" @index(fields: [{}])", fields.join(", ")));
+                }
             }
         }
         directives
@@ -2997,6 +3196,9 @@ tables:
     select:
       id: transaction.hash
       timestamp: block.timestamp
+      owner: params.from
+      spender: params.to
+      amount: params.value
       total:
         _sum: params.value
 "#
@@ -3052,6 +3254,60 @@ tables:
             ),
             serde_json::json!({"clickhouse": {"partitionBy": "concat(id, \"x\")"}})
         );
+    }
+
+    // Indexes are Postgres tuning, so they hang off the backend that has them.
+    #[test]
+    fn declares_postgres_indexes() {
+        let config = parse(&config_with(
+            r#"    storage:
+      postgres:
+        indexes:
+          - owner
+          - [owner, spender]
+          - field: amount
+            direction: desc
+          - [{field: amount, direction: desc}, owner]"#,
+        ))
+        .expect("indexes should compile");
+        let public: serde_json::Value =
+            serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
+                .expect("valid json");
+        // A single-field index becomes a plain column index; only the
+        // multi-field ones need the composite list.
+        assert_eq!(
+            serde_json::json!({
+                "indexed": public["entities"][0]["properties"]
+                    .as_array()
+                    .expect("properties")
+                    .iter()
+                    .filter(|property| property["isIndex"] == serde_json::json!(true))
+                    .map(|property| property["name"].clone())
+                    .collect::<Vec<_>>(),
+                "composite": public["entities"][0]["compositeIndices"].clone(),
+            }),
+            serde_json::json!({
+                "indexed": ["owner", "amount"],
+                "composite": [
+                    [
+                        {"fieldName": "owner", "direction": "Asc"},
+                        {"fieldName": "spender", "direction": "Asc"}
+                    ],
+                    [
+                        {"fieldName": "amount", "direction": "Desc"},
+                        {"fieldName": "owner", "direction": "Asc"}
+                    ]
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_an_index_on_a_field_the_table_does_not_select() {
+        let error = parse_error(&config_with(
+            "    storage:\n      postgres:\n        indexes: [nope]",
+        ));
+        assert!(error.contains("nope"), "{error}");
     }
 
     // Cross-table validation is the schema's, so a table can't opt into a
