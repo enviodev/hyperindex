@@ -1,6 +1,11 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: envio-indexer
 description: Envio Indexer showcase for the Factory Contract feature
+# Entities and effect caches are per-chain: the same id on two chains is two
+# independent rows. Recommended for multichain indexers since v3.6.0. Opt a
+# single entity back into a shared row with `@crossChain` in schema.graphql, or
+# an effect with `crossChain: true`.
+disable_default_cross_chain: true
 contracts:
   - name: UniswapV3Factory
     events:

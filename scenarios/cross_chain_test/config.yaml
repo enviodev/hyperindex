@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../packages/envio/evm.schema.json
+name: cross-chain-test
+disable_default_cross_chain: true
+contracts:
+  - name: Counters
+    handler: src/handlers/Counters.ts
+    events:
+      - event: Bumped(uint256 amount)
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Counters
+        address: "0x1111111111111111111111111111111111111111"
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: Counters
+        address: "0x1111111111111111111111111111111111111111"

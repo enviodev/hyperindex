@@ -118,6 +118,36 @@ let makeCreateTableQuery = (
       : ""});`
 }
 
+// The entity as it's stored: the handler-visible schema plus the chain-id
+// column a per-chain entity's table carries. The value for that column is
+// stamped from the flush group's scope right before serialization, so it never
+// has to be re-derived from a checkpoint.
+let rowSchemaCache = Utils.WeakMap.make()
+let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =>
+  switch rowSchemaCache->Utils.WeakMap.get(entityConfig) {
+  | Some(cached) => cached
+  | None =>
+    let schema = switch entityConfig.table->Table.getChainIdField {
+    | None => entityConfig.schema
+    | Some(chainIdField) =>
+      S.schema(s => {
+        let dict = Dict.make()
+        switch entityConfig.schema->S.classify {
+        | Object({items}) =>
+          items->Array.forEach(({location, schema}) => dict->Dict.set(location, s.matches(schema)))
+        | _ =>
+          JsError.throwWithMessage(
+            `Unexpected non-object schema for entity "${entityConfig.name}".`,
+          )
+        }
+        dict->Dict.set(chainIdField.fieldName, s.matches(ChainId.schema->S.toUnknown))
+        dict
+      })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>)
+    }
+    rowSchemaCache->Utils.WeakMap.set(entityConfig, schema)->ignore
+    schema
+  }
+
 let entityHistoryCache = Utils.WeakMap.make()
 let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
   'entity,
@@ -134,6 +164,9 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
           switch field.fieldName {
           //id is not nullable and should be part of the pk
           | "id" => {...field, fieldName: id, isPrimaryKey: true}->Table.Field->Some
+          // Same for the chain id of a per-chain entity: it completes the row's
+          // identity, so it can neither be nulled out nor left out of the pk.
+          | _ if field.isChainId => field->Table.Field->Some
           | _ =>
             {
               ...field,
@@ -174,7 +207,7 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
 
       let setChangeSchema = EntityHistory.makeSetUpdateSchema(
         ~idSchema=entityConfig.table->Table.getIdSchema,
-        entityConfig.schema,
+        entityConfig->getRowSchema,
       )
 
       {
@@ -353,12 +386,22 @@ let rec makeFilterCondition = (
   }
 }
 
-let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
-  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1;`
+// The chain-id predicate a per-chain entity's row-level SQL needs, already
+// including the leading AND. The chain id is bound as $2 — after the id
+// params at $1 — so one prepared statement serves every chain. Empty for
+// cross-chain entities and for internal tables, which have no such column.
+let makeChainIdCondition = (~table: Table.table, ~chainId: option<ChainId.t>) =>
+  switch (table->Table.getChainIdField, chainId) {
+  | (Some(field), Some(_)) => ` AND "${field->Table.getPgDbFieldName}" = $2`
+  | _ => ""
+  }
+
+let makeDeleteByIdQuery = (~pgSchema, ~tableName, ~chainIdCondition) => {
+  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1${chainIdCondition};`
 }
 
-let makeDeleteByIdsQuery = (~pgSchema, ~tableName, ~idPgType) => {
-  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::${idPgType}[]);`
+let makeDeleteByIdsQuery = (~pgSchema, ~tableName, ~idPgType, ~chainIdCondition) => {
+  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::${idPgType}[])${chainIdCondition};`
 }
 
 let makeLoadAllQuery = (~pgSchema, ~tableName) => {
@@ -779,17 +822,32 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids: array<EntityId.t>, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (
+  sql,
+  ~pgSchema,
+  ~ids: array<EntityId.t>,
+  ~table: Table.table,
+  ~chainId: option<ChainId.t>=None,
+) => {
+  let chainIdCondition = makeChainIdCondition(~table, ~chainId)
+  let chainIdParams = switch chainId {
+  | Some(chainId) if chainIdCondition !== "" => [chainId->(Utils.magic: ChainId.t => unknown)]
+  | _ => []
+  }
   // A JSON array of the serialized ids. For a single id the query binds it as
   // `$1` directly (the array is the positional-params array); for many it binds
-  // the whole array to `$1` behind an `ANY(...)`.
+  // the whole array to `$1` behind an `ANY(...)`. The chain id, when the
+  // condition needs it, rides along as $2.
   let idsJson = table->Table.encodeIdsToJson(ids)
   switch await (
     switch ids {
     | [_] =>
       sql->Postgres.preparedUnsafe(
-        makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
-        idsJson->Obj.magic,
+        makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName, ~chainIdCondition),
+        idsJson
+        ->(Utils.magic: JSON.t => array<unknown>)
+        ->Array.concat(chainIdParams)
+        ->Obj.magic,
       )
     | _ =>
       sql->Postgres.preparedUnsafe(
@@ -797,8 +855,9 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids: array<EntityId.t>, ~table:
           ~pgSchema,
           ~tableName=table.tableName,
           ~idPgType=table->Table.getIdPgFieldType(~pgSchema),
+          ~chainIdCondition,
         ),
-        [idsJson]->Obj.magic,
+        [idsJson->(Utils.magic: JSON.t => unknown)]->Array.concat(chainIdParams)->Obj.magic,
       )
     }
   ) {
@@ -813,7 +872,11 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids: array<EntityId.t>, ~table:
   }
 }
 
-let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+let makeInsertDeleteUpdatesQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~chainId: option<ChainId.t>,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
@@ -833,6 +896,13 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
     allHistoryFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
+  // The chain-id column is part of the history primary key, so a DELETE row
+  // carries the scope's chain — bound once as $3 — rather than the NULL every
+  // other data field gets.
+  let chainIdColumn = switch (entityConfig.table->Table.getChainIdField, chainId) {
+  | (Some(field), Some(_)) => field->Table.getPgDbFieldName
+  | _ => ""
+  }
   let selectParts = allHistoryFieldNames->Array.map(fieldName => {
     switch fieldName {
     | field if field == Table.idFieldName => `u.${Table.idFieldName}`
@@ -840,6 +910,7 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
       `u.${EntityHistory.checkpointIdFieldName}`
     | field if field == EntityHistory.changeFieldName =>
       `'${(EntityHistory.RowAction.DELETE :> string)}'`
+    | field if chainIdColumn !== "" && field == chainIdColumn => "$3"
     | _ => "NULL"
     }
   })
@@ -942,9 +1013,37 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, changes}) => {
+    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes}) => {
       let entitiesToSet = []
       let idsToDelete = []
+
+      // Every row in this group belongs to the group's scope, so the chain id
+      // is stamped once here instead of being looked up per row downstream.
+      let scopeChainId = switch scope {
+      | Internal.CrossChain => None
+      | Chain(chainId) => Some(chainId)
+      }
+      let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+      | (Some(field), Some(chainId)) =>
+        changes->Array.map(change =>
+          switch change {
+          | Change.Set(set) =>
+            Change.Set({
+              ...set,
+              entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
+            })
+          | Delete(_) => change
+          }
+        )
+      | _ => changes
+      }
+
+      // Bound as $3 by the history-delete query, after its two unnest arrays.
+      // Empty for cross-chain entities, whose SQL has no such param.
+      let chainIdParams = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+      | (Some(_), Some(chainId)) => [chainId->(Utils.magic: ChainId.t => unknown)]
+      | _ => []
+      }
 
       // The rollback-diff change is written to the entity table only, never the
       // history table; when present it is an id's oldest change.
@@ -1016,6 +1115,7 @@ let rec writeBatch = async (
                 ~pgSchema,
                 ~table=entityConfig.table,
                 ~entityIndex=entityConfig.index,
+                ~chainId=scopeChainId,
                 ~ids=backfillHistoryIds->Utils.Set.toArray,
               )
             }
@@ -1024,11 +1124,17 @@ let rec writeBatch = async (
               promises->Array.push(
                 sql
                 ->Postgres.preparedUnsafe(
-                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (
-                    entityConfig.table->Table.encodeIdsToJson(batchDeleteEntityIds),
-                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
-                  )->Obj.magic,
+                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
+                  [
+                    entityConfig.table
+                    ->Table.encodeIdsToJson(batchDeleteEntityIds)
+                    ->(Utils.magic: JSON.t => unknown),
+                    batchDeleteCheckpointIds
+                    ->Utils.BigInt.arrayToStringArray
+                    ->(Utils.magic: array<string> => unknown),
+                  ]
+                  ->Array.concat(chainIdParams)
+                  ->Obj.magic,
                 )
                 ->Utils.Promise.ignoreValue,
               )
@@ -1069,7 +1175,7 @@ let rec writeBatch = async (
               sql->setOrThrow(
                 ~items=entitiesToSet,
                 ~table=entityConfig.table,
-                ~itemSchema=entityConfig.schema,
+                ~itemSchema=entityConfig->getRowSchema,
                 ~pgSchema,
                 ~chainIdMode,
               ),
@@ -1077,7 +1183,12 @@ let rec writeBatch = async (
           }
           if idsToDelete->Utils.Array.notEmpty {
             promises->Array.push(
-              sql->deleteByIdsOrThrow(~pgSchema, ~ids=idsToDelete, ~table=entityConfig.table),
+              sql->deleteByIdsOrThrow(
+                ~pgSchema,
+                ~ids=idsToDelete,
+                ~table=entityConfig.table,
+                ~chainId=scopeChainId,
+              ),
             )
           }
 
@@ -1244,6 +1355,14 @@ let rec writeBatch = async (
 
 // Returns the most recent history row at or before the rollback target for IDs changed after it.
 // envio_change is included so ReScript can turn SET rows into restores and DELETE rows into removals.
+// The columns that identify a history row: the id, plus the chain id for a
+// per-chain entity.
+let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
+  switch entityConfig.table->Table.getChainIdField {
+  | Some(field) => [Table.idFieldName, field->Table.getPgDbFieldName]
+  | None => [Table.idFieldName]
+  }
+
 let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
@@ -1260,16 +1379,25 @@ let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~
     ~entityIndex=entityConfig.index,
   )
 
-  `SELECT DISTINCT ON ("${Table.idFieldName}") ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
+  // A per-chain entity's rows are only comparable within a chain, so the row's
+  // identity here is (id, chain id) rather than the id alone.
+  let keyColumns = rollbackKeyColumns(entityConfig)
+  let keyColumnsCommaSeparated = keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")
+  let keyMatch =
+    keyColumns
+    ->Array.map(c => `h."${c}" = "${historyTableName}"."${c}"`)
+    ->Array.joinUnsafe(" AND ")
+
+  `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
   FROM "${pgSchema}"."${historyTableName}"
   WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
     AND EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
-      WHERE h."${Table.idFieldName}" = "${historyTableName}"."${Table.idFieldName}"
+      WHERE ${keyMatch}
         AND h."${EntityHistory.checkpointIdFieldName}" > $1
     )
-  ORDER BY "${Table.idFieldName}", "${EntityHistory.checkpointIdFieldName}" DESC`
+  ORDER BY ${keyColumnsCommaSeparated}, "${EntityHistory.checkpointIdFieldName}" DESC`
 }
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
@@ -1279,13 +1407,19 @@ let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgS
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
-  `SELECT DISTINCT "${Table.idFieldName}"
+  let keyColumns = rollbackKeyColumns(entityConfig)
+  let keyMatch =
+    keyColumns
+    ->Array.map(c => `h."${c}" = "${historyTableName}"."${c}"`)
+    ->Array.joinUnsafe(" AND ")
+
+  `SELECT DISTINCT ${keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")}
   FROM "${pgSchema}"."${historyTableName}"
   WHERE "${EntityHistory.checkpointIdFieldName}" > $1
     AND NOT EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
-      WHERE h."${Table.idFieldName}" = "${historyTableName}"."${Table.idFieldName}"
+      WHERE ${keyMatch}
         AND h."${EntityHistory.checkpointIdFieldName}" <= $1
     )`
 }
@@ -1303,11 +1437,19 @@ let rollbackRowStateSchema: Table.table => S.t<(
   ))
 )
 
+// The chain a rollback row belongs to, read from the chain-id column both
+// rollback queries select. None for a cross-chain entity, which has no column.
+let rollbackChainIdSchema: Table.table => option<S.t<ChainId.t>> = Utils.WeakMap.memoize(table =>
+  table
+  ->Table.getChainIdField
+  ->Option.map(field => S.object(s => s.field(field->Table.getPgDbFieldName, ChainId.schema)))
+)
+
 // Same reason as above for the id-only rows: both rollback queries must yield
 // ids in the entity's own representation, or the two halves of the diff would
 // disagree (Postgres hands back a NUMERIC id as a string, not a bigint).
-let rollbackRemovedIdsSchema: Table.table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
-  S.array(S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema)))
+let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memoize(table =>
+  S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema))
 )
 
 let make = (
@@ -1651,7 +1793,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
         }),
       )
     | rows =>
-      try rows->S.parseOrThrow(table->Table.pgRowsSchema) catch {
+      try rows->S.parseOrThrow(table->Table.pgEntityRowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({
@@ -2095,12 +2237,13 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
   let pruneStaleCheckpoints = (~safeCheckpointId) =>
     InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpointId)
 
-  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~safeCheckpointId) =>
+  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~chainIdColumn, ~safeCheckpointId) =>
     EntityHistory.pruneStaleEntityHistory(
       sql,
       ~pgSchema,
       ~entityName,
       ~entityIndex,
+      ~chainIdColumn,
       ~safeCheckpointId,
     )
 
@@ -2136,17 +2279,26 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
 
-    let removedIds = removedIdRows->S.parseOrThrow(rollbackRemovedIdsSchema(entityConfig.table))
+    let chainIdSchema = rollbackChainIdSchema(entityConfig.table)
+    let scopeOf = row =>
+      switch chainIdSchema {
+      | None => Internal.CrossChain
+      | Some(schema) => Internal.Chain(row->S.parseOrThrow(schema))
+      }
+    let removals = removedIdRows->Array.map((row): Persistence.rollbackRemoval => {
+      entityId: row->S.parseOrThrow(rollbackRemovedIdSchema(entityConfig.table)),
+      scope: scopeOf(row),
+    })
     let restoredEntitiesResult = []
     rollbackRows->Array.forEach(row => {
       let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema(entityConfig.table))
       switch action {
       | SET => restoredEntitiesResult->Array.push(row)->ignore
-      | DELETE => removedIds->Array.push(entityId)->ignore
+      | DELETE => removals->Array.push({entityId, scope: scopeOf(row)})->ignore
       }
     })
 
-    (removedIds, restoredEntitiesResult)
+    (removals, restoredEntitiesResult)
   }
 
   let writeBatchMethod = async (

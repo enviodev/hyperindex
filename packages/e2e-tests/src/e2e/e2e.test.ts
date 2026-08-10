@@ -366,6 +366,93 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
+  // The per-chain pair. Their tables carry a chain-id column in the primary
+  // key, spelled per backend: `chain_id` in Postgres (column_name_format:
+  // snake_case) and `chainId` in ClickHouse (the default format).
+  it("gives per-chain entities a chain-id column in both backends", async () => {
+    const pgColumns = await runPgSql(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'ChainTransfer'
+        ORDER BY column_name`
+    );
+    expect(pgColumns.map((r) => r[0])).toContain("chain_id");
+
+    const pgPrimaryKey = await runPgSql(
+      `SELECT a.attname FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = '"ChainTransfer"'::regclass AND i.indisprimary
+        ORDER BY a.attname`
+    );
+    expect(pgPrimaryKey.map((r) => r[0])).toEqual(["chain_id", "id"]);
+
+    const chColumns = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.columns
+        WHERE database = '${CH_DATABASE}' AND table = 'ChainTransfer'
+        FORMAT JSON`
+    );
+    expect(chColumns.data.map((r) => r.name)).toContain("chainId");
+  });
+
+  it("serves per-chain rows through ClickHouse deduped per (id, chain)", async () => {
+    const pgRows = await runPgSql(`SELECT count(*)::text FROM "ChainTransfer"`);
+    const pgCount = Number(pgRows[0]?.[0]);
+    expect(pgCount).toBeGreaterThan(0);
+
+    // The view dedups with LIMIT 1 BY (id, chainId); a dedup on id alone would
+    // collapse rows that differ only by chain.
+    const chRows = await queryClickHouse<
+      ClickHouseResult<{ c: string; chains: string }>
+    >(
+      `SELECT count() as c, uniqExact(chainId) as chains
+         FROM ${CH_DATABASE}.ChainTransfer FORMAT JSON`
+    );
+    expect({
+      rows: Number(chRows.data[0]?.c),
+      chains: Number(chRows.data[0]?.chains),
+    }).toEqual({ rows: pgCount, chains: 1 });
+  });
+
+  it("keeps a per-chain relationship from reaching another chain's row", async () => {
+    // Only one chain is indexed, so a second chain's row is planted directly to
+    // give the relationship something wrong to resolve to. It shares the `from`
+    // value the relationship joins on, and differs only by chain.
+    const account = await runPgSql(
+      `SELECT "id" FROM "ChainAccount" LIMIT 1`
+    );
+    const accountId = account[0]?.[0];
+    expect(accountId).toBeTruthy();
+
+    await runPgSql(
+      `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
+       VALUES ('planted-other-chain', '${accountId}', 1, 999)
+       ON CONFLICT DO NOTHING`
+    );
+
+    const result = await graphql.query<{
+      ChainAccount: Array<{
+        id: string;
+        transfers: Array<{ id: string; chainId: number }>;
+      }>;
+    }>(
+      `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
+    );
+    const transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+
+    // Removed before asserting so a failure doesn't leave the row for the
+    // tests that follow.
+    await runPgSql(
+      `DELETE FROM "ChainTransfer" WHERE "id" = 'planted-other-chain'`
+    );
+
+    expect(transfers.length).toBeGreaterThan(0);
+    expect({
+      plantedRowReached: transfers.some((tr) => tr.id === "planted-other-chain"),
+      chains: [...new Set(transfers.map((tr) => tr.chainId))],
+    }).toEqual({ plantedRowReached: false, chains: [1] });
+  });
+
   it("should be able to query GraphQL schema", async () => {
     const result = await graphql.query<{
       __schema: { queryType: { name: string } };

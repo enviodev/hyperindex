@@ -164,7 +164,8 @@ mod tests {
 
     #[test]
     fn alchemy_block_range() {
-        let message = "You can make eth_getLogs requests with up to a 500 block range. Based on your parameters, this block range should work: [0x3d7773, 0x3d7966]";
+        let message = "You can make eth_getLogs requests with up to a 500 block range. Based on \
+                       your parameters, this block range should work: [0x3d7773, 0x3d7966]";
         assert_eq!(
             suggested_block_interval_from_message(message),
             Some((500, true))

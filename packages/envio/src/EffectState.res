@@ -131,7 +131,7 @@ let commitCacheCount = (inMemTable: effectCacheInMemTable, ~count) => {
 
 let statsToMetrics = (stats: effectStats): Metrics.effectMetrics => {
   Metrics.effect: stats.effectName,
-  scope: stats.scope->Internal.EffectCache.scopeToString,
+  scope: stats.scope->Internal.chainScopeToString,
   callSeconds: stats.callSeconds,
   callSecondsTotal: stats.callSecondsTotal,
   callCount: stats.callCount,
@@ -152,7 +152,7 @@ let toMetrics = (self: t): array<Metrics.effectMetrics> => {
     metrics
     ->Array.push({
       Metrics.effect: effectName,
-      scope: scope->Internal.EffectCache.scopeToString,
+      scope: scope->Internal.chainScopeToString,
       callSeconds: 0.,
       callSecondsTotal: 0.,
       callCount: 0.,

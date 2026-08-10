@@ -31,6 +31,10 @@ type t = {
   // then smoothed with an EMA on every batch (see applyBatchProgress). None
   // until the chain has processed at least one event.
   mutable chainDensity: option<float>,
+  // In-memory tables for the entities whose rows belong to a single chain.
+  // Empty in the default cross-chain mode, where every entity's table lives on
+  // the indexer instead.
+  mutable entities: EntityTables.t,
   mutable safeCheckpointTracking: option<SafeCheckpointTracking.t>,
   // Reorg handling knobs, mirrored from the chain/indexer config: hashes are
   // compared for blocks within `maxReorgDepth` of the known height, and a
@@ -101,11 +105,13 @@ let make = (
   ~chainDensity=None,
   ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   ~reorgThresholdReadyTolerance=100,
+  ~perChainEntities: array<Internal.entityConfig>=[],
   ~logger: Pino.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
   {
     logger,
+    entities: EntityTables.make(perChainEntities),
     onEventRegistrations,
     fetchState,
     addressStore,
@@ -355,6 +361,7 @@ let makeInternal = (
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
+    ~perChainEntities=config.allEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
     ~transactionStore=TransactionStore.make(
@@ -443,6 +450,11 @@ let makeFromDbState = (
 
 let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
+let entities = (cs: t) => cs.entities
+
+// Rollback discards every uncommitted change, so this chain's partition is
+// rebuilt from scratch alongside the indexer's cross-chain one.
+let resetEntities = (cs: t, ~perChainEntities) => cs.entities = EntityTables.make(perChainEntities)
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let shouldRollbackOnReorg = (cs: t) => cs.shouldRollbackOnReorg
@@ -585,10 +597,16 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
   let bufferBlockNumber = fetchState->FetchState.bufferBlockNumber
   switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
-    Pervasives.min(
-      fetchCeiling,
-      bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt,
-    )
+    // Decided by comparison so no unbounded value is ever converted to int:
+    // at low densities chainTargetItems /. density exceeds the int range, and
+    // truncating it wraps negative — the target collapses below the frontier
+    // and the chain stops querying. The division only runs when its result is
+    // provably below the ceiling-bounded range.
+    if density *. (fetchCeiling - bufferBlockNumber)->Int.toFloat <= chainTargetItems {
+      fetchCeiling
+    } else {
+      bufferBlockNumber + Math.ceil(chainTargetItems /. density)->Float.toInt
+    }
   | _ => Pervasives.min(bufferBlockNumber + coldTargetRange, fetchCeiling)
   }
 }
