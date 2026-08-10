@@ -985,7 +985,6 @@ let make = (
     )
 
     {
-      latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
       // RPC keeps the transaction and block inline on the payload; no

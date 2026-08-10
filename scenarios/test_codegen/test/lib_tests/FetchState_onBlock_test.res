@@ -19,9 +19,8 @@ let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThr
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 
-let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
+let getBlockData = (~blockNumber): FetchState.blockRef => {
   blockNumber,
-  blockTimestamp: getTimestamp(~blockNumber),
 }
 
 let baseEventConfig = (MockIndexer.evmOnEventRegistration(
@@ -105,7 +104,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock={blockNumber: 10},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -153,7 +152,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock={blockNumber: 10},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -202,7 +201,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock={blockNumber: 10},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -255,7 +254,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 12, blockTimestamp: 12 * 15},
+        ~latestFetchedBlock={blockNumber: 12},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -311,7 +310,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock={blockNumber: 10},
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 

@@ -163,13 +163,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     //Parse page items into queue items
     let parsedQueueItems = []
 
-    // Block headers are returned once per number; items reference them by blockNumber.
-    let blocksByNumber = Utils.Map.make()
-    pageUnsafe.blocks->Array.forEach(block => {
-      blocksByNumber->Utils.Map.set(block.number, block)->ignore
-    })
-    let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
-
     pageUnsafe.items->Array.forEach(item => {
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
@@ -178,16 +171,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    // Best-effort timestamp for the queried-range head: the last item if it
-    // happens to be in the range's last block. 0 is a tolerated placeholder
-    // otherwise (FetchState already uses 0 in several spots).
-    let latestFetchedBlockTimestamp = switch pageUnsafe.items->Array.get(
-      pageUnsafe.items->Array.length - 1,
-    ) {
-    | Some(item) if item.blockNumber == heighestBlockQueried => getBlock(item.blockNumber).timestamp
-    | _ => 0
-    }
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
@@ -198,7 +181,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp,
       parsedQueueItems,
       transactionStore: Some(pageUnsafe.transactionStore),
       // The page store also carries the rollbackGuard's blocks (head block and

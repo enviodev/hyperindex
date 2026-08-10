@@ -915,7 +915,7 @@ let handleQueryResult = (
   ~query: FetchState.query,
   ~newItems,
   ~newRegistrations,
-  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
+  ~latestFetchedBlock: FetchState.blockRef,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
 ) => {

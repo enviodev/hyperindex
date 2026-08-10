@@ -111,7 +111,6 @@ let rec onQueryResponse = async (
       transactionStore,
       blockStore,
       latestFetchedBlockNumber,
-      latestFetchedBlockTimestamp,
       stats,
       knownHeight,
       fromBlockQueried,
@@ -227,10 +226,7 @@ let rec onQueryResponse = async (
             ~newItems,
             ~newRegistrations,
             ~knownHeight,
-            ~latestFetchedBlock={
-              FetchState.blockNumber: latestFetchedBlockNumber,
-              blockTimestamp: latestFetchedBlockTimestamp,
-            },
+            ~latestFetchedBlock={FetchState.blockNumber: latestFetchedBlockNumber},
             ~query,
             ~transactionStore,
           )

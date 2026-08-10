@@ -247,7 +247,6 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         "knownHeight": page.knownHeight,
         "fromBlockQueried": page.fromBlockQueried,
         "latestFetchedBlockNumber": page.latestFetchedBlockNumber,
-        "latestFetchedBlockTimestamp": page.latestFetchedBlockTimestamp,
         "events": page.events->Array.map(eventSummary),
         "blockHashes": page.blockHashes,
         "requestCounts": page.requestCounts,
@@ -255,7 +254,6 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         "knownHeight": 100,
         "fromBlockQueried": 100,
         "latestFetchedBlockNumber": 100,
-        "latestFetchedBlockTimestamp": 100,
         "events": [
           {
             "registrationId": `${sighash}_1`,

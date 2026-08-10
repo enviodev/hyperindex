@@ -1211,7 +1211,6 @@ module Source = {
                     blockStore: responseBlockStore,
                     fromBlockQueried: fromBlock,
                     latestFetchedBlockNumber,
-                    latestFetchedBlockTimestamp: latestFetchedBlockNumber,
                     stats: {
                       totalTimeElapsed: 0.,
                     },

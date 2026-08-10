@@ -1787,6 +1787,40 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rollback_guard_blocks_keep_the_head_timestamp() {
+        let page = BlockStore::new_evm(false);
+        page.insert_rollback_guard_blocks(&crate::evm_hypersync_source::types::RollbackGuard {
+            block_number: 20,
+            timestamp: 1_700_000_000,
+            hash: format!("0x{}", "20".repeat(32)),
+            first_block_number: 11,
+            first_parent_hash: format!("0x{}", "0a".repeat(32)),
+        })
+        .expect("guard blocks");
+
+        // The head block materialises with its timestamp; the seam block below
+        // the range carries only the parent hash the guard reports.
+        let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
+        let cols = page
+            .materialize(vec![20, 10], vec![mask, mask])
+            .await
+            .expect("materialize");
+        assert_eq!(
+            (
+                match column(&cols, "timestamp") {
+                    Some(Column::I64(v)) => v.clone(),
+                    _ => panic!("expected timestamp column"),
+                },
+                page.get_hash(10),
+            ),
+            (
+                vec![Some(1_700_000_000), None],
+                Some(format!("0x{}", "0a".repeat(32)))
+            )
+        );
+    }
+
     #[test]
     fn from_js_svm_stores_hashes() {
         let store = BlockStore::from_js_svm(vec![SvmBlockInput {

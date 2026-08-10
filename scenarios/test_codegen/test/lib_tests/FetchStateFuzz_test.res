@@ -162,7 +162,7 @@ let respond = (run: run, ~rng, ~index) => {
   run.fetchState =
     run.fetchState->FetchState.handleQueryResult(
       ~query=q,
-      ~latestFetchedBlock={blockNumber: latest, blockTimestamp: 0},
+      ~latestFetchedBlock={blockNumber: latest},
       ~newItems=[],
     )
   run.pendingBudget = Pervasives.max(0., run.pendingBudget -. q.itemsEst->Int.toFloat)

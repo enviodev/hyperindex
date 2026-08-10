@@ -294,7 +294,6 @@ module Make = () => {
       blockStore: BlockStore.fromJs(observedBlocks, ~ecosystem=Evm, ~shouldChecksum=false),
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
-      latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: (
         {
           totalTimeElapsed: 0.,

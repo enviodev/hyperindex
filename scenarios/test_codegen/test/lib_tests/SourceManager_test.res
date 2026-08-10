@@ -435,7 +435,6 @@ describe("SourceManager fetchNext", () => {
       id: partitionIndex->Int.toString,
       latestFetchedBlock: {
         blockNumber: latestFetchedBlockNumber,
-        blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
       addresses: TestAddresses.setOf(addresses),

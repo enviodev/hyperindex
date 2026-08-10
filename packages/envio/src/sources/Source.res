@@ -89,7 +89,6 @@ type blockRangeFetchResponse = {
   blockStore: BlockStore.t,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
-  latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,
 }

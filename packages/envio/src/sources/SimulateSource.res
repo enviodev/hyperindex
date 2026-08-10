@@ -112,7 +112,6 @@ let make = (
         blockStore: BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
         fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
-        latestFetchedBlockTimestamp: 0,
         stats: {
           totalTimeElapsed: 0.,
         },

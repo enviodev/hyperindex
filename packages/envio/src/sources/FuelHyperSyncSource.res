@@ -106,12 +106,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeRef = Performance.now()
 
-    // Blocks are returned once per height; items reference them by blockHeight.
-    let blocksByHeight = Utils.Map.make()
-    pageUnsafe.blocks->Array.forEach(block => {
-      blocksByHeight->Utils.Map.set(block.height, block)->ignore
-    })
-
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
@@ -183,11 +177,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
-    let latestFetchedBlockTimestamp = switch blocksByHeight->Utils.Map.get(heighestBlockQueried) {
-    | Some(block) => block.time
-    | None => 0
-    }
-
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
@@ -197,7 +186,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp,
       parsedQueueItems,
       // Fuel keeps transaction and block inline on the payload; the block store
       // carries only the (height, id) rows that drive reorg detection (Fuel

@@ -140,17 +140,6 @@ let make = (
 
     let parsingRef = Performance.now()
 
-    // Per-slot blockTime lookup from the response's `blocks` table, for the
-    // batch's `latestFetchedBlockTimestamp`. Slots without a block row (rare;
-    // usually skipped slots) fall back to `None`.
-    let blockTimeBySlot = Dict.make()
-    resp.blocks->Array.forEach(b => {
-      switch b.blockTime {
-      | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
-      | None => ()
-      }
-    })
-
     let parsedQueueItems = resp.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
@@ -180,15 +169,10 @@ let make = (
 
     let parsingTimeElapsed = parsingRef->Performance.secondsSince
     let highestSlot = resp.nextSlot - 1
-    let latestBlockTime =
-      blockTimeBySlot
-      ->Utils.Dict.dangerouslyGetNonOption(highestSlot->Int.toString)
-      ->Option.getOr(0)
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
-      latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
