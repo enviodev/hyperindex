@@ -107,6 +107,15 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // The name handlers, generated types and the test-indexer accessor use.
+    // Omitted when it's the capitalized entity name the runtime falls back to,
+    // so every project predating `as_entity` keeps producing the same JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_name: Option<String>,
+    // A materialized table without `as_entity` is queryable and stored but never
+    // reachable from a handler.
+    #[serde(skip_serializing_if = "is_false")]
+    hidden_from_handlers: bool,
     // Emitted only when the entity's resolved scope differs from
     // `defaultCrossChain`, which the runtime falls back to. Repeating the
     // default would diff against every project that predates the field.
@@ -865,8 +874,13 @@ impl SystemConfig {
                     }
                 };
 
+                let handler_name = cfg.entity_handler_name(&entity.name);
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    handler_name: handler_name
+                        .clone()
+                        .filter(|name| name != &entity.name.clone().capitalize()),
+                    hidden_from_handlers: handler_name.is_none(),
                     cross_chain: Some(system_config::entity_is_cross_chain(
                         entity,
                         cfg.default_cross_chain,

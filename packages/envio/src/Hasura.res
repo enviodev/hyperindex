@@ -250,6 +250,28 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
   }
 }
 
+let makeSelectPermission = (~responseLimit, ~allowAggregations, ~hideByPk) => {
+  let permission = dict{
+    "columns": "*"->(Utils.magic: string => JSON.t),
+    "filter": Object.make()->(Utils.magic: {..} => JSON.t),
+    "limit": responseLimit->(Utils.magic: option<int> => JSON.t),
+    "allow_aggregations": allowAggregations->(Utils.magic: bool => JSON.t),
+  }
+  if hideByPk {
+    // Listing the allowed roots is the only way to drop `<table>_by_pk` — a
+    // materialized table without `as_entity` is queried as a set, not by id.
+    // Hasura rejects `select_aggregate` here unless aggregations are allowed.
+    let roots = ["select"]
+    if allowAggregations {
+      roots->Array.push("select_aggregate")->ignore
+    }
+    let rootsJson = roots->(Utils.magic: array<string> => JSON.t)
+    permission->Dict.set("query_root_fields", rootsJson)
+    permission->Dict.set("subscription_root_fields", rootsJson)
+  }
+  permission
+}
+
 let createSelectPermission = async (
   ~endpoint,
   ~auth,
@@ -257,7 +279,13 @@ let createSelectPermission = async (
   ~pgSchema,
   ~responseLimit,
   ~aggregateEntities,
+  ~hideByPk: bool,
 ) => {
+  let permission = makeSelectPermission(
+    ~responseLimit,
+    ~allowAggregations=aggregateEntities->Array.includes(tableName),
+    ~hideByPk,
+  )
   await sendOperation(
     ~endpoint,
     ~auth,
@@ -270,12 +298,7 @@ let createSelectPermission = async (
         },
         "role": "public",
         "source": "default",
-        "permission": {
-          "columns": "*",
-          "filter": Object.make(),
-          "limit": responseLimit,
-          "allow_aggregations": aggregateEntities->Array.includes(tableName),
-        },
+        "permission": permission,
       },
     }->(Utils.magic: 'a => JSON.t),
   )
@@ -286,9 +309,7 @@ let createSelectPermission = async (
 // column joins alongside the id — without it the relationship would resolve to
 // another chain's row with the same id.
 let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
-  let pairs = [
-    isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}": "id"`,
-  ]
+  let pairs = [isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}": "id"`]
   switch chainIdColumn {
   | Some(column) => pairs->Array.push(`"${column}": "${column}"`)->ignore
   | None => ()
@@ -309,7 +330,6 @@ let createEntityRelationship = async (
   ~chainIdColumn: option<string>,
   ~comment: option<string>=?,
 ) => {
-
   let tableJson = {
     "schema": pgSchema,
     "name": tableName,
@@ -380,6 +400,10 @@ let trackDatabase = async (
   })
   let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
   let tableNames = tableConfigs->Array.map(c => c.tableName)
+  let hiddenTableNames =
+    userEntities->Array.filterMap((e: Internal.entityConfig) =>
+      e.hiddenFromHandlers ? Some(e.table.tableName) : None
+    )
 
   Logging.info("Tracking tables in Hasura")
 
@@ -401,6 +425,7 @@ let trackDatabase = async (
       ~pgSchema,
       ~responseLimit,
       ~aggregateEntities,
+      ~hideByPk=hiddenTableNames->Array.includes(tableName),
     )
   }
 
@@ -417,7 +442,8 @@ let trackDatabase = async (
   for i in 0 to userEntities->Array.length - 1 {
     let entityConfig = userEntities->Array.getUnsafe(i)
     let {tableName} = entityConfig.table
-    let ownChainIdColumn = entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+    let ownChainIdColumn =
+      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
     let sharedChainIdColumn = mappedEntity =>
       switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
       | (Some(column), Some(_)) => Some(column)

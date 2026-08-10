@@ -790,10 +790,21 @@
             ]
           },
           "storage": {
-            "description": "Which backends store this table, overriding the `storage` defaults in config.yaml. The `clickhouse` option takes a boolean or a table options object (which implies the backend is enabled).",
+            "description": "Which backends store this table, overriding the `storage` defaults in config.yaml. The `postgres` and `clickhouse` options each take a boolean or an options object (which implies the backend is enabled).",
             "anyOf": [
               {
                 "$ref": "#/$defs/TableStorage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "as_entity": {
+            "description": "Expose the table to handlers as a readable entity. A name spells the accessor (`as_entity: Account` gives `context.Account`); `true` uses the capitalized table name. Omitted, the table is materialized and queryable over GraphQL but absent from the handler context. Materialized tables are never writable from handlers.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AsEntitySchema"
               },
               {
                 "type": "null"
@@ -986,6 +997,17 @@
         }
       },
       "additionalProperties": false
+    },
+    "AsEntitySchema": {
+      "description": "Shape stand-in for the JSON schema, which has no union of bool and string\nwithout a named type.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ]
     },
     "Queries": {
       "anyOf": [

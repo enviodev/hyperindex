@@ -112,7 +112,7 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
         let (_, id_type) = entity_id_type(entity);
 
         writeln!(code).unwrap();
-        writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
+        writeln!(code, "module {} = {{", entity.code_name).unwrap();
         writeln!(code, "  type id = {}", id_type).unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
         writeln!(code).unwrap();
@@ -154,7 +154,7 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
                 code,
                 "  | @as(\"{0}\") {0}: name<{0}.testIndexerRow, {0}.id, \
                  {0}.testIndexerGetWhereFilter>",
-                entity.name.capitalized
+                entity.code_name
             )
             .unwrap();
         }
@@ -234,6 +234,14 @@ impl CompositeIndexFieldTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
+    // What code calls the entity: the `as_entity` name for a materialized
+    // table, else the capitalized entity name. Names the generated module, the
+    // TS type, `context.<X>` and `indexer.<X>`, while `name` stays the
+    // database and GraphQL spelling.
+    pub code_name: String,
+    // A materialized table without `as_entity` is stored and queryable but
+    // absent from the handler context.
+    pub hidden_from_handlers: bool,
     pub type_code: String,
     pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
@@ -329,8 +337,13 @@ impl EntityRecordTypeTemplate {
             .collect();
         let get_where_filter_code = format!("{{{}}}", get_where_filter_fields.join(", "));
 
+        let handler_name = config.entity_handler_name(&entity.name);
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
+            code_name: handler_name
+                .clone()
+                .unwrap_or_else(|| entity.name.clone().capitalize()),
+            hidden_from_handlers: handler_name.is_none(),
             postgres_fields,
             type_code,
             get_where_filter_code,
@@ -1562,8 +1575,9 @@ switch chainId {{
         let has_custom_id_entity = entities.iter().any(|entity| !entity_id_type(entity).0);
         let handler_context_entity_fields = entities
             .iter()
+            .filter(|entity| !entity.hidden_from_handlers)
             .map(|entity| {
-                let name = &entity.name.capitalized;
+                let name = &entity.code_name;
                 if entity_id_type(entity).0 {
                     format!(
                         "  \\\"{name}\": handlerEntityOperations<Entities.{name}.t, \
@@ -1942,7 +1956,7 @@ type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
         let test_indexer_entity_fields = entities
             .iter()
             .map(|entity| {
-                let name = &entity.name.capitalized;
+                let name = &entity.code_name;
                 let row = format!("Entities.{name}.testIndexerRow");
                 let filter = format!("Entities.{name}.testIndexerGetWhereFilter");
                 if entity_id_type(entity).0 {
@@ -2459,7 +2473,7 @@ type testIndexer = {{
                         .collect();
                     format!(
                         "  \"{}\": {{\n{}\n  }};",
-                        entity.name.capitalized,
+                        entity.code_name,
                         field_entries.join("\n")
                     )
                 })
@@ -2478,10 +2492,7 @@ type testIndexer = {{
         // (`import type { User } from "envio"`). Enums skip aliasing —
         // their schema names often clash with TS reserved words or
         // existing envio exports, so users go through `Enum<"Name">`.
-        let entity_aliases: Vec<String> = entities
-            .iter()
-            .map(|e| e.name.capitalized.clone())
-            .collect();
+        let entity_aliases: Vec<String> = entities.iter().map(|e| e.code_name.clone()).collect();
 
         Ok(ProjectTemplate {
             chain_configs,
@@ -2505,7 +2516,7 @@ type testIndexer = {{
                         let names: Vec<String> = entities
                             .iter()
                             .filter(|e| !e.cross_chain)
-                            .map(|e| format!("\"{}\"", e.name.capitalized))
+                            .map(|e| format!("\"{}\"", e.code_name))
                             .collect();
                         if names.is_empty() {
                             "never".to_string()

@@ -128,10 +128,20 @@ pub struct TableConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Which backends store this table, overriding the `storage` defaults in \
-                       config.yaml. The `clickhouse` option takes a boolean or a table options \
-                       object (which implies the backend is enabled)."
+                       config.yaml. The `postgres` and `clickhouse` options each take a boolean \
+                       or an options object (which implies the backend is enabled)."
     )]
     pub storage: Option<TableStorage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        with = "Option<AsEntitySchema>",
+        description = "Expose the table to handlers as a readable entity. A name spells the \
+                       accessor (`as_entity: Account` gives `context.Account`); `true` uses the \
+                       capitalized table name. Omitted, the table is materialized and queryable \
+                       over GraphQL but absent from the handler context. Materialized tables are \
+                       never writable from handlers."
+    )]
+    pub as_entity: Option<AsEntity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         with = "Option<BTreeMap<String, Queries>>",
@@ -152,6 +162,59 @@ pub struct TableConfig {
                        numbers, booleans and null are literals."
     )]
     pub select: IndexMap<String, RawYaml>,
+}
+
+/// `as_entity: true` or `as_entity: SomeName`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum AsEntity {
+    Enabled(bool),
+    Named(String),
+}
+
+impl<'de> Deserialize<'de> for AsEntity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = AsEntity;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a boolean or an entity name")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(AsEntity::Enabled(v))
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(AsEntity::Named(v.to_string()))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// Shape stand-in for the JSON schema, which has no union of bool and string
+/// without a named type.
+#[derive(JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+pub enum AsEntitySchema {
+    Enabled(bool),
+    Named(String),
+}
+
+impl AsEntity {
+    /// The name handlers reach the table by, or `None` when it stays hidden.
+    fn code_name(&self, table_name: &str) -> Option<String> {
+        match self {
+            AsEntity::Enabled(false) => None,
+            AsEntity::Enabled(true) => Some(table_name.to_string().capitalize()),
+            AsEntity::Named(name) => Some(name.clone()),
+        }
+    }
 }
 
 /// Per-table backend selection, mirroring the `@storage` directive an entity in
@@ -826,6 +889,9 @@ pub struct Compiled {
     /// GraphQL SDL for every table declared in `tables`.
     pub sdl: String,
     pub materializations: Vec<Materialization>,
+    /// The name handlers reach each table by, or `None` when the table stays out
+    /// of the handler context. Keyed by table name.
+    pub handler_names: BTreeMap<String, Option<String>>,
     /// Per-event block/transaction fields the materializations read, so each
     /// event fetches exactly what its tables select.
     pub field_demand: DemandByEvent,
@@ -1820,8 +1886,18 @@ pub fn compile(
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
     let mut demand = DemandByEvent::default();
+    let mut handler_names = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
+        let handler_name = match &table.as_entity {
+            Some(as_entity) => as_entity.code_name(table_name),
+            None => None,
+        };
+        if let Some(name) = &handler_name {
+            validate_handler_name(name, table_name)?;
+        }
+        handler_names.insert(table_name.clone(), handler_name);
+
         let compiled = compile_table(
             table_name,
             table,
@@ -1845,6 +1921,7 @@ pub fn compile(
     Ok(Compiled {
         sdl,
         materializations,
+        handler_names,
         field_demand: demand,
     })
 }
@@ -2400,6 +2477,22 @@ fn resolve_event_branches(
     Ok(branches)
 }
 
+/// The handler name becomes a record field in generated ReScript and a key in
+/// generated TypeScript, so it has to be a capitalized identifier the same way a
+/// contract name does.
+fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
+    let mut chars = name.chars();
+    let valid = matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if valid {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "`tables.{table_name}.as_entity` is `{name}`, which can't name the generated accessor. \
+         Use letters, digits and underscores, starting with a capital."
+    ))
+}
+
 /// `_ref` and `_derived_from` name tables, and the generated SDL uses those
 /// names verbatim — so a table name has to be a usable GraphQL type name.
 pub fn validate_table_names(tables: &Tables) -> Result<()> {
@@ -2532,6 +2625,7 @@ tables:
             serde_json::json!([
                 {
                     "name": "accounts",
+                    "hiddenFromHandlers": true,
                     "properties": [
                         {"name": "id", "type": "string"},
                         {"name": "balance", "type": "bigint"}
@@ -2544,6 +2638,7 @@ tables:
                 },
                 {
                     "name": "approvals",
+                    "hiddenFromHandlers": true,
                     "properties": [
                         {"name": "id", "type": "string"},
                         {"name": "amount", "type": "bigint"},

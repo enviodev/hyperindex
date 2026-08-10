@@ -18,6 +18,8 @@ chains:
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 tables:
   accounts:
+    # Handlers only see a table that opts in; writes stay blocked either way.
+    as_entity: true
     from: evm.events
     where:
       contractName: ERC20

@@ -745,6 +745,13 @@ type entityStorage = {
 
 type genericEntityConfig<'entity> = {
   name: string,
+  // What code calls the entity: the `as_entity` name for a materialized table,
+  // else the capitalized `name`. Keys `context.<X>`, `indexer.<X>` and the
+  // generated types, while `name` stays the database and GraphQL spelling.
+  codeName: string,
+  // A materialized table without `as_entity` is stored and queryable but never
+  // reachable from a handler.
+  hiddenFromHandlers: bool,
   index: int,
   schema: S.t<'entity>,
   table: Table.table,

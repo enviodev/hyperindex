@@ -116,6 +116,8 @@ type t = {
   lowercaseAddresses: bool,
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
+  // Every table by its schema name, including ones hidden from handlers.
+  entitiesByTableName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
@@ -178,6 +180,10 @@ module EnvioAddresses = {
 
   let entityConfig = {
     Internal.name,
+    // Internal table: never in the handler context, and its code name is only
+    // used where a name is required.
+    codeName: name,
+    hiddenFromHandlers: true,
     index,
     schema,
     table,
@@ -380,6 +386,8 @@ let entityStorageSchema = S.schema(s =>
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "handlerName": s.matches(S.option(S.string)),
+    "hiddenFromHandlers": s.matches(S.option(S.bool)),
     "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
@@ -580,6 +588,8 @@ let parseEntitiesFromJson = (
 
     {
       Internal.name: entityName,
+      codeName: entityJson["handlerName"]->Option.getOr(entityName->Utils.String.capitalize),
+      hiddenFromHandlers: entityJson["hiddenFromHandlers"]->Option.getOr(false),
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
@@ -1067,16 +1077,20 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
-  // Keyed by the capitalized entity name to match the handler-context
-  // accessor (`context.Pool_snapshots`) the generated types expose, while
-  // entityConfig.name stays the original schema name used for the physical
-  // Postgres/ClickHouse tables.
+  // Keyed by the code-facing name the generated handler context exposes
+  // (`context.Pool_snapshots`, or an `as_entity` name), while entityConfig.name
+  // stays the schema name the physical Postgres/ClickHouse tables use. A
+  // materialized table without `as_entity` is absent: handlers can't reach it.
   let userEntitiesByName =
     userEntities
-    ->Array.map(entityConfig => {
-      (entityConfig.name->Utils.String.capitalize, entityConfig)
-    })
+    ->Array.filter(entityConfig => !entityConfig.hiddenFromHandlers)
+    ->Array.map(entityConfig => (entityConfig.codeName, entityConfig))
     ->Dict.fromArray
+
+  // Keyed by the schema name, so the materializer can reach a table the handler
+  // context deliberately hides.
+  let entitiesByTableName =
+    userEntities->Array.map(entityConfig => (entityConfig.name, entityConfig))->Dict.fromArray
 
   let materializations = switch publicConfig["materializations"] {
   | Some(json) => json->MaterializationPlan.parseAllOrThrow
@@ -1120,6 +1134,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     lowercaseAddresses,
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
+    entitiesByTableName,
     userEntities,
     allEntities,
     allEnums,

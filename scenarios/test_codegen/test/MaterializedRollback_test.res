@@ -130,7 +130,7 @@ describe("Materialized reducer rollback", () => {
     await indexerMock.waitUntilIdle()
 
     let accounts: array<account> = await indexerMock.queryRaw(
-      config.userEntitiesByName->Dict.getUnsafe("Accounts"),
+      config.entitiesByTableName->Dict.getUnsafe("accounts"),
     )
     await indexerMock.stop()
 
@@ -178,7 +178,7 @@ describe("Materialized reducer rollback", () => {
     await indexerMock.waitUntilIdle()
 
     let accounts: array<account> = await indexerMock.queryRaw(
-      config.userEntitiesByName->Dict.getUnsafe("Accounts"),
+      config.entitiesByTableName->Dict.getUnsafe("accounts"),
     )
     await indexerMock.stop()
 

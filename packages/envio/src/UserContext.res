@@ -171,7 +171,7 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
 // would be silently reverted the next time the source event is reprocessed.
 let throwMaterializedReadOnly = (entityConfig: Internal.entityConfig, op: string): 'a =>
   JsError.throwWithMessage(
-    `context.${entityConfig.name->Utils.String.capitalize}.${op}() is unavailable: \`${entityConfig.name}\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to schema.graphql to write it from handlers.`,
+    `context.${entityConfig.codeName}.${op}() is unavailable: \`${entityConfig.name}\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to schema.graphql to write it from handlers.`,
   )
 
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
@@ -377,10 +377,10 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       ->(Utils.magic: option<Internal.chainInfo> => unknown)
     | _ if prop === Internal.materializerProp =>
       (
+        // By schema name, not the handler-context key: a table without
+        // `as_entity` is deliberately absent from that lookup.
         (table: string) =>
-          switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(
-            table->Utils.String.capitalize,
-          ) {
+          switch params.config.entitiesByTableName->Utils.Dict.dangerouslyGetNonOption(table) {
           | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=true)
           | None => JsError.throwWithMessage(`Materialized table '${table}' has no entity.`)
           }
@@ -389,9 +389,20 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
       | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=false)
       | None =>
-        JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
-        )
+        // A materialized table that didn't opt in is absent on purpose, so say
+        // that rather than sending the user to regenerate code.
+        switch params.config.userEntities->Array.find(entityConfig =>
+          entityConfig.hiddenFromHandlers && entityConfig.codeName === prop
+        ) {
+        | Some(entityConfig) =>
+          JsError.throwWithMessage(
+            `context.${prop} is unavailable: the table \`${entityConfig.name}\` is materialized by config.yaml and not exposed to handlers. Add \`as_entity: ${prop}\` to it to read it here.`,
+          )
+        | None =>
+          JsError.throwWithMessage(
+            `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
+          )
+        }
       }
     }
   },
