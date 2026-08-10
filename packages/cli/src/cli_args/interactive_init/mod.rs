@@ -281,8 +281,8 @@ pub async fn prompt_missing_init_args(
                     });
             if has_invalid_component {
                 anyhow::bail!(
-                    "Invalid --directory value {args_directory:?}: folder names cannot \
-                     contain any of: / \\ : * ? \" ' < > |, and cannot be empty."
+                    "Invalid --directory value {args_directory:?}: folder names cannot contain \
+                     any of: / \\ : * ? \" ' < > |, and cannot be empty."
                 );
             }
             args_directory.clone()

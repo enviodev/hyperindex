@@ -200,10 +200,13 @@ module Entities = {
     type t = {id: id, emptyField: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("emptyField") emptyField?: Envio.whereOperator<id>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
-  type rec name<'entity, 'id> =
-    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.t, EmptyEntity.id>
+  type rec name<'entity, 'id, 'getWhereFilter> =
+    | @as("EmptyEntity") EmptyEntity: name<EmptyEntity.testIndexerRow, EmptyEntity.id, EmptyEntity.testIndexerGetWhereFilter>
 }
 
 type chainId = [#1 | #2]
@@ -500,22 +503,26 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
+type testIndexerEntityOperations<'entity, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }
 
-type testIndexerEntityOperationsWithCustomId<'entity, 'id> = {
+type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: 'id => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
@@ -530,10 +537,10 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.t>,
+  \"EmptyEntity": testIndexerEntityOperations<Entities.EmptyEntity.testIndexerRow, Entities.EmptyEntity.testIndexerGetWhereFilter>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id>) => testIndexerEntityOperationsWithCustomId<'entity, 'id> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

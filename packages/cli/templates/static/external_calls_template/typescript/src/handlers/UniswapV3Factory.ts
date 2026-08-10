@@ -79,7 +79,7 @@ indexer.onEvent(
 
     // Entity data for indexing
     const entity = {
-      id: `${event.chainId}_${event.params.pool}`, // Unique ID (chain + pool address)
+      id: event.params.pool, // Pool address
       token0: event.params.token0, // Token0 address
       token0Decimals: token0Details.decimal, // Fetched token0 decimals
       token1: event.params.token1, // Token1 address

@@ -5,28 +5,6 @@ type rollbackState =
   | FoundReorgDepth({chainId: ChainId.t, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
-module EntityTables = {
-  type t = dict<InMemoryTable.Entity.t>
-  exception UndefinedEntity({entityName: string})
-  let make = (entities: array<Internal.entityConfig>): t => {
-    let init = Dict.make()
-    entities->Array.forEach(entityConfig => {
-      init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
-    })
-    init
-  }
-
-  let get = (self: t, ~entityName: string) => {
-    switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
-    | Some(table) => table
-    | None =>
-      UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
-        ~msg="Unexpected, entity InMemoryTable is undefined",
-      )
-    }
-  }
-}
-
 // Per-(contract, event) handler counters rendered into the
 // envio_processing_handler_* and envio_preload_handler_* metrics.
 type handlerStat = {
@@ -75,6 +53,8 @@ type t = {
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
+  // Cross-chain entities only; each ChainState holds its own partition for the
+  // per-chain ones.
   mutable entities: EntityTables.t,
   effectState: EffectState.t,
   mutable rollback: option<Persistence.rollback>,
@@ -186,7 +166,7 @@ let make = (
     config,
     persistence,
     allEntities: persistence.allEntities,
-    entities: EntityTables.make(persistence.allEntities),
+    entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
     effectState: EffectState.make(),
     rollback: None,
     committedCheckpointId,
@@ -467,6 +447,30 @@ let config = (state: t) => state.config
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
+
+// Every in-memory entity table across all scopes, cross-chain first. The size,
+// drop and flush passes walk the whole store this way instead of assuming a
+// single partition.
+let eachEntityTable = (state: t, fn: (~entityConfig: Internal.entityConfig, ~scope: Internal.chainScope, ~table: InMemoryTable.Entity.t) => unit) => {
+  let chainStates = state.crossChainState->CrossChainState.chainStates
+  state.allEntities->Array.forEach(entityConfig =>
+    if entityConfig.crossChain {
+      fn(
+        ~entityConfig,
+        ~scope=Internal.CrossChain,
+        ~table=state.entities->EntityTables.get(~entityName=entityConfig.name),
+      )
+    } else {
+      chainStates->Utils.Dict.forEach(chainState => {
+        fn(
+          ~entityConfig,
+          ~scope=Internal.Chain((chainState->ChainState.chainConfig).id),
+          ~table=chainState->ChainState.entities->EntityTables.get(~entityName=entityConfig.name),
+        )
+      })
+    }
+  )
+}
 let effectState = (state: t) => state.effectState
 let committedCheckpointId = (state: t) => state.committedCheckpointId
 let processedCheckpointId = (state: t) => state.processedCheckpointId
@@ -802,7 +806,9 @@ let beginRollbackDiff = (
   ~diffCheckpointId,
   ~progressBlockNumberByChainId,
 ) => {
-  state.entities = EntityTables.make(state.allEntities)
+  let perChainEntities = state.allEntities->EntityTables.perChain
+  state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
+  state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback
   state.rollback = Some({
     targetCheckpointId,

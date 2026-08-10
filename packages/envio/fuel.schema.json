@@ -49,6 +49,13 @@
         }
       ]
     },
+    "disable_default_cross_chain": {
+      "description": "Make entities and effect caches per-chain instead of shared across every chain (recommended). Sharing then becomes explicit — add `@crossChain` to an entity in schema.graphql or `crossChain: true` to an effect. (default: false)",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "ecosystem": {
       "description": "Ecosystem of the project.",
       "$ref": "#/$defs/EcosystemTag"

@@ -59,10 +59,25 @@ type sourceSync = {
   pollingInterval: int,
 }
 
+// How a backend spells column names, mirroring `column_name_format` in
+// config.yaml. Only the internal columns the runtime appends need it — user
+// field names arrive pre-resolved from the CLI.
+type columnNameFormat = | @as("original") Original | @as("snake_case") SnakeCase
+
 type storage = {
   postgres: bool,
   clickhouse: bool,
+  postgresColumnNameFormat: columnNameFormat,
+  clickhouseColumnNameFormat: columnNameFormat,
 }
+
+let chainIdFieldName = "chainId"
+
+let chainIdColumnName = format =>
+  switch format {
+  | Original => chainIdFieldName
+  | SnakeCase => "chain_id"
+  }
 
 type contractHandler = {
   name: string,
@@ -76,6 +91,10 @@ type t = {
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
+  // False when `disable_default_cross_chain: true` in config.yaml. Entities
+  // carry their own resolved `crossChain`; this only decides the default for
+  // effects that don't state one.
+  defaultCrossChain: bool,
   storage: storage,
   // Widest scalar the internal chain-id columns need, resolved by the CLI from
   // the maximum active chain id. Older configs predate the field, and every id
@@ -161,6 +180,9 @@ module EnvioAddresses = {
     // always required to have Postgres enabled (Storage::resolve forbids
     // a Postgres-disabled global), so this is safe regardless of mode.
     storage: {postgres: true, clickhouse: false},
+    // The table already keys rows by chain through the composite `id`, so the
+    // per-chain mode must not append a second chain-id column to it.
+    crossChain: true,
   }->Internal.fromGenericEntityConfig
 }
 
@@ -353,6 +375,7 @@ let entityStorageSchema = S.schema(s =>
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
@@ -424,13 +447,30 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
   )
 }
 
+// The chain-id column appended to a per-chain entity's table. It completes the
+// primary key so the same id can exist independently on every chain, and it's
+// spelled per backend because the two can be configured with different
+// `column_name_format`s.
+let makeChainIdField = (~globalStorage: storage) =>
+  Table.mkField(
+    chainIdFieldName,
+    ChainId,
+    ~fieldSchema=ChainId.schema,
+    ~isPrimaryKey=true,
+    ~isChainId=true,
+    ~postgresDbName=globalStorage.postgresColumnNameFormat->chainIdColumnName,
+    ~clickhouseDbName=globalStorage.clickhouseColumnNameFormat->chainIdColumnName,
+  )
+
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
   ~globalStorage: storage,
+  ~defaultCrossChain: bool,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
+    let crossChain = entityJson["crossChain"]->Option.getOr(defaultCrossChain)
 
     let fields: array<Table.fieldOrDerived> = entityJson["properties"]->Array.map(prop => {
       let (fieldType, fieldSchema, isNullable, isArray, isIndex) = getFieldTypeAndSchema(
@@ -478,7 +518,10 @@ let parseEntitiesFromJson = (
 
     let table = Table.mkTable(
       entityName,
-      ~fields=Array.concat(fields, derivedFields),
+      ~fields=Array.concatMany(
+        fields,
+        [crossChain ? [] : [makeChainIdField(~globalStorage)], derivedFields],
+      ),
       ~compositeIndexes,
       ~description=?entityJson["description"],
     )
@@ -536,14 +579,19 @@ let parseEntitiesFromJson = (
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
       storage,
+      crossChain,
     }->Internal.fromGenericEntityConfig
   })
 }
+
+let columnNameFormatSchema = S.enum([Original, SnakeCase])
 
 let publicConfigStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.bool),
     "clickhouse": s.matches(S.option(S.bool)),
+    "postgresColumnNameFormat": s.matches(S.option(columnNameFormatSchema)),
+    "clickhouseColumnNameFormat": s.matches(S.option(columnNameFormatSchema)),
   }
 )
 
@@ -558,6 +606,7 @@ let publicConfigSchema = S.schema(s =>
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
     "chainIdMode": s.matches(S.option(ChainId.modeSchema)),
+    "defaultCrossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(publicConfigStorageSchema),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -995,12 +1044,20 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let globalStorage: storage = {
     postgres: publicConfig["storage"]["postgres"],
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+    postgresColumnNameFormat: publicConfig["storage"]["postgresColumnNameFormat"]->Option.getOr(
+      Original,
+    ),
+    clickhouseColumnNameFormat: publicConfig["storage"]["clickhouseColumnNameFormat"]->Option.getOr(
+      Original,
+    ),
   }
+
+  let defaultCrossChain = publicConfig["defaultCrossChain"]->Option.getOr(true)
 
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage, ~defaultCrossChain)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -1036,6 +1093,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
+    defaultCrossChain,
     storage: globalStorage,
     chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,

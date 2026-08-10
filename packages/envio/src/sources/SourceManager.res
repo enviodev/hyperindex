@@ -557,16 +557,16 @@ let getSourceNewHeight = async (
               // head on every (re)connect; waking the wait loop on a height we already
               // know spins it and leaks fallback pollers (#1270).
               if newHeight > sourceState.knownHeight {
+                sourceState->recordRequestStats([{Source.method: "heightPush", seconds: 0.}])
                 sourceState.knownHeight = newHeight
                 let resolvers = sourceState.pendingHeightResolvers
                 sourceState.pendingHeightResolvers = []
                 resolvers->Array.forEach(resolve => resolve(newHeight))
+              } else {
+                sourceState->recordRequestStats([{Source.method: "heightPushIgnored", seconds: 0.}])
               }
             })
             sourceState.unsubscribe = Some(unsubscribe)
-            // Count a subscription (re)start rather than every pushed height —
-            // there's no request/response to time here.
-            sourceState->recordRequestStats([{Source.method: "heightSubscription", seconds: 0.}])
           | _ =>
             // Slowdown polling when the chain isn't progressing
             let pollingInterval = if reducedPolling {

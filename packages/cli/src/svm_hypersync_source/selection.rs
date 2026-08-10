@@ -127,7 +127,8 @@ impl Registration {
         if let Some(bytes) = &discriminator {
             anyhow::ensure!(
                 matches!(byte_len, 1 | 2 | 4 | 8) && bytes.len() == byte_len,
-                "discriminator byte length must be 1/2/4/8 and match the value, got {} bytes declared as {}",
+                "discriminator byte length must be 1/2/4/8 and match the value, got {} bytes \
+                 declared as {}",
                 bytes.len(),
                 byte_len,
             );

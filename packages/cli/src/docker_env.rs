@@ -199,18 +199,16 @@ async fn connect_docker() -> anyhow::Result<Docker> {
 
     // Build an actionable error with platform-specific hints.
     let hint = if cfg!(target_os = "macos") {
-        "Hint: Open Docker Desktop, or run:\n  \
-         export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock"
+        "Hint: Open Docker Desktop, or run:\n  export \
+         DOCKER_HOST=unix://$HOME/.docker/run/docker.sock"
     } else {
-        "Hint: Start the Docker daemon:\n  \
-         sudo systemctl start docker"
+        "Hint: Start the Docker daemon:\n  sudo systemctl start docker"
     };
 
     anyhow::bail!(
-        "Failed connecting to Docker or Podman. Is the daemon running?\n\
-         Checked: DOCKER_HOST, default Docker socket, ~/.docker/run/docker.sock, \
-         CONTAINER_HOST, common Podman sockets.\n\n\
-         {hint}"
+        "Failed connecting to Docker or Podman. Is the daemon running?\nChecked: DOCKER_HOST, \
+         default Docker socket, ~/.docker/run/docker.sock, CONTAINER_HOST, common Podman \
+         sockets.\n\n{hint}"
     )
 }
 
@@ -459,8 +457,8 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
                 if attempt < IMAGE_PULL_RETRIES {
                     let delay = Duration::from_secs(2u64.pow(attempt));
                     eprintln!(
-                        "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} failed: {e:#}\n\
-                         Retrying in {}s...",
+                        "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} failed: {e:#}\nRetrying in \
+                         {}s...",
                         delay.as_secs()
                     );
                     tokio::time::sleep(delay).await;
@@ -470,8 +468,7 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
                 last_err = Some(format!("Timed out after {}s", IMAGE_PULL_TIMEOUT.as_secs()));
                 if attempt < IMAGE_PULL_RETRIES {
                     eprintln!(
-                        "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} timed out.\n\
-                         Retrying..."
+                        "\nPull attempt {attempt}/{IMAGE_PULL_RETRIES} timed out.\nRetrying..."
                     );
                 }
             }
@@ -479,9 +476,8 @@ async fn ensure_image(docker: &Docker, image: &str) -> anyhow::Result<()> {
     }
 
     anyhow::bail!(
-        "Failed to pull image {image} after {IMAGE_PULL_RETRIES} attempts.\n\
-         Last error: {}\n\
-         Check your network connection and Docker Hub rate limits.",
+        "Failed to pull image {image} after {IMAGE_PULL_RETRIES} attempts.\nLast error: {}\nCheck \
+         your network connection and Docker Hub rate limits.",
         last_err.unwrap_or_default()
     )
 }
@@ -678,12 +674,12 @@ async fn port_conflict_error(
     }
     let hint = match find_port_conflict(docker, host_port).await {
         Some(c) => format!(
-            "Port {host_port} is already in use by container \"{c}\".\n\
-             Run: docker stop {c} && docker rm {c}"
+            "Port {host_port} is already in use by container \"{c}\".\nRun: docker stop {c} && \
+             docker rm {c}"
         ),
         None => format!(
-            "Port {host_port} is already in use by another process.\n\
-             Run: lsof -ti :{host_port} | xargs kill"
+            "Port {host_port} is already in use by another process.\nRun: lsof -ti :{host_port} | \
+             xargs kill"
         ),
     };
     Some(anyhow::anyhow!("Cannot start container {name}.\n{hint}"))
@@ -817,15 +813,15 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     let env = EnvConfig::from_project(opts.project_root);
     let pg_host_port: u16 = env.pg_port.parse().with_context(|| {
         format!(
-            "ENVIO_PG_PORT={:?} is not a valid port number. \
-             Remove it from your .env / environment to use the default (5433).",
+            "ENVIO_PG_PORT={:?} is not a valid port number. Remove it from your .env / \
+             environment to use the default (5433).",
             env.pg_port
         )
     })?;
     let hasura_host_port: u16 = env.hasura_port.parse().with_context(|| {
         format!(
-            "HASURA_EXTERNAL_PORT={:?} is not a valid port number. \
-             Remove it from your .env / environment to use the default (8080).",
+            "HASURA_EXTERNAL_PORT={:?} is not a valid port number. Remove it from your .env / \
+             environment to use the default (8080).",
             env.hasura_port
         )
     })?;
@@ -868,11 +864,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     // silently starting a Docker container the user didn't ask for.
     if pg_external && !pg_alive {
         anyhow::bail!(
-            "Postgres is not reachable at {host}:{port} (from ENVIO_PG_HOST).\n\
-             \n\
-             Possible fixes:\n\
-             - Verify the host is running and accepts connections on that port.\n\
-             - Unset ENVIO_PG_HOST to let the CLI start a local Docker container instead.",
+            "Postgres is not reachable at {host}:{port} (from ENVIO_PG_HOST).\n\nPossible \
+             fixes:\n- Verify the host is running and accepts connections on that port.\n- Unset \
+             ENVIO_PG_HOST to let the CLI start a local Docker container instead.",
             host = env.pg_host_str(),
             port = pg_host_port
         );
@@ -880,13 +874,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
     if let Some(url) = ch_url_ref {
         if ch_external && !ch_alive {
             anyhow::bail!(
-                "ClickHouse is not reachable at {scheme}://{host}:{port}/ping \
-                 (from ENVIO_CLICKHOUSE_HOST={raw:?}).\n\
-                 \n\
-                 Possible fixes:\n\
-                 - Verify ClickHouse is running and the /ping endpoint responds.\n\
-                 - Check that the URL scheme, host, and port are correct.\n\
-                 - Unset ENVIO_CLICKHOUSE_HOST to let the CLI start a local Docker container instead.",
+                "ClickHouse is not reachable at {scheme}://{host}:{port}/ping (from \
+                 ENVIO_CLICKHOUSE_HOST={raw:?}).\n\nPossible fixes:\n- Verify ClickHouse is \
+                 running and the /ping endpoint responds.\n- Check that the URL scheme, host, and \
+                 port are correct.\n- Unset ENVIO_CLICKHOUSE_HOST to let the CLI start a local \
+                 Docker container instead.",
                 raw = env.ch_host_str(),
                 scheme = url.scheme,
                 host = url.host,
@@ -1230,12 +1222,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if start.elapsed() > Duration::from_secs(60) {
                 eprintln!();
                 anyhow::bail!(
-                    "Postgres did not become reachable on port {pg_host_port} within 60 s.\n\
-                     \n\
-                     Try:\n\
-                     - docker logs {PG_CONTAINER}\n\
-                     - docker ps -a | grep {PG_CONTAINER}\n\
-                     - Ensure nothing else is using port {pg_host_port}."
+                    "Postgres did not become reachable on port {pg_host_port} within 60 \
+                     s.\n\nTry:\n- docker logs {PG_CONTAINER}\n- docker ps -a | grep \
+                     {PG_CONTAINER}\n- Ensure nothing else is using port {pg_host_port}."
                 );
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1257,12 +1246,10 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if start.elapsed() > Duration::from_secs(120) {
                 eprintln!();
                 anyhow::bail!(
-                    "Hasura did not become healthy on port {hasura_host_port} within 120 s.\n\
-                     \n\
-                     Try:\n\
-                     - docker logs {HASURA_CONTAINER}\n\
-                     - Verify Postgres is running (Hasura depends on it).\n\
-                     - Ensure nothing else is using port {hasura_host_port}."
+                    "Hasura did not become healthy on port {hasura_host_port} within 120 \
+                     s.\n\nTry:\n- docker logs {HASURA_CONTAINER}\n- Verify Postgres is running \
+                     (Hasura depends on it).\n- Ensure nothing else is using port \
+                     {hasura_host_port}."
                 );
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1287,12 +1274,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
             if start.elapsed() > Duration::from_secs(60) {
                 eprintln!();
                 anyhow::bail!(
-                    "ClickHouse did not become healthy on port {port} within 60 s.\n\
-                     \n\
-                     Try:\n\
-                     - docker logs {CH_CONTAINER}\n\
-                     - docker ps -a | grep {CH_CONTAINER}\n\
-                     - Ensure nothing else is using port {port}.",
+                    "ClickHouse did not become healthy on port {port} within 60 s.\n\nTry:\n- \
+                     docker logs {CH_CONTAINER}\n- docker ps -a | grep {CH_CONTAINER}\n- Ensure \
+                     nothing else is using port {port}.",
                     port = url.port
                 );
             }
@@ -1411,9 +1395,9 @@ pub async fn down() -> anyhow::Result<()> {
                 status_code: 403, ..
             }) => {
                 eprintln!(
-                    "Warning: network {name} still has active endpoints after \
-                     force-disconnect; leaving it in place. Inspect with \
-                     `docker network inspect {name}` to see what's attached."
+                    "Warning: network {name} still has active endpoints after force-disconnect; \
+                     leaving it in place. Inspect with `docker network inspect {name}` to see \
+                     what's attached."
                 );
                 Ok(())
             }
