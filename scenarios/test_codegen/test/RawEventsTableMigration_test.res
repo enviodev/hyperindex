@@ -15,7 +15,7 @@ describe("Raw Events Table Migrations", () => {
       ],
       ~enableRawEvents=true,
       async indexerMock => {
-        let sql = PgStorage.makeClient()
+        let sql = indexerMock.sql
         let rawEventsColumnsRes: array<{
           "column_name": string,
           "data_type": string,
@@ -62,7 +62,7 @@ describe("Raw Events Table Migrations", () => {
       ],
       ~enableRawEvents=true,
       async indexerMock => {
-        let sql = PgStorage.makeClient()
+        let sql = indexerMock.sql
         // Shared across both inserts, so the second one exercises the cached
         // query the way a storage instance would.
         let setQueryCache = PgStorage.makeSetQueryCache()

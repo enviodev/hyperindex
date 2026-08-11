@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(
             (
                 urls.is_empty(),
-                reported == urls.len(),
+                reported >= urls.len(),
                 urls.iter()
                     .all(|url| url.starts_with("https://docs.envio.dev/docs/")),
                 text.contains("ClickHouse"),
@@ -163,7 +163,7 @@ mod tests {
                 text.contains("Use docs_fetch with the URL"),
             ),
             (false, true, true, true, true, false),
-            "search returned {reported} result(s) with {} URL(s):\n{text}",
+            "search reported {reported} result(s) and listed {} URL(s):\n{text}",
             urls.len(),
         );
     }

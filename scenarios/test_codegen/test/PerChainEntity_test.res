@@ -601,7 +601,7 @@ describe("Per-chain history prune", () => {
         await indexerMock.stop()
 
         let globalEntityConfig = config.userEntitiesByName->Dict.getUnsafe("GlobalCounter")
-        let sql = PgStorage.makeClient()
+        let sql = indexerMock.sql
         let pgSchema = indexerMock.pgSchema
         let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
         let globalHistoryTable = PgStorage.getEntityHistory(

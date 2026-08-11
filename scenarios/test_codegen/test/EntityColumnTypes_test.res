@@ -16,7 +16,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
           },
         ],
         async indexerMock => {
-          let sql = PgStorage.makeClient()
+          let sql = indexerMock.sql
           //  This SQL is quite a beast, but it does work 🙏
           let columnsRes: array<{
             "column_name": string,

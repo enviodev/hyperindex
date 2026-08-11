@@ -474,6 +474,9 @@ module Indexer = {
     // The schema this indexer's tables live in. Raw SQL in a test must go
     // through it rather than a global, since every `run` gets its own.
     pgSchema: string,
+    // The run's own client, closed with it. A test needing raw SQL should reach
+    // for this rather than opening one the run won't clean up.
+    sql: Postgres.sql,
     // Quiesce the run: its loops keep driving the database otherwise, and the
     // schema is dropped out from under them at the end of `run`.
     stop: unit => promise<unit>,
@@ -640,14 +643,19 @@ module Indexer = {
             async () => {
               await state->Writing.flush
               state->IndexerState.stop
-              // Bounded: a test may leave a handler that never resolves, which
-              // pins `isProcessing` forever. `run` checks what actually settled
-              // before it decides to drop the schema.
-              let deadline = Date.now() +. 2000.
-              while (
-                (state->IndexerState.isProcessing ||
-                  state->IndexerState.writeFiber->Option.isSome) && Date.now() < deadline
-              ) {
+              // Tests deliberately leave handlers that never resolve, which pins
+              // `isProcessing` for good — so that wait is short and giving up on
+              // it is expected.
+              let processingDeadline = Date.now() +. 2000.
+              while state->IndexerState.isProcessing && Date.now() < processingDeadline {
+                await Utils.delay(1)
+              }
+              // A write is different: `run` drops the schema straight after, and
+              // a write landing on the dropped schema fails the whole worker. No
+              // test blocks one indefinitely, so this bound is a backstop rather
+              // than something any run is expected to hit.
+              let writeDeadline = Date.now() +. 30_000.
+              while state->IndexerState.writeFiber->Option.isSome && Date.now() < writeDeadline {
                 await Utils.delay(1)
               }
             }
@@ -892,6 +900,7 @@ module Indexer = {
           )
         },
         pgSchema,
+        sql,
         stop,
         restart: async () => {
           // The previous run has to be quiet before the resumed one takes over the
@@ -910,11 +919,24 @@ module Indexer = {
     | exn => Some(exn)
     }
 
+    // Every step runs even if an earlier one throws, and a teardown failure
+    // never replaces the body's — losing the real failure behind a cleanup
+    // error is how a broken test becomes unreadable.
+    let teardownFailure = ref(None)
+    let attempt = async step =>
+      switch await step() {
+      | () => ()
+      | exception exn =>
+        if teardownFailure.contents->Option.isNone {
+          teardownFailure := Some(exn)
+        }
+      }
+
     // Stop before dropping: a still-running loop would fail its next query
     // against the vanished schema and report that instead of the real failure.
     for i in 0 to stops->Array.length - 1 {
       switch stops->Array.get(i) {
-      | Some(stop) => await stop()
+      | Some(stop) => await attempt(stop)
       | None => ()
       }
     }
@@ -922,14 +944,20 @@ module Indexer = {
     // information it could have carried, and the sweeper only covers workers
     // that died before getting here.
     switch clients->Array.get(0) {
-    | Some(sql) => await sql->TestPgSchema.drop(~pgSchema)
+    | Some(sql) => await attempt(() => sql->TestPgSchema.drop(~pgSchema))
     | None => ()
     }
-    let _ = await Promise.all(clients->Array.map(sql => sql->Postgres.endSql))
+    for i in 0 to clients->Array.length - 1 {
+      switch clients->Array.get(i) {
+      | Some(sql) => await attempt(() => sql->Postgres.endSql)
+      | None => ()
+      }
+    }
 
-    switch outcome {
-    | Some(exn) => throw(exn)
-    | None => ()
+    switch (outcome, teardownFailure.contents) {
+    | (Some(exn), _) => throw(exn)
+    | (None, Some(exn)) => throw(exn)
+    | (None, None) => ()
     }
   }
 }

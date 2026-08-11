@@ -31,7 +31,7 @@ describe("Dynamic contracts startup size", () => {
           },
         ],
         async indexerMock => {
-          let sql = PgStorage.makeClient()
+          let sql = indexerMock.sql
           let pgSchema = indexerMock.pgSchema
 
           let chainId = 1337->ChainId.fromInt

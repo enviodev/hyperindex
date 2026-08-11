@@ -2076,6 +2076,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ~itemSchema=itemSchema->S.toUnknown,
       ~pgSchema,
       ~setQueryCache,
+      ~chainIdMode,
     )
   }
 

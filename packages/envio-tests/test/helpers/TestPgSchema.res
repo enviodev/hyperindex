@@ -48,6 +48,15 @@ let sweep = async sql => {
     | _ => None
     }
   })
-  let _ = await Promise.all(stale->Array.map(pgSchema => sql->drop(~pgSchema)))
-  stale
+  // Best effort: this runs before the suite, and a schema that refuses to drop
+  // (someone still connected to it, say) must not stop the tests from running.
+  let dropped = []
+  for i in 0 to stale->Array.length - 1 {
+    let pgSchema = stale->Array.getUnsafe(i)
+    switch await sql->drop(~pgSchema) {
+    | () => dropped->Array.push(pgSchema)->ignore
+    | exception _ => ()
+    }
+  }
+  dropped
 }

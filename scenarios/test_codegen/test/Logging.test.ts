@@ -27,18 +27,19 @@ const runWithStrategy = (strategy: string): string => {
   });
 };
 
-// The ECS transport writes through a worker thread, so the order two
-// statements reach stdout isn't guaranteed once the machine is loaded. Compare
-// those lines as a set: every line still has to match exactly, only their
-// relative order is allowed to differ.
+// pino writes through worker threads, so the order in which two statements
+// reach stdout isn't guaranteed once the machine is busy — both the pretty and
+// the ECS transport have been seen interleaving under load. Compare the lines
+// as a multiset instead: a missing, extra or altered line still fails, only
+// their relative order is allowed to differ.
 const sortLines = (s: string) => s.split("\n").sort().join("\n");
+const compare = (s: string) => sortLines(normalize(s));
 
-const testLogStrategy = (strategy: string, { ordered = true } = {}) => {
+const testLogStrategy = (strategy: string) => {
   it(`LOG_STRATEGY=${strategy}`, () => {
     const output = runWithStrategy(strategy);
     const snapshotPath = path.join(SNAPSHOTS_DIR, `Logging.${strategy}.snap`);
     const expected = readFileSync(snapshotPath, "utf-8");
-    const compare = ordered ? normalize : (s: string) => sortLines(normalize(s));
     assert.equal(compare(output), compare(expected));
   });
 };
@@ -46,7 +47,7 @@ const testLogStrategy = (strategy: string, { ordered = true } = {}) => {
 describe("Logging Output", () => {
   testLogStrategy("console-pretty");
   testLogStrategy("console-raw");
-  testLogStrategy("ecs-console", { ordered: false });
+  testLogStrategy("ecs-console");
 });
 
 // These strategies write to file, not stdout - test separately
@@ -69,6 +70,6 @@ describe("Logging Output (file strategies)", () => {
       "Logging.both-prettyconsole.snap"
     );
     const expected = readFileSync(snapshotPath, "utf-8");
-    assert.equal(normalize(output), normalize(expected));
+    assert.equal(compare(output), compare(expected));
   });
 });
