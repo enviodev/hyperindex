@@ -322,21 +322,28 @@ let makeInternal = (
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
   // against the hashes scanned before the restart.
   if chainReorgCheckpoints->Utils.Array.notEmpty {
+    // Checkpoints arrive in id order, and nothing in the schema stops one block
+    // number carrying two hashes — a rollback interrupted between deleting the
+    // old checkpoints and writing the new ones leaves both behind. Take the
+    // most recent and let the next response re-converge detection; refusing to
+    // restore would fail this start and every one after it.
+    let seenBlockNumbers = Utils.Set.make()
+    let latestPerBlock = []
+    for idx in chainReorgCheckpoints->Array.length - 1 downto 0 {
+      let cp = chainReorgCheckpoints->Array.getUnsafe(idx)
+      if !(seenBlockNumbers->Utils.Set.has(cp.blockNumber)) {
+        seenBlockNumbers->Utils.Set.add(cp.blockNumber)->ignore
+        latestPerBlock
+        ->Array.push({BlockStore.blockNumber: cp.blockNumber, blockHash: cp.blockHash})
+        ->ignore
+      }
+    }
     let seedPage = BlockStore.fromJs(
-      chainReorgCheckpoints->Array.map((cp): BlockStore.inputBlock => {
-        blockNumber: cp.blockNumber,
-        blockHash: cp.blockHash,
-      }),
+      latestPerBlock,
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     )
-    switch seedPage->BlockStore.responseConflict->Null.toOption {
-    | Some({blockNumber}) =>
-      JsError.throwWithMessage(
-        `Conflicting reorg checkpoints for block ${blockNumber->Int.toString} while restoring chain state`,
-      )
-    | None => blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)->ignore
-    }
+    blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)->ignore
   }
 
   // Seed chain density from whatever progress this chain already has (from a

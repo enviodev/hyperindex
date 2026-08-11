@@ -44,16 +44,52 @@ let makeResumedChainState = (
   sourceBlockNumber: 1000,
 }
 
-let makeChainState = resumedChainState =>
+let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
   ChainState.makeFromDbState(
     baseChainConfig,
     ~resumedChainState,
-    ~reorgCheckpoints=[],
+    ~reorgCheckpoints,
     ~isInReorgThreshold=false,
     ~isRealtime=false,
     ~config=Config.load(),
     ~registrationsByChainId,
   )
+
+describe("ChainState reorg checkpoint restore", () => {
+  let checkpoint = (~checkpointId, ~blockNumber, ~blockHash): Internal.reorgCheckpoint => {
+    checkpointId,
+    chainId,
+    blockNumber,
+    blockHash,
+  }
+
+  it("resumes from the most recent hash when a block has two checkpoints", t => {
+    // A rollback interrupted between deleting the old checkpoints and writing
+    // the new ones leaves both rows behind; nothing in the schema forbids it.
+    // The restore has to pick one rather than refuse to start.
+    let cs =
+      makeResumedChainState(
+        ~progressBlockNumber=110,
+        ~numEventsProcessed=500.,
+        ~firstEventBlockNumber=Some(10),
+      )->makeChainState(
+        ~reorgCheckpoints=[
+          checkpoint(~checkpointId=1n, ~blockNumber=100, ~blockHash="0x0100"),
+          checkpoint(~checkpointId=2n, ~blockNumber=101, ~blockHash="0x0101a"),
+          checkpoint(~checkpointId=3n, ~blockNumber=101, ~blockHash="0x0101"),
+        ],
+      )
+
+    let blockStore = cs->ChainState.blockStore
+    t.expect({
+      "blockNumbers": blockStore->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=200),
+      "restoredHash": blockStore->BlockStore.getHash(101),
+    }).toEqual({
+      "blockNumbers": [100, 101],
+      "restoredHash": Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
+    })
+  })
+})
 
 describe("ChainState chain density seed (on resume)", () => {
   it("seeds from cumulative resumed progress when there's a first event block", t => {
