@@ -671,7 +671,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.masks[slot as usize] = 1u64 << field;
     }
 
-    /// Remove a key's row entirely and release its slot.
     fn drop_row(&mut self, key: &K, slot: u32) {
         self.by_key.remove(key);
         self.order.remove(key);

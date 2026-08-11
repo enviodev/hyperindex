@@ -9,7 +9,6 @@ pub(crate) const QUERY_BLOCK_HASHES_METHOD: &str = "getBlockHashes";
 /// do. Keep in sync with `HyperSync.res`.
 pub(crate) const SOURCE_BEHIND_HEAD_PREFIX: &str = "SOURCE_BEHIND_HEAD:";
 
-/// Build the marker error for a block the backend instance hasn't reached.
 pub(crate) fn source_behind_head_err(block_number: i64) -> napi::Error {
     napi::Error::from_reason(format!("{SOURCE_BEHIND_HEAD_PREFIX}{block_number}"))
 }

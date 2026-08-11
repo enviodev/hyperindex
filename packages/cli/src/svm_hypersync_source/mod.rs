@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use napi_derive::napi;
@@ -11,24 +10,10 @@ mod query;
 mod selection;
 pub(crate) mod types;
 
-/// Local hex helpers. Lives here so `decoder.rs` can pull them via
-/// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary
-/// and without exposing a public hex parser at the napi surface.
 pub(crate) mod mod_helpers {
-    use anyhow::{anyhow, Result};
+    use anyhow::Result;
     pub fn hex_to_bytes(input: &str) -> Result<Vec<u8>> {
-        let s = input.strip_prefix("0x").unwrap_or(input);
-        if !s.len().is_multiple_of(2) {
-            return Err(anyhow!("hex string has odd length: '{input}'"));
-        }
-        (0..s.len())
-            .step_by(2)
-            .map(|i| {
-                s.get(i..i + 2)
-                    .and_then(|byte| u8::from_str_radix(byte, 16).ok())
-                    .ok_or_else(|| anyhow!("invalid hex byte at offset {i} in '{input}'"))
-            })
-            .collect()
+        crate::hex::decode_optionally_prefixed(input, "hex string")
     }
 }
 
@@ -38,11 +23,10 @@ use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
-use crate::request_stats::{
-    error_with_request_stats, source_behind_head_err, RequestStat, QUERY_BLOCK_HASHES_METHOD,
-};
+use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
 use config::SvmClientConfig;
@@ -273,69 +257,39 @@ impl SvmHyperSyncClient {
         &self,
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
-        let Some(from_slot) = block_numbers.iter().copied().min() else {
-            return Ok((BlockStore::new_svm(), Vec::new()));
-        };
-        let to_slot = block_numbers.iter().copied().max().unwrap_or(from_slot);
-        if from_slot < 0 {
-            return Err(map_err(anyhow::anyhow!(
-                "slot numbers must be non-negative"
-            )));
-        }
-        let to_slot_exclusive = to_slot
-            .checked_add(1)
-            .context("slot range upper bound overflow")
-            .map_err(map_err)?;
-
         let fields = query::FieldSelection {
             block: Some(vec!["slot".to_string(), "blockhash".to_string()]),
             ..Default::default()
         };
-        let aggregate = BlockStore::new_svm();
-        let mut request_stats = Vec::new();
-        let mut cursor = from_slot;
-        // Follow-up pages re-request the last returned block: one HyperSync
-        // response is internally consistent, so a fork switch between
-        // paginated requests is the only seam — and it surfaces as a hash
-        // collision on the overlapping slot when the page is appended.
-        let mut overlap_slot = None;
-        loop {
-            let request_from = overlap_slot.unwrap_or(cursor);
-            let query = SvmQuery {
-                from_slot: request_from,
-                to_slot: Some(to_slot_exclusive),
-                include_all_blocks: Some(true),
-                fields: Some(fields.clone()),
-                ..Default::default()
-            };
-            let started = Instant::now();
-            let response = self.get_raw(query).await;
-            request_stats.push(RequestStat {
-                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
-                seconds: started.elapsed().as_secs_f64(),
-            });
-            let response =
-                response.map_err(|error| error_with_request_stats(error, &request_stats))?;
-            let (next_slot, last_slot, page_store) = block_hash_page(response)
-                .map_err(map_err)
-                .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            if next_slot <= cursor {
-                return Err(error_with_request_stats(
-                    source_behind_head_err(cursor),
-                    &request_stats,
-                ));
-            }
-            aggregate.append_page(&page_store);
-            aggregate
-                .mark_svm_coverage(request_from, next_slot.min(to_slot_exclusive))
-                .map_err(map_err)
-                .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            if next_slot >= to_slot_exclusive {
-                return Ok((aggregate, request_stats));
-            }
-            cursor = next_slot;
-            overlap_slot = last_slot.or(overlap_slot);
-        }
+        paginate_block_hashes(
+            &block_numbers,
+            BlockStore::new_svm(),
+            "slot numbers",
+            |request_from, to_slot_exclusive| {
+                let fields = fields.clone();
+                async move {
+                    let query = SvmQuery {
+                        from_slot: request_from,
+                        to_slot: Some(to_slot_exclusive),
+                        include_all_blocks: Some(true),
+                        fields: Some(fields),
+                        ..Default::default()
+                    };
+                    let response = self.get_raw(query).await?;
+                    let (next, last_returned, store) =
+                        block_hash_page(response).map_err(map_err)?;
+                    Ok(HashPage {
+                        next,
+                        last_returned,
+                        store,
+                    })
+                }
+            },
+            // Each advancing cursor proves its half-open range was processed;
+            // block rows missing inside that coverage are skipped slots.
+            |aggregate, request_from, next| aggregate.mark_svm_coverage(request_from, next),
+        )
+        .await
     }
     #[napi]
     pub async fn get_event_items(

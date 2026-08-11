@@ -1,16 +1,14 @@
 use std::collections::HashSet;
 use std::sync::Once;
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache};
+use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
-use crate::request_stats::{
-    error_with_request_stats, source_behind_head_err, RequestStat, QUERY_BLOCK_HASHES_METHOD,
-};
+use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -134,71 +132,35 @@ impl EvmHyperSyncClient {
         &self,
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
-        let Some(from_block) = block_numbers.iter().copied().min() else {
-            return Ok((
-                BlockStore::new_evm(self.enable_checksum_addresses),
-                Vec::new(),
-            ));
-        };
-        let to_block = block_numbers.iter().copied().max().unwrap_or(from_block);
-        if from_block < 0 {
-            return Err(map_err(anyhow::anyhow!(
-                "block numbers must be non-negative"
-            )));
-        }
-        let to_block_exclusive = to_block
-            .checked_add(1)
-            .context("block range upper bound overflow")
-            .map_err(map_err)?;
-
-        let aggregate = BlockStore::new_evm(self.enable_checksum_addresses);
-        let mut request_stats = Vec::new();
-        let mut cursor = from_block;
-        loop {
-            // Follow-up pages re-request the last block of the previous page:
-            // one HyperSync response is internally consistent, so a fork
-            // switch between paginated requests is the only seam — and it
-            // surfaces as a hash collision on the overlapping block when the
-            // page is appended.
-            let request_from = if cursor > from_block {
-                cursor - 1
-            } else {
-                cursor
-            };
-            let query = Query {
-                from_block: request_from,
-                to_block: Some(to_block_exclusive),
-                include_all_blocks: Some(true),
-                field_selection: query::FieldSelection {
-                    block: Some(vec![BlockField::Number, BlockField::Hash]),
+        paginate_block_hashes(
+            &block_numbers,
+            BlockStore::new_evm(self.enable_checksum_addresses),
+            "block numbers",
+            |request_from, to_block_exclusive| async move {
+                let query = Query {
+                    from_block: request_from,
+                    to_block: Some(to_block_exclusive),
+                    include_all_blocks: Some(true),
+                    field_selection: query::FieldSelection {
+                        block: Some(vec![BlockField::Number, BlockField::Hash]),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
-            };
-            let started = Instant::now();
-            let response = self.get_raw(query).await;
-            request_stats.push(RequestStat {
-                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
-                seconds: started.elapsed().as_secs_f64(),
-            });
-            let response =
-                response.map_err(|error| error_with_request_stats(error, &request_stats))?;
-            let (next_block, page_store) =
-                block_hash_page(response, self.enable_checksum_addresses)
-                    .map_err(map_err)
-                    .map_err(|error| error_with_request_stats(error, &request_stats))?;
-            if next_block <= cursor {
-                return Err(error_with_request_stats(
-                    source_behind_head_err(cursor),
-                    &request_stats,
-                ));
-            }
-            aggregate.append_page(&page_store);
-            if next_block > to_block {
-                return Ok((aggregate, request_stats));
-            }
-            cursor = next_block;
-        }
+                };
+                let response = self.get_raw(query).await?;
+                let (next, store) =
+                    block_hash_page(response, self.enable_checksum_addresses).map_err(map_err)?;
+                // `include_all_blocks` leaves no gaps, so the last block the
+                // page covered is the one before where it stopped.
+                Ok(HashPage {
+                    next,
+                    last_returned: Some(next - 1),
+                    store,
+                })
+            },
+            |_, _, _| Ok(()),
+        )
+        .await
     }
 
     #[napi]

@@ -407,27 +407,12 @@ pub struct FuelBlockInput {
     pub time: Option<i64>,
 }
 
-/// Strictly decode a 0x-prefixed even-length hex string into bytes; anything
-/// else (e.g. an arbitrary marker string) is a validation error.
-pub(crate) fn decode_hex_bytes(s: &str, name: &str) -> Result<Vec<u8>> {
-    let hex = s
-        .strip_prefix("0x")
-        .with_context(|| format!("{name} '{s}' must be a 0x-prefixed hex string"))?;
-    if !hex.len().is_multiple_of(2) {
-        anyhow::bail!("{name} '{s}' must have an even number of hex digits");
-    }
-    let mut out = vec![0u8; hex.len() / 2];
-    faster_hex::hex_decode(hex.as_bytes(), &mut out)
-        .with_context(|| format!("{name} '{s}' is not valid hex"))?;
-    Ok(out)
-}
-
 /// Decode a `fromJsEvm` hash into the fixed 32-byte comparison key the store
 /// stores. Width is part of the validation: a truncated hash zero-extended to
 /// the canonical width would compare unequal to the real hash for that block
 /// and surface as a reorg, hiding the malformed response behind a rollback.
 fn evm_input_hash(s: &str) -> Result<Hash> {
-    let bytes = decode_hex_bytes(s, "block.hash")?;
+    let bytes = crate::hex::decode_prefixed(s, "block.hash")?;
     let buf: [u8; 32] = bytes
         .as_slice()
         .try_into()
@@ -558,7 +543,7 @@ impl BlockStore {
                     id: b
                         .id
                         .as_deref()
-                        .map(|s| decode_hex_bytes(s, "block.id"))
+                        .map(|s| crate::hex::decode_prefixed(s, "block.id"))
                         .transpose()?,
                     time: b.time,
                 })
@@ -598,16 +583,8 @@ impl BlockStore {
         );
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
-        let field = self.hash_field();
         let from = u64::try_from(from_block).unwrap_or(0);
-        let cross = dst
-            .table
-            .first_field_mismatch(&src.table, field, from)
-            .map(|key| HashMismatch {
-                block_number: key as i64,
-                stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
-                received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
-            });
+        let cross = self.first_cross_mismatch(&dst.table, &src.table, from);
         debug_assert!(
             src.page.conflict.is_none(),
             "response stores must be validated before persistent merge"
@@ -637,17 +614,12 @@ impl BlockStore {
         );
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
-        let field = self.hash_field();
-        let cross = dst
-            .table
-            .first_field_mismatch(&src.table, field, 0)
-            .map(|key| HashMismatch {
-                block_number: key as i64,
-                stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
-                received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
-            });
-        let conflict = lowest_conflict(cross, src.page.conflict.take());
-        if let Some(conflict) = conflict {
+        // `record_conflict` already keeps the lowest block number, so the page's
+        // own conflict and the cross-page one need no ordering between them.
+        if let Some(cross) = self.first_cross_mismatch(&dst.table, &src.table, 0) {
+            record_conflict(&mut dst.page.conflict, cross);
+        }
+        if let Some(conflict) = src.page.conflict.take() {
             record_conflict(&mut dst.page.conflict, conflict);
         }
         dst.table.append_from(&mut src.table);
@@ -920,6 +892,23 @@ impl BlockStore {
 
     /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
     /// EVM/Fuel hashes, the raw base58 string for SVM.
+    /// The lowest block at or above `from` that both tables carry a hash for,
+    /// where they disagree.
+    fn first_cross_mismatch(
+        &self,
+        dst: &Table<u64>,
+        src: &Table<u64>,
+        from: u64,
+    ) -> Option<HashMismatch> {
+        let field = self.hash_field();
+        let key = dst.first_field_mismatch(src, field, from)?;
+        Some(HashMismatch {
+            block_number: key as i64,
+            stored_hash: self.hash_display(dst.field_bytes(&key, field).unwrap()),
+            received_hash: self.hash_display(src.field_bytes(&key, field).unwrap()),
+        })
+    }
+
     fn hash_display(&self, bytes: &[u8]) -> String {
         match self.ecosystem {
             Ecosystem::Svm => String::from_utf8_lossy(bytes).into_owned(),
@@ -1080,20 +1069,6 @@ pub struct HashMismatch {
     pub block_number: i64,
     pub stored_hash: String,
     pub received_hash: String,
-}
-
-fn lowest_conflict(
-    first: Option<HashMismatch>,
-    second: Option<HashMismatch>,
-) -> Option<HashMismatch> {
-    match (first, second) {
-        (Some(a), Some(b)) => Some(if a.block_number <= b.block_number {
-            a
-        } else {
-            b
-        }),
-        (a, b) => a.or(b),
-    }
 }
 
 fn record_conflict(target: &mut Option<HashMismatch>, conflict: HashMismatch) {

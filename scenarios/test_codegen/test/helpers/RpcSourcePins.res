@@ -81,9 +81,8 @@ let normalizeEvent = item =>
     JsError.throwWithMessage("RPC source contract pin unexpectedly received an onBlock item")
   }
 
-// Reorg hashes now live in the block-store page the source builds; project
-// them back to the stable (blockNumber, blockHash) shape, deduplicated and
-// ascending by block number (the store keys by block number).
+// The page's reorg hashes as a stable (blockNumber, blockHash) list, ascending
+// and deduplicated by block number.
 let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockData> =>
   blockStore
   ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)

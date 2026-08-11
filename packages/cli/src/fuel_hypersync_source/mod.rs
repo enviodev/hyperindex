@@ -9,7 +9,8 @@ mod selection;
 mod types;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
-use crate::block_store::{decode_hex_bytes, BlockStore, FuelBlockRow};
+use crate::block_store::{BlockStore, FuelBlockRow};
+use crate::hex::decode_prefixed;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -99,7 +100,7 @@ impl FuelHyperSyncClient {
             .map(|b| {
                 Ok(FuelBlockRow {
                     height: u64::try_from(b.height).context("block.height negative")?,
-                    id: Some(decode_hex_bytes(&b.id, "block.id")?),
+                    id: Some(decode_prefixed(&b.id, "block.id")?),
                     time: Some(b.time),
                 })
             })
