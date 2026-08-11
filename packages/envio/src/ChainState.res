@@ -1048,19 +1048,15 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
 // immutable copy of the scanned in-threshold block hashes so the batch never
 // reads the live store mid-build.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
-  let fromBlock = Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0)
-  let blockNumbers =
-    cs.blockStore->BlockStore.getHashedBlockNumbers(
-      ~fromBlock,
+  let {blockNumbers, hashes} =
+    cs.blockStore->BlockStore.getHashes(
+      ~fromBlock=Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0),
       ~belowBlock=cs.fetchState.knownHeight + 1,
     )
   let hashByBlockNumber = Dict.make()
-  blockNumbers->Array.forEach(blockNumber => {
-    switch cs.blockStore->BlockStore.getHash(blockNumber) {
-    | Null.Value(hash) => hashByBlockNumber->Utils.Dict.setByInt(blockNumber, hash)
-    | Null.Null => ()
-    }
-  })
+  blockNumbers->Array.forEachWithIndex((blockNumber, idx) =>
+    hashByBlockNumber->Utils.Dict.setByInt(blockNumber, hashes->Array.getUnsafe(idx))
+  )
   {
     fetchState: cs.fetchState,
     progressBlockNumber: cs.committedProgressBlockNumber,

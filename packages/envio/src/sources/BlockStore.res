@@ -149,3 +149,11 @@ external materialize: (
 @send
 external getHashedBlockNumbers: (t, ~fromBlock: int, ~belowBlock: int) => array<int> =
   "getHashedBlockNumbers"
+
+// Every stored hash in `[fromBlock, belowBlock)` as two aligned columns,
+// ascending by block number — one crossing for what `getHash` would charge per
+// block.
+type hashedBlocks = {blockNumbers: array<int>, hashes: array<string>}
+
+@send
+external getHashes: (t, ~fromBlock: int, ~belowBlock: int) => hashedBlocks = "getHashes"

@@ -736,6 +736,32 @@ impl BlockStore {
             .map(|b| self.hash_display(b))
     }
 
+    /// Every stored hash in `[from_block, below_block)`, ascending, as two
+    /// aligned columns. One call per batch, where reading the same rows through
+    /// `get_hash` would cross the napi boundary once per block.
+    #[napi]
+    pub fn get_hashes(&self, from_block: i64, below_block: i64) -> HashedBlocks {
+        let from = u64::try_from(from_block).unwrap_or(0);
+        let Ok(below) = u64::try_from(below_block) else {
+            return HashedBlocks::default();
+        };
+        let inner = self.inner.lock().unwrap();
+        let field = self.hash_field();
+        let keys = inner.table.keys_with_field(from, below, field);
+        let mut hashes = Vec::with_capacity(keys.len());
+        let mut block_numbers = Vec::with_capacity(keys.len());
+        for key in keys {
+            // `keys_with_field` already filtered to rows carrying the hash.
+            let bytes = inner.table.field_bytes(&key, field).unwrap();
+            hashes.push(self.hash_display(bytes));
+            block_numbers.push(key as i64);
+        }
+        HashedBlocks {
+            block_numbers,
+            hashes,
+        }
+    }
+
     /// Block numbers in `[from_block, below_block)` with a stored hash,
     /// ascending — the rollback candidates to re-fetch and compare.
     #[napi]
@@ -1038,6 +1064,14 @@ impl BlockStore {
         self.insert_watching_hash(keys, cols);
         Ok(())
     }
+}
+
+/// Stored block hashes as two aligned columns, ascending by block number.
+#[derive(Default)]
+#[napi(object)]
+pub struct HashedBlocks {
+    pub block_numbers: Vec<i64>,
+    pub hashes: Vec<String>,
 }
 
 /// A block-hash conflict recorded while building a response or comparing it
@@ -1565,6 +1599,27 @@ mod tests {
                 }
             ),
             (false, vec![Some(format!("0x{}", "20".repeat(32)))])
+        );
+    }
+
+    #[test]
+    fn get_hashes_returns_aligned_columns() {
+        let store = evm_page(vec![
+            hashed_evm_block(10, 0x10),
+            hashed_evm_block(20, 0x20),
+            hashed_evm_block(30, 0x30),
+        ]);
+
+        let page = store.get_hashes(20, 40);
+        assert_eq!(
+            (page.block_numbers, page.hashes),
+            (
+                vec![20, 30],
+                vec![
+                    format!("0x{}", "20".repeat(32)),
+                    format!("0x{}", "30".repeat(32)),
+                ]
+            )
         );
     }
 
