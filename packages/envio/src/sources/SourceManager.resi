@@ -45,7 +45,7 @@ let queryingSeconds: t => float
 
 let inFlightCount: t => int
 
-let onReorg: (t, ~rollbackTargetBlock: int) => unit
+let onReorg: t => unit
 
 let dispatch: (
   t,

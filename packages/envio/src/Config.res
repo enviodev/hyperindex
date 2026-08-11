@@ -1018,12 +1018,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
         // Tower BFT roots a block once 32 votes lock it in (MAX_LOCKOUT_HISTORY
         // is 31, plus the slot itself), which is what `finalized` waits for — so
-        // 32 is the protocol's own bound on how far a fork can be replaced.
-        // That bound counts *blocks*, while the threshold here is measured in
-        // slot numbers, and skipped slots make the slot distance the larger of
-        // the two. The default doubles it so the window still spans 32 blocks
-        // at any realistic skip rate; ~26s of slots is cheap to keep.
-        | Ecosystem.Svm => publicChainConfig["maxReorgDepth"]->Option.getOr(64)
+        // 32 is the protocol's own bound on how far a fork can be replaced. That
+        // bound counts *blocks* while the threshold here is measured in slot
+        // numbers, and skipped slots make the slot distance the larger of the
+        // two, so the default keeps a wide margin over it. Slots are ~0.4s, so
+        // even this spans well under two minutes of chain.
+        | Ecosystem.Svm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
         | Ecosystem.Fuel => 0
         },
         blockLag: publicChainConfig["blockLag"]->Option.getOr(0),

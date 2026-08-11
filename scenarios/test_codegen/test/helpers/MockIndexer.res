@@ -931,7 +931,8 @@ module Source = {
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
     getItemsOrThrowCalls: array<getItemsOrThrowCall>,
-    reorgCalls: array<int>,
+    // How many times the source was told to drop orphaned-chain state.
+    reorgCallCount: unit => int,
     // TODO: Remove in favor of getItemsOrThrowCalls
     resolveGetItemsOrThrow: (
       array<itemMock>,
@@ -963,7 +964,7 @@ module Source = {
     let getHeightOrThrowResolveFns = []
     let getHeightOrThrowRejectFns = []
     let getItemsOrThrowCalls = []
-    let reorgCalls = []
+    let reorgCalls = ref(0)
     let getBlockHashesCalls = []
     let getBlockHashesResolveFns = []
     // Height subscription state
@@ -1010,7 +1011,7 @@ module Source = {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
       },
       getItemsOrThrowCalls,
-      reorgCalls,
+      reorgCallCount: () => reorgCalls.contents,
       resolveGetItemsOrThrow: (
         items,
         ~resolveAt=#all,
@@ -1221,9 +1222,7 @@ module Source = {
               }
             })
           }),
-          onReorg: (~rollbackTargetBlock) => {
-            reorgCalls->Array.push(rollbackTargetBlock)->ignore
-          },
+          onReorg: () => reorgCalls := reorgCalls.contents + 1,
           createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
           | true =>
             Some(

@@ -53,7 +53,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
 
 describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it("calls source.onReorg after an inconsistent hash response", async t => {
-    let reorgCalls = []
+    let reorgCalls = ref(0)
     let attempt = ref(0)
     let source: Source.t = {
       ...makeMockSource(~rateLimitedCalls=0, ~resetMs=0),
@@ -75,9 +75,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
         }
         Promise.resolve({Source.result: Ok(response), requestStats: []})
       },
-      onReorg: (~rollbackTargetBlock) => {
-        reorgCalls->Array.push(rollbackTargetBlock)->ignore
-      },
+      onReorg: () => reorgCalls := reorgCalls.contents + 1,
     }
     let sourceManager = SourceManager.make(~sources=[source], ~isRealtime=false)
 
@@ -86,7 +84,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       ~isRealtime=false,
     )
 
-    t.expect(reorgCalls).toEqual([0])
+    t.expect(reorgCalls.contents).toEqual(1)
   })
 
   Async.it("recovers after a rate limit and tracks wait time", async t => {

@@ -336,7 +336,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let onReorg = source.onReorg->Option.getOrThrow(
             ~message="RPC source must expose onReorg for cache invalidation",
           )
-          onReorg(~rollbackTargetBlock=99)
+          onReorg()
           let _ = await source->invoke(~registration)
           mock.transcript()
           ->Array.reduce(Dict.make(), (counts, entry) => {

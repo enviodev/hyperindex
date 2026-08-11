@@ -6,10 +6,11 @@ open Vitest
 // an actual eth_getLogs / eth_getBlockByNumber reply.
 //
 // Both cases here turn on the same thing: the source answers from its own block
-// cache, so until that cache is dropped it keeps serving the pre-reorg chain —
+// cache, so while that cache holds the pre-reorg chain it keeps serving it —
 // hiding the reorg from detection, and then hiding its depth from the search.
-// `SourceManager.onReorg` is what drops it, and `Rollback.rollback` calls that
-// only after `getLastKnownValidBlock` has already run.
+// `SourceManager.onReorg` drops it, which is why `Rollback.rollback` calls that
+// before `getLastKnownValidBlock`; these cases call it directly at the same
+// points, so they pin why the ordering matters.
 //
 // Separately, the source only harvests hashes from blocks it has a reason to
 // fetch, so a reorg confined to a range with no logs is not detected at all.
@@ -204,8 +205,10 @@ describe("Rollback against a real RPC server", () => {
     state.forkFrom = 102
     // The seam block is served from the source's own block cache, which still
     // holds the pre-reorg chain — without dropping it the refetch reports the
-    // old hash for 102 and the reorg goes unnoticed. See the next test.
-    source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=102))
+    // old hash for 102 and the reorg goes unnoticed. Nothing drops it on the
+    // fetch path, since no reorg is known yet; see the next test for the half
+    // of this the rollback flow does handle.
+    source.onReorg->Option.forEach(cb => cb())
     let reorgedPage =
       await source->fetchRange(~fromBlock=103, ~toBlock=104, ~knownHeight=state.height)
 
@@ -249,9 +252,8 @@ describe("Rollback against a real RPC server", () => {
     // still agree on — three blocks below where the stale cache stops.
     state.forkFrom = 99
 
-    // The RPC source answers the depth search from the block cache it filled
-    // while fetching, which still holds the pre-reorg chain — so the search
-    // "confirms" blocks that no longer exist and stops far too shallow.
+    // Answering the depth search from the cache filled while fetching would
+    // "confirm" blocks that no longer exist and stop far too shallow.
     let staleTarget = await Rollback.getLastKnownValidBlock(
       chainState,
       ~reorgBlockNumber=102,
@@ -259,14 +261,13 @@ describe("Rollback against a real RPC server", () => {
     )
     t.expect(
       staleTarget,
-      ~message="A cached pre-reorg block reads as valid",
+      ~message="A cached pre-reorg block reads as valid, stopping 3 blocks short of the fork",
     ).toEqual(101)
 
-    // Dropping the cache is what makes the search see the new chain. Production
-    // does this through `SourceManager.onReorg`, which `Rollback.rollback`
-    // currently invokes *after* `getLastKnownValidBlock` rather than before, so
-    // the shallow answer above is what a real rollback would use.
-    source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=101))
+    // Dropping the cache is what makes the search see the new chain, which is
+    // what `Rollback.rollback` does through `SourceManager.onReorg` before
+    // running the search.
+    source.onReorg->Option.forEach(cb => cb())
 
     let freshTarget = await Rollback.getLastKnownValidBlock(
       chainState,

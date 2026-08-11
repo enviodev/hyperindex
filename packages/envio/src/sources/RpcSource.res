@@ -1004,7 +1004,7 @@ let make = (
     }
   }
 
-  let onReorg = (~rollbackTargetBlock as _) => {
+  let onReorg = () => {
     // Drop cached block/transaction/receipt data — after a reorg or an
     // internally inconsistent response these may refer to orphaned-chain values.
     resetCachedLoaders()

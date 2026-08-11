@@ -163,7 +163,10 @@ type t = {
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
   // Invoked when a reorg or internally inconsistent response means local state
-  // may point at an orphaned chain (e.g. the RPC block cache). For an
-  // inconsistent response the target is the block before the retried range.
-  onReorg?: (~rollbackTargetBlock: int) => unit,
+  // may point at an orphaned chain (e.g. the RPC block cache): drop all of it.
+  // Deliberately takes no rollback target — the deepest reorged block isn't
+  // known until the depth search runs, and that search reads back through this
+  // very state, so pruning relative to a target would keep exactly the entries
+  // that make it answer wrong.
+  onReorg?: unit => unit,
 }

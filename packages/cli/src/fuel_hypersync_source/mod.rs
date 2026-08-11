@@ -127,7 +127,6 @@ impl FuelHyperSyncClient {
         let response = EventItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            blocks: raw.blocks,
             items,
         };
         Ok((response, block_store))
@@ -163,8 +162,8 @@ pub struct EventItem {
     pub on_event_registration_index: i64,
     pub receipt_index: i64,
     pub tx_id: String,
-    /// Height of the block this receipt belongs to. The block itself is
-    /// carried once, deduplicated, in `EventItemsResponse.blocks`.
+    /// Height of the block this receipt belongs to. The block itself stays in
+    /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
     pub data: Option<String>,
@@ -179,9 +178,6 @@ pub struct EventItem {
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    /// The page's blocks, one per height. Items reference them by
-    /// `block_height`; presence for every routed item is validated here.
-    pub blocks: Vec<Block>,
     pub items: Vec<EventItem>,
 }
 

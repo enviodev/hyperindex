@@ -244,10 +244,10 @@ let validateResponseBlockStore = (
   }
 }
 
-let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
+let onReorg = (sourceManager: t) => {
   sourceManager.sourcesState->Array.forEach(({source}) => {
     switch source.onReorg {
-    | Some(cb) => cb(~rollbackTargetBlock)
+    | Some(cb) => cb()
     | None => ()
     }
   })
@@ -956,7 +956,7 @@ let executeQuery = async (
           ~err,
           ~excludedSources=?excludedSourcesRef.contents,
         )
-        source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=query.fromBlock - 1))
+        source.onReorg->Option.forEach(cb => cb())
         retryRef := retryRef.contents + 1
       }
 
@@ -1107,9 +1107,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
           ~method="getBlockHashes",
           ~err,
         )
-        let lowestRequestedBlock =
-          blockNumbers->Array.reduce(blockNumbers->Array.get(0)->Option.getOr(0), Pervasives.min)
-        source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=lowestRequestedBlock - 1))
+        source.onReorg->Option.forEach(cb => cb())
         retryRef := retryRef.contents + 1
       }
 

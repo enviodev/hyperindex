@@ -1491,7 +1491,7 @@ describe("SourceManager.executeQuery", () => {
       ~knownHeight=100,
     )
 
-    t.expect(sourceMock.reorgCalls).toEqual([])
+    t.expect(sourceMock.reorgCallCount()).toEqual(0)
     switch sourceMock.getItemsOrThrowCalls {
     | [call] =>
       // The response contains block 9 twice with different hashes: once as the
@@ -1501,7 +1501,7 @@ describe("SourceManager.executeQuery", () => {
     }
 
     await Utils.delay(200)
-    t.expect(sourceMock.reorgCalls).toEqual([9])
+    t.expect(sourceMock.reorgCallCount()).toEqual(1)
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => call.resolve([])
     | _ => JsError.throwWithMessage("Expected the retry after cache invalidation")

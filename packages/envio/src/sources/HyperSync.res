@@ -29,8 +29,6 @@ let reraiseIfRecoverable = exn =>
 
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  // Headers for every returned block, deduplicated by block number.
-  blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
   // Page store owning this page's raw transactions.
@@ -107,7 +105,6 @@ module GetLogs = {
 
     {
       items: res.items,
-      blocks: res.blocks,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       transactionStore,
