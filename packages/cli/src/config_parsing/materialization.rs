@@ -1186,8 +1186,8 @@ fn as_operator(value: &Yaml) -> Result<Option<ExprObject<'_>>> {
     }
     if operators.len() > 1 || !plain.is_empty() {
         return Err(anyhow!(
-            "an expression object holds exactly one value — `_value`, `_literal`, `_negate`, \
-             `_sum`, `_concat`, `_ref` or `_derived_from` — optionally with `_description`. Got: {}",
+            "an expression object holds exactly one operator (`_value`, `_literal`, `_negate`, \
+             `_sum`, `_concat`, `_ref`, `_derived_from`), optionally with `_description`. Got: {}",
             operators
                 .into_iter()
                 .chain(plain)
