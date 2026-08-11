@@ -608,19 +608,20 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             .and_then(|c| c.cell_bytes(slot as usize))
     }
 
-    /// Lowest key `>= from` carrying `field` in both tables whose cells differ.
+    /// Lowest key `>= from` carrying `field` in both tables whose cells differ,
+    /// with the two conflicting values.
     pub(crate) fn first_field_mismatch(
         &self,
         other: &Table<K>,
         field: usize,
         from: K,
-    ) -> Option<K> {
+    ) -> Option<(K, Vec<u8>, Vec<u8>)> {
         for key in other.order.range(from..).map(|(k, _)| k) {
             if let (Some(a), Some(b)) =
                 (self.field_bytes(key, field), other.field_bytes(key, field))
             {
                 if a != b {
-                    return Some(key.clone());
+                    return Some((key.clone(), a.to_vec(), b.to_vec()));
                 }
             }
         }

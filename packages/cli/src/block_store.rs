@@ -900,12 +900,11 @@ impl BlockStore {
         src: &Table<u64>,
         from: u64,
     ) -> Option<HashMismatch> {
-        let field = self.hash_field();
-        let key = dst.first_field_mismatch(src, field, from)?;
+        let (key, stored, received) = dst.first_field_mismatch(src, self.hash_field(), from)?;
         Some(HashMismatch {
             block_number: key as i64,
-            stored_hash: self.hash_display(dst.field_bytes(&key, field).unwrap()),
-            received_hash: self.hash_display(src.field_bytes(&key, field).unwrap()),
+            stored_hash: self.hash_display(&stored),
+            received_hash: self.hash_display(&received),
         })
     }
 
