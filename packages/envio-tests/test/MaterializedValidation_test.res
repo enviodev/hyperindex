@@ -625,6 +625,28 @@ ${tableStorage}    from: evm.events
     )
   )
 
+  // The rule arrived with `tables`, so a schema that predates it keeps working.
+  it("leaves a config without tables alone", t =>
+    expectError(
+      t,
+      ~schema=`
+type Note @storage(postgres: true) {
+  id: ID!
+}
+`,
+      `
+name: partial-storage-no-tables
+storage:
+  postgres: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+      "the parse to fail, but it succeeded",
+    )
+  )
+
   // A stated default is the intent to fall back on, so a table overriding it is
   // a deliberate act rather than an omission.
   it("accepts naming one backend once a default is stated", t =>

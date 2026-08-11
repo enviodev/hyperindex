@@ -447,7 +447,11 @@ const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
-pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+pub fn validate_entity_storage(
+    storage: &Storage,
+    schema: &Schema,
+    has_tables: bool,
+) -> anyhow::Result<()> {
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -486,7 +490,9 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     // `default: true` there is nothing that says which way the config leans —
     // so an entity naming a strict subset has to say so outright. Asking for a
     // Postgres index must not quietly stop the table reaching ClickHouse.
-    if !postgres_default && !clickhouse_default {
+    // Only for configs that use `tables`: the rule would reject schemas that
+    // have been valid since before it existed.
+    if has_tables && !postgres_default && !clickhouse_default {
         let both_enabled = storage.postgres.is_some() && storage.clickhouse.is_some();
         let partial: Vec<String> = if both_enabled {
             entities
@@ -1670,7 +1676,9 @@ impl SystemConfig {
             "contract",
         )?;
 
-        validate_entity_storage(&config.storage, &config.schema)?;
+        let has_tables =
+            matches!(&config.human_config, HumanConfig::Evm(evm) if evm.tables.is_some());
+        validate_entity_storage(&config.storage, &config.schema, has_tables)?;
         validate_relationship_storage(&config.storage, &config.schema)?;
         validate_db_column_names(&config.storage, &config.schema)?;
         validate_cross_chain_directives(config.default_cross_chain, &config.schema)?;
@@ -3690,13 +3698,13 @@ mod test {
         #[test]
         fn single_storage_no_directive_ok() {
             let schema = make_schema(vec![entity("Transfer", None, None)]);
-            assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
+            assert!(validate_entity_storage(&postgres_only(), &schema, true).is_ok());
         }
 
         #[test]
         fn single_storage_matching_directive_ok() {
             let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
-            assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
+            assert!(validate_entity_storage(&postgres_only(), &schema, true).is_ok());
         }
 
         // With no `default: true`, an entity that names one backend has to name
@@ -3708,16 +3716,19 @@ mod test {
                 entity("Snapshot", Some(false), Some(true)),
                 entity("Audit", Some(true), Some(true)),
             ]);
-            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+            assert!(validate_entity_storage(&multi(false, false), &schema, true).is_ok());
         }
 
         #[test]
         fn multi_storage_partial_directive_rejected() {
             let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
-            assert!(validate_entity_storage(&multi(false, false), &schema).is_err());
+            assert!(validate_entity_storage(&multi(false, false), &schema, true).is_err());
             // A stated default says which way the config leans, so a directive
             // that overrides it is a deliberate act rather than an omission.
-            assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
+            assert!(validate_entity_storage(&multi(true, false), &schema, true).is_ok());
+            // And a config without `tables` keeps the behaviour it had before
+            // the rule existed.
+            assert!(validate_entity_storage(&multi(false, false), &schema, false).is_ok());
         }
 
         #[test]
@@ -3726,8 +3737,8 @@ mod test {
                 entity("Transfer", None, None),
                 entity("Snapshot", None, Some(true)),
             ]);
-            assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
-            assert!(validate_entity_storage(&multi(false, true), &schema).is_ok());
+            assert!(validate_entity_storage(&multi(true, false), &schema, true).is_ok());
+            assert!(validate_entity_storage(&multi(false, true), &schema, true).is_ok());
         }
 
         // The table options object form opts the entity into ClickHouse, so
@@ -3741,8 +3752,8 @@ mod test {
                 })),
                 ..entity("Transfer", Some(true), None)
             }]);
-            assert!(validate_entity_storage(&postgres_only(), &schema).is_err());
-            assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+            assert!(validate_entity_storage(&postgres_only(), &schema, true).is_err());
+            assert!(validate_entity_storage(&multi(false, false), &schema, true).is_ok());
         }
 
         // A @derivedFrom is served by joining the two entities in Postgres and
