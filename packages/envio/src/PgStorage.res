@@ -630,30 +630,26 @@ let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table,
   }
 }
 
-// Caches table batch set queries. The query text has the schema baked into it,
-// so it's keyed by schema as well as table — one process writing the same table
-// into two schemas would otherwise send every row to whichever it saw first.
-let setQueryCache = Utils.WeakMap.make()
+// Batch set queries, cached per table. The query text bakes in the schema and
+// the chain-id mode, so the cache belongs to the storage instance those came
+// from — `make` creates one and threads it down. A process-wide cache would
+// hand a second storage the first one's schema.
+let makeSetQueryCache = () => Utils.WeakMap.make()
+
 let setOrThrow = async (
   sql,
   ~items,
   ~table: Table.table,
   ~itemSchema,
   ~pgSchema,
+  ~setQueryCache,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
   if items->Array.length === 0 {
     ()
   } else {
     // Get or create cached query for this table
-    let bySchema = switch setQueryCache->Utils.WeakMap.get(table) {
-    | Some(bySchema) => bySchema
-    | None =>
-      let bySchema = Dict.make()
-      setQueryCache->Utils.WeakMap.set(table, bySchema)->ignore
-      bySchema
-    }
-    let data = switch bySchema->Utils.Dict.dangerouslyGetNonOption(pgSchema) {
+    let data = switch setQueryCache->Utils.WeakMap.get(table) {
     | Some(cached) => cached
     | None => {
         let newQuery = makeTableBatchSetQuery(
@@ -662,7 +658,7 @@ let setOrThrow = async (
           ~itemSchema=itemSchema->S.toUnknown,
           ~chainIdMode,
         )
-        bySchema->Dict.set(pgSchema, newQuery)
+        setQueryCache->Utils.WeakMap.set(table, newQuery)->ignore
         newQuery
       }
     }
@@ -962,6 +958,7 @@ let rec writeBatch = async (
   ~config: Config.t,
   ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
+  ~setQueryCache,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
   ~sinkPromise: option<promise<option<exn>>>,
@@ -1015,6 +1012,7 @@ let rec writeBatch = async (
             ~itemSchema=InternalTable.RawEvents.schema,
             ~pgSchema,
             ~chainIdMode,
+            ~setQueryCache,
           )
         }, ~items=rawEvents)
       } catch {
@@ -1170,6 +1168,7 @@ let rec writeBatch = async (
                   ~table=entityHistory.table,
                   ~pgSchema,
                   ~chainIdMode,
+                  ~setQueryCache,
                 ),
               )
               ->ignore
@@ -1187,6 +1186,7 @@ let rec writeBatch = async (
                 ~itemSchema=entityConfig->getRowSchema,
                 ~pgSchema,
                 ~chainIdMode,
+                ~setQueryCache,
               ),
             )
           }
@@ -1349,6 +1349,7 @@ let rec writeBatch = async (
       ~escapeTables,
       ~batch,
       ~pgSchema,
+      ~setQueryCache,
       ~rollback,
       ~isInReorgThreshold,
       ~config,
@@ -1492,6 +1493,7 @@ let make = (
   let storageName = "postgres"
 
   let indexManager = IndexManager.make()
+  let setQueryCache = makeSetQueryCache()
 
   let loadCatalogRows = (sql, ~indexName=?) =>
     sql
@@ -2073,6 +2075,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ~table,
       ~itemSchema=itemSchema->S.toUnknown,
       ~pgSchema,
+      ~setQueryCache,
     )
   }
 
@@ -2356,6 +2359,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       sql,
       ~batch,
       ~pgSchema,
+      ~setQueryCache,
       ~rollback,
       ~isInReorgThreshold,
       ~config,

@@ -63,12 +63,16 @@ describe("Raw Events Table Migrations", () => {
       ~enableRawEvents=true,
       async indexerMock => {
         let sql = PgStorage.makeClient()
+        // Shared across both inserts, so the second one exercises the cached
+        // query the way a storage instance would.
+        let setQueryCache = PgStorage.makeSetQueryCache()
         let insert = () =>
           sql->PgStorage.setOrThrow(
             ~items=[MockIndexer.mockRawEventRow],
             ~table=InternalTable.RawEvents.table,
             ~itemSchema=InternalTable.RawEvents.schema,
             ~pgSchema=indexerMock.pgSchema,
+            ~setQueryCache,
           )
 
         await insert()

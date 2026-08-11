@@ -324,10 +324,9 @@ type contractRegister<'a> = Internal.genericContractRegister<
 >
 module Transaction = Indexer.Transaction
 
-type mockSourceHandler = Internal.genericHandlerArgs<
-  eventLog<unknown>,
-  handlerContext,
-> => promise<unit>
+type mockSourceHandler = Internal.genericHandlerArgs<eventLog<unknown>, handlerContext> => promise<
+  unit,
+>
 type mockSourceContractRegister = contractRegister<unit>
 type mockSourceEvent = {
   __mockHandler?: mockSourceHandler,
@@ -339,12 +338,13 @@ type mockSourceEvent = {
 // through callback metadata carried only by the test payload.
 let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
-    let args = args->(
-      Utils.magic: Internal.handlerArgs => Internal.genericHandlerArgs<
-        eventLog<unknown>,
-        handlerContext,
-      >
-    )
+    let args =
+      args->(
+        Utils.magic: Internal.handlerArgs => Internal.genericHandlerArgs<
+          eventLog<unknown>,
+          handlerContext,
+        >
+      )
     let event = args.event->(Utils.magic: eventLog<unknown> => mockSourceEvent)
     if args.context.isPreload {
       Promise.resolve()
@@ -356,12 +356,13 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
     }
   }
   let contractRegister: Internal.contractRegister = args => {
-    let args = args->(
-      Utils.magic: Internal.contractRegisterArgs => Internal.genericContractRegisterArgs<
-        Internal.genericEvent<unit, Indexer.Block.t, Indexer.Transaction.t>,
-        Indexer.contractRegisterContext,
-      >
-    )
+    let args =
+      args->(
+        Utils.magic: Internal.contractRegisterArgs => Internal.genericContractRegisterArgs<
+          Internal.genericEvent<unit, Indexer.Block.t, Indexer.Transaction.t>,
+          Indexer.contractRegisterContext,
+        >
+      )
     let event = args.event->(Utils.magic: Internal.genericEvent<unit, _, _> => mockSourceEvent)
     switch event.__mockContractRegister {
     | Some(contractRegister) => contractRegister(args)
@@ -417,7 +418,9 @@ let installMockSourceRegistrations = (
   ~config: Config.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
 ) =>
-  config.chainMap->ChainMap.values->Array.forEach(chainConfig => {
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig => {
     let sourceStates = switch chainConfig.sourceConfig {
     | Config.CustomSources(sources) =>
       sources->Array.filterMap(source => source->getMockSourceState)
@@ -445,9 +448,7 @@ let installMockSourceRegistrations = (
         },
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
-      sourceStates->Array.forEach(state =>
-        state.onEventRegistrationRef := Some(mockRegistration)
-      )
+      sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
     }
   })
 
@@ -479,16 +480,6 @@ module Indexer = {
     restart: unit => promise<t>,
   }
 
-  // Postgres resources owned by one `run` — a schema, plus every client and
-  // indexer created inside it (`restart` adds more).
-  type scope = {
-    pgSchema: string,
-    clients: array<Postgres.sql>,
-    stops: array<unit => promise<unit>>,
-    // Whether a write could still land after `stop` gave up waiting.
-    hasPendingWrite: array<unit => bool>,
-  }
-
   type chainConfig = {
     chain: chainId,
     sourceConfig: Config.sourceConfig,
@@ -496,429 +487,6 @@ module Indexer = {
     endBlock?: int,
     maxReorgDepth?: int,
     blockLag?: int,
-  }
-
-  let rec make = async (
-    ~scope: scope,
-    ~chains: array<chainConfig>,
-    // Defaults to the generated project config.
-    ~config as customConfig: option<Config.t>=?,
-    ~saveFullHistory=false,
-    ~enableRawEvents=false,
-    ~reset=true,
-    ~batchSize=?,
-    ~maxAddrInPartition=?,
-    ~clientFilterAddressThreshold=?,
-    ~shouldRollbackOnReorg=true,
-    ~reducedPollingInterval=?,
-    ~targetBufferSize=?,
-    // Defaults to 0 (not the production 100) so the small-scale fixtures here
-    // don't enter the reorg threshold before fetching. Tests exercising the
-    // tolerance pass an explicit value.
-    ~reorgThresholdReadyTolerance=0,
-    // Lets regression tests surface fatal errors without terminating the Vitest worker.
-    ~onError=?,
-    // Same, for the success exit a finite endBlock chain reaches once it's done.
-    ~onExit=?,
-    // Lets a test intercept storage methods, e.g. to stall writeBatch and
-    // exercise races between in-flight writes and the indexer loop.
-    ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
-  ) => {
-    // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-    switch Env.userLogLevel {
-    | None => Logging.setLogLevel(#silent)
-    | Some(_) => ()
-    }
-
-    // The full (un-narrowed) config. Handlers register against this so every
-    // chain resolves once; `finishRegistration` then narrows to the per-test
-    // `config` below.
-    let baseConfig = switch customConfig {
-    | Some(config) => config
-    | None => Config.load()
-    }
-
-    // Build the final per-test config (chain overrides, enableRawEvents, ...).
-    let config = {
-      let chainMap =
-        chains
-        ->Array.map(chainConfig => {
-          let chainId = (chainConfig.chain :> int)->ChainId.fromInt
-          let originalChainConfig = baseConfig.chainMap->ChainMap.get(chainId)
-          (
-            chainId,
-            {
-              ...originalChainConfig,
-              sourceConfig: chainConfig.sourceConfig,
-              startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
-              endBlock: ?switch chainConfig.endBlock {
-              | Some(_) as endBlock => endBlock
-              | None => originalChainConfig.endBlock
-              },
-              maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
-                originalChainConfig.maxReorgDepth,
-              ),
-              blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
-            },
-          )
-        })
-        ->ChainMap.fromArrayUnsafe
-
-      {
-        ...baseConfig,
-        shouldRollbackOnReorg,
-        shouldSaveFullHistory: saveFullHistory,
-        enableRawEvents,
-        chainMap,
-        batchSize: batchSize->Option.getOr(baseConfig.batchSize),
-        maxAddrInPartition: maxAddrInPartition->Option.getOr(baseConfig.maxAddrInPartition),
-        clientFilterAddressThreshold: clientFilterAddressThreshold->Option.getOr(
-          baseConfig.clientFilterAddressThreshold,
-        ),
-        reorgThresholdReadyTolerance,
-      }
-    }
-
-    // Register handlers once against the full chain set (idempotent +
-    // import-cached, so re-`make` reuses), then narrow to this run's chains.
-    switch customConfig {
-    | None => let _ = await HandlerLoader.registerAllHandlers(~config=baseConfig)
-    | Some(_) =>
-      // A supplied config has no handler files on disk; register inline
-      // handlers (if any) through the same public registry lifecycle.
-      HandlerRegister.startRegistration(~config=baseConfig)
-    }
-    let registrationsByChainId = HandlerRegister.finishRegistration(~config)
-    installMockSourceRegistrations(~config, ~registrationsByChainId)
-
-    let sql = PgStorage.makeClient()
-    scope.clients->Array.push(sql)->ignore
-    let pgSchema = scope.pgSchema
-    let storage = mapStorage(
-      // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
-    )
-    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
-
-    let onError = switch onError {
-    | Some(onError) => onError
-    | None => (errHandler: ErrorHandling.t) => {
-        errHandler->ErrorHandling.log
-        NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
-      }
-    }
-
-    await persistence->Persistence.init(
-      ~chainConfigs=config.chainMap->ChainMap.values,
-      ~envioInfo=JSON.Encode.object(Dict.make()),
-      ~resetCommand="envio dev -r",
-      ~runCommand=Some("envio dev"),
-      ~reset,
-    )
-
-    let state = IndexerState.makeFromDbState(
-      ~initialState=persistence->Persistence.getInitializedState,
-      ~config,
-      ~persistence,
-      ~registrationsByChainId,
-      ~reducedPollingInterval?,
-      ~targetBufferSize?,
-      ~isDevelopmentMode=false,
-      ~shouldUseTui=false,
-      ~onError,
-      ~onExit?,
-    )
-    state->IndexerLoop.start
-
-    // Persist before stopping, else a resumed indexer loses uncommitted state,
-    // then let any in-flight batch or write settle so nothing from this run
-    // lands on the database afterwards.
-    // Idempotent: `restart` stops the previous indexer, and so does the `run`
-    // teardown that stops every indexer the scope created.
-    let stopped = ref(None)
-    let stop = () =>
-      switch stopped.contents {
-      | Some(promise) => promise
-      | None =>
-        let promise = (
-          async () => {
-            await state->Writing.flush
-            state->IndexerState.stop
-            // Bounded: a test may leave a handler that never resolves, which
-            // pins `isProcessing` forever. `run` checks what actually settled
-            // before it decides to drop the schema.
-            let deadline = Date.now() +. 2000.
-            while (
-              (state->IndexerState.isProcessing ||
-              state->IndexerState.writeFiber->Option.isSome) && Date.now() < deadline
-            ) {
-              await Utils.delay(1)
-            }
-          }
-        )()
-        stopped := Some(promise)
-        promise
-      }
-    scope.stops->Array.push(stop)->ignore
-    scope.hasPendingWrite->Array.push(() => state->IndexerState.writeFiber->Option.isSome)->ignore
-
-    {
-      getBatchWritePromise: () => {
-        Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = state->IndexerState.processedBatchesCount
-          // Wait until a new batch is processed and written. A reorg batch can
-          // land before this call (e.g. while the test awaits the rollback), so
-          // also stop once the indexer has fully settled.
-          let idleChecks = ref(0)
-          let rec wait = async () => {
-            await state->Writing.flush
-            let isIdle =
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-            // Catching up hands off to the FinalizingIndexes phase, which is
-            // where readiness is decided — so a batch isn't settled until that
-            // phase is over. The idle fallback below still bounds the wait.
-            if (
-              before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
-            ) {
-              ()
-            } else if isIdle && idleChecks.contents >= 5 {
-              ()
-            } else {
-              idleChecks := if isIdle {
-                  idleChecks.contents + 1
-                } else {
-                  0
-                }
-              await Utils.delay(1)
-              await wait()
-            }
-          }
-          await wait()
-          // Skip extra microtasks for indexer to fire follow-up actions
-          // (e.g. the NextQuery dispatch that schedules the next
-          // getItemsOrThrow call). Without this, callers that immediately
-          // call resolveGetItemsOrThrow can race the dispatch and observe
-          // an empty calls array.
-          await Utils.delay(0)
-          await Utils.delay(0)
-          resolve()
-        })
-      },
-      waitUntilIdle: async () => {
-        await state->Writing.flush
-        // Settling takes several ticks: the loop dispatches follow-up actions
-        // (the next query, the finalize pass) from inside the tick that looks
-        // idle, so one observation isn't enough.
-        let settled = ref(0)
-        let attempts = ref(0)
-        while settled.contents < 5 && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          settled :=
-            if (
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
-              state->IndexerState.committedCheckpointId ==
-                state->IndexerState.processedCheckpointId
-            ) {
-              settled.contents + 1
-            } else {
-              0
-            }
-          await Utils.delay(0)
-        }
-        if settled.contents < 5 {
-          JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
-        }
-      },
-      waitUntilReady: async () => {
-        let isReady = () =>
-          state
-          ->IndexerState.chainStates
-          ->Dict.valuesToArray
-          ->Array.every(chainState => chainState->ChainState.isReady)
-        let attempts = ref(0)
-        while !isReady() && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          await Utils.delay(0)
-        }
-        if !isReady() {
-          JsError.throwWithMessage("Timed out waiting for the indexer to report ready")
-        }
-      },
-      getRollbackReadyPromise: () => {
-        Utils.Promise.makeAsync(async (resolve, _reject) => {
-          // Wait for the in-progress rollback to be fully applied. RollbackReady
-          // itself is transient (the reprocessing batch consumes it), so observe
-          // the rollback flag clearing instead.
-          while state->IndexerState.isResolvingReorg {
-            await Utils.delay(1)
-          }
-          // Skip an extra microtask for indexer to fire actions
-          await Utils.delay(0)
-          resolve()
-        })
-      },
-      query: (type entity, name) => {
-        let ec = config->entityConfigByName(name)
-        sql
-        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(ec.table->Table.pgRowsSchema)
-        })
-        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
-      },
-      queryHistory: (type entity, name) => {
-        let ec = config->entityConfigByName(name)
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
-          ),
-        )
-        ->Promise.thenResolve(items => {
-          // Rows aren't ordered by the query, and insert order isn't meaningful
-          // since checkpointId is the source of truth. Sort for stable assertions.
-          items
-          ->S.parseOrThrow(
-            S.array(
-              S.union([
-                PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
-                S.object((s): Change.t<Internal.entity> => {
-                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                  Delete({
-                    entityId: s.field("id", ec.table->Table.getIdSchema),
-                    checkpointId: s.field(
-                      EntityHistory.checkpointIdFieldName,
-                      EntityHistory.unsafeCheckpointIdSchema,
-                    ),
-                  })
-                }),
-              ]),
-            ),
-          )
-          ->Array.toSorted((a, b) => {
-            switch String.compare(
-              (a->Change.getEntityId)->EntityId.toKey,
-              (b->Change.getEntityId)->EntityId.toKey,
-            ) {
-            | 0. =>
-              Float.compare(
-                a->Change.getCheckpointId->BigInt.toFloat,
-                b->Change.getCheckpointId->BigInt.toFloat,
-              )
-            | order => order
-            }
-          })
-        })
-        ->(
-          Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
-        )
-      },
-      queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
-        ->Promise.thenResolve(items => {
-          items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
-        })
-        ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
-      },
-      queryCheckpoints: () => {
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=InternalTable.Checkpoints.table.tableName,
-          ),
-        )
-        ->Promise.thenResolve(rows =>
-          rows
-          ->(Utils.magic: unknown => array<unknown>)
-          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
-        )
-      },
-      queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
-        let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
-        let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-        sql
-        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
-      },
-      metric: async name => {
-        // Parse the metric's samples back out of the rendered /metrics text.
-        Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
-        ->String.split("\n")
-        ->Array.filterMap(line =>
-          if line->String.startsWith(name ++ "{") || line->String.startsWith(name ++ " ") {
-            let rest = line->String.slice(~start=name->String.length)
-            let (labelsPart, value) = switch rest->String.lastIndexOf(" ") {
-            | -1 => ("", rest)
-            | i => (rest->String.slice(~start=0, ~end=i), rest->String.slice(~start=i + 1))
-            }
-            let labels = Dict.make()
-            // Quoted values may contain escaped `\"`, `\\` and `\n`, so match
-            // label pairs instead of splitting on commas/equals.
-            let labelRe = RegExp.fromString(
-              `([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\\]|\\\\.)*)"`,
-              ~flags="g",
-            )
-            let break = ref(false)
-            while !break.contents {
-              switch labelRe->RegExp.exec(labelsPart) {
-              | Some(result) =>
-                let matches = result->RegExp.Result.matches
-                switch (matches->Array.get(0), matches->Array.get(1)) {
-                | (Some(Some(key)), Some(Some(escaped))) =>
-                  labels->Dict.set(
-                    key,
-                    escaped
-                    ->String.replaceAll("\\n", "\n")
-                    ->String.replaceAll("\\\"", "\"")
-                    ->String.replaceAll("\\\\", "\\"),
-                  )
-                | _ => ()
-                }
-              | None => break := true
-              }
-            }
-            Some({value, labels})
-          } else {
-            None
-          }
-        )
-      },
-      pgSchema,
-      stop,
-      restart: async () => {
-        // The previous run has to be quiet before the resumed one takes over the
-        // shared persistence, else the two race against the same db.
-        await stop()
-        await make(
-          ~scope,
-          ~chains,
-          ~config=?customConfig,
-          ~enableRawEvents,
-          ~saveFullHistory,
-          ~reset=false,
-          ~batchSize?,
-          ~maxAddrInPartition?,
-          ~clientFilterAddressThreshold?,
-          ~shouldRollbackOnReorg,
-          ~reducedPollingInterval?,
-          ~targetBufferSize?,
-          ~reorgThresholdReadyTolerance,
-          ~onError,
-          ~onExit?,
-          ~mapStorage,
-        )
-      },
-    }
   }
 
   // Runs `body` against a fresh indexer in a Postgres schema of its own, then
@@ -942,26 +510,400 @@ module Indexer = {
     ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
     body: t => promise<unit>,
   ) => {
-    let scope = {pgSchema: TestPgSchema.make(), clients: [], stops: [], hasPendingWrite: []}
+    // Postgres resources this run owns: one schema, plus every client and
+    // indexer built inside it (`restart` adds more).
+    let pgSchema = TestPgSchema.make()
+    let clients = []
+    let stops = []
 
-    let outcome = try {
-      let indexer = await make(
-        ~scope,
-        ~chains,
-        ~config=?customConfig,
-        ~saveFullHistory,
-        ~enableRawEvents,
-        ~batchSize?,
-        ~maxAddrInPartition?,
-        ~clientFilterAddressThreshold?,
-        ~shouldRollbackOnReorg,
+    // The builder is only reachable here and from `restart`, so it takes just
+    // the flag that differs between them and reads the rest off this call.
+    let rec make = async (~reset) => {
+      // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
+      switch Env.userLogLevel {
+      | None => Logging.setLogLevel(#silent)
+      | Some(_) => ()
+      }
+
+      // The full (un-narrowed) config. Handlers register against this so every
+      // chain resolves once; `finishRegistration` then narrows to the per-test
+      // `config` below.
+      let baseConfig = switch customConfig {
+      | Some(config) => config
+      | None => Config.load()
+      }
+
+      // Build the final per-test config (chain overrides, enableRawEvents, ...).
+      let config = {
+        let chainMap =
+          chains
+          ->Array.map(chainConfig => {
+            let chainId = (chainConfig.chain :> int)->ChainId.fromInt
+            let originalChainConfig = baseConfig.chainMap->ChainMap.get(chainId)
+            (
+              chainId,
+              {
+                ...originalChainConfig,
+                sourceConfig: chainConfig.sourceConfig,
+                startBlock: chainConfig.startBlock->Option.getOr(originalChainConfig.startBlock),
+                endBlock: ?switch chainConfig.endBlock {
+                | Some(_) as endBlock => endBlock
+                | None => originalChainConfig.endBlock
+                },
+                maxReorgDepth: chainConfig.maxReorgDepth->Option.getOr(
+                  originalChainConfig.maxReorgDepth,
+                ),
+                blockLag: chainConfig.blockLag->Option.getOr(originalChainConfig.blockLag),
+              },
+            )
+          })
+          ->ChainMap.fromArrayUnsafe
+
+        {
+          ...baseConfig,
+          shouldRollbackOnReorg,
+          shouldSaveFullHistory: saveFullHistory,
+          enableRawEvents,
+          chainMap,
+          batchSize: batchSize->Option.getOr(baseConfig.batchSize),
+          maxAddrInPartition: maxAddrInPartition->Option.getOr(baseConfig.maxAddrInPartition),
+          clientFilterAddressThreshold: clientFilterAddressThreshold->Option.getOr(
+            baseConfig.clientFilterAddressThreshold,
+          ),
+          reorgThresholdReadyTolerance,
+        }
+      }
+
+      // Register handlers once against the full chain set (idempotent +
+      // import-cached, so re-`make` reuses), then narrow to this run's chains.
+      switch customConfig {
+      | None =>
+        let _ = await HandlerLoader.registerAllHandlers(~config=baseConfig)
+      | Some(_) =>
+        // A supplied config has no handler files on disk; register inline
+        // handlers (if any) through the same public registry lifecycle.
+        HandlerRegister.startRegistration(~config=baseConfig)
+      }
+      let registrationsByChainId = HandlerRegister.finishRegistration(~config)
+      installMockSourceRegistrations(~config, ~registrationsByChainId)
+
+      let sql = PgStorage.makeClient()
+      clients->Array.push(sql)->ignore
+      let storage = mapStorage(
+        // Tracking tables in Hasura costs ~1.9 seconds per indexer.
+        PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
+      )
+      let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+
+      let onError = switch onError {
+      | Some(onError) => onError
+      | None =>
+        (errHandler: ErrorHandling.t) => {
+          errHandler->ErrorHandling.log
+          NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
+        }
+      }
+
+      await persistence->Persistence.init(
+        ~chainConfigs=config.chainMap->ChainMap.values,
+        ~envioInfo=JSON.Encode.object(Dict.make()),
+        ~resetCommand="envio dev -r",
+        ~runCommand=Some("envio dev"),
+        ~reset,
+      )
+
+      let state = IndexerState.makeFromDbState(
+        ~initialState=persistence->Persistence.getInitializedState,
+        ~config,
+        ~persistence,
+        ~registrationsByChainId,
         ~reducedPollingInterval?,
         ~targetBufferSize?,
-        ~reorgThresholdReadyTolerance,
-        ~onError?,
+        ~isDevelopmentMode=false,
+        ~shouldUseTui=false,
+        ~onError,
         ~onExit?,
-        ~mapStorage,
       )
+      state->IndexerLoop.start
+
+      // Persist before stopping, else a resumed indexer loses uncommitted state,
+      // then let any in-flight batch or write settle so nothing from this run
+      // lands on the database afterwards.
+      // Idempotent: `restart` stops the previous indexer, and so does the `run`
+      // teardown that stops every indexer the scope created.
+      let stopped = ref(None)
+      let stop = () =>
+        switch stopped.contents {
+        | Some(promise) => promise
+        | None =>
+          let promise = (
+            async () => {
+              await state->Writing.flush
+              state->IndexerState.stop
+              // Bounded: a test may leave a handler that never resolves, which
+              // pins `isProcessing` forever. `run` checks what actually settled
+              // before it decides to drop the schema.
+              let deadline = Date.now() +. 2000.
+              while (
+                (state->IndexerState.isProcessing ||
+                  state->IndexerState.writeFiber->Option.isSome) && Date.now() < deadline
+              ) {
+                await Utils.delay(1)
+              }
+            }
+          )()
+          stopped := Some(promise)
+          promise
+        }
+      stops->Array.push(stop)->ignore
+
+      {
+        getBatchWritePromise: () => {
+          Utils.Promise.makeAsync(async (resolve, _reject) => {
+            let before = state->IndexerState.processedBatchesCount
+            // Wait until a new batch is processed and written. A reorg batch can
+            // land before this call (e.g. while the test awaits the rollback), so
+            // also stop once the indexer has fully settled.
+            let idleChecks = ref(0)
+            let rec wait = async () => {
+              await state->Writing.flush
+              let isIdle =
+                !(state->IndexerState.isProcessing) &&
+                state->IndexerState.writeFiber->Option.isNone &&
+                state->IndexerState.committedCheckpointId ==
+                  state->IndexerState.processedCheckpointId
+
+              // Catching up hands off to the FinalizingIndexes phase, which is
+              // where readiness is decided — so a batch isn't settled until that
+              // phase is over. The idle fallback below still bounds the wait.
+              if (
+                before < state->IndexerState.processedBatchesCount &&
+                  !(state->IndexerState.isFinalizingIndexes)
+              ) {
+                ()
+              } else if isIdle && idleChecks.contents >= 5 {
+                ()
+              } else {
+                idleChecks := if isIdle {
+                    idleChecks.contents + 1
+                  } else {
+                    0
+                  }
+                await Utils.delay(1)
+                await wait()
+              }
+            }
+            await wait()
+            // Skip extra microtasks for indexer to fire follow-up actions
+            // (e.g. the NextQuery dispatch that schedules the next
+            // getItemsOrThrow call). Without this, callers that immediately
+            // call resolveGetItemsOrThrow can race the dispatch and observe
+            // an empty calls array.
+            await Utils.delay(0)
+            await Utils.delay(0)
+            resolve()
+          })
+        },
+        waitUntilIdle: async () => {
+          await state->Writing.flush
+          // Settling takes several ticks: the loop dispatches follow-up actions
+          // (the next query, the finalize pass) from inside the tick that looks
+          // idle, so one observation isn't enough.
+          let settled = ref(0)
+          let attempts = ref(0)
+          while settled.contents < 5 && attempts.contents < 5000 {
+            attempts := attempts.contents + 1
+            settled := if (
+                !(state->IndexerState.isProcessing) &&
+                state->IndexerState.writeFiber->Option.isNone &&
+                !(state->IndexerState.isFinalizingIndexes) &&
+                state->IndexerState.committedCheckpointId ==
+                  state->IndexerState.processedCheckpointId
+              ) {
+                settled.contents + 1
+              } else {
+                0
+              }
+            await Utils.delay(0)
+          }
+          if settled.contents < 5 {
+            JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
+          }
+        },
+        waitUntilReady: async () => {
+          let isReady = () =>
+            state
+            ->IndexerState.chainStates
+            ->Dict.valuesToArray
+            ->Array.every(chainState => chainState->ChainState.isReady)
+          let attempts = ref(0)
+          while !isReady() && attempts.contents < 5000 {
+            attempts := attempts.contents + 1
+            await Utils.delay(0)
+          }
+          if !isReady() {
+            JsError.throwWithMessage("Timed out waiting for the indexer to report ready")
+          }
+        },
+        getRollbackReadyPromise: () => {
+          Utils.Promise.makeAsync(async (resolve, _reject) => {
+            // Wait for the in-progress rollback to be fully applied. RollbackReady
+            // itself is transient (the reprocessing batch consumes it), so observe
+            // the rollback flag clearing instead.
+            while state->IndexerState.isResolvingReorg {
+              await Utils.delay(1)
+            }
+            // Skip an extra microtask for indexer to fire actions
+            await Utils.delay(0)
+            resolve()
+          })
+        },
+        query: (type entity, name) => {
+          let ec = config->entityConfigByName(name)
+          sql
+          ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=ec.table.tableName))
+          ->Promise.thenResolve(items => {
+            items->S.parseOrThrow(ec.table->Table.pgRowsSchema)
+          })
+          ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
+        },
+        queryHistory: (type entity, name) => {
+          let ec = config->entityConfigByName(name)
+          sql
+          ->Postgres.unsafe(
+            PgStorage.makeLoadAllQuery(
+              ~pgSchema,
+              ~tableName=PgStorage.getEntityHistory(~entityConfig=ec).table.tableName,
+            ),
+          )
+          ->Promise.thenResolve(items => {
+            // Rows aren't ordered by the query, and insert order isn't meaningful
+            // since checkpointId is the source of truth. Sort for stable assertions.
+            items
+            ->S.parseOrThrow(
+              S.array(
+                S.union([
+                  PgStorage.getEntityHistory(~entityConfig=ec).setChangeSchema,
+                  S.object((s): Change.t<Internal.entity> => {
+                    s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                    Delete({
+                      entityId: s.field("id", ec.table->Table.getIdSchema),
+                      checkpointId: s.field(
+                        EntityHistory.checkpointIdFieldName,
+                        EntityHistory.unsafeCheckpointIdSchema,
+                      ),
+                    })
+                  }),
+                ]),
+              ),
+            )
+            ->Array.toSorted((a, b) => {
+              switch String.compare(
+                a->Change.getEntityId->EntityId.toKey,
+                b->Change.getEntityId->EntityId.toKey,
+              ) {
+              | 0. =>
+                Float.compare(
+                  a->Change.getCheckpointId->BigInt.toFloat,
+                  b->Change.getCheckpointId->BigInt.toFloat,
+                )
+              | order => order
+              }
+            })
+          })
+          ->(
+            Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<
+              array<Change.t<entity>>,
+            >
+          )
+        },
+        queryRaw: (type entity, entityConfig: Internal.entityConfig) => {
+          sql
+          ->Postgres.unsafe(
+            PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+          )
+          ->Promise.thenResolve(items => {
+            items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+          })
+          ->(Utils.magic: promise<array<unknown>> => promise<array<entity>>)
+        },
+        queryCheckpoints: () => {
+          sql
+          ->Postgres.unsafe(
+            PgStorage.makeLoadAllQuery(
+              ~pgSchema,
+              ~tableName=InternalTable.Checkpoints.table.tableName,
+            ),
+          )
+          ->Promise.thenResolve(rows =>
+            rows
+            ->(Utils.magic: unknown => array<unknown>)
+            ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+          )
+        },
+        queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
+          let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
+          let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
+          sql
+          ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+          ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
+        },
+        metric: async name => {
+          // Parse the metric's samples back out of the rendered /metrics text.
+          Metrics.collect(~metrics=Some(state->IndexerState.toMetrics))
+          ->String.split("\n")
+          ->Array.filterMap(line =>
+            if line->String.startsWith(name ++ "{") || line->String.startsWith(name ++ " ") {
+              let rest = line->String.slice(~start=name->String.length)
+              let (labelsPart, value) = switch rest->String.lastIndexOf(" ") {
+              | -1 => ("", rest)
+              | i => (rest->String.slice(~start=0, ~end=i), rest->String.slice(~start=i + 1))
+              }
+              let labels = Dict.make()
+              // Quoted values may contain escaped `\"`, `\\` and `\n`, so match
+              // label pairs instead of splitting on commas/equals.
+              let labelRe = RegExp.fromString(
+                `([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\\]|\\\\.)*)"`,
+                ~flags="g",
+              )
+              let break = ref(false)
+              while !break.contents {
+                switch labelRe->RegExp.exec(labelsPart) {
+                | Some(result) =>
+                  let matches = result->RegExp.Result.matches
+                  switch (matches->Array.get(0), matches->Array.get(1)) {
+                  | (Some(Some(key)), Some(Some(escaped))) =>
+                    labels->Dict.set(
+                      key,
+                      escaped
+                      ->String.replaceAll("\\n", "\n")
+                      ->String.replaceAll("\\\"", "\"")
+                      ->String.replaceAll("\\\\", "\\"),
+                    )
+                  | _ => ()
+                  }
+                | None => break := true
+                }
+              }
+              Some({value, labels})
+            } else {
+              None
+            }
+          )
+        },
+        pgSchema,
+        stop,
+        restart: async () => {
+          // The previous run has to be quiet before the resumed one takes over the
+          // shared persistence, else the two race against the same db.
+          await stop()
+          await make(~reset=false)
+        },
+      }
+    }
+
+    let outcome = try {
+      let indexer = await make(~reset=true)
       await body(indexer)
       None
     } catch {
@@ -970,20 +912,20 @@ module Indexer = {
 
     // Stop before dropping: a still-running loop would fail its next query
     // against the vanished schema and report that instead of the real failure.
-    for i in 0 to scope.stops->Array.length - 1 {
-      switch scope.stops->Array.get(i) {
+    for i in 0 to stops->Array.length - 1 {
+      switch stops->Array.get(i) {
       | Some(stop) => await stop()
       | None => ()
       }
     }
-    // A write still in flight would fail fatally against a vanished schema, so
-    // leave that schema for the sweeper rather than pulling it out from under.
-    let isQuiesced = scope.hasPendingWrite->Array.every(pending => !pending())
-    switch scope.clients->Array.get(0) {
-    | Some(sql) if isQuiesced => await sql->TestPgSchema.drop(~pgSchema=scope.pgSchema)
-    | _ => ()
+    // Dropped whether the body passed or threw — a leaked schema outlives the
+    // information it could have carried, and the sweeper only covers workers
+    // that died before getting here.
+    switch clients->Array.get(0) {
+    | Some(sql) => await sql->TestPgSchema.drop(~pgSchema)
+    | None => ()
     }
-    let _ = await Promise.all(scope.clients->Array.map(sql => sql->Postgres.endSql))
+    let _ = await Promise.all(clients->Array.map(sql => sql->Postgres.endSql))
 
     switch outcome {
     | Some(exn) => throw(exn)
@@ -1103,7 +1045,9 @@ module Source = {
         if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
         }
-        getHeightOrThrowResolveFns->Array.forEach(resolve => resolve({Source.height, requestStats: []}))
+        getHeightOrThrowResolveFns->Array.forEach(resolve =>
+          resolve({Source.height, requestStats: []})
+        )
       },
       rejectGetHeightOrThrow: exn => {
         getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
@@ -1142,8 +1086,8 @@ module Source = {
         if getBlockHashesResolveFns->Utils.Array.isEmpty {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
-        getBlockHashesResolveFns->Array.forEach(
-          resolve => resolve({Source.result: Ok(blockHashes), requestStats: []}),
+        getBlockHashesResolveFns->Array.forEach(resolve =>
+          resolve({Source.result: Ok(blockHashes), requestStats: []})
         )
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       },
