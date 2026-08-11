@@ -1,13 +1,23 @@
 open Vitest
 
-// A `_sum` column is maintained as a read-modify-write through the handler
-// context, so the entity-history table snapshots the whole row per checkpoint.
-// That is what makes a reorg take a contribution back: the row is restored to
-// the value it had at the rollback target, and deleted outright if the
-// contribution that created it is the one being rolled back.
+// Materialized writes go through the handler context, so entity history
+// snapshots the whole row per checkpoint. That is what makes a reorg take a
+// write back with no rollback code of its own: a `_sum` column returns to the
+// value it held at the rollback target, an overwritten column returns to what
+// the previous event wrote, and a row whose only contribution is rolled back is
+// deleted outright.
+//
+// This is the rung that needs the real loop. Everything about materialization
+// that doesn't — several tables per event, per-chain keying, `cross_chain` —
+// is covered by `simulate` in `packages/envio-tests`.
 type account = {
   id: string,
   balance: bigint,
+  @as("chainId") chainId: int,
+}
+type lastSeen = {
+  id: string,
+  block: int,
   @as("chainId") chainId: int,
 }
 
@@ -48,6 +58,13 @@ tables:
       id: account
       balance:
         _sum: delta
+  last_seen:
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: params.to
+      block: block.number
 `
 
 // The compiled plans read the event by path, so a mock item can hand the real
@@ -63,6 +80,7 @@ let makeTransferItem = (~block, ~from, ~to, ~value, ~handler: Internal.handler) 
           "eventName": "Transfer",
           "chainId": 1,
           "params": {"from": from, "to": to, "value": value},
+          "block": {"number": block},
         }->(Utils.magic: {..} => Internal.event)
       handler({
         event,
@@ -132,12 +150,16 @@ describe("Materialized reducer rollback", () => {
     let accounts: array<account> = await indexerMock.queryRaw(
       config.entitiesByTableName->Dict.getUnsafe("accounts"),
     )
+    let seen: array<lastSeen> = await indexerMock.queryRaw(
+      config.entitiesByTableName->Dict.getUnsafe("last_seen"),
+    )
     await indexerMock.stop()
 
-    t.expect(accounts->Array.toSorted((a, b) => String.compare(a.id, b.id))).toEqual([
-      {id: alice, balance: -5n, chainId: 1},
-      {id: bob, balance: 5n, chainId: 1},
-    ])
+    t.expect((accounts->Array.toSorted((a, b) => String.compare(a.id, b.id)), seen)).toEqual((
+      [{id: alice, balance: -5n, chainId: 1}, {id: bob, balance: 5n, chainId: 1}],
+      // The overwritten column goes back to what block 101 wrote, not to null.
+      [{id: bob, block: 101, chainId: 1}],
+    ))
   })
 
   Async.it("Deletes a row whose only contribution is reorged away", async t => {
@@ -180,8 +202,11 @@ describe("Materialized reducer rollback", () => {
     let accounts: array<account> = await indexerMock.queryRaw(
       config.entitiesByTableName->Dict.getUnsafe("accounts"),
     )
+    let seen: array<lastSeen> = await indexerMock.queryRaw(
+      config.entitiesByTableName->Dict.getUnsafe("last_seen"),
+    )
     await indexerMock.stop()
 
-    t.expect(accounts).toEqual([])
+    t.expect((accounts, seen)).toEqual(([], []))
   })
 })
