@@ -75,7 +75,7 @@ describe("Materialization plan decoding", () => {
 
   it("says which config is stale", t => {
     t.expect(valid->String.replace(`"table": "accounts",`, "")->failureMessage).toBe(
-      "Invalid indexer config: the materialization plans don't match this envio version. " ++
+      "Invalid indexer config: the `tables` config doesn't match this envio version. " ++
       `Failed parsing at ["0"]["table"]. Reason: Expected string, received undefined. ` ++
       "Run `envio codegen` again.",
     )

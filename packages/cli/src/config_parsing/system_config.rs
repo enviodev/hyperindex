@@ -1081,12 +1081,11 @@ impl SystemConfig {
             materialization::validate_table_names(tables)?;
             if default_cross_chain {
                 return Err(anyhow!(
-                    "`tables` needs `disable_default_cross_chain: true` at the top of \
-                     config.yaml. Without it every table shares one row per id across all chains, \
-                     so the same id on two chains would collide — for a token indexer that \
-                     silently merges balances. Add:\n\n    disable_default_cross_chain: \
-                     true\n\nand mark any table that really is chain-independent with \
-                     `cross_chain: true`."
+                    "`tables` needs `disable_default_cross_chain: true` at the top of config.yaml. \
+                     Without it a table keeps one row per id shared by every chain, so the same id \
+                     on two chains overwrites itself — for a token indexer that silently merges \
+                     balances. Add:\n\n    disable_default_cross_chain: true\n\nand set \
+                     `cross_chain: true` on any table that really is the same across chains."
                 ));
             }
         }

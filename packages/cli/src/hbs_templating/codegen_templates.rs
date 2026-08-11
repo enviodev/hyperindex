@@ -3662,8 +3662,8 @@ type GlobalCounter @crossChain {
             ),
             concat!(
                 "The config has contract names that don't start with a capital letter: ",
-                "\"contract1\". They name the generated types and the `contract` you write in ",
-                "handlers, so they must be capitalized — rename to \"Contract1\"."
+                "\"contract1\". You write these names in handlers and they name the generated ",
+                "types, so rename them to \"Contract1\"."
             )
         );
     }

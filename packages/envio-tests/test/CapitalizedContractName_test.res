@@ -42,7 +42,7 @@ describe("Contract name capitalization", () => {
   it("rejects an uncapitalized name, naming the rename", t => {
     t.expect(parseError("myToken")).toEqual(
       Some(
-        `Config parse error: The config has contract names that don't start with a capital letter: "myToken". They name the generated types and the \`contract\` you write in handlers, so they must be capitalized — rename to "MyToken".`,
+        `Config parse error: The config has contract names that don't start with a capital letter: "myToken". You write these names in handlers and they name the generated types, so rename them to "MyToken".`,
       ),
     )
   })

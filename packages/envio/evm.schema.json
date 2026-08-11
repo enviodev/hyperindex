@@ -776,21 +776,21 @@
         "type": "object",
         "properties": {
           "cross_chain": {
-            "description": "Share one row across every chain instead of keeping the same id per chain. Only meaningful with `disable_default_cross_chain: true`.",
+            "description": "Keep one row per id across all chains instead of one per chain. Only meaningful with `disable_default_cross_chain: true`.",
             "type": [
               "boolean",
               "null"
             ]
           },
           "wildcard": {
-            "description": "Read the events from every address that emits them, rather than only the contract's configured addresses. Needed when the contract has no `address` in config.yaml.",
+            "description": "Read this event from every address that emits it, not only the addresses configured for the contract. Needed when the contract has no `address` in config.yaml.",
             "type": [
               "boolean",
               "null"
             ]
           },
           "storage": {
-            "description": "Which backends store this table, overriding the `storage` defaults in config.yaml. The `postgres` and `clickhouse` options each take a boolean or an options object (which implies the backend is enabled).",
+            "description": "Where this table is stored, overriding the top-level `storage`. `postgres` and `clickhouse` each take true/false, or an object of settings (which also turns the backend on).",
             "anyOf": [
               {
                 "$ref": "#/$defs/TableStorage"
@@ -801,18 +801,14 @@
             ]
           },
           "as_entity": {
-            "description": "Expose the table to handlers as a readable entity. A name spells the accessor (`as_entity: Account` gives `context.Account`); `true` uses the capitalized table name. Omitted, the table is materialized and queryable over GraphQL but absent from the handler context. Materialized tables are never writable from handlers.",
-            "anyOf": [
-              {
-                "$ref": "#/$defs/AsEntitySchema"
-              },
-              {
-                "type": "null"
-              }
+            "description": "Let handlers read this table, under this name: `as_entity: Account` gives them `context.Account`. Left out, the table is still stored and queryable over GraphQL, just not visible to handlers. Handlers can never write it.",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "with": {
-            "description": "Table-local intermediate relations, like SQL CTEs. A list of queries is a UNION ALL; every branch must produce the same columns.",
+            "description": "Intermediate queries this table can read through `from`, like SQL CTEs. A list of queries is read as one combined result, so every query in it must select the same columns.",
             "type": [
               "object",
               "null"
@@ -822,21 +818,34 @@
             }
           },
           "from": {
-            "description": "What the table is materialized from: `evm.events`, or the name of one of its own `with` relations.",
+            "description": "Where the rows come from: `evm.events`, or the name of one of this table's own `with` queries.",
             "type": "string"
           },
           "where": {
-            "description": "Field conditions, ANDed together. A scalar is equality shorthand (`eventName: Transfer`); an object is either a nested path (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of filters. `contractName` and `eventName` also narrow which events the table's paths are typed against.",
+            "description": "Conditions a row must match, all of them. A plain value means equals (`eventName: Transfer`); an object is either a nested field (`block: {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of conditions.",
             "type": [
               "object",
               "null"
             ]
           },
           "select": {
-            "description": "The table's complete public shape. Plain strings are source paths; YAML numbers, booleans and null are literals.",
+            "description": "The table's columns. A plain string is a field of the event; numbers, booleans and null are values as written. Add `_description` beside a column's value to document it.",
             "type": "object",
             "additionalProperties": {
-              "description": "A source path (\"params.owner\"), a YAML literal, or an object holding one value (`_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
+              "anyOf": [
+                {
+                  "description": "A field of the event (\"params.owner\"), a number, boolean or null, or an object holding one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "_description": {
+                      "description": "What this column holds. Becomes the column's description in GraphQL and its comment in the database.",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
             }
           }
         },
@@ -848,7 +857,7 @@
       }
     },
     "TableStorage": {
-      "description": "Per-table backend selection, mirroring the `@storage` directive an entity in\nschema.graphql carries.",
+      "description": "Per-table storage, mirroring the `@storage` directive an entity carries.",
       "type": "object",
       "properties": {
         "postgres": {
@@ -889,7 +898,7 @@
       "type": "object",
       "properties": {
         "indexes": {
-          "description": "Secondary indexes on this table. An entry is a field name, a list of field                        names for a composite index, or `{field, direction}` to sort a field                        descending. `id` is already the primary key.",
+          "description": "Extra indexes for this table. An entry is a field name, a list of field names for an index over several fields, or `{field, direction}` to sort a field descending. `id` is already indexed.",
           "type": [
             "array",
             "null"
@@ -979,7 +988,7 @@
           ]
         },
         "order_by": {
-          "description": "Table fields that lead the history table's sorting key, replacing the                        default `id` prefix.",
+          "description": "Fields to sort the stored rows by, in place of the default `id`.",
           "type": [
             "array",
             "null"
@@ -998,17 +1007,6 @@
       },
       "additionalProperties": false
     },
-    "AsEntitySchema": {
-      "description": "Shape stand-in for the JSON schema, which has no union of bool and string\nwithout a named type.",
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "string"
-        }
-      ]
-    },
     "Queries": {
       "anyOf": [
         {
@@ -1019,7 +1017,7 @@
               "type": "string"
             },
             "where": {
-              "description": "Field conditions, ANDed together. A scalar is equality shorthand (`eventName: Transfer`); an object is either a nested path (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of filters. `contractName` and `eventName` also narrow which events the table's paths are typed against.",
+              "description": "Conditions a row must match, all of them. A plain value means equals (`eventName: Transfer`); an object is either a nested field (`block: {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of conditions.",
               "type": [
                 "object",
                 "null"
@@ -1028,7 +1026,7 @@
             "select": {
               "type": "object",
               "additionalProperties": {
-                "description": "A source path (\"params.owner\"), a YAML literal, or an object holding one value (`_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
+                "description": "A field of the event (\"params.owner\"), a number, boolean or null, or an object holding one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`."
               }
             }
           },
@@ -1048,7 +1046,7 @@
                 "type": "string"
               },
               "where": {
-                "description": "Field conditions, ANDed together. A scalar is equality shorthand (`eventName: Transfer`); an object is either a nested path (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of filters. `contractName` and `eventName` also narrow which events the table's paths are typed against.",
+                "description": "Conditions a row must match, all of them. A plain value means equals (`eventName: Transfer`); an object is either a nested field (`block: {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of conditions.",
                 "type": [
                   "object",
                   "null"
@@ -1057,7 +1055,7 @@
               "select": {
                 "type": "object",
                 "additionalProperties": {
-                  "description": "A source path (\"params.owner\"), a YAML literal, or an object holding one value (`_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
+                  "description": "A field of the event (\"params.owner\"), a number, boolean or null, or an object holding one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`."
                 }
               }
             },

@@ -19,7 +19,7 @@ chains:
 tables:
   accounts:
     # Handlers only see a table that opts in; writes stay blocked either way.
-    as_entity: true
+    as_entity: Accounts
     from: evm.events
     where:
       contractName: ERC20
@@ -94,7 +94,7 @@ describe("materialized tables are read-only from handlers", () => {
     );
 
     t.expect(message).toBe(
-      "context.Accounts.set() is unavailable: \`accounts\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to schema.graphql to write it from handlers."
+      "context.Accounts.set() is unavailable: config.yaml writes \`accounts\` from its \`select\`, so handlers can only read it. To write it from a handler, define the table in schema.graphql instead."
     );
   });
 });

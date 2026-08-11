@@ -100,15 +100,13 @@ pub fn validate_capitalized_names(
         return Ok(());
     }
     Err(anyhow!(
-        "The config has {part_of_config} names that don't start with a capital letter: {}. They \
-         name the generated types and the `{}` you write in handlers, so they must be capitalized \
-         — rename to {}.",
+        "The config has {part_of_config} names that don't start with a capital letter: {}. You \
+         write these names in handlers and they name the generated types, so rename them to {}.",
         uncapitalized
             .iter()
             .map(|name| format!("\"{name}\""))
             .collect::<Vec<_>>()
             .join(", "),
-        part_of_config,
         uncapitalized
             .iter()
             .map(|name| format!("\"{}\"", name.to_string().capitalize()))

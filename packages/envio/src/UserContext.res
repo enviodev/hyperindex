@@ -167,11 +167,11 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
-// A materialized table's rows are derived from its `select`, so a handler write
-// would be silently reverted the next time the source event is reprocessed.
+// The rows come from the table's `select`, so a handler write would be undone
+// the next time the event it reads is processed.
 let throwMaterializedReadOnly = (entityConfig: Internal.entityConfig, op: string): 'a =>
   JsError.throwWithMessage(
-    `context.${entityConfig.codeName}.${op}() is unavailable: \`${entityConfig.name}\` is materialized by its \`select\` in config.yaml, so the indexer owns its rows. Read it here, or move the table to schema.graphql to write it from handlers.`,
+    `context.${entityConfig.codeName}.${op}() is unavailable: config.yaml writes \`${entityConfig.name}\` from its \`select\`, so handlers can only read it. To write it from a handler, define the table in schema.graphql instead.`,
   )
 
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
@@ -382,7 +382,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         (table: string) =>
           switch params.config.entitiesByTableName->Utils.Dict.dangerouslyGetNonOption(table) {
           | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=true)
-          | None => JsError.throwWithMessage(`Materialized table '${table}' has no entity.`)
+          | None => JsError.throwWithMessage(`Table '${table}' is missing from the config.`)
           }
       )->(Utils.magic: (string => unknown) => unknown)
     | _ =>
@@ -396,7 +396,7 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         ) {
         | Some(entityConfig) =>
           JsError.throwWithMessage(
-            `context.${prop} is unavailable: the table \`${entityConfig.name}\` is materialized by config.yaml and not exposed to handlers. Add \`as_entity: ${prop}\` to it to read it here.`,
+            `context.${prop} is unavailable: config.yaml writes the table \`${entityConfig.name}\` but doesn't expose it to handlers. Add \`as_entity: ${prop}\` to it in config.yaml to read it here.`,
           )
         | None =>
           JsError.throwWithMessage(

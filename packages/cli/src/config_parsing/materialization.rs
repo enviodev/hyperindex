@@ -1,20 +1,23 @@
-//! `tables:` in config.yaml — table definitions that own both their schema and
-//! their writes. A table declares `from` + `select` and is maintained by the
-//! runtime with no handler code; tables handlers write stay in schema.graphql.
+//! `tables:` in config.yaml — tables the indexer defines and writes itself,
+//! from a `from` and a `select`, with no handler code. Tables that handlers
+//! write stay in schema.graphql.
 //!
-//! Compilation turns each one into
+//! Each one compiles to three things:
 //!   * GraphQL SDL, merged into the schema the rest of the pipeline already
-//!     consumes, so entity types, tables, Hasura and the generated TS types all
-//!     come out of the existing machinery,
-//!   * a flat list of write plans, one per (table, event, union branch), carried
-//!     to the runtime through the public config JSON, and
-//!   * the block/transaction fields each event has to fetch, attached to that
-//!     event rather than to the source, so an event no table reads pays nothing.
+//!     reads — so entity types, database tables, Hasura and the generated TS
+//!     types come out of the existing machinery untouched,
+//!   * write plans, one per table per matching event, handed to the runtime
+//!     through the public config JSON, and
+//!   * the block/transaction fields to fetch, recorded against the event that
+//!     carries them, so an event no table reads costs nothing.
 //!
-//! Table-local CTEs (`with`) are inlined at compile time: a union branch's
-//! column expressions are substituted into the outer `select`, so the runtime
-//! never sees a CTE. That is sound because CTEs cannot be recursive and cannot
-//! reference each other.
+//! A `where` matching several events produces one plan per event, and the
+//! columns they select must agree — that agreement is what lets one table be
+//! written by several events.
+//!
+//! `with` queries are inlined here rather than passed on: their column
+//! expressions are substituted into the outer `select`, so the runtime never
+//! sees them. Sound because they can neither recurse nor read each other.
 
 use super::{
     abi_compat::AbiType,
@@ -36,9 +39,8 @@ const EVM_EVENTS_SOURCE: &str = "evm.events";
 // ── Human config surface ────────────────────────────────────────────────────
 //
 
-/// Arbitrary YAML kept unparsed so expressions and filters can be validated by
-/// the compiler, which knows the surrounding table and can name the offending
-/// path in its error.
+/// Kept as raw YAML so the compiler validates it instead of serde: only the
+/// compiler knows the surrounding table, and can name the path that is wrong.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RawYaml(pub Yaml);
@@ -50,9 +52,9 @@ impl JsonSchema for RawYaml {
 
     fn json_schema(_gen: &mut SchemaGenerator) -> JsonSchemaSchema {
         json_schema!({
-            "description": "A source path (\"params.owner\"), a YAML literal, or an object \
-                            holding one value (`_value`, `_literal`, `_negate`, `_sum`, \
-                            `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
+            "description": "A field of the event (\"params.owner\"), a number, boolean or null, or \
+                            an object holding one of `_value`, `_literal`, `_negate`, `_sum`, \
+                            `_concat`, `_ref`, `_derived_from`."
         })
     }
 
@@ -61,8 +63,44 @@ impl JsonSchema for RawYaml {
     }
 }
 
-/// A `where` clause, kept unparsed for the same reason as `RawYaml`. Separate
-/// only so editors describe a filter as a filter.
+/// A column of a table's own `select`: an expression, plus the `_description`
+/// only a real column can carry. Separate from `RawYaml` so editors offer
+/// `_description` here and not on a nested expression.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RawColumn(pub Yaml);
+
+impl JsonSchema for RawColumn {
+    fn schema_name() -> Cow<'static, str> {
+        "MaterializationColumn".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> JsonSchemaSchema {
+        let expression = RawYaml::json_schema(gen);
+        json_schema!({
+            "anyOf": [
+                expression,
+                {
+                    "type": "object",
+                    "properties": {
+                        "_description": {
+                            "type": "string",
+                            "description": "What this column holds. Becomes the column's \
+                                            description in GraphQL and its comment in the database."
+                        }
+                    }
+                }
+            ]
+        })
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+}
+
+/// A `where` clause, raw for the same reason as `RawYaml`. Separate only so
+/// editors describe a filter as a filter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RawFilter(pub Yaml);
@@ -75,12 +113,12 @@ impl JsonSchema for RawFilter {
     fn json_schema(_gen: &mut SchemaGenerator) -> JsonSchemaSchema {
         json_schema!({
             "type": "object",
-            "description": "Field conditions, ANDed together. A scalar is equality shorthand \
-                            (`eventName: Transfer`); an object is either a nested path \
-                            (`block: {number: {_gte: 100}}`) or operators (`_eq`, `_ne`, `_gt`, \
-                            `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and`/`_or` take lists of \
-                            filters. `contractName` and `eventName` also narrow which events the \
-                            table's paths are typed against."
+            "description": "Conditions a row must match, all of them. A plain value means equals \
+                            (`eventName: Transfer`); an object is either a nested field (`block: \
+                            {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, \
+                            `_gte`, \
+                            `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of \
+                            conditions."
         })
     }
 
@@ -89,8 +127,7 @@ impl JsonSchema for RawFilter {
     }
 }
 
-/// `tables:` — insertion order is preserved so generated columns follow the
-/// order they were written in.
+/// `tables:`. Insertion-ordered, so generated columns follow the config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Tables(pub IndexMap<String, TableConfig>);
@@ -114,111 +151,56 @@ impl JsonSchema for Tables {
 pub struct TableConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Share one row across every chain instead of keeping the same id per chain. \
-                       Only meaningful with `disable_default_cross_chain: true`."
+        description = "Keep one row per id across all chains instead of one per chain. Only \
+                       meaningful with `disable_default_cross_chain: true`."
     )]
     pub cross_chain: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Read the events from every address that emits them, rather than only the \
-                       contract's configured addresses. Needed when the contract has no `address` \
-                       in config.yaml."
+        description = "Read this event from every address that emits it, not only the addresses \
+                       configured for the contract. Needed when the contract has no `address` in \
+                       config.yaml."
     )]
     pub wildcard: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Which backends store this table, overriding the `storage` defaults in \
-                       config.yaml. The `postgres` and `clickhouse` options each take a boolean \
-                       or an options object (which implies the backend is enabled)."
+        description = "Where this table is stored, overriding the top-level `storage`. `postgres` \
+                       and `clickhouse` each take true/false, or an object of settings (which also \
+                       turns the backend on)."
     )]
     pub storage: Option<TableStorage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        with = "Option<AsEntitySchema>",
-        description = "Expose the table to handlers as a readable entity. A name spells the \
-                       accessor (`as_entity: Account` gives `context.Account`); `true` uses the \
-                       capitalized table name. Omitted, the table is materialized and queryable \
-                       over GraphQL but absent from the handler context. Materialized tables are \
-                       never writable from handlers."
+        description = "Let handlers read this table, under this name: `as_entity: Account` gives \
+                       them `context.Account`. Left out, the table is still stored and queryable \
+                       over GraphQL, just not visible to handlers. Handlers can never write it."
     )]
-    pub as_entity: Option<AsEntity>,
+    pub as_entity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         with = "Option<BTreeMap<String, Queries>>",
-        description = "Table-local intermediate relations, like SQL CTEs. A list of queries is a \
-                       UNION ALL; every branch must produce the same columns."
+        description = "Intermediate queries this table can read through `from`, like SQL CTEs. A \
+                       list of queries is read as one combined result, so every query in it must \
+                       select the same columns."
     )]
     pub with: Option<IndexMap<String, Queries>>,
     #[schemars(
-        description = "What the table is materialized from: `evm.events`, or the name of one of \
-                       its own `with` relations."
+        description = "Where the rows come from: `evm.events`, or the name of one of this table's \
+                       own `with` queries."
     )]
     pub from: String,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
     pub filter: Option<RawFilter>,
     #[schemars(
-        with = "BTreeMap<String, RawYaml>",
-        description = "The table's complete public shape. Plain strings are source paths; YAML \
-                       numbers, booleans and null are literals."
+        with = "BTreeMap<String, RawColumn>",
+        description = "The table's columns. A plain string is a field of the event; numbers, \
+                       booleans and null are values as written. Add `_description` beside a \
+                       column's value to document it."
     )]
-    pub select: IndexMap<String, RawYaml>,
+    pub select: IndexMap<String, RawColumn>,
 }
 
-/// `as_entity: true` or `as_entity: SomeName`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum AsEntity {
-    Enabled(bool),
-    Named(String),
-}
-
-impl<'de> Deserialize<'de> for AsEntity {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = AsEntity;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a boolean or an entity name")
-            }
-
-            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
-                Ok(AsEntity::Enabled(v))
-            }
-
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                Ok(AsEntity::Named(v.to_string()))
-            }
-        }
-
-        deserializer.deserialize_any(Visitor)
-    }
-}
-
-/// Shape stand-in for the JSON schema, which has no union of bool and string
-/// without a named type.
-#[derive(JsonSchema)]
-#[serde(untagged)]
-#[allow(dead_code)]
-pub enum AsEntitySchema {
-    Enabled(bool),
-    Named(String),
-}
-
-impl AsEntity {
-    /// The name handlers reach the table by, or `None` when it stays hidden.
-    fn code_name(&self, table_name: &str) -> Option<String> {
-        match self {
-            AsEntity::Enabled(false) => None,
-            AsEntity::Enabled(true) => Some(table_name.to_string().capitalize()),
-            AsEntity::Named(name) => Some(name.clone()),
-        }
-    }
-}
-
-/// Per-table backend selection, mirroring the `@storage` directive an entity in
-/// schema.graphql carries.
+/// Per-table storage, mirroring the `@storage` directive an entity carries.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TableStorage {
@@ -271,7 +253,9 @@ impl<'de> Deserialize<'de> for PostgresStorage {
 pub struct PostgresOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Secondary indexes on this table. An entry is a field name, a list of field                        names for a composite index, or `{field, direction}` to sort a field                        descending. `id` is already the primary key."
+        description = "Extra indexes for this table. An entry is a field name, a list of field \
+                       names for an index over several fields, or `{field, direction}` to sort a \
+                       field descending. `id` is already indexed."
     )]
     pub indexes: Option<Vec<Index>>,
 }
@@ -450,9 +434,7 @@ pub struct ClickHouseOptions {
     #[schemars(description = "Raw ClickHouse expression emitted as `PARTITION BY <expr>`.")]
     pub partition_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        description = "Table fields that lead the history table's sorting key, replacing the                        default `id` prefix."
-    )]
+    #[schemars(description = "Fields to sort the stored rows by, in place of the default `id`.")]
     pub order_by: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Raw ClickHouse expression emitted as `TTL <expr>`.")]
@@ -532,11 +514,11 @@ enum Scalar {
     BigInt,
     BigDecimal,
     Json,
-    /// Reference to another table; carries the target's name.
+    /// Reference to another table, by that table's name.
     Ref(String),
-    /// An unsuffixed YAML integer. Widens to whichever numeric type it meets.
+    /// A YAML integer. Becomes whichever numeric type it is used alongside.
     NumLit,
-    /// A YAML `null` with nothing to unify against yet.
+    /// A YAML `null`, with nothing yet to take a type from.
     Null,
 }
 
@@ -603,13 +585,13 @@ impl Ty {
             Scalar::BigDecimal => "BigDecimal".to_string(),
             Scalar::Json => "Json".to_string(),
             Scalar::Ref(target) => target.clone(),
-            // Nothing ever unified with it, so the literal keeps its narrowest
-            // faithful type rather than silently becoming a BigInt column.
+            // Nothing widened it, so it keeps the narrowest type that fits
+            // rather than silently becoming a BigInt column.
             Scalar::NumLit => "Int".to_string(),
             Scalar::Null => {
                 return Err(anyhow!(
-                    "the expression is always null, so its type can't be inferred. Give it a \
-                     typed sibling in the union, or drop the field."
+                    "this is always null, so its type is unknown. Select a value that has a type, \
+                     or drop the field."
                 ))
             }
         };
@@ -625,14 +607,14 @@ impl Ty {
         })
     }
 
-    /// The runtime tag a numeric reducer and `_negate` dispatch on.
+    /// The tag the runtime picks a zero and an addition by, for `_sum`/`_negate`.
     fn numeric_tag(&self) -> Option<&'static str> {
         if self.array {
             return None;
         }
         match self.scalar {
-            // NumLit reports the type `to_gql` would give it, so a reducer over
-            // a literal that never widened still agrees with its column.
+            // The type `to_gql` would give it, so a `_sum` over a literal that
+            // never widened still agrees with its column.
             Scalar::Int | Scalar::NumLit => Some("int"),
             Scalar::Float => Some("float"),
             Scalar::BigInt => Some("bigint"),
@@ -642,8 +624,8 @@ impl Ty {
     }
 }
 
-/// Widen two types to one that holds both. Number literals adopt the other
-/// side's numeric type; `null` makes the other side nullable.
+/// One type that holds both. A number takes the other side's numeric type;
+/// `null` makes the other side nullable.
 fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
     if a.scalar == Scalar::Null {
         return Ok(b.clone().nullable());
@@ -732,8 +714,7 @@ struct Typed {
 }
 
 impl Typed {
-    /// Rewrite untyped literals to the target type. Everything else must
-    /// already unify with the target.
+    /// Give a literal the column's type. Anything else must already match it.
     fn coerce(self, target: &Ty) -> Result<CExpr> {
         let Typed { expr, ty } = self;
         if ty.scalar == Scalar::NumLit && !target.array {
@@ -756,15 +737,16 @@ impl Typed {
                     let value: i64 = text.parse().expect("came from an i64 literal");
                     if i32::try_from(value).is_err() {
                         return Err(anyhow!(
-                            "the literal {value} is outside the Int (32-bit) range. Unify it with \
-                             a BigInt expression (e.g. a uint256 param) so the column widens."
+                            "{value} is too big for an Int column. Select a BigInt value (a \
+                             uint256 param, say) into the same column so the column becomes \
+                             BigInt."
                         ));
                     }
                     expr
                 }
                 _ => {
                     return Err(anyhow!(
-                        "a number literal can't be used where {} is expected",
+                        "a number can't be used where {} is expected",
                         target.describe()
                     ))
                 }
@@ -811,8 +793,8 @@ enum CFilter {
     },
 }
 
-/// A filter partially evaluated against a candidate event. `Unknown` carries
-/// the residual the runtime still has to check.
+/// A filter evaluated as far as it can be at compile time. `Unknown` carries
+/// what is left for the runtime to check.
 #[derive(Debug, Clone)]
 enum Residual {
     True,
@@ -861,10 +843,9 @@ fn residual_or(parts: Vec<Residual>) -> Residual {
 pub struct FieldWrite {
     /// Column name as the entity API spells it (`owner_id` for a reference).
     name: String,
-    /// `set` overwrites; `sum` adds to whatever the row already holds.
+    /// `set` overwrites; `sum` adds to what the row already holds.
     op: &'static str,
-    /// Numeric tag the reducer needs to pick a zero and an addition. Only
-    /// emitted for `sum`.
+    /// How to add. Only emitted for `sum`.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     numeric_type: Option<&'static str>,
     expr: CExpr,
@@ -910,7 +891,7 @@ enum Shape<'a> {
         block_fields: &'a BTreeMap<String, Ty>,
         transaction_fields: &'a BTreeMap<String, Ty>,
     },
-    /// A table-local relation: single-segment column names only.
+    /// A `with` query: plain column names, nothing nested.
     Relation {
         name: &'a str,
         columns: &'a IndexMap<String, Ty>,
@@ -951,7 +932,7 @@ fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
                 GqlScalar::Float => Scalar::Float,
                 GqlScalar::Json => Scalar::Json,
                 GqlScalar::ID | GqlScalar::String | GqlScalar::Bytes => Scalar::String,
-                other => return Err(anyhow!("ABI params can't produce the `{other}` type")),
+                other => return Err(anyhow!("`{other}` params are not supported yet")),
             }),
         })
     }
@@ -981,9 +962,8 @@ pub struct Demand {
     pub transaction: BTreeSet<String>,
 }
 
-/// Field demand keyed by the event that carries it, so each `events:` entry
-/// selects only what the tables reading it actually touch, rather than every
-/// event on every contract paying for the widest selection.
+/// Keyed by event, so each `events:` entry fetches only what the tables
+/// reading it touch — rather than every event paying for the widest selection.
 #[derive(Default)]
 pub struct DemandByEvent(pub BTreeMap<(String, String), Demand>);
 
@@ -1007,8 +987,8 @@ impl Shape<'_> {
             Shape::Relation { name, columns } => {
                 if path.len() != 1 {
                     return Err(anyhow!(
-                        "`{}` is a table-local relation, so its columns are plain names — `{}` \
-                         has no nested fields",
+                        "`{}` comes from `with`, and its columns hold plain values — `{}` goes one \
+                         level too deep",
                         name,
                         path.join(".")
                     ));
@@ -1038,15 +1018,11 @@ impl Shape<'_> {
                     "params" => {
                         let params = match &event.kind {
                             EventKind::Params(params) => params,
-                            _ => {
-                                return Err(anyhow!(
-                                    "`evm.events` only exposes `params` for EVM log events"
-                                ))
-                            }
+                            _ => return Err(anyhow!("only EVM log events have `params`")),
                         };
                         let (first, nested) = rest.split_first().ok_or_else(|| {
                             anyhow!(
-                                "`params` is a record — select one of its fields, e.g. `params.{}`",
+                                "`params` has several fields — pick one, e.g. `params.{}`",
                                 params
                                     .first()
                                     .map(|p| p.name.clone())
@@ -1088,13 +1064,13 @@ impl Shape<'_> {
                             [field] => field,
                             [] => {
                                 return Err(anyhow!(
-                                    "`{label}` is a record — select one of its fields, e.g. \
-                                     `{label}.hash`"
+                                    "`{label}` has several fields — pick one, e.g. `{label}.hash`"
                                 ))
                             }
                             _ => {
                                 return Err(anyhow!(
-                                    "`{}` is not a valid path: `{label}` fields are flat",
+                                    "`{}` goes one level too deep — `{label}` fields hold plain \
+                                     values",
                                     path.join(".")
                                 ))
                             }
@@ -1130,20 +1106,22 @@ impl Shape<'_> {
 
 fn split_path(text: &str) -> Result<Vec<String>> {
     if text.is_empty() {
-        return Err(anyhow!("an empty string is not a source path"));
+        return Err(anyhow!(
+            "an empty string is not a value. Use a field of the event, e.g. \
+                            `params.owner`."
+        ));
     }
     let segments: Vec<String> = text.split('.').map(|s| s.to_string()).collect();
     if segments.iter().any(|s| s.is_empty()) {
         return Err(anyhow!(
-            "`{text}` is not a source path. Use dots between field names, e.g. `params.owner`."
+            "`{text}` is not a field of the event. Use dots between names, e.g. `params.owner`."
         ));
     }
     Ok(segments)
 }
 
-/// The single `_`-prefixed key of an operator mapping, if that is what this is.
-/// An expression written as an object: the one key that makes the value, plus
-/// `_description` when the author documented it.
+/// An expression written as an object: the one `_` key that makes the value,
+/// plus `_description` when the author wrote one.
 struct ExprObject<'a> {
     operator: String,
     inner: &'a Yaml,
@@ -1178,16 +1156,16 @@ fn as_operator(value: &Yaml) -> Result<Option<ExprObject<'_>>> {
     if operators.is_empty() {
         if description.is_some() {
             return Err(anyhow!(
-                "`_description` documents a value, but this object doesn't have one. Add the \
-                 value next to it, as `_value: params.owner` or `_sum: params.value`."
+                "`_description` needs a value beside it, such as `_value: params.owner` or `_sum: \
+                 params.value`."
             ));
         }
         return Ok(None);
     }
     if operators.len() > 1 || !plain.is_empty() {
         return Err(anyhow!(
-            "an expression object holds exactly one operator (`_value`, `_literal`, `_negate`, \
-             `_sum`, `_concat`, `_ref`, `_derived_from`), optionally with `_description`. Got: {}",
+            "expected exactly one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, \
+             `_derived_from`, plus an optional `_description`, but got: {}",
             operators
                 .into_iter()
                 .chain(plain)
@@ -1221,8 +1199,7 @@ struct ExprCtx<'a> {
     table_names: &'a [String],
 }
 
-/// Field-level operators, which are not expressions: they say how the column is
-/// maintained rather than what value the event produces.
+/// How a column is maintained, as opposed to what value the event produces.
 enum Selected {
     Value(Typed),
     Sum(Typed),
@@ -1249,7 +1226,7 @@ fn compile_selected(
                 let inner = compile_expr(inner, ctx, demand).context("in `_sum`")?;
                 if inner.ty.numeric_tag().is_none() {
                     return Err(anyhow!(
-                        "`_sum` needs a numeric expression, but got {}",
+                        "`_sum` needs a number, but got {}",
                         inner.ty.describe()
                     ));
                 }
@@ -1258,14 +1235,14 @@ fn compile_selected(
             "_ref" => {
                 let map = inner
                     .as_mapping()
-                    .ok_or_else(|| anyhow!("`_ref` takes `{{table, id}}`"))?;
+                    .ok_or_else(|| anyhow!("`_ref` takes `table` and `id`"))?;
                 let table = map
                     .get(Yaml::String("table".into()))
                     .ok_or_else(|| anyhow!("`_ref` is missing `table`"))?;
                 let table = yaml_string(table, "`_ref.table`")?;
                 if !ctx.table_names.iter().any(|name| name == &table) {
                     return Err(anyhow!(
-                        "`_ref.table` points at `{table}`, which is not declared in `tables`"
+                        "`_ref.table` is `{table}`, which is not one of the tables in `tables`"
                     ));
                 }
                 let id = map
@@ -1274,7 +1251,10 @@ fn compile_selected(
                 for key in map.keys() {
                     let key = yaml_string(key, "a `_ref` key")?;
                     if key != "table" && key != "id" {
-                        return Err(anyhow!("`_ref` has no `{key}` option"));
+                        return Err(anyhow!(
+                            "`_ref` has no `{key}` option. It takes `table` and \
+                                            `id`."
+                        ));
                     }
                 }
                 let id = compile_expr(id, ctx, demand).context("in `_ref.id`")?;
@@ -1290,7 +1270,7 @@ fn compile_selected(
                 })?;
                 if !ctx.table_names.iter().any(|name| name == table) {
                     return Err(anyhow!(
-                        "`_derived_from` points at table `{table}`, which is not declared in \
+                        "`_derived_from` names table `{table}`, which is not one of the tables in \
                          `tables`"
                     ));
                 }
@@ -1312,13 +1292,12 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
         description,
     }) = as_operator(value)?
     {
-        // A description names a column, and only a table's own `select` fields
-        // become columns — a nested expression and a `with` relation's columns
-        // have nowhere to put one.
+        // Only a table's own `select` fields become columns; a nested
+        // expression and a `with` query's columns have nowhere to put one.
         if description.is_some() {
             return Err(anyhow!(
-                "`_description` is only allowed on a table's `select` field, where it describes \
-                 the column"
+                "`_description` describes a column, so it only works on a table's own `select` \
+                 field"
             ));
         }
         return compile_operator(&operator, inner, ctx, demand);
@@ -1359,7 +1338,7 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
                     ty: Ty::new(Scalar::Float),
                 })
             } else {
-                Err(anyhow!("`{number:?}` is not a supported number literal"))
+                Err(anyhow!("`{number:?}` is not a supported number"))
             }
         }
         Yaml::Null => Ok(Typed {
@@ -1367,11 +1346,11 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
             ty: Ty::new(Scalar::Null),
         }),
         Yaml::Sequence(_) => Err(anyhow!(
-            "a list is not an expression. Use `_concat` to join values."
+            "a list is not a value. Use `_concat` to join several values into one."
         )),
         Yaml::Mapping(_) => Err(anyhow!(
-            "an object is only an expression when its single key is an operator like `_literal`, \
-             `_negate`, `_sum`, `_concat` or `_ref`."
+            "an object needs one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, \
+             `_derived_from` to say what the value is."
         )),
         Yaml::Tagged(tagged) => compile_expr(&tagged.value, ctx, demand),
     }
@@ -1400,10 +1379,7 @@ fn compile_operator(
         "_negate" => {
             let inner = compile_expr(inner, ctx, demand).context("in `_negate`")?;
             let numeric_type = inner.ty.numeric_tag().ok_or_else(|| {
-                anyhow!(
-                    "`_negate` needs a numeric expression, but got {}",
-                    inner.ty.describe()
-                )
+                anyhow!("`_negate` needs a number, but got {}", inner.ty.describe())
             })?;
             // Folded so a negated literal stays a literal and can still widen to
             // whatever numeric type its siblings settle on.
@@ -1424,7 +1400,10 @@ fn compile_operator(
                     for key in map.keys() {
                         let key = yaml_string(key, "a `_concat` key")?;
                         if key != "separator" && key != "values" {
-                            return Err(anyhow!("`_concat` has no `{key}` option"));
+                            return Err(anyhow!(
+                                "`_concat` has no `{key}` option. It takes `values` \
+                                                and `separator`."
+                            ));
                         }
                     }
                     let separator = match map.get(Yaml::String("separator".into())) {
@@ -1439,7 +1418,7 @@ fn compile_operator(
                 }
                 _ => {
                     return Err(anyhow!(
-                        "`_concat` takes a list of values, or `{{separator, values}}`"
+                        "`_concat` takes a list of values, or `values` with a `separator`"
                     ))
                 }
             };
@@ -1453,20 +1432,19 @@ fn compile_operator(
                 match part.ty.scalar {
                     Scalar::Json | Scalar::Null | Scalar::Ref(_) => {
                         return Err(anyhow!(
-                            "`_concat.values[{index}]` is {}, which has no canonical text form. \
-                             Convert it explicitly first.",
+                            "`_concat.values[{index}]` is {}, which can't be turned into text",
                             part.ty.describe()
                         ))
                     }
                     _ if part.ty.array => {
                         return Err(anyhow!(
-                            "`_concat.values[{index}]` is a list, which has no canonical text form"
+                            "`_concat.values[{index}]` is a list, which can't be turned into text"
                         ))
                     }
                     _ if part.ty.nullable => {
                         return Err(anyhow!(
-                            "`_concat.values[{index}]` is nullable ({}), so the result could \
-                             silently collide. Handle the null case explicitly.",
+                            "`_concat.values[{index}]` can be null ({}), and two different rows \
+                             would then join to the same text. Select a value that is always set.",
                             part.ty.describe()
                         ))
                     }
@@ -1483,16 +1461,18 @@ fn compile_operator(
             })
         }
         "_sum" => Err(anyhow!(
-            "`_sum` is a reducer, so it can only be a top-level field of `select`"
+            "`_sum` can only be used directly on a `select` field"
         )),
         "_ref" => Err(anyhow!(
-            "`_ref` declares a relationship, so it can only be a top-level field of `select`"
+            "`_ref` can only be used directly on a `select` field"
         )),
         "_derived_from" => Err(anyhow!(
-            "`_derived_from` declares a virtual field, so it can only be a top-level field of \
-             `select`"
+            "`_derived_from` can only be used directly on a `select` field"
         )),
-        other => Err(anyhow!("`{other}` is not a known operator")),
+        other => Err(anyhow!(
+            "`{other}` is not one of `_value`, `_literal`, `_negate`, `_sum`, \
+                              `_concat`, `_ref`, `_derived_from`"
+        )),
     }
 }
 
@@ -1502,7 +1482,7 @@ fn compile_operator(
 
 const COMPARISON_OPS: &[(&str, &str)] = &[
     ("_eq", "eq"),
-    ("_ne", "ne"),
+    ("_neq", "ne"),
     ("_gt", "gt"),
     ("_gte", "gte"),
     ("_lt", "lt"),
@@ -1553,8 +1533,8 @@ fn parse_filter(value: &Yaml) -> Result<Condition> {
             }
             _ if key.starts_with('_') => {
                 return Err(anyhow!(
-                    "`{key}` is not valid at the top of a filter — put it under the field it \
-                     applies to"
+                    "`{key}` compares one field, so it goes under a field name, not at the top of \
+                     `where`"
                 ))
             }
             _ => parts.push(parse_field_filter(std::slice::from_ref(&key), item)?),
@@ -1612,13 +1592,16 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
         }
     }
     if parts.is_empty() {
-        return Err(anyhow!("`{}` has an empty filter object", path.join(".")));
+        return Err(anyhow!(
+            "`{}` has nothing to compare it to. Add a condition such as `_eq`.",
+            path.join(".")
+        ));
     }
     Ok(Condition::And(parts))
 }
 
-/// Collect the `contractName`/`eventName` equalities a filter can express, so a
-/// table only ever generates plans for events it could match.
+/// The `contractName`/`eventName` a filter can match, so a table only gets
+/// plans for events it could actually be written by.
 fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<String>)) {
     match condition {
         Condition::And(parts) | Condition::Or(parts) => {
@@ -1654,8 +1637,8 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
     }
 }
 
-/// Partially evaluate against one candidate event: the discriminators are known,
-/// everything else becomes a runtime check.
+/// Evaluate against one candidate event: `contractName`/`eventName` are known
+/// here, everything else becomes a runtime check.
 fn evaluate(
     condition: &Condition,
     contract_name: &str,
@@ -1710,7 +1693,7 @@ fn evaluate(
                         ("eq", false) | ("ne", true) => Residual::False,
                         _ => {
                             return Err(anyhow!(
-                                "`{}` only supports `_eq`/`_ne`/`_in`",
+                                "`{}` only supports `_eq`/`_neq`/`_in`",
                                 path.join(".")
                             ))
                         }
@@ -1816,17 +1799,16 @@ struct SchemaField {
     description: Option<String>,
 }
 
-/// GraphQL string literal. `partition_by`/`ttl` are raw ClickHouse expressions
-/// that reach the schema through this, so quotes and backslashes are escaped
-/// rather than left to break the parse.
+/// A GraphQL string. `partition_by`, `ttl` and `_description` are user text
+/// that reaches the schema through here, so quotes and backslashes are escaped
+/// instead of breaking the parse.
 fn sdl_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 impl TableSchema {
-    /// Directives the table shares with an entity in schema.graphql. Emitting
-    /// them means the existing directive parsing and its cross-entity
-    /// validations apply unchanged.
+    /// The directives an entity in schema.graphql would carry. Emitting them
+    /// means the existing directive parsing and validations apply unchanged.
     fn directives(&self) -> String {
         let mut directives = String::new();
         if self.cross_chain {
@@ -1835,8 +1817,7 @@ impl TableSchema {
         if let Some(storage) = &self.storage {
             let mut args = Vec::new();
             match &storage.postgres {
-                // The options form implies the backend is enabled, matching how
-                // the `clickhouse` arg of the directive behaves.
+                // Options imply the backend is on, as in the directive.
                 Some(PostgresStorage::Enabled(enabled)) => {
                     args.push(format!("postgres: {enabled}"))
                 }
@@ -1878,8 +1859,8 @@ impl TableSchema {
                         .fields()
                         .iter()
                         .map(|field| match field.direction {
-                            // The directive spells a directed field as a
-                            // two-element list, ascending being the bare name.
+                            // The directive spells a descending field as a two-element
+                            // list; ascending is the bare name.
                             Some(IndexDirection::Desc) => {
                                 format!("[{}, \"DESC\"]", sdl_string(&field.field))
                             }
@@ -1917,23 +1898,23 @@ impl TableSchema {
     }
 }
 
-/// A `select` field's resolved shape, unified across the union's branches.
+/// A `select` field's resolved shape, merged across every matching event.
 struct FieldShape {
     name: String,
     ty: Ty,
     description: Option<String>,
-    /// The target field on the other table, for `_derived_from`. A derived field
-    /// is virtual: it appears in the schema but never in a write.
+    /// For `_derived_from`, the field on the other table. Such a field is in
+    /// the schema but never written.
     derived_from: Option<String>,
     is_ref: bool,
 }
 
-/// One resolved union branch of a materialized table.
+/// One table's writes for one event.
 struct Branch {
     contract_name: String,
     event_name: String,
     filter: Option<CFilter>,
-    /// Column expressions, for a table reading from a `with` relation.
+    /// Column expressions, when the table reads a `with` query.
     columns: IndexMap<String, CExpr>,
 }
 
@@ -1946,8 +1927,7 @@ pub fn compile(
     for name in &table_names {
         if schema.entities.contains_key(name) {
             return Err(anyhow!(
-                "Table `{name}` is declared in `tables` and as an entity in schema.graphql. A \
-                 table has exactly one definition — remove one of them."
+                "`{name}` is defined twice: in `tables` and in schema.graphql. Remove one of them."
             ));
         }
     }
@@ -1963,7 +1943,7 @@ pub fn compile(
 
     for (table_name, table) in &tables.0 {
         let handler_name = match &table.as_entity {
-            Some(as_entity) => as_entity.code_name(table_name),
+            Some(name) => Some(name.clone()),
             None => None,
         };
         if let Some(name) = &handler_name {
@@ -2028,17 +2008,17 @@ fn compile_table(
         return Err(anyhow!("every table must select an `id`"));
     }
 
-    // Resolve `from` to the branches that feed the outer `select`. Reading a
-    // relation means one branch per union arm; reading the source directly is
-    // the single-branch case with no columns to substitute.
+    // Reading a `with` query gives one branch per query in it; reading
+    // `evm.events` gives one branch per matching event, with no columns to
+    // substitute.
     let (branches, relation_columns) = match table.with.as_ref().and_then(|with| with.get(from)) {
         Some(queries) => {
-            // No defined meaning yet, and dropping it silently would
-            // materialize rows the user asked to exclude.
+            // No defined meaning yet, and ignoring it would write rows the
+            // user asked to exclude.
             if table.filter.is_some() {
                 return Err(anyhow!(
-                    "`where` is not supported on a table reading a `with` relation. Put the \
-                     filter on the relation's queries instead."
+                    "a table reading a `with` query can't have its own `where`. Move the \
+                     conditions into the `with` queries."
                 ));
             }
             compile_relation(
@@ -2052,21 +2032,21 @@ fn compile_table(
             )?
         }
         None => {
-            // A relation is only reachable through `from`, so declaring one and
-            // then reading something else leaves it dead — almost always a typo.
+            // A `with` query is only reachable through `from`, so declaring
+            // one and reading something else leaves it dead — usually a typo.
             if let Some(with) = &table.with {
                 if !with.is_empty() {
                     return Err(anyhow!(
-                        "`from: {from}` doesn't read any of this table's `with` relations ({}), \
-                         which are only usable through `from`.",
+                        "`with` declares {}, but `from: {from}` reads none of them. Set `from` to \
+                         one of them, or drop `with`.",
                         with.keys().cloned().collect::<Vec<_>>().join(", ")
                     ));
                 }
             }
             if from != EVM_EVENTS_SOURCE {
                 return Err(anyhow!(
-                    "`from: {from}` is not a known source. Use `{EVM_EVENTS_SOURCE}`, or one of \
-                     this table's `with` relations."
+                    "`from: {from}` is not a source. Use `{EVM_EVENTS_SOURCE}`, or the name of one \
+                     of this table's `with` queries."
                 ));
             }
             let condition = table
@@ -2097,12 +2077,12 @@ fn compile_table(
 
     if branches.is_empty() {
         return Err(anyhow!(
-            "`where` matches no configured event, so the table could never be written"
+            "`where` matches none of the configured events, so this table would never get any rows"
         ));
     }
 
-    // Compile the outer select once per branch. Types are unified across
-    // branches, which is what makes a union's arms interchangeable.
+    // Once per branch: each event sees its own paths, and the column types
+    // are then merged across all of them.
     let mut declared: Option<Vec<FieldShape>> = None;
     let mut plans = Vec::new();
 
@@ -2186,21 +2166,21 @@ fn compile_table(
             Some(declared) => {
                 if declared.len() != shapes.len() {
                     return Err(anyhow!(
-                        "the union branches select different fields for `{table_name}`"
+                        "`{table_name}` selects a different number of columns for different events"
                     ));
                 }
                 for (existing, incoming) in declared.iter_mut().zip(shapes) {
                     if existing.name != incoming.name {
                         return Err(anyhow!(
-                            "the union branches select different fields for `{table_name}`: `{}` \
-                             vs `{}`",
+                            "`{table_name}` selects different columns for different events: `{}` \
+                             for one, `{}` for another",
                             existing.name,
                             incoming.name
                         ));
                     }
                     existing.ty = unify(&existing.ty, &incoming.ty).with_context(|| {
                         format!(
-                            "the union branches disagree on the type of `{}`",
+                            "`{}` has a different type for different events",
                             existing.name
                         )
                     })?;
@@ -2210,7 +2190,7 @@ fn compile_table(
                             if existing_text != incoming_text =>
                         {
                             return Err(anyhow!(
-                                "the union branches give `{}` different `_description`s",
+                                "`{}` has a different `_description` for different events",
                                 existing.name
                             ))
                         }
@@ -2226,17 +2206,16 @@ fn compile_table(
 
     let declared = declared.expect("branches is non-empty");
 
-    // Now that every branch has been seen, the declared types are final; write
-    // the plans against them so a widened literal serializes as the right type.
+    // Column types are final only once every branch has been seen, so the plans
+    // are written here — a literal serializes as the type it widened to.
     let mut materializations = Vec::with_capacity(plans.len());
     for (branch, resolved) in plans {
         let mut id = None;
         let mut fields = Vec::new();
         for ((field_name, (selected, _)), shape) in resolved.into_iter().zip(&declared) {
             let ty = &shape.ty;
-            // A reducer's numeric type is read off the unified column, not off
-            // this branch's own expression: a `0` in one branch and a BigInt in
-            // another must agree on the zero the reducer starts from.
+            // A `_sum` adds in the column's type, not this branch's own: a `0`
+            // in one branch and a BigInt in another must agree on the zero.
             let (op, numeric_type, expr) = match selected {
                 Selected::Value(typed) => (
                     "set",
@@ -2270,15 +2249,15 @@ fn compile_table(
             if field_name == "id" {
                 if op == "sum" {
                     return Err(anyhow!(
-                        "`select.id` can't be a `_sum` — the id is the key contributions group by"
+                        "`select.id` can't be a `_sum`: the id names the row, it isn't added up"
                     ));
                 }
                 id = Some(expr);
                 continue;
             }
             fields.push(FieldWrite {
-                // A reference is stored under the `_id` column the entity API
-                // exposes, which is what the runtime writes.
+                // A reference is written to the `_id` column, as the entity API
+                // spells it.
                 name: if shape.is_ref {
                     format!("{field_name}_id")
                 } else {
@@ -2300,8 +2279,8 @@ fn compile_table(
         });
     }
 
-    // Reject an id that storage can't key on before the mismatch reaches
-    // codegen, where the message no longer mentions the table.
+    // Caught here rather than in codegen, where the error would no longer
+    // name the table.
     let id_ty = &declared
         .iter()
         .find(|shape| shape.name == "id")
@@ -2309,7 +2288,7 @@ fn compile_table(
         .ty;
     if id_ty.nullable || id_ty.array {
         return Err(anyhow!(
-            "`select.id` must be a non-null scalar, but it is {}",
+            "`select.id` must always be set and hold a single value, but it is {}",
             id_ty.describe()
         ));
     }
@@ -2350,7 +2329,7 @@ fn compile_table(
     ))
 }
 
-/// Compile the union branches of a `with` relation and unify their columns.
+/// Compile the queries of one `with` and merge their column types.
 #[allow(clippy::type_complexity)]
 fn compile_relation(
     relation_name: &str,
@@ -2362,21 +2341,19 @@ fn compile_relation(
     demand: &mut DemandByEvent,
 ) -> Result<(Vec<Branch>, Option<(String, IndexMap<String, Ty>)>)> {
     if queries.0.is_empty() {
-        return Err(anyhow!(
-            "`with.{relation_name}` must have at least one query"
-        ));
+        return Err(anyhow!("`with.{relation_name}` needs at least one query"));
     }
 
     let mut branches: Vec<Branch> = Vec::new();
-    // Per-branch column types, unified once every branch has been compiled.
+    // Merged once every query has been compiled.
     let mut column_types: Option<IndexMap<String, Ty>> = None;
     let mut pending: Vec<(usize, IndexMap<String, Typed>)> = Vec::new();
 
     for (query_index, query) in queries.0.iter().enumerate() {
         if query.from != EVM_EVENTS_SOURCE {
             return Err(anyhow!(
-                "`with.{relation_name}[{query_index}].from` is `{}`, but a relation can only read \
-                 `{EVM_EVENTS_SOURCE}`",
+                "`with.{relation_name}[{query_index}].from` must be `{EVM_EVENTS_SOURCE}`, but got \
+                 `{}`",
                 query.from
             ));
         }
@@ -2397,7 +2374,7 @@ fn compile_relation(
         .with_context(|| format!("in `with.{relation_name}[{query_index}]`"))?;
         if events.is_empty() {
             return Err(anyhow!(
-                "`with.{relation_name}[{query_index}].where` matches no configured event"
+                "`with.{relation_name}[{query_index}].where` matches none of the configured events"
             ));
         }
 
@@ -2446,7 +2423,7 @@ fn compile_relation(
                 Some(existing) => {
                     if existing.len() != columns.len() || existing.keys().ne(columns.keys()) {
                         return Err(anyhow!(
-                            "the branches of `with.{relation_name}` must select the same columns, \
+                            "every query in `with.{relation_name}` must select the same columns, \
                              but got [{}] and [{}]",
                             existing.keys().cloned().collect::<Vec<_>>().join(", "),
                             columns.keys().cloned().collect::<Vec<_>>().join(", ")
@@ -2491,8 +2468,8 @@ fn compile_relation(
     Ok((branches, Some((relation_name.to_string(), column_types))))
 }
 
-/// Every configured (contract, event) a filter could match, with the part of the
-/// filter the runtime still has to check.
+/// Every configured (contract, event) a filter could match, each with whatever
+/// of the filter the runtime still has to check.
 #[allow(clippy::type_complexity)]
 fn resolve_event_branches(
     condition: Option<&Condition>,
@@ -2542,8 +2519,8 @@ fn resolve_event_branches(
                         block_fields: block_field_types,
                         transaction_fields: transaction_field_types,
                     };
-                    // Field demand is only real for branches that survive, so
-                    // it is collected into a scratch set and merged on success.
+                    // Only a surviving branch's fields need fetching, so they are
+                    // collected aside and merged once the branch is kept.
                     let mut branch_demand = Demand::default();
                     let residual = evaluate(
                         condition,
@@ -2572,9 +2549,8 @@ fn resolve_event_branches(
     Ok(branches)
 }
 
-/// The handler name becomes a record field in generated ReScript and a key in
-/// generated TypeScript, so it has to be a capitalized identifier the same way a
-/// contract name does.
+/// The name becomes a field in generated ReScript and a key in generated
+/// TypeScript, so it has the same rules as a contract name.
 fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
     let mut chars = name.chars();
     let valid = matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
@@ -2583,8 +2559,8 @@ fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
         return Ok(());
     }
     Err(anyhow!(
-        "`tables.{table_name}.as_entity` is `{name}`, which can't name the generated accessor. \
-         Use letters, digits and underscores, starting with a capital."
+        "`tables.{table_name}.as_entity` is `{name}`, which handlers can't use as a name. Use \
+         letters, digits and underscores, starting with a capital."
     ))
 }
 
@@ -2592,8 +2568,8 @@ fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
 /// names verbatim — so a table name has to be a usable GraphQL type name.
 pub fn validate_table_names(tables: &Tables) -> Result<()> {
     for name in tables.0.keys() {
-        // No leading underscore: `capitalize` leaves `_` unchanged, so it
-        // would reach codegen as an invalid ReScript module name.
+        // No leading underscore: capitalizing leaves `_` alone, so it would
+        // reach codegen as an invalid ReScript module name.
         let mut chars = name.chars();
         let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
             && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -2605,8 +2581,8 @@ pub fn validate_table_names(tables: &Tables) -> Result<()> {
         }
         if name.capitalize() != *name && tables.0.contains_key(&name.capitalize()) {
             return Err(anyhow!(
-                "Tables `{name}` and `{}` differ only by case, which the generated code can't \
-                 tell apart.",
+                "tables `{name}` and `{}` differ only by case, which the generated code can't tell \
+                 apart. Rename one of them.",
                 name.capitalize()
             ));
         }
@@ -2954,7 +2930,7 @@ tables:
             "  approvals:\n    from: evm.events\n    where:\n      contractName: ERC20\n      \
              eventName: Approval",
             "  approvals:\n    from: evm.events\n    where:\n      contractName: ERC20\n      \
-             eventName: Approval\n      params:\n        owner:\n          _ne:\n            \
+             eventName: Approval\n      params:\n        owner:\n          _neq:\n            \
              _literal: \"0x0000000000000000000000000000000000000000\"",
         );
         let config = parse(&yaml).expect("param filter narrowed by discriminator should compile");
@@ -2984,7 +2960,7 @@ tables:
         );
         let error = parse_error(&yaml);
         assert!(
-            error.contains("`where` is not supported on a table reading a `with` relation"),
+            error.contains("a table reading a `with` query can't have its own `where`"),
             "{error}"
         );
     }
@@ -3085,7 +3061,7 @@ tables:
         );
         let error = parse_error(&yaml);
         assert!(
-            error.contains("`_description` documents a value, but this object doesn't have one"),
+            error.contains("`_description` needs a value beside it"),
             "{error}"
         );
     }
@@ -3104,7 +3080,7 @@ tables:
         );
         let error = parse_error(&yaml);
         assert!(
-            error.contains("`_description` is only allowed on a table's `select` field"),
+            error.contains("`_description` describes a column, so it only works on"),
             "{error}"
         );
     }
@@ -3123,7 +3099,7 @@ tables:
         );
         let error = parse_error(&yaml);
         assert!(
-            error.contains("`_description` is only allowed on a table's `select` field"),
+            error.contains("`_description` describes a column, so it only works on"),
             "{error}"
         );
         assert!(
@@ -3150,7 +3126,7 @@ tables:
     fn rejects_an_int_literal_out_of_i32_range() {
         let yaml = ERC20_YAML.replace("      amount: params.value", "      amount: 5000000000");
         let error = parse_error(&yaml);
-        assert!(error.contains("outside the Int (32-bit) range"), "{error}");
+        assert!(error.contains("is too big for an Int column"), "{error}");
     }
 
     // `capitalize` leaves `_` unchanged, so a leading underscore would reach
@@ -3386,7 +3362,7 @@ tables:
         );
         let error = format!("{:#}", parse(&yaml).expect_err("expected a config error"));
         assert!(
-            error.contains("doesn't read any of this table's `with` relations (changes)"),
+            error.contains("`with` declares changes, but `from: evm.events` reads none of them"),
             "{error}"
         );
     }

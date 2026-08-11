@@ -158,6 +158,6 @@ let parseAllOrThrow = (json: JSON.t) =>
   try json->S.parseJsonOrThrow(S.array(schema)) catch {
   | S.Raised(error) =>
     JsError.throwWithMessage(
-      `Invalid indexer config: the materialization plans don't match this envio version. ${error->S.Error.message}. Run \`envio codegen\` again.`,
+      `Invalid indexer config: the \`tables\` config doesn't match this envio version. ${error->S.Error.message}. Run \`envio codegen\` again.`,
     )
   }
