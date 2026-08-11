@@ -821,10 +821,16 @@ let make = (
     | None => knownHeight
     }
 
-    let firstBlockParentPromise =
-      fromBlock > 0
+    // The seam block (`fromBlock - 1`) is the only block this range shares with
+    // what the store already scanned, so it is where a reorg at the boundary
+    // shows up. Reading it directly would answer from the block cache — it was
+    // the previous range's `toBlock`, so it is always cached, and always on the
+    // chain that range saw. Read `fromBlock` instead, which no earlier range
+    // touched, and take the seam's hash from its `parentHash`.
+    let firstBlockPromise =
+      fromBlock > 0 && fromBlock <= toBlock
         ? blockLoader.contents
-          ->LazyLoader.get(fromBlock - 1)
+          ->LazyLoader.get(fromBlock)
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
@@ -950,14 +956,16 @@ let make = (
     })
     ->Promise.all
 
-    let optFirstBlockParent = await firstBlockParentPromise
+    let optFirstBlock = await firstBlockPromise
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    // They go into a hash-only page store merged into the chain store, where
-    // hash comparison happens. The block data itself stays inline on the payload.
+    // Both these blocks and the logs' own `blockHash` come from this range's
+    // responses, never from the block cache's older view of the chain. They go
+    // into a hash-only page store merged into the chain store, where hash
+    // comparison happens. The block data itself stays inline on the payload.
     let observedBlocks: array<BlockStore.inputBlock> = []
     let pushBlockInfo = (b: blockInfo) => {
       observedBlocks
@@ -974,7 +982,7 @@ let make = (
       }
     }
     pushBlockInfo(latestFetchedBlockInfo)
-    switch optFirstBlockParent {
+    switch optFirstBlock {
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }

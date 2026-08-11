@@ -5,12 +5,12 @@ open Vitest
 // own responses. Every hash the store compares is one the source harvested from
 // an actual eth_getLogs / eth_getBlockByNumber reply.
 //
-// Both cases here turn on the same thing: the source answers from its own block
-// cache, so while that cache holds the pre-reorg chain it keeps serving it —
-// hiding the reorg from detection, and then hiding its depth from the search.
-// `SourceManager.onReorg` drops it, which is why `Rollback.rollback` calls that
-// before `getLastKnownValidBlock`; these cases call it directly at the same
-// points, so they pin why the ordering matters.
+// Detection reads only this range's own responses — the logs' `blockHash` and
+// the `parentHash` of the range's first block — so it sees the new chain as
+// soon as it is served. The depth search that follows does go through the
+// source's block cache, which still holds the abandoned fork, which is why
+// `Rollback.rollback` drops it via `SourceManager.onReorg` before searching;
+// the second case pins what that ordering buys.
 //
 // Separately, the source only harvests hashes from blocks it has a reason to
 // fetch, so a reorg confined to a range with no logs is not detected at all.
@@ -198,17 +198,11 @@ describe("Rollback against a real RPC server", () => {
       chainState
       ->ChainState.blockStore
       ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=200),
-      ~message="Every observed block contributes its own hash and its parent's, including the seam block below the range",
-    ).toEqual([98, 99, 100, 101, 102])
+      ~message="Every observed block contributes its own hash and its parent's",
+    ).toEqual([99, 100, 101, 102])
 
     // The chain reorgs from 102 up, and the source refetches across the seam.
     state.forkFrom = 102
-    // The seam block is served from the source's own block cache, which still
-    // holds the pre-reorg chain — without dropping it the refetch reports the
-    // old hash for 102 and the reorg goes unnoticed. Nothing drops it on the
-    // fetch path, since no reorg is known yet; see the next test for the half
-    // of this the rollback flow does handle.
-    source.onReorg->Option.forEach(cb => cb())
     let reorgedPage =
       await source->fetchRange(~fromBlock=103, ~toBlock=104, ~knownHeight=state.height)
 
@@ -248,9 +242,10 @@ describe("Rollback against a real RPC server", () => {
       chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=105),
     ).toEqual(ReorgDetection.NoReorg)
 
-    // The fork actually starts at 99, so 98 is the deepest block both chains
-    // still agree on — three blocks below where the stale cache stops.
-    state.forkFrom = 99
+    // The fork starts at 100. Block 99 was never cached (nothing fetched it),
+    // so the search re-reads it fresh and it still matches; 100 and 101 were
+    // cached while fetching, and that is what the search gets wrong.
+    state.forkFrom = 100
 
     // Answering the depth search from the cache filled while fetching would
     // "confirm" blocks that no longer exist and stop far too shallow.
@@ -261,7 +256,7 @@ describe("Rollback against a real RPC server", () => {
     )
     t.expect(
       staleTarget,
-      ~message="A cached pre-reorg block reads as valid, stopping 3 blocks short of the fork",
+      ~message="Cached pre-reorg blocks read as valid, stopping 2 blocks past the fork",
     ).toEqual(101)
 
     // Dropping the cache is what makes the search see the new chain, which is
@@ -276,8 +271,8 @@ describe("Rollback against a real RPC server", () => {
     )
     t.expect(
       freshTarget,
-      ~message="Refetched hashes place the fork at 99, so the rollback goes to 98",
-    ).toEqual(98)
+      ~message="Refetched hashes place the fork at 100, so the rollback goes to 99",
+    ).toEqual(99)
 
     await mock.closeAsync()
   })
