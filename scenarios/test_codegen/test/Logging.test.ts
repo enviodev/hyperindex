@@ -2,7 +2,12 @@ import { execSync } from "child_process";
 import { readFileSync } from "fs";
 import { strict as assert } from "assert";
 import path from "path";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
+
+// Every case here boots a fresh node process, and the suite now runs a worker
+// per core — so these wait on process startup against a fully loaded machine,
+// not on anything they measure. The default 30s is sized for in-process tests.
+vi.setConfig({ testTimeout: 120_000 });
 
 const FIXTURE_PATH = "test/fixtures/LogTesting.res.mjs";
 const SNAPSHOTS_DIR = path.join(import.meta.dirname, "__snapshots__");
