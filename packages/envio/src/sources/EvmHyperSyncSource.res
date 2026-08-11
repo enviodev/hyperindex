@@ -194,18 +194,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = async (~blockNumbers, ~logger as _) => {
-    let (result, requestStats) = try {
-      let (blockStore, requestStats) = await client.getBlockHashes(~blockNumbers)
-      (Ok(blockStore), requestStats)
-    } catch {
-    | exn => {
-        let failure = exn->Source.unpackNativeRequestFailure
-        (Error(failure->HyperSync.mapNativeFailure), failure.requestStats)
-      }
-    }
-    {Source.result, requestStats}
-  }
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=client.getBlockHashes)
 
   {
     name,

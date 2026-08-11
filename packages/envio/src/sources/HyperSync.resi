@@ -13,6 +13,12 @@ let mapNativeFailure: Source.nativeRequestFailure => exn
 let mapNativeFailureExn: exn => exn
 let reraiseIfRecoverable: exn => unit
 
+// Wrap a native client's paginated block-hash query as a `Source.getBlockHashes`,
+// keeping the request timings whether it succeeds or fails.
+let makeGetBlockHashes: (
+  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+) => (~blockNumbers: array<int>, ~logger: Pino.t) => promise<Source.getBlockHashesResponse>
+
 module GetLogs: {
   type error =
     | UnexpectedMissingParams({missingParams: array<string>})

@@ -25,6 +25,25 @@ let mapNativeFailure = (failure: Source.nativeRequestFailure) => {
 
 let mapNativeFailureExn = exn => exn->Source.unpackNativeRequestFailure->mapNativeFailure
 
+// Every HyperSync client paginates block hashes in Rust and returns the page
+// store with the timings of the requests it took. A failure arrives as the
+// native envelope, which carries those same timings, so the caller records them
+// either way.
+let makeGetBlockHashes = (
+  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+) =>
+  async (~blockNumbers, ~logger as _) => {
+    let (result, requestStats) = try {
+      let (blockStore, requestStats) = await query(~blockNumbers)
+      (Ok(blockStore), requestStats)
+    } catch {
+    | exn =>
+      let failure = exn->Source.unpackNativeRequestFailure
+      (Error(failure->mapNativeFailure), failure.requestStats)
+    }
+    {Source.result, requestStats}
+  }
+
 let reraiseIfRecoverable = exn =>
   switch exn->mapNativeFailureExn {
   | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)

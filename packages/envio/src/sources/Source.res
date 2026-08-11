@@ -25,6 +25,21 @@ type nativeRequestFailure = {
 // Keep in sync with `request_stats.rs` `NATIVE_FAILURE_PREFIX`.
 let nativeFailurePrefix = "ENVIO_NATIVE_FAILURE:"
 
+// The envelope `request_stats.rs` writes after the prefix.
+type nativeFailurePayload = {message: string, requestStats: array<requestStat>}
+
+let nativeFailurePayloadSchema = S.schema(s => {
+  message: s.matches(S.string),
+  requestStats: s.matches(
+    S.array(
+      S.schema(s => {
+        method: s.matches(S.string),
+        seconds: s.matches(S.float),
+      }),
+    ),
+  ),
+})
+
 let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   let originalMessage = switch exn->JsExn.anyToExnInternal {
   | JsExn(jsExn) => jsExn->JsExn.message
@@ -34,36 +49,18 @@ let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   // keeps its original message and cause untouched.
   let decoded = switch originalMessage {
   | Some(message) if message->String.startsWith(nativeFailurePrefix) =>
-    let payload =
-      message->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
-    switch payload->JSON.parseOrThrow->JSON.Decode.object {
-    | exception _ => None
-    | Some(obj) =>
-      switch obj->Dict.get("message") {
-      | Some(String(innerMessage)) =>
-        let requestStats = switch obj->Dict.get("requestStats") {
-        | Some(Array(stats)) =>
-          stats->Array.filterMap(stat =>
-            switch stat->JSON.Decode.object {
-            | Some(obj) =>
-              switch (obj->Dict.get("method"), obj->Dict.get("seconds")) {
-              | (Some(String(method)), Some(Number(seconds))) => Some({method, seconds})
-              | _ => None
-              }
-            | None => None
-            }
-          )
-        | _ => []
-        }
-        Some((innerMessage, requestStats))
-      | _ => None
-      }
-    | None => None
+    try Some(
+      message
+      ->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
+      ->JSON.parseOrThrow
+      ->S.parseOrThrow(nativeFailurePayloadSchema),
+    ) catch {
+    | _ => None
     }
   | _ => None
   }
   switch decoded {
-  | Some((message, requestStats)) => {
+  | Some({message, requestStats}) => {
       cause: JsError.make(message)->(Utils.magic: JsError.t => exn),
       message: Some(message),
       requestStats,
