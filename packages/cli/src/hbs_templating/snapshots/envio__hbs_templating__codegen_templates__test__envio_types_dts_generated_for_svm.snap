@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3481
 expression: project_template.envio_types_dts
 ---
 /**
@@ -297,6 +296,7 @@ declare module "envio" {
         };
       } };
       entities: Entities;
+      perChainEntities: never;
       enums: Enums;
     };
   }

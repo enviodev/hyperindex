@@ -393,7 +393,9 @@ impl EvmRpcClient {
             None => {
                 self.intervals.set_partition(partition_id, shrunk_interval);
                 RetryDecision::WithBackoff {
-                    message: "Failed getting data for the block range. Will try smaller block range for the next attempt.".to_string(),
+                    message: "Failed getting data for the block range. Will try smaller block \
+                              range for the next attempt."
+                        .to_string(),
                     backoff_millis: self.sync_config.backoff_millis,
                 }
             }

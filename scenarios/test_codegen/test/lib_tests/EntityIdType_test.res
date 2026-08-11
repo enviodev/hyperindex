@@ -48,6 +48,7 @@ describe("Non-string entity id support", () => {
         ~pgSchema="public",
         ~tableName="NumericId",
         ~idPgType=numericIdTable->Table.getIdPgFieldType(~pgSchema="public"),
+        ~chainIdCondition="",
       ),
     ).toBe(`DELETE FROM "public"."NumericId" WHERE id = ANY($1::INTEGER[]);`)
   })
@@ -59,6 +60,8 @@ describe("Non-string entity id support", () => {
         ~entityName="BigParent",
         ~entityIndex=0,
         ~idPgType=bigParentTable->Table.getIdPgFieldType(~pgSchema="public"),
+        ~chainIdColumn=None,
+        ~chainId=None,
       )->String.includes("UNNEST($1::NUMERIC[])"),
     ).toBe(true)
   })
@@ -351,6 +354,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       ~updatedEntities=[
         {
           entityConfig,
+          scope: Internal.CrossChain,
           changes: [Change.Delete({entityId, checkpointId: 1n})],
         },
       ],

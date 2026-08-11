@@ -21,6 +21,7 @@ let make: (
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
   ~reorgThresholdReadyTolerance: int=?,
+  ~perChainEntities: array<Internal.entityConfig>=?,
   ~logger: Pino.t,
 ) => t
 
@@ -44,6 +45,8 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Pino.t
+let entities: t => EntityTables.t
+let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
 let reorgDetection: t => ReorgDetection.t

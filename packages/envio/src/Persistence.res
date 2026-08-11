@@ -63,9 +63,19 @@ type rollback = {
   progressBlockNumberByChainId: dict<int>,
 }
 
+// One flush group: the changes an entity accumulated within a single chain
+// scope. A per-chain entity contributes one group per chain, and the scope is
+// what stamps the chain id onto the rows — it's never re-derived downstream.
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
+  scope: Internal.chainScope,
   changes: array<Change.t<Internal.entity>>,
+}
+
+// An id the rollback must delete, together with the scope its row lives in.
+type rollbackRemoval = {
+  entityId: EntityId.t,
+  scope: Internal.chainScope,
 }
 
 type storage = {
@@ -119,6 +129,7 @@ type storage = {
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
+    ~chainIdColumn: option<string>,
     ~safeCheckpointId: Internal.checkpointId,
   ) => promise<unit>,
   // Get rollback target checkpoint
@@ -140,7 +151,7 @@ type storage = {
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<EntityId.t>, array<unknown>)>,
+  ) => promise<(array<rollbackRemoval>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,

@@ -64,8 +64,8 @@ describe("Internal.EffectCache address mapping", () => {
 
   it("Maps scope to its Prometheus label value", t => {
     t.expect((
-      Internal.EffectCache.scopeToString(CrossChain),
-      Internal.EffectCache.scopeToString(Chain(137->ChainId.fromInt)),
+      Internal.chainScopeToString(CrossChain),
+      Internal.chainScopeToString(Chain(137->ChainId.fromInt)),
     )).toEqual(("crossChain", "137"))
   })
 

@@ -24,7 +24,7 @@ describe("UniswapV3Factory PoolCreated (integration)", () => {
             "sets": [
               {
                 "fee": 3000n,
-                "id": "1_0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
+                "id": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
                 "pool": "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
                 "tickSpacing": 60n,
                 "token0": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
@@ -64,8 +64,10 @@ describe("UniswapV3Factory PoolCreated (unit)", () => {
       },
     });
 
-    const entityId = `1_${pool}`;
-    // Effect falls back to 18 when RPC is not configured
+    const entityId = pool;
+    // Effect falls back to 18 when RPC is not configured. Entities are
+    // per-chain (see `disable_default_cross_chain` in config.yaml), so a row
+    // read outside a handler carries the chain it belongs to.
     t.expect(await indexer.UniswapV3Factory_PoolCreated.get(entityId)).toEqual({
       id: entityId,
       token0,
@@ -75,6 +77,7 @@ describe("UniswapV3Factory PoolCreated (unit)", () => {
       pool,
       token0Decimals: 18,
       token1Decimals: 18,
+      chainId: 1,
     });
   });
 
@@ -98,6 +101,6 @@ describe("UniswapV3Factory PoolCreated (unit)", () => {
       },
     });
 
-    t.expect(await indexer.UniswapV3Factory_PoolCreated.get(`1_${pool}`)).toBeDefined();
+    t.expect(await indexer.UniswapV3Factory_PoolCreated.get(pool)).toBeDefined();
   });
 });

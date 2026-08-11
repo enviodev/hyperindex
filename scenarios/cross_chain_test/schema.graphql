@@ -1,0 +1,19 @@
+# Per-chain by default: the same `Counter` id exists independently on chain 1
+# and chain 137.
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+
+# Opted back into a single row shared by every chain.
+type GlobalCounter @crossChain {
+  id: ID!
+  count: BigInt!
+}
+
+# Ids are chain-qualified by the effect that builds them, so the same id never
+# appears on two chains — which lets the ambiguity-free `get` path be asserted.
+type Label {
+  id: ID!
+  value: String!
+}

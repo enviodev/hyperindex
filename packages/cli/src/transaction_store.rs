@@ -460,7 +460,8 @@ impl TransactionStore {
         // would silently truncate and misalign the result with the caller's items.
         if block_numbers.len() != transaction_indices.len() || block_numbers.len() != masks.len() {
             return Err(napi::Error::from_reason(format!(
-                "materialize column length mismatch: block_numbers={}, transaction_indices={}, masks={}",
+                "materialize column length mismatch: block_numbers={}, transaction_indices={}, \
+                 masks={}",
                 block_numbers.len(),
                 transaction_indices.len(),
                 masks.len()

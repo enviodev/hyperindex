@@ -36,7 +36,8 @@ fn encode_indexed_topic_inner(abi_type: &str, value: Value) -> Result<String> {
             let encoded = value.abi_encode();
             if encoded.len() != 32 {
                 bail!(
-                    "Expected indexed scalar ABI type `{abi_type}` to encode to one word, got {} bytes",
+                    "Expected indexed scalar ABI type `{abi_type}` to encode to one word, got {} \
+                     bytes",
                     encoded.len()
                 );
             }
@@ -148,7 +149,8 @@ fn encode_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) -> Result<()> {
             let encoded = scalar.abi_encode();
             if encoded.len() != 32 {
                 bail!(
-                    "Expected an indexed scalar container member to encode to one word, got {} bytes",
+                    "Expected an indexed scalar container member to encode to one word, got {} \
+                     bytes",
                     encoded.len()
                 );
             }

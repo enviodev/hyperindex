@@ -70,6 +70,19 @@ let getIndexingAddressesByChain = (state: testIndexerState): dict<
   byChain
 }
 
+// Rows of a per-chain entity are keyed per (chain, id): the same id exists
+// independently on every chain.
+let rowKey = (~scope: Internal.chainScope, ~entityId: EntityId.t) =>
+  switch scope {
+  | CrossChain => entityId->EntityId.toKey
+  | Chain(chainId) => `${chainId->ChainId.toString}|${entityId->EntityId.toKey}`
+  }
+
+let readChainId = (entity: Internal.entity, ~field: Table.field): option<ChainId.t> =>
+  entity
+  ->(Utils.magic: Internal.entity => dict<ChainId.t>)
+  ->Utils.Dict.dangerouslyGetNonOption(field.fieldName)
+
 let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFilter.t): array<
   Internal.entity,
 > => {
@@ -79,16 +92,28 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
   // entityConfig.
   switch state.entityConfigs->Dict.get(tableName) {
   | None => []
-  | Some(_) =>
+  | Some(entityConfig) =>
     let entityDict = state.entities->Dict.get(tableName)->Option.getOr(Dict.make())
-    entityDict
-    ->Dict.valuesToArray
-    ->Array.filter(entity => {
-      // The store holds decoded entities and the filter carries decoded values,
-      // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
-      let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
-      filter->EntityFilter.matches(~entity=entityAsDict)
-    })
+    let matched =
+      entityDict
+      ->Dict.valuesToArray
+      ->Array.filter(entity => {
+        // The store holds decoded entities and the filter carries decoded values,
+        // so compare directly (same approach as InMemoryTable) — no JSON round-trip.
+        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+        filter->EntityFilter.matches(~entity=entityAsDict)
+      })
+    // The chain is already fixed by the scope the load ran for, so the loaded
+    // entity is handed back in the shape the handlers see.
+    switch entityConfig.table->Table.getChainIdField {
+    | None => matched
+    | Some(field) =>
+      matched->Array.map(entity => {
+        let copy = entity->(Utils.magic: Internal.entity => dict<unknown>)->Utils.Dict.shallowCopy
+        copy->Utils.Dict.deleteInPlace(field.fieldName)
+        copy->(Utils.magic: dict<unknown> => Internal.entity)
+      })
+    }
   }
 }
 
@@ -104,8 +129,11 @@ let handleWriteBatch = (
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
 
-  updatedEntities->Array.forEach(({entityConfig, changes}: Persistence.updatedEntity) => {
+  updatedEntities->Array.forEach(({entityConfig, scope, changes}: Persistence.updatedEntity) => {
     let entityName = entityConfig.name
+    // The scope is what makes a per-chain row identifiable, so it's stamped
+    // onto the stored entity the same way the Postgres write path does.
+    let chainIdField = entityConfig.table->Table.getChainIdField
     let entityDict = switch state.entities->Dict.get(entityName) {
     | Some(dict) => dict
     | None =>
@@ -138,10 +166,17 @@ let handleWriteBatch = (
         // The store keeps decoded entities so load comparisons (bigint /
         // BigDecimal) work on real values. Ids are keyed by their string form
         // since they may be string/int/bigint.
-        entityDict->Dict.set(entityId->EntityId.toKey, entity)
+        let storedEntity = switch (chainIdField, scope->Internal.chainScopeChainId) {
+        | (Some(field), Some(chainId)) =>
+          entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId)
+        | _ => entity
+        }
+        entityDict->Dict.set(rowKey(~scope, ~entityId), storedEntity)
+        // The change already carries the checkpoint's chainId, so the entity
+        // inside it stays unstamped.
         entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
       | Delete({entityId, checkpointId}) =>
-        Dict.delete(entityDict->Obj.magic, entityId->EntityId.toKey)
+        Dict.delete(entityDict->Obj.magic, rowKey(~scope, ~entityId))
         entityChangeFor(checkpointId).deleted->Array.push(entityId)->ignore
       }
     }
@@ -379,7 +414,10 @@ let copyEntity = (entity: Internal.entity): Internal.entity =>
   ->Utils.Dict.shallowCopy
   ->(Utils.magic: dict<unknown> => Internal.entity)
 
-// Entity operations for direct manipulation outside of handlers
+// Entity operations for direct manipulation outside of handlers. Unlike a
+// handler, which always runs on a known chain, these are chain-agnostic — so a
+// per-chain entity is looked up across every chain and an id present on more
+// than one is an error rather than an arbitrary pick.
 let getEntityFromState = (
   ~state: testIndexerState,
   ~entityConfig: Internal.entityConfig,
@@ -392,7 +430,25 @@ let getEntityFromState = (
     )
   }
   let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-  entityDict->Dict.get(entityId)->Option.map(copyEntity)
+  switch entityConfig.table->Table.getChainIdField {
+  | None => entityDict->Dict.get(entityId)->Option.map(copyEntity)
+  | Some(field) =>
+    let matches = entityDict->Dict.valuesToArray->Array.filter(entity => entity.id === entityId)
+    switch matches {
+    | [] => None
+    | [entity] => Some(copyEntity(entity))
+    | _ =>
+      let chains =
+        matches
+        ->Array.map(entity =>
+          entity->readChainId(~field)->Option.mapOr("unknown", ChainId.toString)
+        )
+        ->Array.join(", ")
+      JsError.throwWithMessage(
+        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) — use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
+      )
+    }
+  }
 }
 
 let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
@@ -435,7 +491,23 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
       state.entities->Dict.set(entityConfig.name, dict)
       dict
     }
-    entityDict->Dict.set(entity.id, copyEntity(entity))
+    // Outside a handler there's no chain in context, so a per-chain entity has
+    // to say which chain the row belongs to.
+    let scope = switch entityConfig.table->Table.getChainIdField {
+    | None => Internal.CrossChain
+    | Some(field) =>
+      switch entity->readChainId(~field) {
+      | Some(chainId) => Internal.Chain(chainId)
+      | None =>
+        JsError.throwWithMessage(
+          `${entityConfig.name}.set() requires a \`${field.fieldName}\` because the entity is per-chain. Pass it alongside the entity fields.`,
+        )
+      }
+    }
+    entityDict->Dict.set(
+      rowKey(~scope, ~entityId=entity.id->EntityId.unsafeOfString),
+      copyEntity(entity),
+    )
   }
 }
 
@@ -453,9 +525,43 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
   }
 }
 
+// The same filter syntax as `context.X.getWhere` in a handler, matched against
+// the store instead of a database. A per-chain entity's rows carry their chain
+// id, so `{chainId: {_eq: 1}}` is what narrows an id that exists on several
+// chains.
+let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
+  dict<dict<unknown>> => promise<array<Internal.entity>>
+) => {
+  filter => {
+    if state.processInProgress {
+      JsError.throwWithMessage(
+        `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
+      )
+    }
+    let filters =
+      filter->EntityFilter.parseGetWhereOrThrow(
+        ~entityName=entityConfig.name,
+        ~table=entityConfig.table,
+      )
+    let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
+    // parseGetWhereOrThrow expands an operator group into alternatives whose
+    // matches are disjoint, so the union needs no dedup.
+    Promise.resolve(
+      entityDict
+      ->Dict.valuesToArray
+      ->Array.filter(entity => {
+        let entityAsDict = entity->(Utils.magic: Internal.entity => dict<EntityFilter.FieldValue.t>)
+        filters->Array.some(filter => filter->EntityFilter.matches(~entity=entityAsDict))
+      })
+      ->Array.map(copyEntity),
+    )
+  }
+}
+
 type entityOperations = {
   get: string => promise<option<Internal.entity>>,
   getAll: unit => promise<array<Internal.entity>>,
+  getWhere: dict<dict<unknown>> => promise<array<Internal.entity>>,
   getOrThrow: (string, ~message: string=?) => promise<Internal.entity>,
   set: Internal.entity => unit,
 }
@@ -507,8 +613,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
-  pruneStaleEntityHistory: async (~entityName as _, ~entityIndex as _, ~safeCheckpointId as _) =>
-    (),
+  pruneStaleEntityHistory: async (
+    ~entityName as _,
+    ~entityIndex as _,
+    ~chainIdColumn as _,
+    ~safeCheckpointId as _,
+  ) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
@@ -625,6 +735,7 @@ let createTestIndexer = (): t<'processConfig> => {
         {
           get: makeEntityGet(~state, ~entityConfig),
           getAll: makeEntityGetAll(~state, ~entityConfig),
+          getWhere: makeEntityGetWhere(~state, ~entityConfig),
           getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
           set: makeEntitySet(~state, ~entityConfig),
         },

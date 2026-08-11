@@ -1786,7 +1786,11 @@ let registerDynamicContracts = (
                         dynamicContract: Some(contractName),
                         addresses: splitAddresses,
                         mergeBlock: None,
-                        mutPendingQueries: p.mutPendingQueries,
+                        // Must be a fresh array: sharing p's (empty) queue by
+                        // reference lets both split halves push and consume in
+                        // one array, so one half can consume the other's
+                        // fetched range and skip it for its own addresses.
+                        mutPendingQueries: [],
                         sourceRangeCapacity: p.sourceRangeCapacity,
                         prevSourceRangeCapacity: p.prevSourceRangeCapacity,
                         eventDensity: p.eventDensity,

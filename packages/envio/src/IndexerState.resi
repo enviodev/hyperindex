@@ -9,12 +9,6 @@ type rollbackState =
   | FoundReorgDepth({chainId: ChainId.t, rollbackTargetBlockNumber: int})
   | RollbackReady({eventsProcessedDiffByChain: dict<float>})
 
-module EntityTables: {
-  type t = dict<InMemoryTable.Entity.t>
-  let make: array<Internal.entityConfig> => t
-  let get: (t, ~entityName: string) => InMemoryTable.Entity.t
-}
-
 type t
 
 let make: (
@@ -80,6 +74,14 @@ let config: t => Config.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
+let eachEntityTable: (
+  t,
+  (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~table: InMemoryTable.Entity.t,
+  ) => unit,
+) => unit
 let effectState: t => EffectState.t
 let committedCheckpointId: t => Internal.checkpointId
 let processedCheckpointId: t => Internal.checkpointId

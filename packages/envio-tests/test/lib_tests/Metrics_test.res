@@ -45,7 +45,7 @@ newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\",a=b \\\\ with\\nnewli
       ~name="envio_source_request_seconds_total",
       ~help="Cumulative time spent on data source requests.",
       ~kind="counter",
-      ~entries=[(`{method="getLogs"}`, 1.5), (`{method="heightSubscription"}`, 0.)],
+      ~entries=[(`{method="getLogs"}`, 1.5), (`{method="heightPush"}`, 0.)],
       ~value=v => v !== 0. ? Some(v) : None,
     )
 
@@ -177,7 +177,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       effects: [
         {
           effect: "getMetadata",
-          scope: Internal.EffectCache.scopeToString(CrossChain),
+          scope: Internal.chainScopeToString(CrossChain),
           callSeconds: 8.4,
           callSecondsTotal: 20.9,
           callCount: 300.,
@@ -220,6 +220,20 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           method: "getLogs",
           count: 42,
           seconds: 33.75,
+        },
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          method: "heightPush",
+          count: 7,
+          seconds: 0.,
+        },
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          method: "heightPushIgnored",
+          count: 0,
+          seconds: 0.,
         },
       ],
       sourceHeights: [
@@ -351,9 +365,10 @@ envio_indexing_buffer_block{chainId="1"} 260
 # TYPE envio_indexing_end_block gauge
 envio_indexing_end_block{chainId="1"} 1000
 
-# HELP envio_source_request_total The number of requests made to data sources.
+# HELP envio_source_request_total The number of requests made to data sources. Heights pushed by a subscription stream are counted here too, under the heightPush and heightPushIgnored methods.
 # TYPE envio_source_request_total counter
 envio_source_request_total{source="HyperSync",chainId="1",method="getLogs"} 42
+envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
