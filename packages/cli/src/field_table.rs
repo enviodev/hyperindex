@@ -717,20 +717,43 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
 
     /// Drop rows with keys `> target` (rolled back).
     pub(crate) fn rollback(&mut self, target: K) {
-        let dead: Vec<K> = self
-            .order
-            .range((
-                std::ops::Bound::Excluded(target),
-                std::ops::Bound::Unbounded,
-            ))
-            .map(|(k, _)| k.clone())
-            .collect();
-        for k in dead {
+        for k in self.keys_above(target) {
             if let Some(slot) = self.by_key.remove(&k) {
                 self.order.remove(&k);
                 self.free_slot(slot);
             }
         }
+    }
+
+    /// Drop rows with keys `> target` (rolled back), except rows with keys
+    /// `<= keep_field_through` carrying `field`: those are reduced to that one
+    /// field. The rolled-back range is refetched, so a row whose key is still
+    /// vouched for keeps its cell readable to compare the refetch against.
+    pub(crate) fn rollback_keeping_field(
+        &mut self,
+        target: K,
+        keep_field_through: K,
+        field: usize,
+    ) {
+        let bit = 1u64 << field;
+        for k in self.keys_above(target) {
+            let slot = self.by_key[&k];
+            if k <= keep_field_through && self.masks[slot as usize] & bit != 0 {
+                self.reduce_row_to_field(slot, field);
+            } else {
+                self.drop_row(&k, slot);
+            }
+        }
+    }
+
+    fn keys_above(&self, target: K) -> Vec<K> {
+        self.order
+            .range((
+                std::ops::Bound::Excluded(target),
+                std::ops::Bound::Unbounded,
+            ))
+            .map(|(k, _)| k.clone())
+            .collect()
     }
 
     pub(crate) fn clear(&mut self) {

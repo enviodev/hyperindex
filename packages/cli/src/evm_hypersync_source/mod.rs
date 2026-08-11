@@ -23,10 +23,7 @@ use config::ClientConfig;
 use decode::{Decoder, LogAddress, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{
-    encode_address, Block, OnEventRegistrationInput, ParamValue,
-    RollbackGuard,
-};
+use types::{encode_address, Block, OnEventRegistrationInput, ParamValue, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -1125,7 +1122,10 @@ mod tests {
         )
         .expect("expected success when block and transaction join");
 
-        assert_eq!(items.iter().map(|i| i.block_number).collect::<Vec<_>>(), vec![7]);
+        assert_eq!(
+            items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
+            vec![7]
+        );
     }
 
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.

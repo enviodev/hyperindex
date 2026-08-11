@@ -819,16 +819,29 @@ impl BlockStore {
         }
     }
 
-    /// Drop all blocks above `target_block` (rolled back), hashes included. The
-    /// rolled-back range is refetched, so its stale hashes must not linger for
-    /// reorg detection.
+    /// Drop all blocks above `target_block` (rolled back). Blocks above
+    /// `drop_hashes_above` lose their hash with the rest of the row: they sit on
+    /// a fork the rollback disproved, so keeping the hash would re-report the
+    /// same reorg against the refetch. Blocks between the two keep a hash-only
+    /// row — the rollback validated those hashes, so they still detect a source
+    /// that answers the refetch from an orphaned fork. `None` means no block is
+    /// suspect (a chain rolled back for cross-chain ordering, not a reorg), so
+    /// every rolled-back hash survives.
     #[napi]
-    pub fn rollback(&self, target_block: i64) {
+    pub fn rollback(&self, target_block: i64, drop_hashes_above: Option<i64>) {
         let mut inner = self.inner.lock().unwrap();
-        match u64::try_from(target_block) {
-            Ok(target) => inner.table.rollback(target),
-            Err(_) => inner.table.clear(),
-        }
+        let Ok(target) = u64::try_from(target_block) else {
+            inner.table.clear();
+            return;
+        };
+        let keep_through = match drop_hashes_above {
+            Some(above) => u64::try_from(above).unwrap_or(0),
+            None => u64::MAX,
+        };
+        let field = self.hash_field();
+        inner
+            .table
+            .rollback_keeping_field(target, keep_through, field);
     }
 }
 
@@ -1320,7 +1333,7 @@ mod tests {
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
             .expect("materialize");
-        store.rollback(20);
+        store.rollback(20, Some(20));
         let after_rollback = store
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
@@ -1552,6 +1565,76 @@ mod tests {
                 }
             ),
             (false, vec![Some(format!("0x{}", "20".repeat(32)))])
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rollback_keeps_validated_hashes_above_the_new_progress() {
+        let store = evm_page(vec![
+            hashed_evm_block(90, 0x90),
+            hashed_evm_block(93, 0x93),
+            hashed_evm_block(95, 0x95),
+            hashed_evm_block(97, 0x97),
+        ]);
+
+        // The depth search validated hashes through 95; progress only restores
+        // to 90. Blocks 93 and 95 keep their (validated) hash to compare the
+        // refetch against, block 97 sits above the fork and goes.
+        store.rollback(90, Some(95));
+
+        assert_eq!(
+            (
+                store.get_hash(93),
+                store.get_hash(95),
+                store.get_hash(97),
+                store.get_hashed_block_numbers(0, 200),
+            ),
+            (
+                Some(format!("0x{}", "93".repeat(32))),
+                Some(format!("0x{}", "95".repeat(32))),
+                None,
+                vec![90, 93, 95],
+            )
+        );
+
+        // The kept rows are hash-only — their payload was rolled back with the
+        // rest of the range.
+        let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
+        let cols = store.materialize(vec![93], vec![mask]).await.unwrap();
+        assert_eq!(
+            match column(&cols, "timestamp") {
+                Some(Column::I64(v)) => v.iter().any(|c| c.is_some()),
+                None => false,
+                _ => panic!("expected timestamp column"),
+            },
+            false
+        );
+    }
+
+    #[test]
+    fn rollback_without_a_fork_keeps_every_hash() {
+        // A chain rolled back for cross-chain ordering never reorged, so none of
+        // its scanned hashes are suspect — they stay to detect a reorg on the
+        // refetch.
+        let store = evm_page(vec![
+            hashed_evm_block(105, 0x05),
+            hashed_evm_block(106, 0x06),
+            hashed_evm_block(200, 0x20),
+        ]);
+
+        store.rollback(105, None);
+
+        assert_eq!(
+            (
+                store.get_hash(106),
+                store.get_hash(200),
+                store.get_hashed_block_numbers(0, 300),
+            ),
+            (
+                Some(format!("0x{}", "06".repeat(32))),
+                Some(format!("0x{}", "20".repeat(32))),
+                vec![105, 106, 200],
+            )
         );
     }
 

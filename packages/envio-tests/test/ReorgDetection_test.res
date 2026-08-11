@@ -158,11 +158,36 @@ describe("Block store reorg detection", () => {
 
   it("rollback drops hashes above the valid block", t => {
     let store = mock(scannedHashesFixture)
-    store->BlockStore.rollback(499)
+    store->BlockStore.rollback(499, ~dropHashesAbove=Null.Value(499))
     t.expect(store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000)).toEqual([
       1,
       50,
       300,
+    ])
+  })
+
+  it("rollback keeps the hashes the depth search validated", t => {
+    let store = mock(scannedHashesFixture)
+    // Progress restores to 299, but blocks up to 499 were validated against a
+    // fresh fetch, so their hashes stay to check the refetch against.
+    store->BlockStore.rollback(299, ~dropHashesAbove=Null.Value(499))
+    t.expect({
+      "blockNumbers": store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000),
+      "validatedHash": store->BlockStore.getHash(300),
+    }).toEqual({
+      "blockNumbers": [1, 50, 300],
+      "validatedHash": Null.Value("0x789"),
+    })
+  })
+
+  it("rollback without a reorg keeps every hash", t => {
+    let store = mock(scannedHashesFixture)
+    store->BlockStore.rollback(299, ~dropHashesAbove=Null.Null)
+    t.expect(store->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=1000)).toEqual([
+      1,
+      50,
+      300,
+      500,
     ])
   })
 

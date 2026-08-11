@@ -134,10 +134,13 @@ external materialize: (
 // hashes of blocks at or above `keepHashesFrom` for reorg detection.
 @send external prune: (t, int, ~keepHashesFrom: int) => unit = "prune"
 
-// Drop blocks above the given block (rolled back), hashes included. The
-// rolled-back range is refetched, so its stale hashes must not linger for
-// reorg detection.
-@send external rollback: (t, int) => unit = "rollback"
+// Drop blocks above the given block (rolled back). Blocks above
+// `dropHashesAbove` lose their hash too — they sit on a fork the rollback
+// disproved, and keeping the hash would re-report the same reorg against the
+// refetch. Blocks between the two keep a hash-only row, so a source answering
+// the refetch from an orphaned fork is still caught. `Null` means no block is
+// suspect (rolled back for cross-chain ordering, not a reorg).
+@send external rollback: (t, int, ~dropHashesAbove: Null.t<int>) => unit = "rollback"
 
 // Hash of a stored block, if the store still holds it.
 @send external getHash: (t, int) => Null.t<string> = "getHash"
