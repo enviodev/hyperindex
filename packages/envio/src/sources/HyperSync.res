@@ -10,10 +10,14 @@ let markerValue = (msg, ~prefix) =>
 let mapNativeFailure = (failure: Source.nativeRequestFailure) => {
   switch failure.message {
   | Some(msg) if msg->String.startsWith(rateLimitedPrefix) =>
-    Source.RateLimited({resetMs: msg->markerValue(~prefix=rateLimitedPrefix)->Option.getOr(1000)})
+    Source.RateLimited({
+      resetMs: msg->markerValue(~prefix=rateLimitedPrefix)->Option.getOr(1000),
+      requestStats: failure.requestStats,
+    })
   | Some(msg) if msg->String.startsWith(behindHeadPrefix) =>
     Source.SourceBehindHead({
       blockNumber: msg->markerValue(~prefix=behindHeadPrefix)->Option.getOr(0),
+      requestStats: failure.requestStats,
     })
   | _ => failure.cause
   }

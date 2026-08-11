@@ -112,14 +112,16 @@ exception InconsistentResponse({
 // request. Load-balanced backends drift from each other around the head, so
 // this is expected there and resolves by retrying — SourceManager owns the
 // backoff and the decision to fail over, identically for every ecosystem.
-exception SourceBehindHead({blockNumber: int})
+// Carries the timings of the requests the failed operation did make, so a
+// retried request still counts towards the source's metrics.
+exception SourceBehindHead({blockNumber: int, requestStats: array<requestStat>})
 
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
 
-type rateLimited = {resetMs: int}
+type rateLimited = {resetMs: int, requestStats: array<requestStat>}
 exception RateLimited(rateLimited)
 
 type getItemsError =

@@ -99,7 +99,10 @@ describe("native request failures", () => {
       "mapped": exn->HyperSync.mapNativeFailureExn,
     }).toEqual({
       "requestStats": [{Source.method: "getBlockHashes", seconds: 0.25}],
-      "mapped": Source.RateLimited({resetMs: 2500}),
+      "mapped": Source.RateLimited({
+        resetMs: 2500,
+        requestStats: [{Source.method: "getBlockHashes", seconds: 0.25}],
+      }),
     })
   })
 })
@@ -1519,7 +1522,7 @@ describe("SourceManager.executeQuery", () => {
     // Every ecosystem's source raises this instead of building its own backoff,
     // so the retry cadence lives in one place.
     (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
-      Source.SourceBehindHead({blockNumber: 10}),
+      Source.SourceBehindHead({blockNumber: 10, requestStats: []}),
     )
     await Utils.delay(200)
 
@@ -1528,6 +1531,38 @@ describe("SourceManager.executeQuery", () => {
     | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
     }
     t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("counts the requests a failed getItems still made", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    // The native client reports the timings of the requests it made before
+    // giving up, so a source failing under load still shows up in its metrics.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({
+        blockNumber: 10,
+        requestStats: [{Source.method: "getLogs", seconds: 0.5}],
+      }),
+    )
+    await Utils.delay(200)
+
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
+    }
+    let _ = await p
+
+    t.expect(
+      sourceManager
+      ->SourceManager.getRequestStatSamples
+      ->Array.map(({method, count, seconds}) => (method, count, seconds)),
+    ).toEqual([("getLogs", 1, 0.5)])
   })
 
   Async.it("Rethrows unknown errors", async t => {

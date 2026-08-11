@@ -60,7 +60,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | FuelHyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
     | FuelHyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(

@@ -18,7 +18,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
       let current = callCount.contents
       callCount := current + 1
       if current < rateLimitedCalls {
-        throw(Source.RateLimited({resetMs: resetMs}))
+        throw(Source.RateLimited({resetMs: resetMs, requestStats: []}))
       }
       let data = BlockStore.fromJs(
         blockNumbers->Array.map(n => {

@@ -113,7 +113,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
     | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(

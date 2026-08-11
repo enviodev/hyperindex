@@ -937,11 +937,13 @@ let executeQuery = async (
       }
       responseRef := Some(response)
     } catch {
-    | Source.RateLimited({resetMs}) =>
+    | Source.RateLimited({resetMs, requestStats}) =>
+      sourceState->recordRequestStats(requestStats)
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber}) as err =>
+    | Source.SourceBehindHead({blockNumber, requestStats}) as err =>
+      sourceState->recordRequestStats(requestStats)
       await sourceManager->retryRecoverable(
         sourceState,
         ~condition=BehindHead({blockNumber: blockNumber}),
@@ -1089,11 +1091,13 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       | Error(exn) => throw(exn)
       }
     } catch {
-    | Source.RateLimited({resetMs}) =>
+    | Source.RateLimited({resetMs, requestStats}) =>
+      sourceState->recordRequestStats(requestStats)
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.SourceBehindHead({blockNumber}) as err =>
+    | Source.SourceBehindHead({blockNumber, requestStats}) as err =>
+      sourceState->recordRequestStats(requestStats)
       await sourceManager->retryRecoverable(
         sourceState,
         ~condition=BehindHead({blockNumber: blockNumber}),
