@@ -8,14 +8,12 @@ let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
 
 let entityConfig = (name: string): Internal.entityConfig => config->entityConfigByName(name)
 
-// EVM block hashes are stored as the fixed 32-byte reorg comparison key; a
-// `fromJs` page zero-extends a shorter mock marker to that width, so a stored
-// hash reads back left-padded. Mirror that here for assertions that compare
-// against `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
-let evmBlockHash = hex => {
-  let digits = hex->String.slice(~start=2, ~end=hex->String.length)
-  "0x" ++ "0"->String.repeat(64 - digits->String.length) ++ digits
-}
+// EVM block hashes are the fixed 32-byte reorg comparison key, and the store
+// rejects anything narrower. Widen the short markers fixtures use, both on the
+// way into a mocked response and in assertions that compare against
+// `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
+let evmBlockHash = hex =>
+  "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
 
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
@@ -1046,7 +1044,10 @@ module Source = {
           JsError.throwWithMessage("getBlockHashesResolveFns is empty")
         }
         let blockStore = BlockStore.fromJs(
-          blockHashes,
+          blockHashes->Array.map((block): BlockStore.inputBlock => {
+            ...block,
+            blockHash: ?block.blockHash->Option.map(evmBlockHash),
+          }),
           ~ecosystem=Evm,
           ~shouldChecksum=false,
         )
@@ -1118,12 +1119,10 @@ module Source = {
                   let latestFetchedBlockNumber =
                     latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
-                  // The store hex-validates hashes, so pad the decimal marker
-                  // to an even number of hex digits.
-                  let mockBlockHash = blockNumber => {
-                    let s = blockNumber->Int.toString
-                    s->String.length->mod(2) == 1 ? `0x0${s}` : `0x${s}`
-                  }
+                  // The store takes 32-byte hashes, so widen the decimal marker.
+                  let mockBlockHash = blockNumber => evmBlockHash(
+                    `0x${blockNumber->Int.toString}`,
+                  )
                   let latestFetchedBlockHash = switch latestFetchedBlockHash {
                   | Some(latestFetchedBlockHash) => latestFetchedBlockHash
                   | None => mockBlockHash(latestFetchedBlockNumber)
@@ -1132,7 +1131,7 @@ module Source = {
                     (
                       {
                         blockNumber: latestFetchedBlockNumber,
-                        blockHash: latestFetchedBlockHash,
+                        blockHash: evmBlockHash(latestFetchedBlockHash),
                       }: BlockStore.inputBlock
                     ),
                   ]
@@ -1142,7 +1141,7 @@ module Source = {
                       (
                         {
                           blockNumber: prevRangeLastBlock.blockNumber,
-                          blockHash: prevRangeLastBlock.blockHash,
+                          blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
                         }: BlockStore.inputBlock
                       ),
                     )

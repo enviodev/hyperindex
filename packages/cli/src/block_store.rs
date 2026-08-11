@@ -422,18 +422,16 @@ pub(crate) fn decode_hex_bytes(s: &str, name: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Left-pad a `fromJsEvm` hash into the fixed 32-byte comparison key the store
-/// stores. Real observations (RPC blocks, seeded checkpoints) are already 32
-/// bytes, so this is a no-op for them; shorter values (test markers) are
-/// zero-extended to the canonical width. Anything wider than 32 bytes is a
-/// validation error.
+/// Decode a `fromJsEvm` hash into the fixed 32-byte comparison key the store
+/// stores. Width is part of the validation: a truncated hash zero-extended to
+/// the canonical width would compare unequal to the real hash for that block
+/// and surface as a reorg, hiding the malformed response behind a rollback.
 fn evm_input_hash(s: &str) -> Result<Hash> {
     let bytes = decode_hex_bytes(s, "block.hash")?;
-    if bytes.len() > 32 {
-        anyhow::bail!("block.hash '{s}' exceeds 32 bytes");
-    }
-    let mut buf = [0u8; 32];
-    buf[32 - bytes.len()..].copy_from_slice(&bytes);
+    let buf: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("block.hash '{s}' must be 32 bytes, got {}", bytes.len()))?;
     Ok(Hash::from(buf))
 }
 
@@ -1599,6 +1597,25 @@ mod tests {
                 }
             ),
             (false, vec![Some(format!("0x{}", "20".repeat(32)))])
+        );
+    }
+
+    #[test]
+    fn from_js_evm_rejects_a_truncated_hash() {
+        let reason = match BlockStore::from_js_evm(
+            vec![EvmBlockInput {
+                number: 10,
+                hash: Some("0x0b64".to_string()),
+                timestamp: None,
+            }],
+            false,
+        ) {
+            Ok(_) => panic!("a short hash is not a block hash"),
+            Err(err) => err.reason.clone(),
+        };
+        assert!(
+            reason.contains("must be 32 bytes, got 2"),
+            "unexpected reason: {reason}"
         );
     }
 

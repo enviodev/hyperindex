@@ -74,9 +74,9 @@ describe("ChainState reorg checkpoint restore", () => {
         ~firstEventBlockNumber=Some(10),
       )->makeChainState(
         ~reorgCheckpoints=[
-          checkpoint(~checkpointId=1n, ~blockNumber=100, ~blockHash="0x0100"),
-          checkpoint(~checkpointId=2n, ~blockNumber=101, ~blockHash="0x0101a"),
-          checkpoint(~checkpointId=3n, ~blockNumber=101, ~blockHash="0x0101"),
+          checkpoint(~checkpointId=1n, ~blockNumber=100, ~blockHash=MockIndexer.evmBlockHash("0x0100")),
+          checkpoint(~checkpointId=2n, ~blockNumber=101, ~blockHash=MockIndexer.evmBlockHash("0x0101a")),
+          checkpoint(~checkpointId=3n, ~blockNumber=101, ~blockHash=MockIndexer.evmBlockHash("0x0101")),
         ],
       )
 

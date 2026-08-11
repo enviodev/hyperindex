@@ -1,5 +1,11 @@
 open Vitest
 
+// The store takes 32-byte block hashes; widen the short markers these
+// fixtures use rather than making every one of them 64 digits long.
+let evmHash = hex =>
+  "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
+
+
 let chainId = 1->ChainId.fromInt
 
 // Mock source that throws Source.RateLimited on the first N calls, then
@@ -25,9 +31,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
           let hashDigits = n->Int.toString
           {
             BlockStore.blockNumber: n,
-            blockHash: hashDigits->String.length->mod(2) === 0
-              ? `0x${hashDigits}`
-              : `0x0${hashDigits}`,
+            blockHash: evmHash(`0x${hashDigits}`),
             blockTimestamp: n,
           }
         }),
@@ -60,14 +64,14 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       getBlockHashes: (~blockNumbers, ~logger as _) => {
         let blockNumber = blockNumbers->Utils.Array.firstUnsafe
         let response = BlockStore.fromJs(
-          [{BlockStore.blockNumber, blockHash: "0x01"}],
+          [{BlockStore.blockNumber, blockHash: evmHash("0x01")}],
           ~ecosystem=Evm,
           ~shouldChecksum=false,
         )
         if attempt.contents === 0 {
           attempt := 1
           let conflictingPage = BlockStore.fromJs(
-            [{BlockStore.blockNumber, blockHash: "0x02"}],
+            [{BlockStore.blockNumber, blockHash: evmHash("0x02")}],
             ~ecosystem=Evm,
             ~shouldChecksum=false,
           )

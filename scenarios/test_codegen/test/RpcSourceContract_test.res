@@ -120,12 +120,12 @@ let getLogsParams = (~toBlock="0x64") =>
 let blockParams = hex => JSON.parseOrThrow(`["${hex}",false]`)
 
 let block100 = JSON.parseOrThrow(
-  `{"number":"0x64","timestamp":"0x64","hash":"0x0b64","parentHash":"0x0b63","gasUsed":"0x5208","miner":"${minerAddress}"}`,
+  `{"number":"0x64","timestamp":"0x64","hash":"0x0000000000000000000000000000000000000000000000000000000000000b64","parentHash":"0x0000000000000000000000000000000000000000000000000000000000000b63","gasUsed":"0x5208","miner":"${minerAddress}"}`,
 )
 
 let log = (~logIndex) =>
   JSON.parseOrThrow(
-    `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"${logIndex}","removed":false}`,
+    `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"${logIndex}","removed":false}`,
   )
 
 let transaction = JSON.parseOrThrow(
@@ -256,8 +256,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             "block": {
               "number": 100,
               "timestamp": 100,
-              "hash": "0x0b64",
-              "parentHash": "0x0b63",
+              "hash": "0x0000000000000000000000000000000000000000000000000000000000000b64",
+              "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000b63",
               "gasUsed": "21000",
               "miner": normalizedMinerAddress,
             },
@@ -282,8 +282,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             "block": {
               "number": 100,
               "timestamp": 100,
-              "hash": "0x0b64",
-              "parentHash": "0x0b63",
+              "hash": "0x0000000000000000000000000000000000000000000000000000000000000b64",
+              "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000b63",
               "gasUsed": "21000",
               "miner": normalizedMinerAddress,
             },
@@ -303,8 +303,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         // Block 99 comes from block 100's parentHash, which is what reorg
         // detection compares the seam against.
         "blockHashes": [
-          {ReorgDetection.blockNumber: 99, blockHash: MockIndexer.evmBlockHash("0x0b63")},
-          {ReorgDetection.blockNumber: 100, blockHash: MockIndexer.evmBlockHash("0x0b64")},
+          {ReorgDetection.blockNumber: 99, blockHash: MockIndexer.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b63")},
+          {ReorgDetection.blockNumber: 100, blockHash: MockIndexer.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b64")},
         ],
         "requestCounts": Dict.fromArray([
           ("eth_getLogs", 1),
@@ -494,7 +494,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       // branch's server-side filter; routing re-checks the registration's
       // topic filters against these values and dedups to one item.
       let orFanOutLog = JSON.parseOrThrow(
-        `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"0x2","removed":false}`,
+        `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"0x2","removed":false}`,
       )
       let page = await MockRpcServer.withScenario(
         ~name=`${name}: OR fan-out and dedup`,
@@ -624,7 +624,7 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       // contract's filtered topic1 value; routing re-checks it per registration.
       let logFor = (~address, ~topic1, ~logIndex) =>
         JSON.parseOrThrow(
-          `{"address":"${address}","topics":["${sighash}","${topic1}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0b64","logIndex":"${logIndex}","removed":false}`,
+          `{"address":"${address}","topics":["${sighash}","${topic1}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"${logIndex}","removed":false}`,
         )
 
       let page = await MockRpcServer.withScenario(
