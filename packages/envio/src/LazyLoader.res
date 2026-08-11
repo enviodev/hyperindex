@@ -108,6 +108,23 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
   )
 }
 
+// Publish an already-started load under `k`, replacing whatever is cached.
+// A caller that must not be served a stale value loads the key itself and hands
+// the pending promise over here, so later readers of the same key reuse it
+// instead of issuing a second request.
+let set = (am: asyncMap<'key, 'value>, k: 'key, value: promise<'value>): promise<'value> => {
+  let _ = am.externalPromises->Utils.Map.set(k, value)
+  let loadedKeysNumber = am.loadedKeys->SDSL.Queue.push(k)
+  if loadedKeysNumber > am._cacheSize {
+    switch am.loadedKeys->SDSL.Queue.pop {
+    | None => ()
+    | Some(old) =>
+      let _ = am.externalPromises->Utils.Map.delete(old)
+    }
+  }
+  value
+}
+
 let get = (am: asyncMap<'key, 'value>, k: 'key): promise<'value> => {
   switch am.externalPromises->Utils.Map.get(k) {
   | Some(x) => x
