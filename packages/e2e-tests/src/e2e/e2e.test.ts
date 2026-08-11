@@ -709,6 +709,41 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     `);
   });
 
+  it("serves a config.yaml table as a set, with no by_pk root", async () => {
+    const result = await graphql.query<{
+      __schema: { queryType: { fields: Array<{ name: string }> } };
+    }>(`{ __schema { queryType { fields { name } } } }`);
+
+    const roots = result
+      .data!.__schema.queryType.fields.map((f) => f.name)
+      .filter((name) => name.startsWith("transfer_totals"))
+      .sort();
+
+    // `_aggregate` is absent because aggregations are off for every table here
+    // (ENVIO_HASURA_PUBLIC_AGGREGATE is unset), not because the table is
+    // materialized. `_by_pk` is absent because it is.
+    expect(roots).toEqual(["transfer_totals"]);
+
+    // The rows are the indexer's own work: `received` must equal what the
+    // handler-written Transfer entity says the account received.
+    const [account] = await runPgSql(
+      `SELECT "to" FROM "Transfer" GROUP BY "to" ORDER BY count(*) DESC, "to" LIMIT 1`
+    );
+    const recipient = account?.[0];
+    expect(recipient).toBeTruthy();
+
+    const expected = await runPgSql(
+      `SELECT sum(value)::text FROM "Transfer" WHERE "to" = '${recipient}'`
+    );
+    const actual = await graphql.query<{
+      transfer_totals: Array<{ received: string }>;
+    }>(`{ transfer_totals(where: {id: {_eq: "${recipient}"}}) { received } }`);
+
+    expect(actual.data?.transfer_totals).toEqual([
+      { received: expected[0]?.[0] },
+    ]);
+  });
+
   it("Hasura serves numeric arrays as strings", async () => {
     // NUMERIC[] columns are created as TEXT[] when Hasura is enabled, because
     // Hasura otherwise returns the elements as numbers and drops precision on

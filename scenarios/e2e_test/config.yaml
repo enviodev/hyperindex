@@ -23,3 +23,19 @@ chains:
     contracts:
       - name: ERC20
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+# Written by config.yaml, not by a handler. No `as_entity`, so it stays out of
+# the handler context — and out of Hasura's `_by_pk` root, which only makes
+# sense for a table whose ids a caller can name.
+tables:
+  transfer_totals:
+    storage:
+      postgres: true
+    from: evm.events
+    where:
+      contractName: ERC20
+      eventName: Transfer
+    select:
+      id: params.to
+      received:
+        _sum: params.value
+        _description: "Total received by this account"
