@@ -1312,10 +1312,13 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
         description,
     }) = as_operator(value)?
     {
+        // A description names a column, and only a table's own `select` fields
+        // become columns — a nested expression and a `with` relation's columns
+        // have nowhere to put one.
         if description.is_some() {
             return Err(anyhow!(
-                "`_description` documents a `select` field, so it belongs beside the field's own \
-                 value, not inside its `{operator}`"
+                "`_description` is only allowed on a table's `select` field, where it describes \
+                 the column"
             ));
         }
         return compile_operator(&operator, inner, ctx, demand);
@@ -3101,7 +3104,30 @@ tables:
         );
         let error = parse_error(&yaml);
         assert!(
-            error.contains("`_description` documents a `select` field, so it belongs beside"),
+            error.contains("`_description` is only allowed on a table's `select` field"),
+            "{error}"
+        );
+    }
+
+    // A relation is a CTE feeding the table, so its columns are intermediate —
+    // the table's own `select` is where a column, and its description, exist.
+    #[test]
+    fn rejects_a_description_on_a_relation_column() {
+        let yaml = ERC20_YAML.replace(
+            "            account: params.to\n            delta: params.value\n",
+            r#"            account: params.to
+            delta:
+              _value: params.value
+              _description: "Credited to the recipient"
+"#,
+        );
+        let error = parse_error(&yaml);
+        assert!(
+            error.contains("`_description` is only allowed on a table's `select` field"),
+            "{error}"
+        );
+        assert!(
+            error.contains("in `with.balance_changes[3].select.delta`"),
             "{error}"
         );
     }
