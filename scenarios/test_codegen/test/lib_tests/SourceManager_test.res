@@ -94,15 +94,13 @@ describe("native request failures", () => {
     } catch {
     | exn => exn
     }
-    let failure = exn->Source.unpackNativeRequestFailure
-
-    t.expect(failure.requestStats).toEqual([
-      {Source.method: "getBlockHashes", seconds: 0.25},
-    ])
-    switch exn->HyperSync.mapNativeFailureExn {
-    | Source.RateLimited({resetMs}) => t.expect(resetMs).toEqual(2500)
-    | _ => t.expect(false, ~message="Expected a mapped rate-limit exception").toEqual(true)
-    }
+    t.expect({
+      "requestStats": (exn->Source.unpackNativeRequestFailure).requestStats,
+      "mapped": exn->HyperSync.mapNativeFailureExn,
+    }).toEqual({
+      "requestStats": [{Source.method: "getBlockHashes", seconds: 0.25}],
+      "mapped": Source.RateLimited({resetMs: 2500}),
+    })
   })
 })
 

@@ -664,61 +664,69 @@ let backoffBeforeRetry = async (
   }
 }
 
-// The queried block hasn't reached the backend instance that served the
-// request. Expected around the head of a load-balanced backend, so early
-// attempts stay quiet and short; a source that stays behind fails over like any
-// other. Shared by every ecosystem's getItems and getBlockHashes.
-let retryBehindHead = async (
+// A condition the source reported about itself, which retrying can resolve.
+// Both are expected occasionally around the head of a load-balanced backend, so
+// early attempts stay quiet; one that persists means the chain has stopped
+// making progress, and says so.
+type recoverableCondition =
+  // The queried block hasn't reached the backend instance that served the
+  // request.
+  | BehindHead({blockNumber: int})
+  // The response contradicted itself (the same block twice with different
+  // hashes, or a requested hash missing). It may be a reorg mid-request, so
+  // refetch before concluding anything about the chain.
+  | InconsistentResponse
+
+// A source that keeps contradicting itself is not mid-reorg, it is broken, and
+// no amount of retrying moves the chain forward. Roughly ten minutes of the
+// backoff schedule below.
+let inconsistentResponseStallRetries = 25
+
+let retryRecoverable = async (
   sourceManager: t,
   sourceState: sourceState,
+  ~condition: recoverableCondition,
   ~retry,
   ~isRealtime,
   ~logger: Pino.t,
-  ~blockNumber: int,
   ~method: string,
   ~err: exn,
   ~excludedSources=?,
 ) => {
-  let backoffMillis = retry === 0 ? 100 : 500 * retry
-  let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+  let (backoffMillis, log, msg) = switch condition {
+  | BehindHead({blockNumber}) => (
+      retry === 0 ? 100 : 500 * retry,
+      retry >= 4 ? Logging.childWarn : Logging.childTrace,
+      `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected — indexing continues after an automatic retry.`,
+    )
+  | InconsistentResponse => (
+      retry === 0 ? 100 : 1000 * retry,
+      if retry >= inconsistentResponseStallRetries {
+        Logging.childError
+      } else if retry >= 2 {
+        Logging.childWarn
+      } else {
+        Logging.childTrace
+      },
+      retry >= inconsistentResponseStallRetries
+        ? `The ${sourceState.source.name} source has contradicted itself on ${retry->Int.toString} consecutive ${method} responses, so this chain has stopped making progress. A single response disagreeing with itself is a reorg mid-request, but a repeating one means the endpoint is serving blocks and logs from nodes on different chains. Point the chain at another source.`
+        : `Received a partial indicator of a possible reorg from the source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`,
+    )
+  }
   logger->log({
-    "msg": `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected — indexing continues after an automatic retry.`,
+    "msg": msg,
     "method": method,
     "retry": retry,
     "backOffMilliseconds": backoffMillis,
     "err": err->Utils.prettifyExn,
   })
-  await sourceManager->backoffBeforeRetry(
-    sourceState,
-    ~retry,
-    ~isRealtime,
-    ~backoffMillis,
-    ~minBackoffMillis=minRecoverableBackoffMillis,
-    ~excludedSources?,
-  )
-}
-
-// The response contradicted itself (the same block twice with different hashes,
-// or a requested hash missing). It may be a reorg mid-request, so refetch before
-// concluding anything about the chain.
-let retryInconsistentResponse = async (
-  sourceManager: t,
-  sourceState: sourceState,
-  ~retry,
-  ~isRealtime,
-  ~logger: Pino.t,
-  ~method: string,
-  ~err: exn,
-  ~excludedSources=?,
-) => {
-  let backoffMillis = retry === 0 ? 100 : 1000 * retry
-  let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
-  logger->log({
-    "msg": `Received a partial indicator of a possible reorg from the source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`,
-    "retry": retry,
-    "backOffMilliseconds": backoffMillis,
-    "err": err->Utils.prettifyExn,
-  })
+  switch condition {
+  // Before the backoff, not after: local state may point at an orphaned chain,
+  // and a sibling query on this source would keep reading it for as long as the
+  // wait lasts.
+  | InconsistentResponse => sourceState.source.onReorg->Option.forEach(cb => cb())
+  | BehindHead(_) => ()
+  }
   await sourceManager->backoffBeforeRetry(
     sourceState,
     ~retry,
@@ -934,31 +942,30 @@ let executeQuery = async (
       retryRef := retryRef.contents + 1
 
     | Source.SourceBehindHead({blockNumber}) as err =>
-      await sourceManager->retryBehindHead(
+      await sourceManager->retryRecoverable(
         sourceState,
+        ~condition=BehindHead({blockNumber: blockNumber}),
         ~retry,
         ~isRealtime,
         ~logger,
-        ~blockNumber,
         ~method="getItems",
         ~err,
         ~excludedSources=?excludedSourcesRef.contents,
       )
       retryRef := retryRef.contents + 1
 
-    | Source.InconsistentResponse(_) as err => {
-        await sourceManager->retryInconsistentResponse(
-          sourceState,
-          ~retry,
-          ~isRealtime,
-          ~logger,
-          ~method="getItems",
-          ~err,
-          ~excludedSources=?excludedSourcesRef.contents,
-        )
-        source.onReorg->Option.forEach(cb => cb())
-        retryRef := retryRef.contents + 1
-      }
+    | Source.InconsistentResponse(_) as err =>
+      await sourceManager->retryRecoverable(
+        sourceState,
+        ~condition=InconsistentResponse,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~method="getItems",
+        ~err,
+        ~excludedSources=?excludedSourcesRef.contents,
+      )
+      retryRef := retryRef.contents + 1
 
     | Source.GetItemsError(error) =>
       switch error {
@@ -1087,29 +1094,28 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       retryRef := retryRef.contents + 1
 
     | Source.SourceBehindHead({blockNumber}) as err =>
-      await sourceManager->retryBehindHead(
+      await sourceManager->retryRecoverable(
         sourceState,
+        ~condition=BehindHead({blockNumber: blockNumber}),
         ~retry,
         ~isRealtime,
         ~logger,
-        ~blockNumber,
         ~method="getBlockHashes",
         ~err,
       )
       retryRef := retryRef.contents + 1
 
-    | Source.InconsistentResponse(_) as err => {
-        await sourceManager->retryInconsistentResponse(
-          sourceState,
-          ~retry,
-          ~isRealtime,
-          ~logger,
-          ~method="getBlockHashes",
-          ~err,
-        )
-        source.onReorg->Option.forEach(cb => cb())
-        retryRef := retryRef.contents + 1
-      }
+    | Source.InconsistentResponse(_) as err =>
+      await sourceManager->retryRecoverable(
+        sourceState,
+        ~condition=InconsistentResponse,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~method="getBlockHashes",
+        ~err,
+      )
+      retryRef := retryRef.contents + 1
 
     | exn =>
       let backoffMillis = Pervasives.min(100. *. 2. ** retry->Int.toFloat, 60_000.)->Float.toInt
