@@ -555,6 +555,92 @@ describe("tables: names and storage", () => {
   })
 })
 
+// Naming one backend turns the other off. With nothing marked `default: true`
+// there is no stated intent to fall back on, so the omission has to be spelled
+// out — otherwise asking for a Postgres index quietly stops the table reaching
+// ClickHouse.
+describe("tables: naming one backend when both are enabled", () => {
+  let bothEnabled = (~defaults="", tableStorage) => `
+name: partial-storage
+disable_default_cross_chain: true
+storage:
+  postgres:${defaults === "postgres" ? "\n    default: true" : " true"}
+  clickhouse: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  totals:
+${tableStorage}    from: evm.events
+    select:
+      id: params.to
+      received:
+        _sum: params.value
+`
+
+  let partialMessage = says =>
+    "Config parse error: Schema validation failed:\n\nBoth storage backends are enabled and neither is `default: true`, so leaving one out of a table's storage would turn it off silently:\n  - `totals` says " ++
+    says ++
+    "\n\nFixes:\n  - Name both, in schema.graphql: @storage(postgres: true, clickhouse: false)\n  - Or in a `tables` entry of config.yaml:\n      storage:\n        postgres: true\n        clickhouse: false\n  - Or set `default: true` on one backend under `storage:` in config.yaml, and leave the storage off the tables that should follow it."
+
+  it("rejects a table that asks for an index and says nothing about clickhouse", t =>
+    expectError(
+      t,
+      bothEnabled(`    storage:
+      postgres:
+        indexes:
+          - received
+`),
+      partialMessage("postgres, not clickhouse"),
+    )
+  )
+
+  it("rejects a table that names clickhouse only", t =>
+    expectError(
+      t,
+      bothEnabled(`    storage:
+      clickhouse: true
+`),
+      partialMessage("clickhouse, not postgres"),
+    )
+  )
+
+  it("accepts a table that names both", t =>
+    expectError(
+      t,
+      bothEnabled(`    storage:
+      postgres:
+        indexes:
+          - received
+      clickhouse: false
+`),
+      "the parse to fail, but it succeeded",
+    )
+  )
+
+  // A stated default is the intent to fall back on, so a table overriding it is
+  // a deliberate act rather than an omission.
+  it("accepts naming one backend once a default is stated", t =>
+    expectError(
+      t,
+      bothEnabled(
+        ~defaults="postgres",
+        `    storage:
+      clickhouse: true
+`,
+      ),
+      "the parse to fail, but it succeeded",
+    )
+  )
+})
+
 // `tables` is an EVM key. Serde's unknown-field check doesn't reach through the
 // ecosystem flattening, so this is the one that would silently do nothing.
 describe("tables: other ecosystems", () => {

@@ -1817,11 +1817,11 @@ chains:
     (
       "rejects a derivedFrom pointing at an entity that isn't in postgres",
       `
-type Trader @storage(postgres: true) {
+type Trader @storage(postgres: true, clickhouse: false) {
   id: ID!
   orders: [Order!]! @derivedFrom(field: "trader")
 }
-type Order @storage(clickhouse: true) {
+type Order @storage(postgres: false, clickhouse: true) {
   id: ID!
   trader: Trader!
 }

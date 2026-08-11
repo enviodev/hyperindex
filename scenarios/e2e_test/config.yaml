@@ -30,6 +30,7 @@ tables:
   transfer_totals:
     storage:
       postgres: true
+      clickhouse: false
     from: evm.events
     where:
       contractName: ERC20

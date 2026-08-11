@@ -18,7 +18,7 @@ type Transfer @crossChain @storage(postgres: true, clickhouse: true) {
 }
 
 "An on-chain account participating in transfers"
-type Account @crossChain @storage(postgres: true) {
+type Account @crossChain @storage(postgres: true, clickhouse: false) {
   "The account's Ethereum address"
   id: ID!
   "All transfers sent from this account"
@@ -27,7 +27,7 @@ type Account @crossChain @storage(postgres: true) {
 
 # Override the global multi-storage default: this entity only lives in
 # Postgres. ClickHouse will not receive writes for it.
-type TransferPgOnly @crossChain @storage(postgres: true) {
+type TransferPgOnly @crossChain @storage(postgres: true, clickhouse: false) {
   id: ID!
   from: String!
   value: BigInt!
@@ -35,7 +35,7 @@ type TransferPgOnly @crossChain @storage(postgres: true) {
 
 # Mirror override: this entity only lives in ClickHouse, so it is
 # absent from the Postgres-backed `pgUserEntities` (and from Hasura).
-type TransferChOnly @crossChain @storage(clickhouse: true) {
+type TransferChOnly @crossChain @storage(postgres: false, clickhouse: true) {
   id: ID!
   from: String!
   value: BigInt!
@@ -44,7 +44,7 @@ type TransferChOnly @crossChain @storage(clickhouse: true) {
 # NUMERIC[] columns are created as TEXT[] when Hasura is enabled, so Hasura
 # returns the elements as strings rather than numbers that lose precision.
 # https://github.com/enviodev/hyperindex/issues/788
-type NumericArrays @crossChain @storage(postgres: true) {
+type NumericArrays @crossChain @storage(postgres: true, clickhouse: false) {
   id: ID!
   bigInts: [BigInt!]!
   bigDecimals: [BigDecimal!]!
@@ -60,7 +60,7 @@ type ChainTransfer @storage(postgres: true, clickhouse: true) {
   value: BigInt!
 }
 
-type ChainAccount @storage(postgres: true) {
+type ChainAccount @storage(postgres: true, clickhouse: false) {
   id: ID!
   transfers: [ChainTransfer!]! @derivedFrom(field: "from")
 }

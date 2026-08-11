@@ -482,6 +482,43 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
+    // A directive that names one backend turns the others off, and with no
+    // `default: true` there is nothing that says which way the config leans —
+    // so an entity naming a strict subset has to say so outright. Asking for a
+    // Postgres index must not quietly stop the table reaching ClickHouse.
+    if !postgres_default && !clickhouse_default {
+        let both_enabled = storage.postgres.is_some() && storage.clickhouse.is_some();
+        let partial: Vec<String> = if both_enabled {
+            entities
+                .iter()
+                .filter(|e| e.has_storage_directive())
+                .filter_map(|e| match (e.postgres.is_some(), e.clickhouse.is_some()) {
+                    (true, false) => {
+                        Some(format!("  - `{}` says postgres, not clickhouse", e.name))
+                    }
+                    (false, true) => {
+                        Some(format!("  - `{}` says clickhouse, not postgres", e.name))
+                    }
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !partial.is_empty() {
+            return Err(anyhow!(
+                "Schema validation failed:\n\nBoth storage backends are enabled and neither is \
+                 `default: true`, so leaving one out of a table's storage would turn it off \
+                 silently:\n{}\n\nFixes:\n  - Name both, in schema.graphql: @storage(postgres: \
+                 true, clickhouse: false)\n  - Or in a `tables` entry of config.yaml:\n      \
+                 storage:\n        postgres: true\n        clickhouse: false\n  - Or set \
+                 `default: true` on one backend under `storage:` in config.yaml, and leave the \
+                 storage off the tables that should follow it.",
+                partial.join("\n")
+            ));
+        }
+    }
+
     // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
     // ceiling) as a String, which sorts lexicographically — wrong for anything
     // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
@@ -3662,14 +3699,25 @@ mod test {
             assert!(validate_entity_storage(&postgres_only(), &schema).is_ok());
         }
 
+        // With no `default: true`, an entity that names one backend has to name
+        // the other too — otherwise the omission silently turns it off.
         #[test]
         fn multi_storage_all_annotated_ok() {
             let schema = make_schema(vec![
-                entity("Transfer", Some(true), None),
-                entity("Snapshot", None, Some(true)),
+                entity("Transfer", Some(true), Some(false)),
+                entity("Snapshot", Some(false), Some(true)),
                 entity("Audit", Some(true), Some(true)),
             ]);
             assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn multi_storage_partial_directive_rejected() {
+            let schema = make_schema(vec![entity("Transfer", Some(true), None)]);
+            assert!(validate_entity_storage(&multi(false, false), &schema).is_err());
+            // A stated default says which way the config leans, so a directive
+            // that overrides it is a deliberate act rather than an omission.
+            assert!(validate_entity_storage(&multi(true, false), &schema).is_ok());
         }
 
         #[test]
