@@ -12,9 +12,10 @@ use serde_json::Value;
 
 use super::errors::Report;
 
-/// The parameter types a manifest signature declares, in order, with the
-/// `indexed` marker dropped — that's what identifies one overload.
-fn manifest_arg_types(signature: &str) -> Vec<String> {
+/// The parameter types a manifest signature declares, in order, each paired
+/// with whether it is indexed. Indexing is part of what identifies an overload:
+/// Safe declares `ExecutionSuccess` both ways, and the two differ only there.
+fn manifest_arg_types(signature: &str) -> Vec<(String, bool)> {
     let Some(open) = signature.find('(') else {
         return vec![];
     };
@@ -49,12 +50,17 @@ fn manifest_arg_types(signature: &str) -> Vec<String> {
 
     args.into_iter()
         .map(|arg| {
-            arg.trim_start_matches("indexed")
+            let indexed = arg
+                .split_whitespace()
+                .any(|word| word == "indexed");
+            let ty = arg
+                .trim_start_matches("indexed")
                 .trim_end_matches("indexed")
                 .trim()
-                .to_string()
+                .to_string();
+            (ty, indexed)
         })
-        .filter(|arg| !arg.is_empty())
+        .filter(|(ty, _)| !ty.is_empty())
         .collect()
 }
 
@@ -155,10 +161,10 @@ fn matching_entry(manifest_signature: &str, abi_json: Option<&str>) -> Option<Va
     found.into_iter().find(|candidate| {
         let inputs = inputs_of(candidate);
         inputs.len() == wanted.len()
-            && inputs
-                .iter()
-                .zip(wanted.iter())
-                .all(|(input, want)| &solidity_type(input) == want)
+            && inputs.iter().zip(wanted.iter()).all(|(input, (ty, indexed))| {
+                &solidity_type(input) == ty
+                    && input.get("indexed").and_then(Value::as_bool).unwrap_or(false) == *indexed
+            })
     })
 }
 
@@ -220,13 +226,36 @@ mod tests {
         {"name":"id","type":"uint256","indexed":false},
         {"name":"data","type":"bytes","indexed":false}]},
       {"type":"event","name":"Approval","inputs":[
-        {"name":"owner","type":"address","indexed":true}]}
+        {"name":"owner","type":"address","indexed":true}]},
+      {"type":"event","name":"Executed","inputs":[
+        {"name":"txHash","type":"bytes32","indexed":false},
+        {"name":"payment","type":"uint256","indexed":false}]},
+      {"type":"event","name":"Executed","inputs":[
+        {"name":"txHash","type":"bytes32","indexed":true},
+        {"name":"payment","type":"uint256","indexed":false}]}
     ]"#;
 
     fn resolve(signature: &str) -> (String, Report) {
         let mut report = Report::new();
         let resolved = resolve_event(signature, Some(ABI), "data source \"Token\"", &mut report);
         (resolved, report)
+    }
+
+    // Safe declares ExecutionSuccess both ways, so indexing is the only thing
+    // telling the two overloads apart. Resolving both to one signature leaves
+    // two events envio cannot route a log to.
+    #[test]
+    fn tells_two_overloads_apart_by_indexing_alone() {
+        assert_eq!(
+            (
+                resolve("Executed(bytes32,uint256)").0,
+                resolve("Executed(indexed bytes32,uint256)").0,
+            ),
+            (
+                "Executed(bytes32 txHash, uint256 payment)".to_string(),
+                "Executed(bytes32 indexed txHash, uint256 payment)".to_string(),
+            )
+        );
     }
 
     #[test]
