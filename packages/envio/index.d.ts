@@ -725,6 +725,129 @@ export type FuelOnEventWhere<Params, ContractName extends string> =
 type _ProjectEvmEvent = EvmEvent extends EventLike ? EvmEvent : never;
 type _ProjectFuelEvent = FuelEvent extends EventLike ? FuelEvent : never;
 
+// ============== EVM inline field selection ==============
+
+/** Marks a block/transaction field the registration doesn't select. Reading such
+ * a field is a type error; the message names the field and where to add it. */
+export type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
+
+/** Every EVM block field, with the type it has once selected. Declared by hand
+ * so the `fields` option types work in a project that never ran codegen; kept
+ * in sync with the config-parsing enums by a test in `codegen_templates.rs`. */
+export type EvmAllBlockFields = {
+  readonly number: number;
+  readonly timestamp: number;
+  readonly hash: string;
+  readonly parentHash: string;
+  readonly nonce: bigint | undefined;
+  readonly sha3Uncles: string;
+  readonly logsBloom: string;
+  readonly transactionsRoot: string;
+  readonly stateRoot: string;
+  readonly receiptsRoot: string;
+  readonly miner: Address;
+  readonly difficulty: bigint | undefined;
+  readonly totalDifficulty: bigint | undefined;
+  readonly extraData: string;
+  readonly size: bigint;
+  readonly gasLimit: bigint;
+  readonly gasUsed: bigint;
+  readonly uncles: readonly string[] | undefined;
+  readonly baseFeePerGas: bigint | undefined;
+  readonly blobGasUsed: bigint | undefined;
+  readonly excessBlobGas: bigint | undefined;
+  readonly parentBeaconBlockRoot: string | undefined;
+  readonly withdrawalsRoot: string | undefined;
+  readonly l1BlockNumber: number | undefined;
+  readonly sendCount: string | undefined;
+  readonly sendRoot: string | undefined;
+  readonly mixHash: string | undefined;
+};
+
+export type EvmAllTransactionFields = {
+  readonly transactionIndex: number;
+  readonly hash: string;
+  readonly from: Address | undefined;
+  readonly to: Address | undefined;
+  readonly gas: bigint;
+  readonly gasPrice: bigint | undefined;
+  readonly maxPriorityFeePerGas: bigint | undefined;
+  readonly maxFeePerGas: bigint | undefined;
+  readonly cumulativeGasUsed: bigint;
+  readonly effectiveGasPrice: bigint;
+  readonly gasUsed: bigint;
+  readonly input: string;
+  readonly nonce: bigint;
+  readonly value: bigint;
+  readonly v: string | undefined;
+  readonly r: string | undefined;
+  readonly s: string | undefined;
+  readonly contractAddress: Address | undefined;
+  readonly logsBloom: string;
+  readonly root: string | undefined;
+  readonly status: number | undefined;
+  readonly yParity: string | undefined;
+  readonly accessList: readonly unknown[] | undefined;
+  readonly maxFeePerBlobGas: bigint | undefined;
+  readonly blobVersionedHashes: readonly string[] | undefined;
+  readonly type: number | undefined;
+  readonly l1Fee: bigint | undefined;
+  readonly l1GasPrice: bigint | undefined;
+  readonly l1GasUsed: bigint | undefined;
+  readonly l1FeeScalar: number | undefined;
+  readonly gasUsedForL1: bigint | undefined;
+  readonly authorizationList: readonly unknown[] | undefined;
+};
+
+export type EvmBlockFieldName = keyof EvmAllBlockFields & string;
+export type EvmTransactionFieldName = keyof EvmAllTransactionFields & string;
+
+/** The `fields` option of `indexer.onEvent` / `indexer.contractRegister`.
+ * Names the block and transaction fields this registration reads. Replaces
+ * `field_selection` from `config.yaml` for this registration — fields selected
+ * there but not listed here are not readable. */
+export type EvmFieldsSelection = {
+  readonly block?: readonly EvmBlockFieldName[];
+  readonly transaction?: readonly EvmTransactionFieldName[];
+};
+
+/** Included in every inline selection without being listed. `block.number` is
+ * the item's own key, so it costs nothing extra. */
+type EvmAlwaysSelectedBlockField = "number";
+
+type EvmSelectedFields<All, Selected extends string, Knob extends string> = {
+  readonly [K in keyof All]: K extends Selected
+    ? All[K]
+    : FieldNotSelected<`Field '${K &
+        string}' is not selected for this handler. Add it to fields.${Knob} in the registration options.`>;
+};
+
+/** Field names listed under `Knob`, or `never` when the key is absent. */
+type EvmListedFields<Fields, Knob extends keyof EvmFieldsSelection> = Fields extends Record<
+  Knob,
+  readonly (infer Name extends string)[]
+>
+  ? Name
+  : never;
+
+/** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
+ * With no `fields` option the event type passes through, so the `config.yaml`
+ * `field_selection` path is unaffected. */
+export type EvmEventWithFields<Event, Fields> = Fields extends EvmFieldsSelection
+  ? Omit<Event, "block" | "transaction"> & {
+      readonly block: EvmSelectedFields<
+        EvmAllBlockFields,
+        EvmAlwaysSelectedBlockField | EvmListedFields<Fields, "block">,
+        "block"
+      >;
+      readonly transaction: EvmSelectedFields<
+        EvmAllTransactionFields,
+        EvmListedFields<Fields, "transaction">,
+        "transaction"
+      >;
+    }
+  : Event;
+
 /** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
  * The conditional `Event extends EventLike` distributes over union members so that each member's
  * contractName/eventName pair is constrained together — preventing invalid cross-member pairings.
@@ -736,6 +859,7 @@ export type EvmOnEventOptions<Event extends EventLike = _ProjectEvmEvent, Params
       readonly event: Event["eventName"];
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
+      readonly fields?: EvmFieldsSelection;
     }
   : never;
 
@@ -1181,7 +1305,8 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 /** Register an event handler. */
                 readonly onEvent: <
                   C extends keyof Contracts & string,
-                  E extends keyof Contracts[C] & string
+                  E extends keyof Contracts[C] & string,
+                  const F extends EvmFieldsSelection | undefined = undefined
                 >(
                   options: {
                     readonly contract: C;
@@ -1195,13 +1320,17 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                         : {},
                       C
                     >;
+                    /** Block and transaction fields this handler reads. Replaces
+                     * `field_selection` from `config.yaml` for this registration. */
+                    readonly fields?: F;
                   },
-                  handler: EvmOnEventHandler<Contracts[C][E], EvmOnEventContext<Config>>
+                  handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
                 /** Register a contract register handler for dynamic contract indexing. */
                 readonly contractRegister: <
                   C extends keyof Contracts & string,
-                  E extends keyof Contracts[C] & string
+                  E extends keyof Contracts[C] & string,
+                  const F extends EvmFieldsSelection | undefined = undefined
                 >(
                   options: {
                     readonly contract: C;
@@ -1215,8 +1344,11 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                         : {},
                       C
                     >;
+                    /** Block and transaction fields this handler reads. Replaces
+                     * `field_selection` from `config.yaml` for this registration. */
+                    readonly fields?: F;
                   },
-                  handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
+                  handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;
               }
             : {})

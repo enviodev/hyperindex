@@ -739,7 +739,7 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
       | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
       | None =>
         let {transactionIndex} = eventItem
-        let mask = eventItem.onEventRegistration.eventConfig.transactionFieldMask
+        let mask = eventItem.onEventRegistration.transactionFieldMask
         if mask != 0. {
           anyTransactionFieldSelected := true
         }
@@ -766,7 +766,7 @@ let groupBatchItems = (items: array<Internal.item>, ~includeBlocks: bool): (
         switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
         | Some(_) => () // RPC/simulate/Fuel carry the block inline.
         | None =>
-          let mask = eventItem.onEventRegistration.eventConfig.blockFieldMask
+          let mask = eventItem.onEventRegistration.blockFieldMask
           let last = blockItemGroups->Array.length - 1
           if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
             blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)

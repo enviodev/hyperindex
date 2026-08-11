@@ -3916,4 +3916,49 @@ type GlobalCounter @crossChain {
             "Got:\n{out}",
         );
     }
+
+    /// Renders the `EvmAllBlockFields` / `EvmAllTransactionFields` records that
+    /// `packages/envio/index.d.ts` declares by hand, from the config-parsing
+    /// enums. Hand-written there so the inline `fields` option types work in a
+    /// project that never ran codegen; rendered here so they can't drift.
+    fn evm_all_fields_dts() -> String {
+        let all = system_config::FieldSelection::all_evm();
+        let selection = super::FieldSelection::new(FieldSelectionOptions {
+            block_fields: all.block_fields,
+            transaction_fields: all.transaction_fields,
+        });
+        let render = |name: &str, fields: &[SelectedFieldTemplate]| {
+            let lines: Vec<String> = fields
+                .iter()
+                .map(|f| {
+                    format!(
+                        "  readonly {}: {};",
+                        f.name.camel,
+                        ProjectTemplate::to_envio_dts_type(&f.ts_type)
+                    )
+                })
+                .collect();
+            format!("export type {name} = {{\n{}\n}};", lines.join("\n"))
+        };
+        format!(
+            "{}\n\n{}",
+            render("EvmAllBlockFields", &selection.block_fields),
+            render("EvmAllTransactionFields", &selection.transaction_fields),
+        )
+    }
+
+    #[test]
+    fn evm_all_fields_dts_matches_hand_written_index_dts() {
+        let rendered = evm_all_fields_dts();
+        insta::assert_snapshot!(&rendered);
+
+        let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
+        let index_dts = std::fs::read_to_string(&index_dts_path)
+            .unwrap_or_else(|e| panic!("Failed to read {index_dts_path}: {e}"));
+        assert!(
+            index_dts.contains(&rendered),
+            "packages/envio/index.d.ts is out of sync with the EVM field enums. Replace its \
+             EvmAllBlockFields/EvmAllTransactionFields declarations with:\n\n{rendered}",
+        );
+    }
 }

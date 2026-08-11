@@ -113,6 +113,9 @@ contracts:
 
 Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. See `indexer-transactions` skill for full field lists.
 
+A handler can also name its fields inline with the `fields` option, replacing
+`field_selection` for that registration — see the `indexer-transactions` skill.
+
 ## Environment Variables
 
 ```yaml

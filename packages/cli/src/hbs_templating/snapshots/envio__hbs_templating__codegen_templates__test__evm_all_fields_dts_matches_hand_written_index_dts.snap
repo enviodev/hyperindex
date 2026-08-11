@@ -1,0 +1,68 @@
+---
+source: packages/cli/src/hbs_templating/codegen_templates.rs
+expression: "&rendered"
+---
+export type EvmAllBlockFields = {
+  readonly number: number;
+  readonly timestamp: number;
+  readonly hash: string;
+  readonly parentHash: string;
+  readonly nonce: bigint | undefined;
+  readonly sha3Uncles: string;
+  readonly logsBloom: string;
+  readonly transactionsRoot: string;
+  readonly stateRoot: string;
+  readonly receiptsRoot: string;
+  readonly miner: Address;
+  readonly difficulty: bigint | undefined;
+  readonly totalDifficulty: bigint | undefined;
+  readonly extraData: string;
+  readonly size: bigint;
+  readonly gasLimit: bigint;
+  readonly gasUsed: bigint;
+  readonly uncles: readonly string[] | undefined;
+  readonly baseFeePerGas: bigint | undefined;
+  readonly blobGasUsed: bigint | undefined;
+  readonly excessBlobGas: bigint | undefined;
+  readonly parentBeaconBlockRoot: string | undefined;
+  readonly withdrawalsRoot: string | undefined;
+  readonly l1BlockNumber: number | undefined;
+  readonly sendCount: string | undefined;
+  readonly sendRoot: string | undefined;
+  readonly mixHash: string | undefined;
+};
+
+export type EvmAllTransactionFields = {
+  readonly transactionIndex: number;
+  readonly hash: string;
+  readonly from: Address | undefined;
+  readonly to: Address | undefined;
+  readonly gas: bigint;
+  readonly gasPrice: bigint | undefined;
+  readonly maxPriorityFeePerGas: bigint | undefined;
+  readonly maxFeePerGas: bigint | undefined;
+  readonly cumulativeGasUsed: bigint;
+  readonly effectiveGasPrice: bigint;
+  readonly gasUsed: bigint;
+  readonly input: string;
+  readonly nonce: bigint;
+  readonly value: bigint;
+  readonly v: string | undefined;
+  readonly r: string | undefined;
+  readonly s: string | undefined;
+  readonly contractAddress: Address | undefined;
+  readonly logsBloom: string;
+  readonly root: string | undefined;
+  readonly status: number | undefined;
+  readonly yParity: string | undefined;
+  readonly accessList: readonly unknown[] | undefined;
+  readonly maxFeePerBlobGas: bigint | undefined;
+  readonly blobVersionedHashes: readonly string[] | undefined;
+  readonly type: number | undefined;
+  readonly l1Fee: bigint | undefined;
+  readonly l1GasPrice: bigint | undefined;
+  readonly l1GasUsed: bigint | undefined;
+  readonly l1FeeScalar: number | undefined;
+  readonly gasUsedForL1: bigint | undefined;
+  readonly authorizationList: readonly unknown[] | undefined;
+};

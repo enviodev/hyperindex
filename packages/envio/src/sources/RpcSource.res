@@ -463,6 +463,29 @@ let makeFieldRegistry = (addressSchema: S.t<JSON.t>): Utils.Record.t<
 let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
 let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 
+// Whether an RPC source can populate a field. Both getters skip a field they
+// can't parse, so this is what separates "absent because the chain has none"
+// from "absent because RPC never provides it". The always-present fields are
+// special-cased: the block carries number/timestamp/hash, and the log carries
+// the transaction's hash/transactionIndex.
+let isRpcBlockField = (name: string) =>
+  switch name {
+  | "number" | "timestamp" | "hash" => true
+  | _ =>
+    blockFieldRegistryChecksum
+    ->Utils.Record.get(name->(Utils.magic: string => Internal.evmBlockField))
+    ->Option.isSome
+  }
+
+let isRpcTransactionField = (name: string) =>
+  switch name {
+  | "transactionIndex" | "hash" => true
+  | _ =>
+    fieldRegistryChecksum
+    ->Utils.Record.get(name->(Utils.magic: string => Internal.evmTransactionField))
+    ->Option.isSome
+  }
+
 type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
 
 // Parse fields from a raw JSON object into a result dict.
@@ -885,9 +908,13 @@ let make = (
       (
         async () => {
           let (block, transaction) = try await Promise.all2((
-            log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
+            log->getEventBlockOrThrow(
+              ~selectedBlockFields=onEventRegistration.selectedBlockFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmBlockField>
+              ),
+            ),
             log->getEventTransactionOrThrow(
-              ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+              ~selectedTransactionFields=onEventRegistration.selectedTransactionFields->(
                 Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
               ),
             ),
@@ -931,7 +958,7 @@ let make = (
             payload: {
               contractName: eventConfig.contractName,
               eventName: eventConfig.name,
-              chainId: chainId,
+              chainId,
               params: decoded,
               block,
               transaction,
@@ -1023,7 +1050,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId=chainId, ~onHeight)
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
     )
 
   {

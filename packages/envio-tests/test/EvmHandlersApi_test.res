@@ -139,6 +139,7 @@ import type {
   EvmOnEventHandler,
   EvmOnEventOptions,
   EvmOnEventWhere,
+  EvmFieldsSelection,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
@@ -152,6 +153,7 @@ expectType<
       readonly event: "Synced";
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<{}, "Token">;
+      readonly fields?: EvmFieldsSelection;
     }
   >
 >(true);
@@ -261,6 +263,99 @@ expectType<TypeEqual<TransferEvent["transaction"]["transactionIndex"], number>>(
 expectType<TypeEqual<TransferEvent["transaction"]["hash"], string>>(true);
 expectType<IsNotSelected<TransferEvent["transaction"]["from"]>>(true);
 expectType<IsNotSelected<TransferEvent["block"]["parentHash"]>>(true);
+`)
+  )
+
+  it("narrows event block/transaction fields by the inline fields option", _ =>
+    check(`
+import { indexer } from "envio";
+import type { EvmAllBlockFields, EvmAllTransactionFields, EvmFieldsSelection } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
+  ? true
+  : false;
+
+expectType<TypeEqual<EvmAllBlockFields["parentHash"], string>>(true);
+expectType<TypeEqual<EvmAllBlockFields["nonce"], bigint | undefined>>(true);
+expectType<TypeEqual<EvmAllTransactionFields["hash"], string>>(true);
+expectType<TypeEqual<EvmAllTransactionFields["to"], \`0x\${string}\` | undefined>>(true);
+
+const _selection: EvmFieldsSelection = { block: ["parentHash"], transaction: ["to"] };
+// @ts-expect-error - "notAField" is not an EVM block field
+const _badSelection: EvmFieldsSelection = { block: ["notAField"] };
+
+if (0) {
+  // Inline fields replace the config selection for this handler: Transfer
+  // inherits the global transaction_fields [transactionIndex, hash], but they
+  // are not readable here because they aren't listed.
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      fields: { block: ["parentHash"], transaction: ["to"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+      expectType<TypeEqual<typeof event.transaction.to, \`0x\${string}\` | undefined>>(true);
+      // number is always included, without listing it.
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<IsNotSelected<typeof event.block.timestamp>>(true);
+      expectType<IsNotSelected<typeof event.block.hash>>(true);
+      expectType<IsNotSelected<typeof event.block.nonce>>(true);
+      expectType<IsNotSelected<typeof event.transaction.hash>>(true);
+      expectType<IsNotSelected<typeof event.transaction.transactionIndex>>(true);
+      // Everything outside block/transaction is untouched.
+      expectType<TypeEqual<typeof event.params.value, bigint>>(true);
+      expectType<TypeEqual<typeof event.eventName, "Transfer">>(true);
+    },
+  );
+
+  // Listing an always-included field is allowed, not an error.
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: { block: ["number", "timestamp"] } },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
+    },
+  );
+
+  // An empty selection still carries number, and nothing else.
+  indexer.onEvent(
+    { contract: "Token", event: "Approval", fields: {} },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<IsNotSelected<typeof event.block.parentHash>>(true);
+      expectType<IsNotSelected<typeof event.transaction.to>>(true);
+    },
+  );
+
+  // Without the option the config selection applies, unchanged.
+  indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ event }) => {
+    expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
+    expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+    expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+  });
+
+  indexer.onEvent(
+    // @ts-expect-error - "notAField" is not an EVM block field
+    { contract: "Token", event: "Transfer", fields: { block: ["notAField"] } },
+    async () => {},
+  );
+
+  indexer.contractRegister(
+    {
+      contract: "Factory",
+      event: "PoolCreated",
+      fields: { transaction: ["from"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.from, \`0x\${string}\` | undefined>>(true);
+      expectType<IsNotSelected<typeof event.transaction.hash>>(true);
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+    },
+  );
+}
 `)
   )
 

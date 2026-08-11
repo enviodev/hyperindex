@@ -589,6 +589,15 @@ type onEventRegistration = {
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
+  // Field selection for this registration: the `eventConfig` values unless the
+  // registration passed an inline `fields` option, which replaces them. Two
+  // registrations of one event can select different fields, so every consumer
+  // (query building, store materialisation) reads them from here rather than
+  // from the shared `eventConfig`.
+  selectedBlockFields: Utils.Set.t<string>,
+  selectedTransactionFields: Utils.Set.t<string>,
+  transactionFieldMask: float,
+  blockFieldMask: float,
 }
 
 type evmOnEventRegistration = {
@@ -696,9 +705,18 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
+// The `fields` option of an EVM `onEvent`/`contractRegister` registration:
+// the block and transaction fields the handler reads. Replaces the config
+// `field_selection` for this registration.
+type evmFieldsSelection = {
+  block?: array<string>,
+  transaction?: array<string>,
+}
+
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
+  fields?: evmFieldsSelection,
 }
 
 type fuelSupplyParams = {

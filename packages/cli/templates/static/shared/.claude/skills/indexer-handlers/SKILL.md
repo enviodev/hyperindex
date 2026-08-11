@@ -33,14 +33,15 @@ indexer.onEvent(
     // event.srcAddress     — emitting contract address (checksummed)
     // event.logIndex       — log index within block
     // event.block          — { number, timestamp, hash }
-    // event.transaction    — transaction fields (configure via field_selection)
+    // event.transaction    — transaction fields (configure via `fields` or field_selection)
   },
 );
 ```
 
 The first argument is the options object — `contract` and `event` names plus
-optional `wildcard` / `where` (see `indexer-wildcard` and `indexer-filters`
-skills). The second argument is the handler.
+optional `wildcard` / `where` / `fields` (see `indexer-wildcard`,
+`indexer-filters` and `indexer-transactions` skills). The second argument is the
+handler.
 
 ## Context API
 

@@ -292,6 +292,89 @@ let resolveFieldSelection = (
   )
 }
 
+// An inline `fields` selection replaces the config `field_selection`, so only
+// `number` — the item's own key — comes for free. `timestamp`/`hash` must be
+// listed, unlike on the config path where all three are always included.
+let alwaysSelectedInlineBlockFields = ["number"]
+
+// `toRawEvent` reads `block.hash`/`block.timestamp` off the payload, so a
+// registration that doesn't select them still has to materialise them when the
+// project stores raw events. Runtime only — the handler's type doesn't widen.
+let rawEventBlockFields = ["timestamp", "hash"]
+
+let parseFieldsOrThrow = (
+  fields: option<array<string>>,
+  ~valid: array<string>,
+  ~kind: string,
+  ~contractName: string,
+  ~eventName: string,
+) => {
+  let seen = Utils.Set.make()
+  fields
+  ->Option.getOr([])
+  ->Array.forEach(name => {
+    if !(valid->Array.includes(name)) {
+      JsError.throwWithMessage(
+        `Invalid "${name}" field in the fields.${kind} option of the "${eventName}" event registration on contract "${contractName}". Valid ${kind} fields: ${valid->Array.joinUnsafe(
+            ", ",
+          )}.`,
+      )
+    }
+    if seen->Utils.Set.has(name) {
+      JsError.throwWithMessage(
+        `Duplicate "${name}" field in the fields.${kind} option of the "${eventName}" event registration on contract "${contractName}".`,
+      )
+    }
+    seen->Utils.Set.add(name)->ignore
+  })
+  seen
+}
+
+// Resolve the registration's selection: the event config's selection by
+// default, or the inline `fields` option when the registration supplies one.
+let resolveRegistrationFieldSelection = (
+  ~fields: option<Internal.evmFieldsSelection>,
+  ~eventConfig: Internal.evmEventConfig,
+  ~enableRawEvents: bool,
+) =>
+  switch fields {
+  | None => (
+      eventConfig.selectedBlockFields->(
+        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+      ),
+      eventConfig.selectedTransactionFields,
+      eventConfig.blockFieldMask,
+      eventConfig.transactionFieldMask,
+    )
+  | Some(fields) =>
+    let selectedBlockFields = parseFieldsOrThrow(
+      fields.block,
+      ~valid=Evm.blockFields,
+      ~kind="block",
+      ~contractName=eventConfig.contractName,
+      ~eventName=eventConfig.name,
+    )
+    let selectedTransactionFields = parseFieldsOrThrow(
+      fields.transaction,
+      ~valid=Evm.transactionFields,
+      ~kind="transaction",
+      ~contractName=eventConfig.contractName,
+      ~eventName=eventConfig.name,
+    )
+    alwaysSelectedInlineBlockFields->Array.forEach(name =>
+      selectedBlockFields->Utils.Set.add(name)->ignore
+    )
+    if enableRawEvents {
+      rawEventBlockFields->Array.forEach(name => selectedBlockFields->Utils.Set.add(name)->ignore)
+    }
+    (
+      selectedBlockFields,
+      selectedTransactionFields,
+      Evm.eventBlockFieldMask(selectedBlockFields),
+      Evm.eventTransactionFieldMask(selectedTransactionFields),
+    )
+  }
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (
@@ -344,9 +427,18 @@ let buildEvmOnEventRegistration = (
   ~where: option<JSON.t>,
   ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
+  ~fields: option<Internal.evmFieldsSelection>=?,
+  ~enableRawEvents: bool=false,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
   let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
+
+  let (
+    selectedBlockFields,
+    selectedTransactionFields,
+    blockFieldMask,
+    transactionFieldMask,
+  ) = resolveRegistrationFieldSelection(~fields, ~eventConfig, ~enableRawEvents)
 
   let {resolvedWhere, filterByAddresses, addressFilterParamGroups} = LogSelection.parseWhereOrThrow(
     ~where,
@@ -379,6 +471,10 @@ let buildEvmOnEventRegistration = (
     addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
+    selectedBlockFields,
+    selectedTransactionFields,
+    blockFieldMask,
+    transactionFieldMask,
   }
 }
 
@@ -462,6 +558,12 @@ let buildSvmOnEventRegistration = (
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
   startBlock,
+  selectedBlockFields: eventConfig.selectedBlockFields->(
+    Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>
+  ),
+  selectedTransactionFields: eventConfig.selectedTransactionFields,
+  blockFieldMask: eventConfig.blockFieldMask,
+  transactionFieldMask: eventConfig.transactionFieldMask,
 }
 
 // ============== Build Fuel event config ==============
@@ -539,4 +641,8 @@ let buildFuelOnEventRegistration = (
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
   startBlock,
+  selectedBlockFields: Utils.Set.make(),
+  selectedTransactionFields: eventConfig.selectedTransactionFields,
+  blockFieldMask: eventConfig.blockFieldMask,
+  transactionFieldMask: eventConfig.transactionFieldMask,
 }

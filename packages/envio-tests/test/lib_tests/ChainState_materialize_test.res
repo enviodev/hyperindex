@@ -31,7 +31,8 @@ let makeItem = (
     "chain": materializeChainId,
     "onEventRegistration":
       {
-        "eventConfig": {"transactionFieldMask": transactionMask, "blockFieldMask": blockMask},
+        "transactionFieldMask": transactionMask,
+        "blockFieldMask": blockMask,
       }->(Utils.magic: {..} => Internal.onEventRegistration),
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)
