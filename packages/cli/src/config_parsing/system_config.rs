@@ -16,7 +16,7 @@ use super::{
 };
 use crate::utils::dotenv::{self, EnvMap};
 use crate::{
-    config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
+    config_parsing::human_config::evm::RpcTransactionField,
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
@@ -2858,6 +2858,9 @@ impl FieldSelection {
             ));
         }
 
+        // Every block field is derivable from `eth_getBlockByNumber`, so only
+        // transactions have an RPC-unavailable set: the two whose complex array
+        // shape has no parser in `RpcSource`'s field registry.
         if has_rpc_sync_src {
             let invalid_rpc_tx_fields: Vec<_> = transaction_fields
                 .iter()
@@ -2870,19 +2873,6 @@ impl FieldSelection {
                     "The following selected transaction_fields are unavailable for indexing via \
                      RPC: {}",
                     invalid_rpc_tx_fields.iter().join(", ")
-                ));
-            }
-
-            let invalid_rpc_block_fields: Vec<_> = block_fields
-                .iter()
-                .filter(|&field| RpcBlockField::try_from(field.clone()).is_err())
-                .cloned()
-                .collect();
-
-            if !invalid_rpc_block_fields.is_empty() {
-                return Err(anyhow!(
-                    "The following selected block_fields are unavailable for indexing via RPC: {}",
-                    invalid_rpc_block_fields.iter().join(", ")
                 ));
             }
         }

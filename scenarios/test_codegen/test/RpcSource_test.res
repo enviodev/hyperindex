@@ -197,9 +197,11 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           R,
           S,
           YParity,
+          Type,
           // Receipt fields
           GasUsed,
           EffectiveGasPrice,
+          CumulativeGasUsed,
           Status,
         ]),
       ),
@@ -219,9 +221,11 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       "s": "0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a",
       "v": "0x1",
       "yParity": "0x1",
+      "type": 2,
       // Receipt fields
       "gasUsed": 21000n,
       "effectiveGasPrice": 17699339493n,
+      "cumulativeGasUsed": 15039647n,
       "status": 1,
     })
     },
@@ -711,6 +715,67 @@ describe("RpcSource - getEventBlockOrThrow", () => {
         "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949"
       }`),
     )
+    },
+  )
+
+  // `eth_getBlockByNumber` carries every block field the config can select, so
+  // none of them are RPC-unavailable. Pinned against a real response because
+  // the config validation is only as good as what the endpoint actually returns.
+  Async.itWithOptions(
+    "Queries the block fields with no HyperSync equivalent (with real RPC)",
+    {retry: 3},
+    async t => {
+      let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
+      let client = Rpc.makeClient(rpcUrl)
+
+      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+        ~getBlockJson=async blockNumber =>
+          switch await Rpc.getRawBlock(~client, ~blockNumber) {
+          | Some(json) => json
+          | None =>
+            JsError.throwWithMessage(`Block not found for number: ${blockNumber->Int.toString}`)
+          },
+        ~lowercaseAddresses=false,
+      )
+
+      let log = {
+        ...mockLog(),
+        blockNumber: 21758655,
+      }
+
+      t.expect(
+        (
+          await log->getEventBlockOrThrow(
+            ~selectedBlockFields=Utils.Set.fromArray([
+              (Sha3Uncles: evmBlockField),
+              TransactionsRoot,
+              ReceiptsRoot,
+              Size,
+              Uncles,
+              MixHash,
+              WithdrawalsRoot,
+              BlobGasUsed,
+              ExcessBlobGas,
+              ParentBeaconBlockRoot,
+              TotalDifficulty,
+            ]),
+          )
+        )->toJson,
+      ).toEqual(
+        %raw(`{
+        "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+        "transactionsRoot": "0x4adb6fa9a977f828f28575406e90b48a636920f8fa05877aa5aae7cbc3afb7c6",
+        "receiptsRoot": "0x9d845c74774f03ed99d16af07747dbfe7d1825392360b901ed1d72087819cbcf",
+        "size": 114290n,
+        "uncles": [],
+        "mixHash": "0xfea0481418a65cc4b9e4c5d5960f639aa5d9b649474bf7231ce8105d63570f74",
+        "withdrawalsRoot": "0x8cdf00ffc923f4bedfe91ec276c860451f98c8cdcfe8e2cee54fdd6c7a521009",
+        "blobGasUsed": 786432n,
+        "excessBlobGas": 65011712n,
+        "parentBeaconBlockRoot": "0xaf040950a84627a7cc2dd0884a830df31986bf0a8672da50e5f8560f9cfa1233",
+        "totalDifficulty": 58750003716598352816469n
+      }`),
+      )
     },
   )
 })
