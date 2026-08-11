@@ -836,7 +836,7 @@
             "description": "The table's complete public shape. Plain strings are source paths; YAML numbers, booleans and null are literals.",
             "type": "object",
             "additionalProperties": {
-              "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`)."
+              "description": "A source path (\"params.owner\"), a YAML literal, or an object holding one value (`_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
             }
           }
         },
@@ -1028,7 +1028,7 @@
             "select": {
               "type": "object",
               "additionalProperties": {
-                "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`)."
+                "description": "A source path (\"params.owner\"), a YAML literal, or an object holding one value (`_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
               }
             }
           },
@@ -1057,7 +1057,7 @@
               "select": {
                 "type": "object",
                 "additionalProperties": {
-                  "description": "A source path (\"params.owner\"), a YAML literal, or a structured expression whose single key is an operator (`_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`)."
+                  "description": "A source path (\"params.owner\"), a YAML literal, or an object holding one value (`_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
                 }
               }
             },

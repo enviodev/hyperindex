@@ -50,9 +50,9 @@ impl JsonSchema for RawYaml {
 
     fn json_schema(_gen: &mut SchemaGenerator) -> JsonSchemaSchema {
         json_schema!({
-            "description": "A source path (\"params.owner\"), a YAML literal, or a structured \
-                            expression whose single key is an operator (`_literal`, `_negate`, \
-                            `_sum`, `_concat`, `_ref`, `_derived_from`)."
+            "description": "A source path (\"params.owner\"), a YAML literal, or an object \
+                            holding one value (`_value`, `_literal`, `_negate`, `_sum`, \
+                            `_concat`, `_ref`, `_derived_from`) and an optional `_description`."
         })
     }
 
@@ -1142,29 +1142,52 @@ fn split_path(text: &str) -> Result<Vec<String>> {
 }
 
 /// The single `_`-prefixed key of an operator mapping, if that is what this is.
-fn as_operator(value: &Yaml) -> Result<Option<(String, &Yaml)>> {
+/// An expression written as an object: the one key that makes the value, plus
+/// `_description` when the author documented it.
+struct ExprObject<'a> {
+    operator: String,
+    inner: &'a Yaml,
+    description: Option<String>,
+}
+
+const DESCRIPTION_KEY: &str = "_description";
+
+fn as_operator(value: &Yaml) -> Result<Option<ExprObject<'_>>> {
     let map = match value {
         Yaml::Mapping(map) => map,
         _ => return Ok(None),
     };
     let mut operators = Vec::new();
     let mut plain = Vec::new();
+    let mut description = None;
     for key in map.keys() {
         let key = key
             .as_str()
             .ok_or_else(|| anyhow!("expected a string key in an expression object"))?;
-        if key.starts_with('_') {
+        if key == DESCRIPTION_KEY {
+            let value = map
+                .get(Yaml::String(key.into()))
+                .expect("key from this map");
+            description = Some(yaml_string(value, "`_description`")?);
+        } else if key.starts_with('_') {
             operators.push(key.to_string());
         } else {
             plain.push(key.to_string());
         }
     }
     if operators.is_empty() {
+        if description.is_some() {
+            return Err(anyhow!(
+                "`_description` documents a value, but this object doesn't have one. Add the \
+                 value next to it, as `_value: params.owner` or `_sum: params.value`."
+            ));
+        }
         return Ok(None);
     }
     if operators.len() > 1 || !plain.is_empty() {
         return Err(anyhow!(
-            "an expression object holds exactly one operator, but got: {}",
+            "an expression object holds exactly one value — `_value`, `_literal`, `_negate`, \
+             `_sum`, `_concat`, `_ref` or `_derived_from` — optionally with `_description`. Got: {}",
             operators
                 .into_iter()
                 .chain(plain)
@@ -1176,7 +1199,11 @@ fn as_operator(value: &Yaml) -> Result<Option<(String, &Yaml)>> {
     let inner = map
         .get(Yaml::String(operator.clone()))
         .expect("key came from the same map");
-    Ok(Some((operator, inner)))
+    Ok(Some(ExprObject {
+        operator,
+        inner,
+        description,
+    }))
 }
 
 fn yaml_string(value: &Yaml, what: &str) -> Result<String> {
@@ -1203,8 +1230,20 @@ enum Selected {
     DerivedFrom { table: String, field: String },
 }
 
-fn compile_selected(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Selected> {
-    if let Some((operator, inner)) = as_operator(value)? {
+fn compile_selected(
+    value: &Yaml,
+    ctx: &ExprCtx,
+    demand: &mut Demand,
+) -> Result<(Selected, Option<String>)> {
+    let ExprObject {
+        operator,
+        inner,
+        description,
+    } = match as_operator(value)? {
+        Some(object) => object,
+        None => return Ok((Selected::Value(compile_expr(value, ctx, demand)?), None)),
+    };
+    let selected = {
         match operator.as_str() {
             "_sum" => {
                 let inner = compile_expr(inner, ctx, demand).context("in `_sum`")?;
@@ -1214,7 +1253,7 @@ fn compile_selected(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<
                         inner.ty.describe()
                     ));
                 }
-                return Ok(Selected::Sum(inner));
+                Selected::Sum(inner)
             }
             "_ref" => {
                 let map = inner
@@ -1239,7 +1278,7 @@ fn compile_selected(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<
                     }
                 }
                 let id = compile_expr(id, ctx, demand).context("in `_ref.id`")?;
-                return Ok(Selected::Ref { table, id });
+                Selected::Ref { table, id }
             }
             "_derived_from" => {
                 let target = yaml_string(inner, "`_derived_from`")?;
@@ -1255,19 +1294,30 @@ fn compile_selected(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<
                          `tables`"
                     ));
                 }
-                return Ok(Selected::DerivedFrom {
+                Selected::DerivedFrom {
                     table: table.to_string(),
                     field: field.to_string(),
-                });
+                }
             }
-            _ => (),
+            _ => Selected::Value(compile_operator(&operator, inner, ctx, demand)?),
         }
-    }
-    Ok(Selected::Value(compile_expr(value, ctx, demand)?))
+    };
+    Ok((selected, description))
 }
 
 fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Typed> {
-    if let Some((operator, inner)) = as_operator(value)? {
+    if let Some(ExprObject {
+        operator,
+        inner,
+        description,
+    }) = as_operator(value)?
+    {
+        if description.is_some() {
+            return Err(anyhow!(
+                "`_description` documents a `select` field, so it belongs beside the field's own \
+                 value, not inside its `{operator}`"
+            ));
+        }
         return compile_operator(&operator, inner, ctx, demand);
     }
     match value {
@@ -1342,6 +1392,8 @@ fn compile_operator(
                 ty: Ty::new(Scalar::String),
             })
         }
+        // The identity, so a plain path can carry a `_description`.
+        "_value" => compile_expr(inner, ctx, demand).context("in `_value`"),
         "_negate" => {
             let inner = compile_expr(inner, ctx, demand).context("in `_negate`")?;
             let numeric_type = inner.ty.numeric_tag().ok_or_else(|| {
@@ -1749,8 +1801,16 @@ struct TableSchema {
     name: String,
     cross_chain: bool,
     storage: Option<TableStorage>,
-    /// `(field name as written, GraphQL type, derived-from target)`
-    fields: Vec<(String, String, Option<String>)>,
+    fields: Vec<SchemaField>,
+}
+
+struct SchemaField {
+    /// The field name as written in `select`.
+    name: String,
+    gql_type: String,
+    /// The target field on the other table, for `_derived_from`.
+    derived_from: Option<String>,
+    description: Option<String>,
 }
 
 /// GraphQL string literal. `partition_by`/`ttl` are raw ClickHouse expressions
@@ -1832,7 +1892,16 @@ impl TableSchema {
 
     fn to_sdl(&self) -> String {
         let mut sdl = format!("type {}{} {{\n", self.name, self.directives());
-        for (name, gql_type, derived_from) in &self.fields {
+        for SchemaField {
+            name,
+            gql_type,
+            derived_from,
+            description,
+        } in &self.fields
+        {
+            if let Some(description) = description {
+                sdl.push_str(&format!("  {}\n", sdl_string(description)));
+            }
             match derived_from {
                 Some(field) => sdl.push_str(&format!(
                     "  {name}: {gql_type} @derivedFrom(field: \"{field}\")\n"
@@ -1849,6 +1918,7 @@ impl TableSchema {
 struct FieldShape {
     name: String,
     ty: Ty,
+    description: Option<String>,
     /// The target field on the other table, for `_derived_from`. A derived field
     /// is virtual: it appears in the schema but never in a write.
     derived_from: Option<String>,
@@ -2075,14 +2145,16 @@ fn compile_table(
 
         let shapes: Vec<FieldShape> = resolved
             .iter()
-            .map(|(field_name, selected)| {
+            .map(|(field_name, (selected, description))| {
                 let name = field_name.clone();
+                let description = description.clone();
                 match selected {
                     Selected::Value(typed) | Selected::Sum(typed) => FieldShape {
                         name,
                         ty: typed.ty.clone(),
                         derived_from: None,
                         is_ref: false,
+                        description,
                     },
                     Selected::Ref { table, id } => FieldShape {
                         name,
@@ -2093,12 +2165,14 @@ fn compile_table(
                         },
                         derived_from: None,
                         is_ref: true,
+                        description,
                     },
                     Selected::DerivedFrom { table, field } => FieldShape {
                         name,
                         ty: Ty::new(Scalar::Ref(table.clone())).array(),
                         derived_from: Some(field.clone()),
                         is_ref: false,
+                        description,
                     },
                 }
             })
@@ -2127,6 +2201,19 @@ fn compile_table(
                             existing.name
                         )
                     })?;
+                    existing.description = match (existing.description.take(), incoming.description)
+                    {
+                        (Some(existing_text), Some(incoming_text))
+                            if existing_text != incoming_text =>
+                        {
+                            return Err(anyhow!(
+                                "the union branches give `{}` different `_description`s",
+                                existing.name
+                            ))
+                        }
+                        (Some(text), _) | (None, Some(text)) => Some(text),
+                        (None, None) => None,
+                    };
                 }
             }
         }
@@ -2142,7 +2229,7 @@ fn compile_table(
     for (branch, resolved) in plans {
         let mut id = None;
         let mut fields = Vec::new();
-        for ((field_name, selected), shape) in resolved.into_iter().zip(&declared) {
+        for ((field_name, (selected, _)), shape) in resolved.into_iter().zip(&declared) {
             let ty = &shape.ty;
             // A reducer's numeric type is read off the unified column, not off
             // this branch's own expression: a `0` in one branch and a BigInt in
@@ -2240,7 +2327,12 @@ fn compile_table(
                 .ty
                 .to_gql(shape.name == "id")
                 .with_context(|| format!("in `select.{}`", shape.name))?;
-            Ok((shape.name.clone(), gql_type, shape.derived_from.clone()))
+            Ok(SchemaField {
+                name: shape.name.clone(),
+                gql_type,
+                derived_from: shape.derived_from.clone(),
+                description: shape.description.clone(),
+            })
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -2890,6 +2982,126 @@ tables:
         let error = parse_error(&yaml);
         assert!(
             error.contains("`where` is not supported on a table reading a `with` relation"),
+            "{error}"
+        );
+    }
+
+    // A description travels as a GraphQL description on the generated field, so
+    // it reaches the database column comment and Hasura with no extra plumbing.
+    #[test]
+    fn carries_field_descriptions_into_the_schema() {
+        let yaml = ERC20_YAML
+            .replace(
+                "      amount: params.value\n",
+                r#"      amount:
+        _value: params.value
+        _description: "Approved amount, in token units"
+"#,
+            )
+            .replace(
+                "      balance:\n        _sum: delta\n",
+                r#"      balance:
+        _sum: delta
+        _description: "Credits minus debits, across every chain"
+"#,
+            );
+        let config = parse(&yaml).expect("described fields should compile");
+        let described = |entity: &str, field: &str| {
+            config
+                .get_entity(&entity.to_string())
+                .expect("entity")
+                .get_field(field)
+                .expect("field")
+                .description
+                .clone()
+        };
+        assert_eq!(
+            (
+                described("approvals", "amount"),
+                described("approvals", "id"),
+                described("accounts", "balance"),
+            ),
+            (
+                Some("Approved amount, in token units".to_string()),
+                None,
+                Some("Credits minus debits, across every chain".to_string()),
+            )
+        );
+    }
+
+    // `_value` is the identity, so wrapping a field to describe it must not
+    // change what the field materializes.
+    #[test]
+    fn a_described_field_materializes_the_same_plan() {
+        let yaml = ERC20_YAML.replace(
+            "      amount: params.value\n",
+            r#"      amount:
+        _value: params.value
+        _description: "Approved amount"
+"#,
+        );
+        assert_eq!(
+            serde_json::to_value(&parse(&yaml).expect("compiles").materializations)
+                .expect("serializable"),
+            serde_json::to_value(&parse(ERC20_YAML).expect("compiles").materializations)
+                .expect("serializable")
+        );
+    }
+
+    // Quotes would otherwise close the SDL string early and corrupt the type the
+    // rest of the schema is parsed from.
+    #[test]
+    fn escapes_a_quoted_description() {
+        let yaml = ERC20_YAML.replace(
+            "      amount: params.value\n",
+            r#"      amount:
+        _value: params.value
+        _description: 'The "approved" amount'
+"#,
+        );
+        let config = parse(&yaml).expect("a quoted description should compile");
+        assert_eq!(
+            config
+                .get_entity(&"approvals".to_string())
+                .expect("approvals")
+                .get_field("amount")
+                .expect("amount")
+                .description
+                .as_deref(),
+            Some(r#"The "approved" amount"#)
+        );
+    }
+
+    #[test]
+    fn rejects_a_description_without_a_value() {
+        let yaml = ERC20_YAML.replace(
+            "      amount: params.value\n",
+            r#"      amount:
+        _description: "Approved amount"
+"#,
+        );
+        let error = parse_error(&yaml);
+        assert!(
+            error.contains("`_description` documents a value, but this object doesn't have one"),
+            "{error}"
+        );
+    }
+
+    // A description belongs to a column, and a nested expression has no column
+    // of its own — accepting it there would silently drop it.
+    #[test]
+    fn rejects_a_nested_description() {
+        let yaml = ERC20_YAML.replace(
+            "            delta:\n              _negate: params.value\n",
+            r#"            delta:
+              _negate:
+                _value: params.value
+                _description: "Nested"
+"#,
+        );
+        let error = parse_error(&yaml);
+        assert!(
+            error.contains("`_description` documents a `select` field, so it belongs beside"),
             "{error}"
         );
     }
