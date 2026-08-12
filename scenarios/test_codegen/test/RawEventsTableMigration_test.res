@@ -15,13 +15,13 @@ describe("Raw Events Table Migrations", () => {
       ],
       ~enableRawEvents=true,
       async indexerMock => {
-        let sql = indexerMock.sql
+        let {sql} = indexerMock->IndexerRunner.pgOrThrow
         let rawEventsColumnsRes: array<{
           "column_name": string,
           "data_type": string,
         }> = await sql->Postgres.unsafe(`SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
            FROM INFORMATION_SCHEMA.COLUMNS
-           WHERE TABLE_SCHEMA = '${indexerMock.pgSchema}'
+           WHERE TABLE_SCHEMA = '${(indexerMock->IndexerRunner.pgOrThrow).pgSchema}'
              AND TABLE_NAME = 'raw_events'
            ORDER BY ORDINAL_POSITION;`)
 
@@ -62,7 +62,7 @@ describe("Raw Events Table Migrations", () => {
       ],
       ~enableRawEvents=true,
       async indexerMock => {
-        let sql = indexerMock.sql
+        let {sql} = indexerMock->IndexerRunner.pgOrThrow
         // Shared across both inserts, so the second one exercises the cached
         // query the way a storage instance would.
         let setQueryCache = PgStorage.makeSetQueryCache()
@@ -71,7 +71,7 @@ describe("Raw Events Table Migrations", () => {
             ~items=[MockIndexer.mockRawEventRow],
             ~table=InternalTable.RawEvents.table,
             ~itemSchema=InternalTable.RawEvents.schema,
-            ~pgSchema=indexerMock.pgSchema,
+            ~pgSchema=(indexerMock->IndexerRunner.pgOrThrow).pgSchema,
             ~setQueryCache,
           )
 

@@ -16,7 +16,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
           },
         ],
         async indexerMock => {
-          let sql = indexerMock.sql
+          let {sql} = indexerMock->IndexerRunner.pgOrThrow
           //  This SQL is quite a beast, but it does work 🙏
           let columnsRes: array<{
             "column_name": string,
@@ -54,7 +54,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
               JOIN pg_type t ON a.atttypid = t.oid
               LEFT JOIN pg_type et ON t.typelem = et.oid
             WHERE
-              n.nspname = '${indexerMock.pgSchema}' AND
+              n.nspname = '${(indexerMock->IndexerRunner.pgOrThrow).pgSchema}' AND
               c.relname = 'PostgresNumericPrecisionEntityTester' AND
               a.attnum > 0 AND
               NOT a.attisdropped

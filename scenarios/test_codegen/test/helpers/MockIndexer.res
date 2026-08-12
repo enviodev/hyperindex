@@ -182,6 +182,8 @@ module Indexer = {
 
     await IndexerRunner.run(
       ~config,
+      // These tests read the generated project's Postgres schema throughout.
+      ~backend=#postgres,
       ~resolveRegistrations=async () => {
         // Register handlers once against the full chain set (idempotent +
         // import-cached, so a restart reuses), then narrow to this run's chains.

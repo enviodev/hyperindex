@@ -9,14 +9,7 @@
 // Note: `handlers` is a ReScript template string, so a literal `${` in the
 // source must be escaped.
 
-type backend = [#memory | #postgres | #clickhouse]
-
-let backendName = (backend: backend) =>
-  switch backend {
-  | #memory => "memory"
-  | #postgres => "postgres"
-  | #clickhouse => "clickhouse"
-  }
+type backend = IndexerRunner.backend
 
 // A backend this scenario can't run on, and why. The reason shows up in the
 // skip message — an opt-out nobody can explain is an opt-out nobody revisits.
@@ -147,4 +140,48 @@ let run = async (
     ~mapStorage?,
     indexer => body(~indexer, ~source),
   )
+}
+
+let skipReason = (scenario: t) =>
+  scenario.unsupported
+  ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
+  ->Option.map(({reason}) => reason)
+
+// Registers a vitest test that runs `body` against this scenario. A backend the
+// scenario declares unsupported is skipped by name and reason, so the reporter
+// says which coverage the run is missing instead of quietly passing.
+let it = (
+  scenario: t,
+  name,
+  ~sources: array<sourceMock>=[],
+  ~reducedPollingInterval=?,
+  ~targetBufferSize=?,
+  ~onError=?,
+  ~onExit=?,
+  ~mapStorage=?,
+  body: (
+    ~t: Vitest.testContext,
+    ~indexer: IndexerRunner.t,
+    ~source: int => MockSource.t,
+  ) => promise<unit>,
+) => {
+  switch scenario->skipReason {
+  | Some(reason) =>
+    Vitest.Async.it_skip(
+      `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: ${reason}]`,
+      async _ => (),
+    )
+  | None =>
+    Vitest.Async.it(name, async t =>
+      await scenario->run(
+        ~sources,
+        ~reducedPollingInterval?,
+        ~targetBufferSize?,
+        ~onError?,
+        ~onExit?,
+        ~mapStorage?,
+        (~indexer, ~source) => body(~t, ~indexer, ~source),
+      )
+    )
+  }
 }

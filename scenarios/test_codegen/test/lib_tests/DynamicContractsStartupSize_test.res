@@ -31,8 +31,7 @@ describe("Dynamic contracts startup size", () => {
           },
         ],
         async indexerMock => {
-          let sql = indexerMock.sql
-          let pgSchema = indexerMock.pgSchema
+          let {sql, pgSchema} = indexerMock->IndexerRunner.pgOrThrow
 
           let chainId = 1337->ChainId.fromInt
           let rowCount = 120
