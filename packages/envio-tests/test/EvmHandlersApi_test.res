@@ -163,6 +163,16 @@ expectType<
   TypeEqual<EvmContractRegisterOptions<PoolCreated>, EvmOnEventOptions<PoolCreated>>
 >(true);
 
+// Both aliases narrow \`fields\` the way the \`onEvent\`/\`contractRegister\`
+// signatures do, so a selection typed through them stays a literal.
+type PinnedFields = { readonly block: readonly ["parentHash"] };
+expectType<
+  TypeEqual<
+    EvmContractRegisterOptions<PoolCreated, {}, PinnedFields>["fields"],
+    PinnedFields | undefined
+  >
+>(true);
+
 expectType<
   TypeEqual<
     EvmOnEventHandler<PoolCreated>,

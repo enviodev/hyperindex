@@ -293,20 +293,20 @@ let resolveFieldSelection = (
   )
 }
 
-// Block fields an inline selection carries whether or not the handler listed
-// them. `number` is the item's own key; `timestamp` backs the progress-latency
-// metric (`ChainState.applyBatchProgress`), which would go silent for a chain
-// whose every registration selects inline. Neither costs a fetch: sources
-// always request number/timestamp/hash (`REQUIRED_BLOCK_FIELDS` on the
-// HyperSync side, the whole block JSON on the RPC side), so this only widens
-// what's copied onto the payload. Runtime only — the handler's type exposes
-// `number` alone, so the extra field is unread rather than unsound.
-let internalBlockFields = ["number", "timestamp"]
+// `block.number` is the item's own key, so an inline selection carries it
+// whether or not the handler listed it. Nothing else is added: dropping
+// `timestamp`/`hash` is the point of naming fields inline, and the two things
+// that read them off the payload cope — the progress-latency metric
+// (`ChainState.applyBatchProgress`) skips a batch whose last block has no
+// timestamp, and `raw_events` selects them back below.
+let internalBlockFields = ["number"]
 
-// `toRawEvent` additionally reads `block.hash` off the payload, so a
-// registration that doesn't select it still has to materialise it when the
-// project stores raw events.
-let rawEventBlockFields = ["hash"]
+// `toRawEvent` reads `block.hash`/`block.timestamp` for the `raw_events` row's
+// own columns, which are not nullable. They stay out of the row's stored
+// `block_fields` (`Evm.cleanUpRawEventFieldsInPlace` strips number/timestamp/
+// hash from it), so the column still holds exactly what the registration
+// selected.
+let rawEventBlockFields = ["hash", "timestamp"]
 
 let parseFieldsOrThrow = (
   fields: option<array<string>>,

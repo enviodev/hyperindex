@@ -107,6 +107,13 @@ let buildOnEventRegistrationWith = (
   ~fields: option<Internal.evmFieldsSelection>,
   ~startBlock=?,
 ): Internal.onEventRegistration => {
+  // Only EVM resolves a registration selection of its own; Fuel and SVM take
+  // theirs from the event config, so an inline one would be silently dropped.
+  if fields->Option.isSome && config.ecosystem.name !== Evm {
+    JsError.throwWithMessage(
+      `The fields option of the "${eventConfig.name}" event registration on contract "${eventConfig.contractName}" is only supported on EVM. Select the fields in your config instead.`,
+    )
+  }
   switch config.ecosystem.name {
   | Fuel =>
     (EventConfigBuilder.buildFuelOnEventRegistration(
@@ -462,20 +469,23 @@ let getSimulateOnEventRegistrations = (
   }
 }
 
-// A chain that syncs over RPC can only deliver the fields the RPC source knows
-// how to parse; the rest are silently skipped at materialisation. The selection
-// can come from either `config.yaml` or the inline `fields` option, so the
-// message names neither. Runs on the registrations a chain actually keeps, so a
-// handler whose `where` opts out of this chain isn't held to its limits.
+// An RPC source can only deliver the fields it knows how to parse; the rest are
+// silently skipped at materialisation. Every RPC on the chain counts, whatever
+// it's for — a fallback or realtime source runs the same parsers as a sync one,
+// so a field it can't deliver would go missing for whichever blocks it served.
+// The selection can come from either `config.yaml` or the inline `fields`
+// option, so the message names neither. Runs on the registrations a chain
+// actually keeps, so a handler whose `where` opts out of this chain isn't held
+// to its limits.
 let validateRpcFieldSelection = (
   chainConfig: Config.chain,
   registrations: array<Internal.onEventRegistration>,
 ) => {
-  let syncsOverRpc = switch chainConfig.sourceConfig {
-  | EvmSourceConfig({rpcs}) => rpcs->Array.some(rpc => rpc.sourceFor === Sync)
+  let hasRpc = switch chainConfig.sourceConfig {
+  | EvmSourceConfig({rpcs}) => !(rpcs->Utils.Array.isEmpty)
   | _ => false
   }
-  if syncsOverRpc {
+  if hasRpc {
     registrations->Array.forEach(reg =>
       reg.selectedTransactionFields
       ->Utils.Set.toArray

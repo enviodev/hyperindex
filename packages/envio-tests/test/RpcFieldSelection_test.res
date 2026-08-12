@@ -6,7 +6,8 @@ open Vitest
 // must be accepted by the config, and every field it can't must be rejected.
 
 // `number`/`timestamp`/`hash` are always on the block, so they aren't
-// selectable through `block_fields` — the config enum has no variant for them.
+// selectable through `block_fields` — the config enum has no variant for them,
+// and the RPC block registry has no parser for them either.
 let selectableBlockFields =
   Evm.blockFields->Array.filter(name =>
     switch name {
@@ -14,6 +15,11 @@ let selectableBlockFields =
     | _ => true
     }
   )
+
+let hasRpcBlockParser = (name: string) =>
+  RpcSource.blockFieldRegistryChecksum
+  ->Utils.Record.get(name->(Utils.magic: string => Internal.evmBlockField))
+  ->Option.isSome
 
 let selectableTransactionFields =
   Internal.allEvmTransactionFields->(
@@ -44,28 +50,21 @@ let parseError = yaml =>
 describe("RPC field_selection validation", () => {
   it("accepts every field the RPC source can parse", t => {
     let yaml = rpcChainConfig(
-      ~blockFields=selectableBlockFields->Array.filter(RpcSource.isRpcBlockField),
-      ~transactionFields=selectableTransactionFields->Array.filter(
-        RpcSource.isRpcTransactionField,
-      ),
+      ~blockFields=selectableBlockFields,
+      ~transactionFields=selectableTransactionFields->Array.filter(RpcSource.isRpcTransactionField),
     )
-    t.expect(parseError(yaml)).toBe(None)
+    t.expect((
+      selectableBlockFields->Array.filter(f => !hasRpcBlockParser(f)),
+      parseError(yaml),
+    )).toEqual(([], None))
   })
 
   it("rejects every field the RPC source can't parse", t => {
-    let unsupportedBlock = selectableBlockFields->Array.filter(f => !RpcSource.isRpcBlockField(f))
-    let unsupportedTransaction =
+    let unsupported =
       selectableTransactionFields->Array.filter(f => !RpcSource.isRpcTransactionField(f))
     let errors =
-      unsupportedBlock
-      ->Array.map(field => parseError(rpcChainConfig(~blockFields=[field])))
-      ->Array.concat(
-        unsupportedTransaction->Array.map(field =>
-          parseError(rpcChainConfig(~transactionFields=[field]))
-        ),
-      )
-    t.expect((unsupportedBlock, unsupportedTransaction, errors)).toEqual((
-      [],
+      unsupported->Array.map(field => parseError(rpcChainConfig(~transactionFields=[field])))
+    t.expect((unsupported, errors)).toEqual((
       ["accessList", "authorizationList"],
       [
         Some(
@@ -76,5 +75,27 @@ describe("RPC field_selection validation", () => {
         ),
       ],
     ))
+  })
+
+  // The chain syncs over HyperSync here — but its fallback RPC would serve the
+  // same events with the same parsers, so the limit still applies.
+  it("holds a chain to the RPC limits when it only falls back to one", t => {
+    t.expect(
+      parseError(`
+name: rpc-fallback-field-selection
+field_selection:
+  transaction_fields: [accessList]
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: fallback
+    start_block: 0
+`),
+    ).toBe(
+      Some(
+        "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
+      ),
+    )
   })
 })

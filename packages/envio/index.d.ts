@@ -913,7 +913,8 @@ export type EvmOnEventHandler<
 export type EvmContractRegisterOptions<
   Event extends EventLike = _ProjectEvmEvent,
   Params = {},
-> = EvmOnEventOptions<Event, Params>;
+  Fields extends EvmFieldsSelection | undefined = EvmFieldsSelection,
+> = EvmOnEventOptions<Event, Params, Fields>;
 
 /** Handler function for an EVM contractRegister registration. */
 export type EvmContractRegisterHandler<

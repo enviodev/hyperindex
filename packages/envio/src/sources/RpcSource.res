@@ -463,25 +463,12 @@ let makeFieldRegistry = (addressSchema: S.t<JSON.t>): Utils.Record.t<
 let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
 let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 
-// Whether an RPC source can populate a field. Both getters skip a field they
-// can't parse, so this is what separates "absent because the chain has none"
-// from "absent because RPC never provides it". The always-present fields are
-// special-cased: the block carries number/timestamp/hash, and the log carries
-// the transaction's hash/transactionIndex.
-//
-// `isRpcBlockField` is total — every block field has a parser. It has no
-// caller in the runtime for that reason; `RpcFieldSelection_test.res` reads it
-// to hold the config-parse validation to the same answer, so a future block
-// field added without a parser is caught there rather than silently dropped.
-let isRpcBlockField = (name: string) =>
-  switch name {
-  | "number" | "timestamp" | "hash" => true
-  | _ =>
-    blockFieldRegistryChecksum
-    ->Utils.Record.get(name->(Utils.magic: string => Internal.evmBlockField))
-    ->Option.isSome
-  }
-
+// Whether an RPC source can populate a transaction field. The getter skips a
+// field it can't parse, so this is what separates "absent because the chain has
+// none" from "absent because RPC never provides it". `hash` and
+// `transactionIndex` come off the log itself, so they have no registry entry.
+// Blocks need no equivalent: `eth_getBlockByNumber` carries every block field,
+// which `RpcFieldSelection_test.res` holds the registry to.
 let isRpcTransactionField = (name: string) =>
   switch name {
   | "transactionIndex" | "hash" => true

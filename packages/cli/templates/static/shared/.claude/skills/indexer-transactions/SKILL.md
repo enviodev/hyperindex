@@ -52,8 +52,10 @@ indexer.onEvent({ contract: "MyContract", event: "Transfer" }, async ({ event, c
 
 ## Selecting Fields in the Handler
 
-A registration can name its fields inline with `fields`, instead of in
-config.yaml. The types follow the list, so unlisted fields stay a compile error.
+`fields` names a registration's block and transaction fields inline, **replacing**
+`field_selection` for that registration — including fields config.yaml selected
+but this list omits. `block.number` is always readable; everything else has to be
+listed. EVM only, on `indexer.onEvent` and `indexer.contractRegister`.
 
 ```ts
 indexer.onEvent(
@@ -63,26 +65,23 @@ indexer.onEvent(
     fields: { transaction: ["hash", "from"], block: ["timestamp"] },
   },
   async ({ event, context }) => {
-    event.transaction.hash; // typed
-    event.transaction.gasUsed; // compile error — not listed
+    const hash = event.transaction.hash; // string
+    const gas: bigint = event.transaction.gasUsed; // Type error: not selected
   },
 );
 ```
 
-`fields` **replaces** the config `field_selection` for that registration: a
-field selected in config.yaml but not listed here is a compile error in this
-handler, even though it may still be present at runtime. Only `block.number` is
-readable without listing it.
+An unlisted field types as `FieldNotSelected<"...">`, whose message names the
+field and the option to add it to. It fails where the real value is expected,
+not on the property access itself.
 
-Two handlers on one event can select different fields. The indexer fetches the
+Write the selection inline or as a `const` object. A variable typed
+`EvmFieldsSelection` is rejected: its element types name the whole field union
+rather than this selection, so every field would look selected.
+
+Two handlers on one event can select different sets. The indexer fetches the
 union, so a field one handler listed is often populated for the other too —
-the types, not the runtime, are what keep each handler to its own selection.
-
-Write the selection inline (or with `as const`). A variable typed as
-`EvmFieldsSelection` is rejected: its element types no longer name the selected
-fields, so every field would look selected.
-
-Available on `indexer.onEvent` and `indexer.contractRegister`, EVM only.
+the types, not the runtime, keep each handler to its own selection.
 
 ## Available Transaction Fields
 

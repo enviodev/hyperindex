@@ -229,8 +229,8 @@ let buildChainsObject = (~config: Config.t) => {
 let getGlobalIndexer = (): 'indexer => {
   // Parse eventIdentity config to extract contractName, eventName, and options.
   // Supports two runtime formats:
-  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
-  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where?, fields? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where?, fields? }
   let parseIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
@@ -239,6 +239,7 @@ let getGlobalIndexer = (): 'indexer => {
           "event": unknown,
           "wildcard": option<bool>,
           "where": option<JSON.t>,
+          "fields": option<Internal.evmFieldsSelection>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -255,12 +256,14 @@ let getGlobalIndexer = (): 'indexer => {
     }
     let wildcard = raw["wildcard"]
     let where = raw["where"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
-    | (None, None) => None
-    | (wildcard, where) =>
+    let fields = raw["fields"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where, fields) {
+    | (None, None, None) => None
+    | (wildcard, where, fields) =>
       Some({
         ?wildcard,
         where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+        ?fields,
       })
     }
     (contractName, eventName, eventOptions)
