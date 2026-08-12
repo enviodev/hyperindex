@@ -127,6 +127,22 @@ let getProgressedChainsById = {
   }
 }
 
+// Index of the first entry of an ascending array strictly above `blockNumber`,
+// or the array length when there is none.
+let seekFirstAbove = (blockNumbers: array<int>, blockNumber) => {
+  let low = ref(0)
+  let high = ref(blockNumbers->Array.length)
+  while low.contents < high.contents {
+    let mid = (low.contents + high.contents) / 2
+    if blockNumbers->Array.getUnsafe(mid) > blockNumber {
+      high := mid
+    } else {
+      low := mid + 1
+    }
+  }
+  low.contents
+}
+
 @inline
 let addReorgCheckpoints = (
   ~prevCheckpointId,
@@ -144,25 +160,27 @@ let addReorgCheckpoints = (
   if shouldRollbackOnReorg {
     let prevCheckpointId = ref(prevCheckpointId)
     // The snapshot already holds only in-threshold scanned hashes, ascending,
-    // so a straight range filter over it gives the gap checkpoints without
-    // re-reading the store per block.
+    // so seeking to the gap's lower bound gives the gap checkpoints without
+    // rescanning the whole snapshot for every gap in the batch.
     let blockNumbers = scannedHashes.blockNumbers
-    for idx in 0 to blockNumbers->Array.length - 1 {
-      let blockNumber = blockNumbers->Array.getUnsafe(idx)
-      if blockNumber > fromBlockExclusive && blockNumber < toBlockExclusive {
-        let hash =
-          scannedHashes.hashByBlockNumber
-          ->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber)
-          ->Option.getUnsafe
-        let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
-        prevCheckpointId := checkpointId
+    let length = blockNumbers->Array.length
+    let idx = ref(blockNumbers->seekFirstAbove(fromBlockExclusive))
+    while idx.contents < length && blockNumbers->Array.getUnsafe(idx.contents) < toBlockExclusive {
+      let blockNumber = blockNumbers->Array.getUnsafe(idx.contents)
+      let hash =
+        scannedHashes.hashByBlockNumber
+        ->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber)
+        ->Option.getUnsafe
+      let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
+      prevCheckpointId := checkpointId
 
-        mutCheckpointIds->Array.push(checkpointId)
-        mutCheckpointChainIds->Array.push(chainId)
-        mutCheckpointBlockNumbers->Array.push(blockNumber)
-        mutCheckpointBlockHashes->Array.push(Null.Value(hash))
-        mutCheckpointEventsProcessed->Array.push(0)
-      }
+      mutCheckpointIds->Array.push(checkpointId)
+      mutCheckpointChainIds->Array.push(chainId)
+      mutCheckpointBlockNumbers->Array.push(blockNumber)
+      mutCheckpointBlockHashes->Array.push(Null.Value(hash))
+      mutCheckpointEventsProcessed->Array.push(0)
+
+      idx := idx.contents + 1
     }
     prevCheckpointId.contents
   } else {
