@@ -98,11 +98,33 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
   {...config, chainMap}
 }
 
+// Knobs a user has no say over: they exist to make a scenario reach a state
+// that would otherwise need thousands of blocks or addresses. Anything a user
+// can configure belongs in the YAML instead.
+let withInternalOverrides = (
+  config: Config.t,
+  ~maxAddrInPartition,
+  ~clientFilterAddressThreshold,
+  ~reorgThresholdReadyTolerance,
+) => {
+  ...config,
+  maxAddrInPartition: maxAddrInPartition->Option.getOr(config.maxAddrInPartition),
+  clientFilterAddressThreshold: clientFilterAddressThreshold->Option.getOr(
+    config.clientFilterAddressThreshold,
+  ),
+  reorgThresholdReadyTolerance: reorgThresholdReadyTolerance->Option.getOr(
+    config.reorgThresholdReadyTolerance,
+  ),
+}
+
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
   ~reducedPollingInterval=?,
   ~targetBufferSize=?,
+  ~maxAddrInPartition=?,
+  ~clientFilterAddressThreshold=?,
+  ~reorgThresholdReadyTolerance=?,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -119,7 +141,14 @@ let run = async (
       ),
     ))
 
-  let config = scenario.config->withMockSources(~sources=mocks)
+  let config =
+    scenario.config
+    ->withMockSources(~sources=mocks)
+    ->withInternalOverrides(
+      ~maxAddrInPartition,
+      ~clientFilterAddressThreshold,
+      ~reorgThresholdReadyTolerance,
+    )
 
   let source = chain =>
     switch mocks->Array.find(((mockedChain, _)) => mockedChain === chain) {
@@ -173,6 +202,9 @@ let it = (
   ~sources: array<sourceMock>=[],
   ~reducedPollingInterval=?,
   ~targetBufferSize=?,
+  ~maxAddrInPartition=?,
+  ~clientFilterAddressThreshold=?,
+  ~reorgThresholdReadyTolerance=?,
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
@@ -194,6 +226,9 @@ let it = (
         ~sources,
         ~reducedPollingInterval?,
         ~targetBufferSize?,
+        ~maxAddrInPartition?,
+        ~clientFilterAddressThreshold?,
+        ~reorgThresholdReadyTolerance?,
         ~onError?,
         ~onExit?,
         ~mapStorage?,
