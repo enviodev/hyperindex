@@ -187,6 +187,11 @@ if (0) {
     async () => {},
   );
   indexer.onInstruction(
+    // @ts-expect-error - the inline fields selection is EVM-only
+    { program: "Swapper", instruction: "swap", fields: { block: ["slot"] } },
+    async () => {},
+  );
+  indexer.onInstruction(
     { program: "Swapper", instruction: "swap" },
     async ({ instruction }) => {
       expectType<TypeEqual<typeof instruction.programName, string>>(true);

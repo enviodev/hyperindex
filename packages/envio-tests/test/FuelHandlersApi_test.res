@@ -231,6 +231,11 @@ if (0) {
       expectType<TypeEqual<typeof event.contractName, "Greeter">>(true);
     },
   );
+  indexer.onEvent(
+    // @ts-expect-error - the inline fields selection is EVM-only
+    { contract: "Greeter", event: "NewGreeting", fields: { block: ["id"] } },
+    async () => {},
+  );
   indexer.contractRegister(
     { contract: "Greeter", event: "ClearGreeting" },
     async ({ context }) => {

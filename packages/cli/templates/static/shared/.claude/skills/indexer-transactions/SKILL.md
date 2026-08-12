@@ -71,17 +71,12 @@ indexer.onEvent(
 );
 ```
 
-An unlisted field types as `FieldNotSelected<"...">`, whose message names the
-field and the option to add it to. It fails where the real value is expected,
-not on the property access itself.
+Write the selection inline, or in a variable declared `as const` — a variable
+typed `EvmFieldsSelection` is rejected, because it no longer says which fields
+this registration picked.
 
-Write the selection inline or as a `const` object. A variable typed
-`EvmFieldsSelection` is rejected: its element types name the whole field union
-rather than this selection, so every field would look selected.
-
-Two handlers on one event can select different sets. The indexer fetches the
-union, so a field one handler listed is often populated for the other too —
-the types, not the runtime, keep each handler to its own selection.
+Two handlers on one event can select different sets. Read only what you listed:
+anything else is a type error, and its value is not guaranteed.
 
 ## Available Transaction Fields
 
