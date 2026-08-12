@@ -93,6 +93,10 @@ let addressOf = i => {
 type account = {id: string, balance: bigint}
 type approval = {id: string, amount: bigint, owner_id: string, spender_id: string}
 
+// Events per block, which is also the checkpoint density: a checkpoint covers a
+// block, not an event, so a batch carries far fewer checkpoints than changes.
+let eventsPerBlock = 20
+
 // One batch's worth of changes, in the shape Writing.res hands to storage.
 let makeChanges = (~seed, ~firstCheckpointId: bigint) => {
   let random = makeRandom(seed)
@@ -103,8 +107,12 @@ let makeChanges = (~seed, ~firstCheckpointId: bigint) => {
 
   for i in 0 to events - 1 {
     let checkpointId = firstCheckpointId + i->BigInt.fromInt
-    checkpointIds->Array.push(checkpointId)->ignore
-    checkpointBlockNumbers->Array.push(10861674 + i / 20)->ignore
+    let blockNumber = 10861674 + i / eventsPerBlock
+    // The block's last event closes its checkpoint.
+    if mod(i + 1, eventsPerBlock) === 0 || i === events - 1 {
+      checkpointIds->Array.push(checkpointId)->ignore
+      checkpointBlockNumbers->Array.push(blockNumber)->ignore
+    }
 
     let isApproval = mod(random(), 100) < approvalShare
     let a = addressOf(mod(random(), pool))
@@ -253,6 +261,7 @@ let run = async (~clickhouse) => {
       ),
       accountChanges->Array.length + approvalChanges->Array.length,
       uniqueIds(accountChanges) + uniqueIds(approvalChanges),
+      checkpointIds->Array.length,
     ))
     ->ignore
   }
@@ -271,11 +280,14 @@ let run = async (~clickhouse) => {
 
   let totalChanges = ref(0)
   let totalUnique = ref(0)
+  let totalCheckpoints = ref(0)
   let started = Performance.now()
   for i in 0 to prepared->Array.length - 1 {
-    let (batch, updatedEntities, changesCount, uniqueCount) = prepared->Array.getUnsafe(i)
+    let (batch, updatedEntities, changesCount, uniqueCount, checkpointCount) =
+      prepared->Array.getUnsafe(i)
     totalChanges := totalChanges.contents + changesCount
     totalUnique := totalUnique.contents + uniqueCount
+    totalCheckpoints := totalCheckpoints.contents + checkpointCount
     try {
       await storage.writeBatch(
         ~batch,
@@ -297,22 +309,30 @@ let run = async (~clickhouse) => {
   let wallSeconds = started->Performance.secondsSince
   await storage.close()
 
+  // Rows each backend actually inserts for the same changes. Postgres collapses
+  // a batch to one upsert per id, and only writes history and checkpoints inside
+  // the reorg threshold; ClickHouse always appends every change plus the
+  // checkpoints that make them visible.
+  let rowsWritten = if clickhouse {
+    totalChanges.contents + totalCheckpoints.contents
+  } else if history {
+    totalUnique.contents + totalChanges.contents + totalCheckpoints.contents
+  } else {
+    totalUnique.contents
+  }
+
   Console.log(
     `${clickhouse ? "clickhouse-only" : "postgres-only"} | wall ${wallSeconds->Float.toFixed(
         ~digits=2,
-      )}s | changes ${totalChanges.contents->Int.toString} | rowsWritten ${(clickhouse
-        ? totalChanges.contents + events * batches
-        : totalUnique.contents)->Int.toString} | ${perBackendSeconds
+      )}s | changes ${totalChanges.contents->Int.toString} | checkpoints ${totalCheckpoints.contents->Int.toString} | rows ${rowsWritten->Int.toString} | ${perBackendSeconds
       ->Dict.toArray
       ->Array.map(((k, v)) => `${k} ${v->Float.toFixed(~digits=2)}s`)
       ->Array.joinUnsafe(" | ")}`,
   )
   Console.log(
     `  -> ${(totalChanges.contents->Int.toFloat /. wallSeconds)
-      ->Float.toFixed(
-        ~digits=0,
-      )} changes/s, ${((clickhouse ? totalChanges.contents + events * batches : totalUnique.contents)
-        ->Int.toFloat /. wallSeconds)->Float.toFixed(~digits=0)} rows/s, ${(wallSeconds *. 1000. /.
+      ->Float.toFixed(~digits=0)} changes/s, ${(rowsWritten->Int.toFloat /. wallSeconds)
+      ->Float.toFixed(~digits=0)} rows/s, ${(wallSeconds *. 1000. /.
       prepared->Array.length->Int.toFloat)->Float.toFixed(~digits=0)} ms/batch`,
   )
 }

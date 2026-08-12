@@ -33,7 +33,6 @@ type columnInput = {
 @send
 external stage: (t, ~table: string, ~rows: int, ~columns: array<columnInput>) => int = "stage"
 @send external flush: (t, int) => promise<array<string>> = "flush"
-@send external discard: (t, int) => unit = "discard"
 @send external invalidateSchema: (t, string) => unit = "invalidateSchema"
 
 let make = (~url, ~username, ~password, ~database) =>

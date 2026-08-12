@@ -193,13 +193,6 @@ impl ClickHouseSink {
         self.insert_staged(staged).await.map_err(to_napi)
     }
 
-    /// Drops a staged batch without inserting it. Only needed if the caller
-    /// abandons a batch between `stage` and `flush`.
-    #[napi]
-    pub fn discard(&self, handle: u32) {
-        self.staged.lock().unwrap().remove(&handle);
-    }
-
     /// Forgets the cached column types for `table`, so the next insert re-reads
     /// them. Called after DDL recreates a table.
     #[napi]
