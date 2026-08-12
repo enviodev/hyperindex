@@ -282,9 +282,14 @@ impl SvmHyperSyncClient {
                         block_hash_page(response).map_err(map_err)?;
                     // Each advancing cursor proves its half-open range was
                     // processed; block rows missing inside it are skipped slots.
-                    aggregate
-                        .mark_svm_coverage(request_from, next.min(to_slot_exclusive))
-                        .map_err(map_err)?;
+                    // A cursor that didn't advance proves nothing — leave it to
+                    // the paginator, which reports it as a source behind the
+                    // head rather than a malformed coverage range.
+                    if next > request_from {
+                        aggregate
+                            .mark_svm_coverage(request_from, next.min(to_slot_exclusive))
+                            .map_err(map_err)?;
+                    }
                     Ok(HashPage {
                         next,
                         last_returned,
