@@ -69,26 +69,29 @@ tables:
 
 // The compiled plans read the event by path, so a mock item can hand the real
 // materializer handler a plain event object with the params under test.
-let makeTransferItem = (~block, ~from, ~to, ~value, ~handler: Internal.handler) => (
-  {
-    blockNumber: block,
-    logIndex: 0,
-    handler: args => {
-      let event =
-        {
-          "contractName": "ERC20",
-          "eventName": "Transfer",
-          "chainId": 1,
-          "params": {"from": from, "to": to, "value": value},
-          "block": {"number": block},
-        }->(Utils.magic: {..} => Internal.event)
-      handler({
-        event,
-        context: args.context->(Utils.magic: MockIndexer.handlerContext => Internal.handlerContext),
-      })
-    },
-  }: MockIndexer.Source.itemMock
-)
+let makeTransferItem = (
+  ~block,
+  ~from,
+  ~to,
+  ~value,
+  ~handler: Internal.handler,
+): MockIndexer.Source.itemMock => {
+  blockNumber: block,
+  logIndex: 0,
+  handler: args => {
+    let event = {
+      "contractName": "ERC20",
+      "eventName": "Transfer",
+      "chainId": 1,
+      "params": {"from": from, "to": to, "value": value},
+      "block": {"number": block},
+    }->(Utils.magic: {..} => Internal.event)
+    handler({
+      event,
+      context: args.context->(Utils.magic: MockIndexer.handlerContext => Internal.handlerContext),
+    })
+  },
+}
 
 let materializerHandler = (config: Config.t) =>
   switch Materialization.buildHandlers(config)->Array.find(({contractName, eventName}) =>
@@ -109,57 +112,64 @@ describe("Materialized reducer rollback", () => {
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chainId=#1,
     )
-    let indexerMock = await MockIndexer.Indexer.make(
+    await MockIndexer.Indexer.run(
       ~config,
-      ~chains=[{chain: #1, sourceConfig: Config.CustomSources([source.source]), maxReorgDepth: 200}],
-    )
-    await Utils.delay(0)
-    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=source)
+      ~chains=[
+        {chain: #1, sourceConfig: Config.CustomSources([source.source]), maxReorgDepth: 200},
+      ],
+      async indexerMock => {
+        await Utils.delay(0)
+        await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=source)
 
-    // Block 101 moves 5 from alice to bob and is never reorged.
-    source.resolveGetItemsOrThrow(
-      [makeTransferItem(~block=101, ~from=alice, ~to=bob, ~value=5n, ~handler)],
-      ~latestFetchedBlockNumber=101,
-      ~latestFetchedBlockHash="0x101",
-    )
-    await indexerMock.getBatchWritePromise()
+        // Block 101 moves 5 from alice to bob and is never reorged.
+        source.resolveGetItemsOrThrow(
+          [makeTransferItem(~block=101, ~from=alice, ~to=bob, ~value=5n, ~handler)],
+          ~latestFetchedBlockNumber=101,
+          ~latestFetchedBlockHash="0x101",
+        )
+        await indexerMock.getBatchWritePromise()
 
-    // Block 102 moves 2 more, and is the change the reorg takes back.
-    source.resolveGetItemsOrThrow(
-      [makeTransferItem(~block=102, ~from=alice, ~to=bob, ~value=2n, ~handler)],
-      ~latestFetchedBlockNumber=102,
-      ~latestFetchedBlockHash="0x102",
-    )
-    await indexerMock.getBatchWritePromise()
+        // Block 102 moves 2 more, and is the change the reorg takes back.
+        source.resolveGetItemsOrThrow(
+          [makeTransferItem(~block=102, ~from=alice, ~to=bob, ~value=2n, ~handler)],
+          ~latestFetchedBlockNumber=102,
+          ~latestFetchedBlockHash="0x102",
+        )
+        await indexerMock.getBatchWritePromise()
 
-    // Block 102 comes back with a different hash.
-    source.resolveGetItemsOrThrow(
-      [],
-      ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
-    )
-    await Utils.delay(0)
-    await Utils.delay(0)
-    source.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
-    await indexerMock.getRollbackReadyPromise()
+        // Block 102 comes back with a different hash.
+        source.resolveGetItemsOrThrow(
+          [],
+          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+        )
+        await Utils.delay(0)
+        await Utils.delay(0)
+        source.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
+        await indexerMock.getRollbackReadyPromise()
 
-    // The rollback diff is written with the next batch, so drive one more.
-    source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102, ~latestFetchedBlockHash="0x102")
-    await indexerMock.getBatchWritePromise()
-    await indexerMock.waitUntilIdle()
+        // The rollback diff is written with the next batch, so drive one more.
+        source.resolveGetItemsOrThrow(
+          [],
+          ~latestFetchedBlockNumber=102,
+          ~latestFetchedBlockHash="0x102",
+        )
+        await indexerMock.getBatchWritePromise()
+        await indexerMock.waitUntilIdle()
 
-    let accounts: array<account> = await indexerMock.queryRaw(
-      config.entitiesByTableName->Dict.getUnsafe("accounts"),
-    )
-    let seen: array<lastSeen> = await indexerMock.queryRaw(
-      config.entitiesByTableName->Dict.getUnsafe("last_seen"),
-    )
-    await indexerMock.stop()
+        let accounts: array<account> = await indexerMock.queryRaw(
+          config.entitiesByTableName->Dict.getUnsafe("accounts"),
+        )
+        let seen: array<lastSeen> = await indexerMock.queryRaw(
+          config.entitiesByTableName->Dict.getUnsafe("last_seen"),
+        )
 
-    t.expect((accounts->Array.toSorted((a, b) => String.compare(a.id, b.id)), seen)).toEqual((
-      [{id: alice, balance: -5n, chainId: 1}, {id: bob, balance: 5n, chainId: 1}],
-      // The overwritten column goes back to what block 101 wrote, not to null.
-      [{id: bob, block: 101, chainId: 1}],
-    ))
+        t.expect((accounts->Array.toSorted((a, b) => String.compare(a.id, b.id)), seen)).toEqual((
+          [{id: alice, balance: -5n, chainId: 1}, {id: bob, balance: 5n, chainId: 1}],
+          // The overwritten column goes back to what block 101 wrote, not to null.
+          [{id: bob, block: 101, chainId: 1}],
+        ))
+      },
+    )
   })
 
   Async.it("Deletes a row whose only contribution is reorged away", async t => {
@@ -172,41 +182,48 @@ describe("Materialized reducer rollback", () => {
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chainId=#1,
     )
-    let indexerMock = await MockIndexer.Indexer.make(
+    await MockIndexer.Indexer.run(
       ~config,
-      ~chains=[{chain: #1, sourceConfig: Config.CustomSources([source.source]), maxReorgDepth: 200}],
-    )
-    await Utils.delay(0)
-    await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=source)
+      ~chains=[
+        {chain: #1, sourceConfig: Config.CustomSources([source.source]), maxReorgDepth: 200},
+      ],
+      async indexerMock => {
+        await Utils.delay(0)
+        await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock=source)
 
-    source.resolveGetItemsOrThrow(
-      [makeTransferItem(~block=102, ~from=alice, ~to=carol, ~value=9n, ~handler)],
-      ~latestFetchedBlockNumber=102,
-      ~latestFetchedBlockHash="0x102",
-    )
-    await indexerMock.getBatchWritePromise()
+        source.resolveGetItemsOrThrow(
+          [makeTransferItem(~block=102, ~from=alice, ~to=carol, ~value=9n, ~handler)],
+          ~latestFetchedBlockNumber=102,
+          ~latestFetchedBlockHash="0x102",
+        )
+        await indexerMock.getBatchWritePromise()
 
-    source.resolveGetItemsOrThrow(
-      [],
-      ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
-    )
-    await Utils.delay(0)
-    await Utils.delay(0)
-    source.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
-    await indexerMock.getRollbackReadyPromise()
+        source.resolveGetItemsOrThrow(
+          [],
+          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+        )
+        await Utils.delay(0)
+        await Utils.delay(0)
+        source.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
+        await indexerMock.getRollbackReadyPromise()
 
-    source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102, ~latestFetchedBlockHash="0x102")
-    await indexerMock.getBatchWritePromise()
-    await indexerMock.waitUntilIdle()
+        source.resolveGetItemsOrThrow(
+          [],
+          ~latestFetchedBlockNumber=102,
+          ~latestFetchedBlockHash="0x102",
+        )
+        await indexerMock.getBatchWritePromise()
+        await indexerMock.waitUntilIdle()
 
-    let accounts: array<account> = await indexerMock.queryRaw(
-      config.entitiesByTableName->Dict.getUnsafe("accounts"),
-    )
-    let seen: array<lastSeen> = await indexerMock.queryRaw(
-      config.entitiesByTableName->Dict.getUnsafe("last_seen"),
-    )
-    await indexerMock.stop()
+        let accounts: array<account> = await indexerMock.queryRaw(
+          config.entitiesByTableName->Dict.getUnsafe("accounts"),
+        )
+        let seen: array<lastSeen> = await indexerMock.queryRaw(
+          config.entitiesByTableName->Dict.getUnsafe("last_seen"),
+        )
 
-    t.expect((accounts, seen)).toEqual(([], []))
+        t.expect((accounts, seen)).toEqual(([], []))
+      },
+    )
   })
 })

@@ -1944,10 +1944,7 @@ pub fn compile(
     let mut handler_names = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
-        let handler_name = match &table.as_entity {
-            Some(name) => Some(name.clone()),
-            None => None,
-        };
+        let handler_name = table.as_entity.clone();
         if let Some(name) = &handler_name {
             validate_handler_name(name, table_name)?;
         }

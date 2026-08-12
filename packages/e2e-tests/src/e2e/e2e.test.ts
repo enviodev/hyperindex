@@ -710,7 +710,14 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
   });
 
   it("serves a config.yaml table as a set, with no by_pk root", async () => {
-    const result = await graphql.query<{
+    // As the `public` role, not admin: the root fields are restricted by the
+    // table's select permission, and admin bypasses permissions entirely.
+    const asPublic = new GraphQLClient({
+      endpoint: config.graphqlEndpoint,
+      adminSecret: config.hasuraAdminSecret,
+      role: "public",
+    });
+    const result = await asPublic.query<{
       __schema: { queryType: { fields: Array<{ name: string }> } };
     }>(`{ __schema { queryType { fields { name } } } }`);
 
@@ -735,7 +742,7 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     const expected = await runPgSql(
       `SELECT sum(value)::text FROM "Transfer" WHERE "to" = '${recipient}'`
     );
-    const actual = await graphql.query<{
+    const actual = await asPublic.query<{
       transfer_totals: Array<{ received: string }>;
     }>(`{ transfer_totals(where: {id: {_eq: "${recipient}"}}) { received } }`);
 
