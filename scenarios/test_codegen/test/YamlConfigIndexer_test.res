@@ -38,34 +38,39 @@ chains:
       )
 
       let source = MockIndexer.Source.make([#getHeightOrThrow, #getItemsOrThrow], ~chainId=#1337)
-      let indexerMock = await MockIndexer.Indexer.make(
+      await MockIndexer.Indexer.run(
         ~config,
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([source.source])}],
         ~shouldRollbackOnReorg=false,
-      )
-      await Utils.delay(0)
+        async indexerMock => {
+          await Utils.delay(0)
 
-      source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+          source.resolveGetHeightOrThrow(300)
+          await Utils.delay(0)
+          await Utils.delay(0)
 
-      source.resolveGetItemsOrThrow([
-        {
-          blockNumber: 5,
-          logIndex: 0,
-          handler: async args => {
-            let context =
-              args.context->(Utils.magic: MockIndexer.handlerContext => yamlHandlerContext)
-            context.yamlToken.set({id: "token-1", owner: "0xabc"})
-          },
+          source.resolveGetItemsOrThrow(
+            [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: MockIndexer.handlerContext => yamlHandlerContext)
+                  context.yamlToken.set({id: "token-1", owner: "0xabc"})
+                },
+              },
+            ],
+            ~latestFetchedBlockNumber=300,
+          )
+          await indexerMock.getBatchWritePromise()
+
+          let tokens: array<yamlToken> = await indexerMock.queryRaw(
+            config.userEntitiesByName->Dict.getUnsafe("YamlToken"),
+          )
+          t.expect(tokens).toEqual([{id: "token-1", owner: "0xabc"}])
         },
-      ], ~latestFetchedBlockNumber=300)
-      await indexerMock.getBatchWritePromise()
-
-      let tokens: array<yamlToken> = await indexerMock.queryRaw(
-        config.userEntitiesByName->Dict.getUnsafe("YamlToken"),
       )
-      t.expect(tokens).toEqual([{id: "token-1", owner: "0xabc"}])
     },
   )
 })

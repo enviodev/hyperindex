@@ -12,7 +12,7 @@ describe("Concurrent batch write and processing", () => {
         [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
         ~chainId=#1337,
       )
-      let indexerMock = await MockIndexer.Indexer.make(
+      await MockIndexer.Indexer.run(
         ~chains=[
           {
             chain: #1337,
@@ -63,106 +63,116 @@ describe("Concurrent batch write and processing", () => {
             run()
           },
         },
+        async indexerMock => {
+          await Utils.delay(0)
+          await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+
+          sourceMock.resolveGetItemsOrThrow(
+            [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async ({context}) => {
+                  context.\"SimpleEntity".set({
+                    id: "1",
+                    value: "created",
+                  })
+                },
+              },
+            ],
+            ~latestFetchedBlockNumber=101,
+            ~resolveAt=#first,
+          )
+          await indexerMock.getBatchWritePromise()
+
+          // Delete the entity and stall the batch write so it stays in flight
+          let resolveStall = ref(() => ())
+          stallWriteBatch :=
+            Some(Promise.make((resolve, _reject) => resolveStall := (() => resolve())))
+          let writeBatchCallsBeforeStall = writeBatchCalls.contents
+          sourceMock.resolveGetItemsOrThrow(
+            [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async ({context}) => {
+                  context.\"SimpleEntity".deleteUnsafe("1")
+                },
+              },
+            ],
+            ~latestFetchedBlockNumber=102,
+            ~resolveAt=#first,
+          )
+          while writeBatchCalls.contents == writeBatchCallsBeforeStall {
+            await Utils.delay(1)
+          }
+
+          // Re-create the entity while the delete's write is still in flight
+          let recreateProcessed = ref(false)
+          sourceMock.resolveGetItemsOrThrow(
+            [
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async ({context}) => {
+                  context.\"SimpleEntity".set({
+                    id: "1",
+                    value: "recreated",
+                  })
+                  recreateProcessed := true
+                },
+              },
+            ],
+            ~latestFetchedBlockNumber=103,
+            ~resolveAt=#first,
+          )
+          while !recreateProcessed.contents {
+            await Utils.delay(1)
+          }
+          // Let the processed batch get queued for the next write
+          await Utils.delay(1)
+
+          stallWriteBatch := None
+          resolveStall.contents()
+          await indexerMock.getBatchWritePromise()
+
+          t.expect(
+            (
+              writeBatchErrors,
+              await (
+                indexerMock.queryHistory("SimpleEntity"): promise<
+                  array<Change.t<Indexer.Entities.SimpleEntity.t>>,
+                >
+              ),
+            ),
+            ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
+          ).toEqual((
+            [],
+            [
+              Set({
+                checkpointId: 2n,
+                entityId: "1"->EntityId.unsafeOfString,
+                entity: {
+                  Indexer.Entities.SimpleEntity.id: "1",
+                  value: "created",
+                },
+              }),
+              Delete({
+                checkpointId: 3n,
+                entityId: "1"->EntityId.unsafeOfString,
+              }),
+              Set({
+                checkpointId: 4n,
+                entityId: "1"->EntityId.unsafeOfString,
+                entity: {
+                  Indexer.Entities.SimpleEntity.id: "1",
+                  value: "recreated",
+                },
+              }),
+            ],
+          ))
+        },
       )
-      await Utils.delay(0)
-      await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
-
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.\"SimpleEntity".set({
-                id: "1",
-                value: "created",
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=101,
-        ~resolveAt=#first,
-      )
-      await indexerMock.getBatchWritePromise()
-
-      // Delete the entity and stall the batch write so it stays in flight
-      let resolveStall = ref(() => ())
-      stallWriteBatch := Some(Promise.make((resolve, _reject) => resolveStall := () => resolve()))
-      let writeBatchCallsBeforeStall = writeBatchCalls.contents
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.\"SimpleEntity".deleteUnsafe("1")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=102,
-        ~resolveAt=#first,
-      )
-      while writeBatchCalls.contents == writeBatchCallsBeforeStall {
-        await Utils.delay(1)
-      }
-
-      // Re-create the entity while the delete's write is still in flight
-      let recreateProcessed = ref(false)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.\"SimpleEntity".set({
-                id: "1",
-                value: "recreated",
-              })
-              recreateProcessed := true
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
-      )
-      while !recreateProcessed.contents {
-        await Utils.delay(1)
-      }
-      // Let the processed batch get queued for the next write
-      await Utils.delay(1)
-
-      stallWriteBatch := None
-      resolveStall.contents()
-      await indexerMock.getBatchWritePromise()
-
-      t.expect(
-        (writeBatchErrors, await (indexerMock.queryHistory("SimpleEntity"): promise<array<Change.t<Indexer.Entities.SimpleEntity.t>>>)),
-        ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
-      ).toEqual((
-        [],
-        [
-          Set({
-            checkpointId: 2n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              Indexer.Entities.SimpleEntity.id: "1",
-              value: "created",
-            },
-          }),
-          Delete({
-            checkpointId: 3n,
-            entityId: "1"->EntityId.unsafeOfString,
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              Indexer.Entities.SimpleEntity.id: "1",
-              value: "recreated",
-            },
-          }),
-        ],
-      ))
     },
   )
 })
