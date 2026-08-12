@@ -11,6 +11,10 @@ const ENVIO_BIN = path.resolve(
 );
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..");
 
+// Its own schema, so `setup`/`down` can't wipe a schema another test file is
+// indexing into while the suite runs in parallel.
+const PG_SCHEMA = `envio_test_${Date.now()}_${process.pid}_dbmigrate`;
+
 const runEnvio = (args: string[]) =>
   spawnSync(process.execPath, [ENVIO_BIN, ...args], {
     cwd: PROJECT_ROOT,
@@ -19,6 +23,7 @@ const runEnvio = (args: string[]) =>
     env: {
       ...process.env,
       ENVIO_PG_PORT: "5433",
+      ENVIO_PG_SCHEMA: PG_SCHEMA,
       // Hasura isn't reachable in the test environment; without this, retries
       // dominate runtime and obscure whether the process actually exited.
       ENVIO_HASURA: "false",

@@ -6,50 +6,53 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chainId=#1337,
     )
-    let indexerMock = await MockIndexer.Indexer.make(
+    await MockIndexer.Indexer.run(
       ~chains=[
         {
           chain: #1337,
           sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
-    )
-    await Utils.delay(0)
+      async indexerMock => {
+        await Utils.delay(0)
 
-    sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 100,
-          logIndex: 0,
-          handler: async ({context}) => {
-            context.\"EntityWithBigDecimal".set({
-              id: "testEntity",
-              bigDecimal: BigDecimal.fromFloat(123.456),
-            })
-            context.\"EntityWithBigDecimal".set({
-              id: "testEntity2",
-              bigDecimal: BigDecimal.fromFloat(654.321),
-            })
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=100,
-    )
-    await indexerMock.getBatchWritePromise()
+        sourceMock.resolveGetHeightOrThrow(300)
+        await Utils.delay(0)
+        await Utils.delay(0)
+        sourceMock.resolveGetItemsOrThrow(
+          [
+            {
+              blockNumber: 100,
+              logIndex: 0,
+              handler: async ({context}) => {
+                context.\"EntityWithBigDecimal".set({
+                  id: "testEntity",
+                  bigDecimal: BigDecimal.fromFloat(123.456),
+                })
+                context.\"EntityWithBigDecimal".set({
+                  id: "testEntity2",
+                  bigDecimal: BigDecimal.fromFloat(654.321),
+                })
+              },
+            },
+          ],
+          ~latestFetchedBlockNumber=100,
+        )
+        await indexerMock.getBatchWritePromise()
 
-    let entities: array<Indexer.Entities.EntityWithBigDecimal.t> =
-      await indexerMock.query("EntityWithBigDecimal")
-    switch entities->Array.find(e => e.id === "testEntity") {
-    | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("123.456")
-    | None => JsError.throwWithMessage("testEntity1 should exist")
-    }
-    switch entities->Array.find(e => e.id === "testEntity2") {
-    | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("654.321")
-    | None => JsError.throwWithMessage("testEntity2 should exist")
-    }
+        let entities: array<Indexer.Entities.EntityWithBigDecimal.t> = await indexerMock.query(
+          "EntityWithBigDecimal",
+        )
+        switch entities->Array.find(e => e.id === "testEntity") {
+        | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("123.456")
+        | None => JsError.throwWithMessage("testEntity1 should exist")
+        }
+        switch entities->Array.find(e => e.id === "testEntity2") {
+        | Some(entity) => t.expect(entity.bigDecimal.toString()).toBe("654.321")
+        | None => JsError.throwWithMessage("testEntity2 should exist")
+        }
+      },
+    )
   })
 })
 
