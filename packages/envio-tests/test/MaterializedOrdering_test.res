@@ -93,6 +93,15 @@ describe("materializer ordering", () => {
     });
   });
 
+
+  it("counts the log once per registration", async (t) => {
+    const indexer = createTestIndexer();
+
+    const result = await indexer.process({ chains: { 1: { simulate: [transfer(5n)] } } });
+
+    // One log, two registrations: the shared materializer's and the handler's.
+    t.expect(result.changes.map((c) => c.eventsProcessed)).toEqual([2]);
+  });
 });
 `,
 )

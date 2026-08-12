@@ -19,9 +19,6 @@ type registrationsByChainId = dict<chainRegistrations>
 type activeRegistration = {
   config: Config.t,
   registrationsByChainId: dict<chainRegistrations>,
-  // The handlers `Materialization` built, by identity, so they can be folded
-  // into a user handler's registration instead of taking one of their own.
-  materializerHandlers: Utils.Set.t<Internal.handler>,
   mutable finished: bool,
 }
 
@@ -143,81 +140,15 @@ let sameEventAndFilter = (
   | Fuel | Svm => true
   }
 
-// A materializer takes a registration of its own only when it has to. Sharing
-// one with a handler that fetches exactly the same logs means one item per log
-// instead of two — the event is counted once, and the handler still reads the
-// current event's contribution because the materializer runs first inside the
-// shared handler.
-//
-// Only the *first* handler for the event is a candidate: folding into a later
-// one would let an earlier handler read the table before this event's write.
-let inlineMaterializers = (
-  resolved: array<Internal.onEventRegistration>,
-  ~materializerHandlers: Utils.Set.t<Internal.handler>,
-  ~config: Config.t,
-): array<Internal.onEventRegistration> => {
-  let isMaterializer = (reg: Internal.onEventRegistration) =>
-    switch reg.handler {
-    | Some(handler) => materializerHandlers->Utils.Set.has(handler)
-    | None => false
-    }
-  let materializers = resolved->Array.filter(isMaterializer)
-  if materializers->Utils.Array.isEmpty {
-    resolved
-  } else {
-    let hosts = resolved->Array.filter(reg => !isMaterializer(reg))
-    let standalone = []
-    materializers->Array.forEach(materializer => {
-      let key = getKey(
-        ~contractName=materializer.eventConfig.contractName,
-        ~eventName=materializer.eventConfig.name,
-      )
-      let firstHandler = hosts->Array.findIndex(
-        reg =>
-          reg.handler->Option.isSome &&
-            getKey(~contractName=reg.eventConfig.contractName, ~eventName=reg.eventConfig.name) ===
-              key,
-      )
-      switch firstHandler {
-      | -1 => standalone->Array.push(materializer)->ignore
-      | index =>
-        let host = hosts->Array.getUnsafe(index)
-        if sameEventAndFilter(host, materializer, ~config) {
-          let write = materializer.handler->Option.getUnsafe
-          let handle = host.handler->Option.getUnsafe
-          hosts->Array.setUnsafe(
-            index,
-            {
-              ...host,
-              handler: Some(
-                async args => {
-                  await write(args)
-                  await handle(args)
-                },
-              ),
-            },
-          )
-        } else {
-          standalone->Array.push(materializer)->ignore
-        }
-      }
-    })
-    standalone->Array.concat(hosts)
-  }
-}
-
 // Merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
 // dispatch order follows handler registration order). Two handlers (or two
 // contractRegisters) for one event never merge. Operates on the raw per-chain
 // registrations stored at `onEvent` time; shared by `finishRegistration` and
 // simulate so both see the same registrations.
-let mergeRegistrations = (
-  resolved: array<Internal.onEventRegistration>,
-  ~materializerHandlers: Utils.Set.t<Internal.handler>,
-  ~config: Config.t,
-): array<Internal.onEventRegistration> => {
-  let resolved = resolved->inlineMaterializers(~materializerHandlers, ~config)
+let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config: Config.t): array<
+  Internal.onEventRegistration,
+> => {
   let merged: ref<array<Internal.onEventRegistration>> = ref([])
   resolved->Array.forEach((reg: Internal.onEventRegistration) => {
     if reg.handler->Option.isSome {
@@ -359,7 +290,6 @@ let startRegistration = (~config: Config.t) => {
     let r = {
       config,
       registrationsByChainId: Dict.make(),
-      materializerHandlers: Utils.Set.make(),
       finished: false,
     }
     EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
@@ -373,16 +303,13 @@ let startRegistration = (~config: Config.t) => {
       wildcard,
       handler,
     }) =>
-      {
-        r.materializerHandlers->Utils.Set.add(handler)->ignore
-        r->addOnEventRegistration(
-          ~contractName,
-          ~eventName,
-          ~handler=Some(handler),
-          ~contractRegister=None,
-          ~eventOptions=wildcard ? Some({wildcard: true}) : None,
-        )
-      }
+      r->addOnEventRegistration(
+        ~contractName,
+        ~eventName,
+        ~handler=Some(handler),
+        ~contractRegister=None,
+        ~eventOptions=wildcard ? Some({wildcard: true}) : None,
+      )
     )
     // Replay pre-registered callbacks in source (FIFO) order, then clear. For
     // multiple handlers on one event this replay order is the dispatch order, so
@@ -467,12 +394,12 @@ let getSimulateOnEventRegistrations = (
   ~chainId: ChainId.t,
   ~eventConfig: Internal.eventConfig,
 ): array<Internal.onEventRegistration> => {
-  let (stored, materializerHandlers) = switch getActiveRegistration() {
-  | Some(r) => (r->storedOnEventRegistrations(~chainId), r.materializerHandlers)
-  | None => ([], Utils.Set.make())
+  let stored = switch getActiveRegistration() {
+  | Some(r) => r->storedOnEventRegistrations(~chainId)
+  | None => []
   }
   let matching =
-    mergeRegistrations(stored, ~materializerHandlers, ~config)->Array.filter(reg =>
+    mergeRegistrations(stored, ~config)->Array.filter(reg =>
       reg.eventConfig.contractName === eventConfig.contractName &&
         reg.eventConfig.name === eventConfig.name
     )
@@ -505,11 +432,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
         let chainId = chainConfig.id
         let key = chainId->ChainId.toString
 
-        let builtRegs = mergeRegistrations(
-          r->storedOnEventRegistrations(~chainId),
-          ~materializerHandlers=r.materializerHandlers,
-          ~config,
-        )
+        let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
         let registeredKeys = Utils.Set.make()
         builtRegs->Array.forEach(reg =>
           registeredKeys
