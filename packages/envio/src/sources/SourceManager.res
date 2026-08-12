@@ -699,9 +699,9 @@ let retryBehindHead = async (
 }
 
 // A source that keeps contradicting itself is not mid-reorg, it is broken, and
-// no amount of retrying moves the chain forward. Roughly ten minutes of the
+// no amount of retrying moves the chain forward. Roughly five minutes of the
 // backoff schedule below.
-let inconsistentResponseStallRetries = 25
+let inconsistentResponseStallRetries = 13
 
 // The response contradicted itself (the same block twice with different hashes,
 // or a requested hash missing). It may be a reorg mid-request, so refetch before

@@ -694,6 +694,26 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         }
     }
 
+    /// Clear `field` on rows with keys `> above`, dropping any row left with
+    /// no fields. Forgets stale reorg hashes past a detected divergence
+    /// without discarding buffered block data other partitions still need.
+    pub(crate) fn clear_field_above(&mut self, above: K, field: usize) {
+        let bit = 1u64 << field;
+        let affected: Vec<K> = self
+            .order
+            .range((std::ops::Bound::Excluded(above), std::ops::Bound::Unbounded))
+            .filter(|(_, &slot)| self.masks[slot as usize] & bit != 0)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in affected {
+            let slot = self.by_key[&k];
+            self.masks[slot as usize] &= !bit;
+            if self.masks[slot as usize] == 0 {
+                self.drop_row(&k, slot);
+            }
+        }
+    }
+
     /// Drop rows with keys `< below` whose only field is `field`, i.e.
     /// hash-only reorg observations that fell out of the threshold window.
     /// Rows carrying other fields are data awaiting batch-progress pruning
