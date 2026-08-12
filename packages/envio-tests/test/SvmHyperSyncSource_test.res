@@ -215,7 +215,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       t.expect({
         "item": item,
         "query": capturedQueries->Array.getUnsafe(0),
-        "latestFetchedBlockTimestamp": response.latestFetchedBlockTimestamp,
       }).toEqual({
         "item": Some({
           "blockNumber": slot,
@@ -245,7 +244,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
             clientFilteredContracts: None,
           }: SvmHyperSyncClient.EventItems.query
         ),
-        "latestFetchedBlockTimestamp": blockTime,
       })
     },
   )

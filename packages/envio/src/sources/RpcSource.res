@@ -774,6 +774,26 @@ let make = (
     receiptLoader := makeReceiptLoader()
   }
 
+  // The two blocks reorg detection reads per range are loaded here rather than
+  // through the cache: it is keyed by block number and only dropped on a reorg,
+  // so a retry of a range would be served whatever the failed attempt saw — the
+  // very fork the retry exists to reveal. The fresh load is published back to
+  // the cache, so an event payload in the same block still costs one request.
+  let getFreshBlockInfo = blockNumber =>
+    blockLoader.contents
+    ->LazyLoader.set(
+      blockNumber,
+      getKnownRawBlockWithBackoff(
+        ~client,
+        ~sourceName=name,
+        ~chainId,
+        ~backoffMsOnFailure=1000,
+        ~blockNumber,
+        ~recordRequest,
+      ),
+    )
+    ->Promise.thenResolve(parseBlockInfo)
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -821,11 +841,14 @@ let make = (
     | None => knownHeight
     }
 
-    let firstBlockParentPromise =
-      fromBlock > 0
-        ? blockLoader.contents
-          ->LazyLoader.get(fromBlock - 1)
-          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
+    // The seam block (`fromBlock - 1`) is the only block this range shares with
+    // what the store already scanned, so it is where a reorg at the boundary
+    // shows up. Read `fromBlock` and take the seam's hash from its `parentHash`:
+    // the seam itself was the previous range's `toBlock` and would come back
+    // from that range's view of the chain.
+    let firstBlockPromise =
+      fromBlock > 0 && fromBlock <= toBlock
+        ? getFreshBlockInfo(fromBlock)->Promise.thenResolve(b => Some(b))
         : Promise.resolve(None)
 
     if selection.onEventRegistrations->Utils.Array.isEmpty {
@@ -875,9 +898,13 @@ let make = (
     }
     requestStats->Array.forEach(stat => recordRequest(~method=stat.method, ~seconds=stat.seconds))
 
-    let latestFetchedBlockInfo = await blockLoader.contents
-    ->LazyLoader.get(queriedToBlock)
-    ->Promise.thenResolve(parseBlockInfo)
+    // A single-block range asks for the same block as both the seam and the
+    // head, and it is only worth one request.
+    let optFirstBlock = await firstBlockPromise
+    let latestFetchedBlockInfo = switch optFirstBlock {
+    | Some(firstBlock) if firstBlock.number === queriedToBlock => firstBlock
+    | _ => await getFreshBlockInfo(queriedToBlock)
+    }
 
     let parsedQueueItems = await items
     ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
@@ -950,14 +977,14 @@ let make = (
     })
     ->Promise.all
 
-    let optFirstBlockParent = await firstBlockParentPromise
-
     let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    // They go into a hash-only page store merged into the chain store, where
-    // hash comparison happens. The block data itself stays inline on the payload.
+    // Both these blocks and the logs' own `blockHash` come from this range's
+    // responses, never from the block cache's older view of the chain. They go
+    // into a hash-only page store merged into the chain store, where hash
+    // comparison happens. The block data itself stays inline on the payload.
     let observedBlocks: array<BlockStore.inputBlock> = []
     let pushBlockInfo = (b: blockInfo) => {
       observedBlocks
@@ -974,7 +1001,7 @@ let make = (
       }
     }
     pushBlockInfo(latestFetchedBlockInfo)
-    switch optFirstBlockParent {
+    switch optFirstBlock {
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }
@@ -985,7 +1012,6 @@ let make = (
     )
 
     {
-      latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
       // RPC keeps the transaction and block inline on the payload; no
@@ -1005,7 +1031,7 @@ let make = (
     }
   }
 
-  let onReorg = (~rollbackTargetBlock as _) => {
+  let onReorg = () => {
     // Drop cached block/transaction/receipt data — after a reorg or an
     // internally inconsistent response these may refer to orphaned-chain values.
     resetCachedLoaders()

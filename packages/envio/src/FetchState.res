@@ -1,9 +1,6 @@
 type indexingAddress = Internal.indexingContract
 
-type blockNumberAndTimestamp = {
-  blockNumber: int,
-  blockTimestamp: int,
-}
+type blockRef = {blockNumber: int}
 
 type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
 
@@ -70,7 +67,7 @@ type pendingQuery = {
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
-  mutable fetchedBlock: option<blockNumberAndTimestamp>,
+  mutable fetchedBlock: option<blockRef>,
 }
 
 /**
@@ -83,7 +80,7 @@ type partition = {
   id: string,
   // The block number of the latest fetched query
   // which added all its events to the queue
-  latestFetchedBlock: blockNumberAndTimestamp,
+  latestFetchedBlock: blockRef,
   selection: selection,
   // The partition's slice of the chain's address index. Ordered by
   // (effectiveStartBlock, address) inside Rust, so a partition layout is a pure
@@ -303,7 +300,7 @@ module OptimizedPartitions = {
         id: newId,
         dynamicContract: Some(contractName),
         selection: p1.selection,
-        latestFetchedBlock: {blockNumber: potentialMergeBlock, blockTimestamp: 0},
+        latestFetchedBlock: {blockNumber: potentialMergeBlock},
         mergeBlock: None,
         addresses: p1.addresses, // replaced below
         mutPendingQueries: [],
@@ -612,7 +609,7 @@ module OptimizedPartitions = {
   @inline
   let consumeFetchedQueries = (
     mutPendingQueries: array<pendingQuery>,
-    ~initialLatestFetchedBlock: blockNumberAndTimestamp,
+    ~initialLatestFetchedBlock: blockRef,
   ) => {
     let latestFetchedBlock = ref(initialLatestFetchedBlock)
 
@@ -662,7 +659,7 @@ module OptimizedPartitions = {
     ~query,
     ~knownHeight,
     ~itemsCount,
-    ~latestFetchedBlock: blockNumberAndTimestamp,
+    ~latestFetchedBlock: blockRef,
   ) =>
     optimizedPartitions->handleQueryResponseForPartition(
       ~p=optimizedPartitions->getOrThrow(~partitionId=query.partitionId),
@@ -678,7 +675,7 @@ module OptimizedPartitions = {
     ~query,
     ~knownHeight,
     ~itemsCount,
-    ~latestFetchedBlock: blockNumberAndTimestamp,
+    ~latestFetchedBlock: blockRef,
   ) => {
     let mutEntities = optimizedPartitions.entities->Utils.Dict.shallowCopy
 
@@ -876,13 +873,11 @@ let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
   switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
   | None => {
       blockNumber: latestOnBlockBlockNumber,
-      blockTimestamp: 0,
     }
   | Some(latestFullyFetchedBlock) =>
     latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
       ? {
           blockNumber: latestOnBlockBlockNumber,
-          blockTimestamp: 0,
         }
       : latestFullyFetchedBlock
   }
@@ -1213,7 +1208,7 @@ let collapseClientFilteredContracts = (
   // Frontiers of the addresses that were never given a server-side partition
   // because their contract is already client-filtered. They stand in for the
   // partitions that would otherwise have been created only to be absorbed here.
-  ~clientFilteredFrontiers: array<blockNumberAndTimestamp>=[],
+  ~clientFilteredFrontiers: array<blockRef>=[],
   ~knownHeight: int,
 ) => {
   if clientFilteredContracts->Utils.Set.size === 0 {
@@ -1301,8 +1296,8 @@ let collapseClientFilteredContracts = (
       // partition (and any in-progress backfill) untouched.
       partitions
     } else {
-      let minFrontierRef: ref<option<blockNumberAndTimestamp>> = ref(None)
-      let considerFrontier = (b: blockNumberAndTimestamp) =>
+      let minFrontierRef: ref<option<blockRef>> = ref(None)
+      let considerFrontier = (b: blockRef) =>
         switch minFrontierRef.contents {
         | Some(m) if m.blockNumber <= b.blockNumber => ()
         | _ => minFrontierRef := Some(b)
@@ -1537,7 +1532,6 @@ OptimizedPartitions.t => {
       | Some({startBlock}) =>
         clientFilteredFrontiers->Array.push({
           blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
-          blockTimestamp: 0,
         })
       | None => ()
       }
@@ -1564,7 +1558,6 @@ OptimizedPartitions.t => {
 
         let latestFetchedBlock = {
           blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
-          blockTimestamp: 0,
         }
         let remainingRef = ref(countRef.contents)
         let chunkOffsetRef = ref(offsetRef.contents)
@@ -1872,7 +1865,7 @@ newItems are ordered earliest to latest (as they are returned from the worker)
 let handleQueryResult = (
   fetchState: t,
   ~query: query,
-  ~latestFetchedBlock: blockNumberAndTimestamp,
+  ~latestFetchedBlock: blockRef,
   ~newItems,
 ): t => {
   fetchState->updateInternal(
@@ -2617,7 +2610,6 @@ let make = (
   ~isResumed=false,
 ): t => {
   let latestFetchedBlock = {
-    blockTimestamp: 0,
     blockNumber: progressBlockNumber,
   }
 
@@ -2813,7 +2805,7 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
         adjusted
         ->Array.push({
           ...pq,
-          fetchedBlock: Some({blockNumber: targetBlockNumber, blockTimestamp: 0}),
+          fetchedBlock: Some({blockNumber: targetBlockNumber}),
         })
         ->ignore
       | Some(_) => adjusted->Array.push(pq)->ignore
@@ -2869,7 +2861,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
         ...p,
         id,
         latestFetchedBlock: p.latestFetchedBlock.blockNumber > targetBlockNumber
-          ? {blockNumber: targetBlockNumber, blockTimestamp: 0}
+          ? {blockNumber: targetBlockNumber}
           : p.latestFetchedBlock,
         // Everything above the target is refetched by whichever partition this
         // one was catching up to, so there is nothing left to catch up on past

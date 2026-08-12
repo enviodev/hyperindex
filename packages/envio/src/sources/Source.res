@@ -25,6 +25,21 @@ type nativeRequestFailure = {
 // Keep in sync with `request_stats.rs` `NATIVE_FAILURE_PREFIX`.
 let nativeFailurePrefix = "ENVIO_NATIVE_FAILURE:"
 
+// The envelope `request_stats.rs` writes after the prefix.
+type nativeFailurePayload = {message: string, requestStats: array<requestStat>}
+
+let nativeFailurePayloadSchema = S.schema(s => {
+  message: s.matches(S.string),
+  requestStats: s.matches(
+    S.array(
+      S.schema(s => {
+        method: s.matches(S.string),
+        seconds: s.matches(S.float),
+      }),
+    ),
+  ),
+})
+
 let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   let originalMessage = switch exn->JsExn.anyToExnInternal {
   | JsExn(jsExn) => jsExn->JsExn.message
@@ -34,36 +49,18 @@ let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   // keeps its original message and cause untouched.
   let decoded = switch originalMessage {
   | Some(message) if message->String.startsWith(nativeFailurePrefix) =>
-    let payload =
-      message->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
-    switch payload->JSON.parseOrThrow->JSON.Decode.object {
-    | exception _ => None
-    | Some(obj) =>
-      switch obj->Dict.get("message") {
-      | Some(String(innerMessage)) =>
-        let requestStats = switch obj->Dict.get("requestStats") {
-        | Some(Array(stats)) =>
-          stats->Array.filterMap(stat =>
-            switch stat->JSON.Decode.object {
-            | Some(obj) =>
-              switch (obj->Dict.get("method"), obj->Dict.get("seconds")) {
-              | (Some(String(method)), Some(Number(seconds))) => Some({method, seconds})
-              | _ => None
-              }
-            | None => None
-            }
-          )
-        | _ => []
-        }
-        Some((innerMessage, requestStats))
-      | _ => None
-      }
-    | None => None
+    try Some(
+      message
+      ->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
+      ->JSON.parseOrThrow
+      ->S.parseOrThrow(nativeFailurePayloadSchema),
+    ) catch {
+    | _ => None
     }
   | _ => None
   }
   switch decoded {
-  | Some((message, requestStats)) => {
+  | Some({message, requestStats}) => {
       cause: JsError.make(message)->(Utils.magic: JsError.t => exn),
       message: Some(message),
       requestStats,
@@ -89,7 +86,6 @@ type blockRangeFetchResponse = {
   blockStore: BlockStore.t,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
-  latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,
 }
@@ -109,12 +105,20 @@ exception InconsistentResponse({
   missingBlockNumbers: array<int>,
 })
 
+// The queried block hasn't reached the backend instance that served the
+// request. Load-balanced backends drift from each other around the head, so
+// this is expected there and resolves by retrying — SourceManager owns the
+// backoff and the decision to fail over, identically for every ecosystem.
+// Carries the timings of the requests the failed operation did make, so a
+// retried request still counts towards the source's metrics.
+exception SourceBehindHead({blockNumber: int, requestStats: array<requestStat>})
+
 type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
 
-type rateLimited = {resetMs: int}
+type rateLimited = {resetMs: int, requestStats: array<requestStat>}
 exception RateLimited(rateLimited)
 
 type getItemsError =
@@ -158,7 +162,10 @@ type t = {
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
   // Invoked when a reorg or internally inconsistent response means local state
-  // may point at an orphaned chain (e.g. the RPC block cache). For an
-  // inconsistent response the target is the block before the retried range.
-  onReorg?: (~rollbackTargetBlock: int) => unit,
+  // may point at an orphaned chain (e.g. the RPC block cache): drop all of it.
+  // Deliberately takes no rollback target — the deepest reorged block isn't
+  // known until the depth search runs, and that search reads back through this
+  // very state, so pruning relative to a target would keep exactly the entries
+  // that make it answer wrong.
+  onReorg?: unit => unit,
 }

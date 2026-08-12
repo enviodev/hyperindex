@@ -1,28 +1,57 @@
-let mapRateLimitedFailure = (failure: Source.nativeRequestFailure) => {
+// A napi error carries nothing but a message, so the native clients signal the
+// recoverable conditions SourceManager knows how to retry as a `PREFIX:<int>`
+// marker. Keep in sync with `request_stats.rs`.
+let rateLimitedPrefix = "RATE_LIMITED:"
+let behindHeadPrefix = "SOURCE_BEHIND_HEAD:"
+
+let markerValue = (msg, ~prefix) =>
+  msg->String.slice(~start=prefix->String.length, ~end=msg->String.length)->Int.fromString
+
+let mapNativeFailure = (failure: Source.nativeRequestFailure) => {
   switch failure.message {
-  | Some(msg) if msg->String.startsWith("RATE_LIMITED:") =>
-    let resetMs =
-      msg
-      ->String.slice(~start=13, ~end=msg->String.length)
-      ->Int.fromString
-      ->Option.getOr(1000)
-    Source.RateLimited({resetMs: resetMs})
+  | Some(msg) if msg->String.startsWith(rateLimitedPrefix) =>
+    Source.RateLimited({
+      resetMs: msg->markerValue(~prefix=rateLimitedPrefix)->Option.getOr(1000),
+      requestStats: failure.requestStats,
+    })
+  | Some(msg) if msg->String.startsWith(behindHeadPrefix) =>
+    Source.SourceBehindHead({
+      blockNumber: msg->markerValue(~prefix=behindHeadPrefix)->Option.getOr(0),
+      requestStats: failure.requestStats,
+    })
   | _ => failure.cause
   }
 }
 
-let mapRateLimitedExn = exn => exn->Source.unpackNativeRequestFailure->mapRateLimitedFailure
+let mapNativeFailureExn = exn => exn->Source.unpackNativeRequestFailure->mapNativeFailure
 
-let reraiseIfRateLimited = exn =>
-  switch exn->mapRateLimitedExn {
-  | Source.RateLimited(_) as exn => throw(exn)
+// Every HyperSync client paginates block hashes in Rust and returns the page
+// store with the timings of the requests it took. A failure arrives as the
+// native envelope, which carries those same timings, so the caller records them
+// either way.
+let makeGetBlockHashes = (
+  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+) =>
+  async (~blockNumbers, ~logger as _) => {
+    let (result, requestStats) = try {
+      let (blockStore, requestStats) = await query(~blockNumbers)
+      (Ok(blockStore), requestStats)
+    } catch {
+    | exn =>
+      let failure = exn->Source.unpackNativeRequestFailure
+      (Error(failure->mapNativeFailure), failure.requestStats)
+    }
+    {Source.result, requestStats}
+  }
+
+let reraiseIfRecoverable = exn =>
+  switch exn->mapNativeFailureExn {
+  | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)
   | _ => ()
   }
 
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  // Headers for every returned block, deduplicated by block number.
-  blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
   // Page store owning this page's raw transactions.
@@ -86,7 +115,7 @@ module GetLogs = {
     ) {
     | res => res
     | exception exn =>
-      reraiseIfRateLimited(exn)
+      reraiseIfRecoverable(exn)
       switch extractMissingParams(exn) {
       | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
       | None => throw(exn)
@@ -99,7 +128,6 @@ module GetLogs = {
 
     {
       items: res.items,
-      blocks: res.blocks,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
       transactionStore,

@@ -1,4 +1,5 @@
 mod address_store;
+mod block_hash_pagination;
 mod block_store;
 mod cli_args;
 mod client_filtered_contracts;
@@ -17,6 +18,7 @@ mod field_table;
 mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
+mod hex;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;

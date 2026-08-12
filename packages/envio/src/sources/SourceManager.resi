@@ -17,7 +17,6 @@ let make: (
   ~reducedPollingInterval: int=?,
   ~recoveryTimeout: float=?,
   ~getHeightRetryInterval: (~retry: int) => int=?,
-  ~maxRetries: option<int>=?,
 ) => t
 
 let getActiveSource: t => Source.t
@@ -46,7 +45,7 @@ let queryingSeconds: t => float
 
 let inFlightCount: t => int
 
-let onReorg: (t, ~rollbackTargetBlock: int) => unit
+let onReorg: t => unit
 
 let dispatch: (
   t,

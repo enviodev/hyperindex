@@ -280,21 +280,9 @@ module EventItems = {
     params: Internal.eventParams,
   }
 
-  // The always-needed block fields, one per block number. The block's remaining
-  // fields live raw in the block store and are materialised on demand.
-  type blockHeader = {
-    number: int,
-    timestamp: int,
-    hash: string,
-  }
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One header per returned block number, including blocks no item
-    // references — reorg detection reads them all. The block store keeps only
-    // the ones items reference.
-    blocks: array<blockHeader>,
     items: array<item>,
   }
 }

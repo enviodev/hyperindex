@@ -58,6 +58,17 @@ let timeoutAfter = timeoutMillis =>
     )
   )
 
+// Remember `k` as cached, evicting the oldest entry once the cache is full.
+let rememberLoaded = (am: asyncMap<'key, 'value>, k: 'key) => {
+  if am.loadedKeys->SDSL.Queue.push(k) > am._cacheSize {
+    switch am.loadedKeys->SDSL.Queue.pop {
+    | None => ()
+    | Some(old) =>
+      let _ = am.externalPromises->Utils.Map.delete(old)
+    }
+  }
+}
+
 let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
   // Track that we are loading it now
   let _ = am.inProgress->Utils.Set.add(k)
@@ -75,17 +86,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     // Track that it is no longer in progress
     let _ = am.inProgress->Utils.Set.delete(k)
 
-    // Track that we've loaded this key
-    let loadedKeysNumber = am.loadedKeys->SDSL.Queue.push(k)
-
-    // Delete the oldest key if the cache is overly full
-    if loadedKeysNumber > am._cacheSize {
-      switch am.loadedKeys->SDSL.Queue.pop {
-      | None => ()
-      | Some(old) =>
-        let _ = am.externalPromises->Utils.Map.delete(old)
-      }
-    }
+    am->rememberLoaded(k)
 
     // Load the next one, if there is anything in the queue
     switch am.loaderQueue->SDSL.Queue.pop {
@@ -106,6 +107,16 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
       awaitTaskPromiseAndLoadNextWithTimeout()
     }
   )
+}
+
+// Publish an already-started load under `k`, replacing whatever is cached.
+// A caller that must not be served a stale value loads the key itself and hands
+// the pending promise over here, so later readers of the same key reuse it
+// instead of issuing a second request.
+let set = (am: asyncMap<'key, 'value>, k: 'key, value: promise<'value>): promise<'value> => {
+  let _ = am.externalPromises->Utils.Map.set(k, value)
+  am->rememberLoaded(k)
+  value
 }
 
 let get = (am: asyncMap<'key, 'value>, k: 'key): promise<'value> => {

@@ -1,15 +1,23 @@
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
   transactionStore: TransactionStore.t,
   blockStore: BlockStore.t,
 }
 
-let reraiseIfRateLimited: exn => unit
-let mapRateLimitedFailure: Source.nativeRequestFailure => exn
-let mapRateLimitedExn: exn => exn
+// Map a native client's `PREFIX:<int>` failure marker onto the exception
+// SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
+// the original cause.
+let mapNativeFailure: Source.nativeRequestFailure => exn
+let mapNativeFailureExn: exn => exn
+let reraiseIfRecoverable: exn => unit
+
+// Wrap a native client's paginated block-hash query as a `Source.getBlockHashes`,
+// keeping the request timings whether it succeeds or fails.
+let makeGetBlockHashes: (
+  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+) => (~blockNumbers: array<int>, ~logger: Pino.t) => promise<Source.getBlockHashesResponse>
 
 module GetLogs: {
   type error =

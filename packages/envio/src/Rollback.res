@@ -50,14 +50,17 @@ let rec rollback = async (
       let chainState = state->IndexerState.getChainState(~chainId)
 
       state->IndexerState.enterFindingReorgDepth
+
+      // Before the search, not after: it re-fetches the scanned hashes through
+      // the sources, and a source answering from a cache it filled on the
+      // orphaned chain would confirm blocks that no longer exist — stopping the
+      // rollback short of the real fork.
+      chainState->ChainState.sourceManager->SourceManager.onReorg
+
       let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
         ~reorgBlockNumber,
         ~isRealtime=state->IndexerState.isRealtime,
       )
-
-      chainState
-      ->ChainState.sourceManager
-      ->SourceManager.onReorg(~rollbackTargetBlock=rollbackTargetBlockNumber)
 
       state->IndexerState.foundReorgDepth(~chainId, ~rollbackTargetBlockNumber)
       // Rendezvous with the processing loop: whichever of {depth found, loop

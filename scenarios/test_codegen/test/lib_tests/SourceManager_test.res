@@ -94,15 +94,16 @@ describe("native request failures", () => {
     } catch {
     | exn => exn
     }
-    let failure = exn->Source.unpackNativeRequestFailure
-
-    t.expect(failure.requestStats).toEqual([
-      {Source.method: "getBlockHashes", seconds: 0.25},
-    ])
-    switch exn->HyperSync.mapRateLimitedExn {
-    | Source.RateLimited({resetMs}) => t.expect(resetMs).toEqual(2500)
-    | _ => t.expect(false, ~message="Expected a mapped rate-limit exception").toEqual(true)
-    }
+    t.expect({
+      "requestStats": (exn->Source.unpackNativeRequestFailure).requestStats,
+      "mapped": exn->HyperSync.mapNativeFailureExn,
+    }).toEqual({
+      "requestStats": [{Source.method: "getBlockHashes", seconds: 0.25}],
+      "mapped": Source.RateLimited({
+        resetMs: 2500,
+        requestStats: [{Source.method: "getBlockHashes", seconds: 0.25}],
+      }),
+    })
   })
 })
 
@@ -435,7 +436,6 @@ describe("SourceManager fetchNext", () => {
       id: partitionIndex->Int.toString,
       latestFetchedBlock: {
         blockNumber: latestFetchedBlockNumber,
-        blockTimestamp: latestFetchedBlockNumber * 15,
       },
       selection: normalSelection,
       addresses: TestAddresses.setOf(addresses),
@@ -1492,7 +1492,7 @@ describe("SourceManager.executeQuery", () => {
       ~knownHeight=100,
     )
 
-    t.expect(sourceMock.reorgCalls).toEqual([])
+    t.expect(sourceMock.reorgCallCount()).toEqual(0)
     switch sourceMock.getItemsOrThrowCalls {
     | [call] =>
       // The response contains block 9 twice with different hashes: once as the
@@ -1502,7 +1502,7 @@ describe("SourceManager.executeQuery", () => {
     }
 
     await Utils.delay(200)
-    t.expect(sourceMock.reorgCalls).toEqual([9])
+    t.expect(sourceMock.reorgCallCount()).toEqual(1)
     switch sourceMock.getItemsOrThrowCalls {
     | [call] => call.resolve([])
     | _ => JsError.throwWithMessage("Expected the retry after cache invalidation")
@@ -1510,37 +1510,59 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
-  Async.it("Gives up with the source error once maxRetries is exhausted", async t => {
+  Async.it("Retries a source that hasn't reached the queried block yet", async t => {
     let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
-    let sourceManager = SourceManager.make(
-      ~isRealtime=false,
-      ~sources=[sourceMock.source],
-      ~maxRetries=Some(1),
-    )
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
     let p = sourceManager->SourceManager.executeQuery(
-      ~query=mockQuery(),
+      ~query={...mockQuery(), fromBlock: 10},
       ~isRealtime=false,
       ~knownHeight=100,
     )
-    let failure = Source.GetItemsError(
-      FailedGettingItems({
-        exn: JsError.make("Connection refused")->(Utils.magic: JsError.t => exn),
-        attemptedToBlock: 100,
-        retry: WithBackoff({message: "Failed to fetch", backoffMillis: 0}),
+
+    // Every ecosystem's source raises this instead of building its own backoff,
+    // so the retry cadence lives in one place.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({blockNumber: 10, requestStats: []}),
+    )
+    await Utils.delay(200)
+
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
+    }
+    t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("counts the requests a failed getItems still made", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    // The native client reports the timings of the requests it made before
+    // giving up, so a source failing under load still shows up in its metrics.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({
+        blockNumber: 10,
+        requestStats: [{Source.method: "getLogs", seconds: 0.5}],
       }),
     )
-    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(failure)
-    await Utils.delay(50)
+    await Utils.delay(200)
+
     switch sourceMock.getItemsOrThrowCalls {
-    | [call] => call.reject(failure)
-    | _ => JsError.throwWithMessage("Expected a retry call after the first failure")
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
     }
-    try {
-      let _ = await p
-      JsError.throwWithMessage("Should not have resolved")
-    } catch {
-    | JsExn(e) => t.expect(e->JsExn.message).toEqual(Some("Connection refused"))
-    }
+    let _ = await p
+
+    t.expect(
+      sourceManager
+      ->SourceManager.getRequestStatSamples
+      ->Array.map(({method, count, seconds}) => (method, count, seconds)),
+    ).toEqual([("getLogs", 1, 0.5)])
   })
 
   Async.it("Rethrows unknown errors", async t => {
@@ -1642,7 +1664,7 @@ describe("SourceManager.executeQuery", () => {
       )
 
       // Retries 0, 1, 2 on sync (primary)
-      for idx in 0 to 2 {
+      for _idx in 0 to 2 {
         switch syncMock.getItemsOrThrowCalls {
         | [call] => {
             handledGetItemsOrThrowCalls->Array.push({
@@ -1656,9 +1678,7 @@ describe("SourceManager.executeQuery", () => {
         | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
         }
         await Promise.resolve()
-        if idx !== 2 {
-          await Utils.delay(0)
-        }
+        await Utils.delay(0)
       }
 
       // Retry 3 on fallback (sync failed, fallback is recovered secondary)

@@ -87,17 +87,9 @@ module EventItems = {
     to?: string,
   }
 
-  type block = {
-    id: string,
-    height: int,
-    time: int,
-  }
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One block per height; items reference them by `blockHeight`.
-    blocks: array<block>,
     items: array<item>,
   }
 }

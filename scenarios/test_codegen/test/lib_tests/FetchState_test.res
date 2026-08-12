@@ -20,7 +20,7 @@ let defaultQuery: FetchState.query = {
 // Keep for backward compatibility of tests
 type oldQueueItem =
   | Item(Internal.item)
-  | NoItem({latestFetchedBlock: FetchState.blockNumberAndTimestamp})
+  | NoItem({latestFetchedBlock: FetchState.blockRef})
 
 let getItem = (item: oldQueueItem) =>
   switch item {
@@ -49,9 +49,8 @@ let mockAddress6 = Envio.TestHelpers.Addresses.mockAddresses[6]->Option.getOrThr
 let mockFactoryAddress = Envio.TestHelpers.Addresses.mockAddresses[7]->Option.getOrThrow
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
-let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
+let getBlockData = (~blockNumber): FetchState.blockRef => {
   blockNumber,
-  blockTimestamp: getTimestamp(~blockNumber),
 }
 
 let makeDynContractRegistration = (
@@ -245,7 +244,6 @@ describe("FetchState.make", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: -1,
-              blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
             addresses: TestAddresses.setOf([mockAddress0]),
@@ -362,7 +360,6 @@ describe("FetchState.make", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: -1,
-              blockTimestamp: 0,
             },
             selection: fetchState.normalSelection,
             addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress1, mockAddress2]),
@@ -420,7 +417,6 @@ describe("FetchState.make", () => {
               id: "0",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
               addresses: TestAddresses.setOf([mockAddress1]),
@@ -436,7 +432,6 @@ describe("FetchState.make", () => {
               id: "1",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
               addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress2]),
@@ -507,7 +502,6 @@ describe("FetchState.make", () => {
               id: "0",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
               addresses: TestAddresses.setOf([mockAddress2]),
@@ -523,7 +517,6 @@ describe("FetchState.make", () => {
               id: "1",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
               addresses: TestAddresses.setOf([mockAddress1]),
@@ -539,7 +532,6 @@ describe("FetchState.make", () => {
               id: "2",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
               addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress4]),
@@ -555,7 +547,6 @@ describe("FetchState.make", () => {
               id: "3",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: fetchState.normalSelection,
               addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress3]),
@@ -1277,7 +1268,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "1",
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(
@@ -1296,7 +1286,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "2",
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress3, mockAddress0]),
@@ -1346,7 +1335,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "1",
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(~contractName="NftFactory", [mockAddress1, mockAddress4]),
@@ -1362,7 +1350,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "2",
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress2, mockAddress3, mockAddress0]),
@@ -1520,7 +1507,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "1",
         latestFetchedBlock: {
           blockNumber: 9,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress1, mockAddress0]),
@@ -1568,7 +1554,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "1",
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
         mergeBlock: None,
         selection: fetchState.normalSelection,
@@ -1584,7 +1569,6 @@ describe("FetchState.registerDynamicContracts", () => {
         id: "2",
         latestFetchedBlock: {
           blockNumber: 299_999,
-          blockTimestamp: 0,
         },
         mergeBlock: None,
         selection: fetchState.normalSelection,
@@ -1659,7 +1643,6 @@ describe("FetchState.registerDynamicContracts", () => {
               id: "0",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: {
                 dependsOnAddresses: false,
@@ -1680,7 +1663,6 @@ describe("FetchState.registerDynamicContracts", () => {
               id: "1",
               latestFetchedBlock: {
                 blockNumber: -1,
-                blockTimestamp: 0,
               },
               selection: {
                 dependsOnAddresses: true,
@@ -1748,7 +1730,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: 10,
-              blockTimestamp: 10,
             },
             dynamicContract: None,
             mutPendingQueries: [],
@@ -1794,7 +1775,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: 10,
-              blockTimestamp: 10,
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
@@ -1813,7 +1793,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "2",
             latestFetchedBlock: {
               blockNumber: 2,
-              blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
@@ -1921,7 +1900,6 @@ describe("FetchState.getNextQuery & integration", () => {
       ~query,
       ~latestFetchedBlock={
         blockNumber: 10,
-        blockTimestamp: 10,
       },
       ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
     )
@@ -2037,7 +2015,6 @@ describe("FetchState.getNextQuery & integration", () => {
       ~query,
       ~latestFetchedBlock={
         blockNumber: 8,
-        blockTimestamp: 8,
       },
       ~newItems=[mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)],
     )
@@ -2067,7 +2044,6 @@ describe("FetchState.getNextQuery & integration", () => {
         id: "1",
         latestFetchedBlock: {
           blockNumber: 0,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress1, mockAddress2]),
@@ -2084,7 +2060,6 @@ describe("FetchState.getNextQuery & integration", () => {
         FetchState.id: "2",
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
         selection: fetchState.normalSelection,
         addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress3]),
@@ -2144,7 +2119,6 @@ describe("FetchState.getNextQuery & integration", () => {
         ~query=queries->Array.getUnsafe(0),
         ~latestFetchedBlock={
           blockNumber: 10,
-          blockTimestamp: 10,
         },
         ~newItems=[],
       )
@@ -2152,7 +2126,6 @@ describe("FetchState.getNextQuery & integration", () => {
         ~query=queries->Array.getUnsafe(1),
         ~latestFetchedBlock={
           blockNumber: 2,
-          blockTimestamp: 0,
         },
         ~newItems=[],
       )
@@ -2297,7 +2270,6 @@ describe("FetchState.getNextQuery & integration", () => {
       ~query=p2Query,
       ~latestFetchedBlock={
         blockNumber: 9,
-        blockTimestamp: 9,
       },
       ~newItems=[mockEvent(~blockNumber=4, ~logIndex=6), mockEvent(~blockNumber=4, ~logIndex=2)],
     )
@@ -2312,7 +2284,6 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual((
       {
         blockNumber: 9,
-        blockTimestamp: 9,
       },
       ["2", "0"],
       4,
@@ -2329,7 +2300,6 @@ describe("FetchState.getNextQuery & integration", () => {
       ~query=queries->Array.getUnsafe(0),
       ~latestFetchedBlock={
         blockNumber: 10,
-        blockTimestamp: 10,
       },
       ~newItems=[],
     )
@@ -2359,7 +2329,6 @@ describe("FetchState.getNextQuery & integration", () => {
             latestSourceRangeCapacityUpdateBlock: 0,
             latestFetchedBlock: {
               blockNumber: 10,
-              blockTimestamp: 10,
             },
             selection: fetchState.normalSelection,
             addresses: TestAddresses.setOf([mockAddress0, mockAddress1, mockAddress2, mockAddress3]),
@@ -2570,7 +2539,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: 2,
-              blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
@@ -2587,7 +2555,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "1",
             latestFetchedBlock: {
               blockNumber: 2,
-              blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
@@ -2620,7 +2587,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: 1,
-              blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
@@ -2657,7 +2623,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: -1,
-              blockTimestamp: 0,
             },
             dynamicContract: Some("Gravatar"),
             mutPendingQueries: [],
@@ -2744,7 +2709,6 @@ describe("FetchState.getNextQuery & integration", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: -1,
-              blockTimestamp: 0,
             },
             dynamicContract: None,
             mutPendingQueries: [],
@@ -2782,7 +2746,6 @@ describe("FetchState unit tests for specific cases", () => {
             id: "0",
             latestFetchedBlock: {
               blockNumber: 10,
-              blockTimestamp: 10,
             },
             dynamicContract: None,
             mutPendingQueries: [],
@@ -2798,7 +2761,6 @@ describe("FetchState unit tests for specific cases", () => {
             id: "1",
             latestFetchedBlock: {
               blockNumber: 1,
-              blockTimestamp: 0,
             },
             dynamicContract: None,
             mutPendingQueries: [],
@@ -2841,7 +2803,6 @@ describe("FetchState unit tests for specific cases", () => {
       ~query,
       ~latestFetchedBlock={
         blockNumber: 10,
-        blockTimestamp: 10,
       },
       ~newItems=[
         mockEvent(~blockNumber=4, ~logIndex=1, ~registrationIndex=0),
@@ -2991,7 +2952,6 @@ describe("FetchState unit tests for specific cases", () => {
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
-          blockTimestamp: 0,
         },
       }),
     )
@@ -3060,7 +3020,6 @@ describe("FetchState unit tests for specific cases", () => {
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
-          blockTimestamp: 0,
         },
       }),
     )
@@ -3087,7 +3046,6 @@ describe("FetchState unit tests for specific cases", () => {
       NoItem({
         latestFetchedBlock: {
           blockNumber: -1,
-          blockTimestamp: 0,
         },
       }),
     )
@@ -3155,7 +3113,6 @@ describe("FetchState unit tests for specific cases", () => {
       NoItem({
         latestFetchedBlock: {
           blockNumber: 1,
-          blockTimestamp: 0,
         },
       }),
     )
@@ -3198,7 +3155,7 @@ describe("FetchState unit tests for specific cases", () => {
       ->FetchState.handleQueryResult(
         ~query,
         ~newItems=[mockEvent(~blockNumber=0)],
-        ~latestFetchedBlock={blockNumber: -1, blockTimestamp: 0},
+        ~latestFetchedBlock={blockNumber: -1},
       )
       ->FetchState.isActivelyIndexing,
       ~message=`Although, with items in the queue it should be considered active`,
@@ -3221,7 +3178,7 @@ describe("FetchState unit tests for specific cases", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~newItems=[],
-        ~latestFetchedBlock={blockNumber: latestFetchedBlockNumber, blockTimestamp: 0},
+        ~latestFetchedBlock={blockNumber: latestFetchedBlockNumber},
       )
     }
 
@@ -3407,7 +3364,7 @@ describe("FetchState.sortForBatch", () => {
     let fs =
       fs0->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+        ~latestFetchedBlock={blockNumber: latestBlock},
         ~newItems=queueBlocks->Array.map(b => mockEvent(~blockNumber=b)),
       )
     {...fs, firstEventBlock: Some(0)}
@@ -3772,7 +3729,7 @@ describe("FetchState progress tracking", () => {
     fs0->FetchState.startFetchingQueries(~queries=[query])
     fs0->FetchState.handleQueryResult(
       ~query,
-      ~latestFetchedBlock={blockNumber: latestBlock, blockTimestamp: latestBlock},
+      ~latestFetchedBlock={blockNumber: latestBlock},
       ~newItems=queueBlocks->Array.map(((b, l)) => mockEvent(~blockNumber=b, ~logIndex=l)),
     )
   }
@@ -3849,7 +3806,7 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       let fetchStateWithLargeQueue =
         fetchStateWithTwoPartitions->FetchState.handleQueryResult(
           ~query=query0,
-          ~latestFetchedBlock={blockNumber: 30, blockTimestamp: 30 * 15},
+          ~latestFetchedBlock={blockNumber: 30},
           ~newItems=largeQueueEvents,
         )
 
@@ -3902,7 +3859,7 @@ describe("FetchState proposes queries against the natural ceiling", () => {
         fetchState
         ->FetchState.handleQueryResult(
           ~query=query3,
-          ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+          ~latestFetchedBlock={blockNumber: 10},
           ~newItems=[mockEvent(~blockNumber=5)],
         )
         ->FetchState.updateKnownHeight(~knownHeight=30)
@@ -4045,7 +4002,7 @@ describe("Stale query response should not overwrite source range capacity", () =
       ->FetchState.updateKnownHeight(~knownHeight=100000)
       ->FetchState.handleQueryResult(
         ~query=q1,
-        ~latestFetchedBlock={blockNumber: 500, blockTimestamp: 500 * 15},
+        ~latestFetchedBlock={blockNumber: 500},
         ~newItems=[mockEvent(~blockNumber=100)],
       )
 
@@ -4076,7 +4033,7 @@ describe("Stale query response should not overwrite source range capacity", () =
     let fs2 =
       fs1->FetchState.handleQueryResult(
         ~query=q2,
-        ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 1000 * 15},
+        ~latestFetchedBlock={blockNumber: 1000},
         ~newItems=[mockEvent(~blockNumber=600)],
       )
 
@@ -4115,7 +4072,7 @@ describe("Stale query response should not overwrite source range capacity", () =
     let fs3 =
       fs2->FetchState.handleQueryResult(
         ~query=chunkB,
-        ~latestFetchedBlock={blockNumber: 2500, blockTimestamp: 2500 * 15},
+        ~latestFetchedBlock={blockNumber: 2500},
         ~newItems=[],
       )
 
@@ -4133,7 +4090,7 @@ describe("Stale query response should not overwrite source range capacity", () =
     let fs4 =
       fs3->FetchState.handleQueryResult(
         ~query=chunkA,
-        ~latestFetchedBlock={blockNumber: 1500, blockTimestamp: 1500 * 15},
+        ~latestFetchedBlock={blockNumber: 1500},
         ~newItems=[],
       )
 
@@ -4161,7 +4118,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
   let makeTwoPartitionFetchState = (~order: array<string>): FetchState.t => {
     let overshootPartition: FetchState.partition = {
       id: "overshoot",
-      latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+      latestFetchedBlock: {blockNumber: 0},
       selection: normalSelection,
       addresses: TestAddresses.setOf([mockAddress0]),
       mergeBlock: None,
@@ -4174,7 +4131,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
     }
     let unknownPartition: FetchState.partition = {
       id: "unknown",
-      latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+      latestFetchedBlock: {blockNumber: 0},
       selection: normalSelection,
       addresses: TestAddresses.setOf([mockAddress1]),
       mergeBlock: None,
@@ -4252,7 +4209,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
 
   let makeChunkPartition = (~id, ~address, ~mergeBlock): FetchState.partition => {
     id,
-    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    latestFetchedBlock: {blockNumber: 0},
     selection: normalSelection,
     addresses: TestAddresses.setOf([address]),
     mergeBlock,
@@ -4329,7 +4286,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     ~latestFetchedBlock=0,
   ): FetchState.partition => {
     id,
-    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    latestFetchedBlock: {blockNumber: latestFetchedBlock},
     selection: normalSelection,
     addresses: TestAddresses.setOf([address]),
     mergeBlock: None,
@@ -4538,7 +4495,7 @@ describe("FetchState.getNextQuery target containment", () => {
     ~mutPendingQueries=[],
   ): FetchState.partition => {
     id: "0",
-    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    latestFetchedBlock: {blockNumber: latestFetchedBlock},
     selection: normalSelection,
     addresses: TestAddresses.setOf([mockAddress0]),
     mergeBlock,
@@ -4637,7 +4594,7 @@ describe("FetchState.getNextQuery target containment", () => {
             isChunk: true,
             itemsTarget: None,
             itemsEst: 1500,
-            fetchedBlock: Some({blockNumber: 200, blockTimestamp: 0}),
+            fetchedBlock: Some({blockNumber: 200}),
           },
         ],
       ),
@@ -4665,7 +4622,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
       ~partitions=[
         {
           id: "0",
-          latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+          latestFetchedBlock: {blockNumber: 0},
           selection: normalSelection,
           addresses: TestAddresses.setOf([mockAddress0]),
           mergeBlock: None,
@@ -4768,7 +4725,7 @@ describe("Response density and source range capacity update independently", () =
       ~partitions=[
         {
           id: "0",
-          latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+          latestFetchedBlock: {blockNumber: 0},
           selection: normalSelection,
           addresses,
           mergeBlock: None,
@@ -4818,7 +4775,7 @@ describe("Response density and source range capacity update independently", () =
     let updated =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
+        ~latestFetchedBlock={blockNumber: 90},
         ~newItems=Array.fromInitializer(~length=itemsCount, i =>
           mockEvent(~blockNumber=10, ~logIndex=i)
         ),
@@ -4854,7 +4811,7 @@ describe("Response density and source range capacity update independently", () =
     let updated =
       fetchState->FetchState.handleQueryResult(
         ~query=chunkQuery,
-        ~latestFetchedBlock={blockNumber: 90, blockTimestamp: 90 * 15},
+        ~latestFetchedBlock={blockNumber: 90},
         ~newItems=Array.fromInitializer(~length=3, i =>
           mockEvent(~blockNumber=10, ~logIndex=i)
         ),
@@ -4914,7 +4871,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
 
   let makePartition = (~idx, ~inFlight): FetchState.partition => {
     id: idx->Int.toString,
-    latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+    latestFetchedBlock: {blockNumber: 0},
     selection: normalSelection,
     addresses,
     mergeBlock: None,
@@ -5014,7 +4971,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
       isChunk: true,
       itemsTarget: None,
       itemsEst: 1,
-      fetchedBlock: idx === 0 ? None : Some({blockNumber: (idx + 1) * 10, blockTimestamp: 0}),
+      fetchedBlock: idx === 0 ? None : Some({blockNumber: (idx + 1) * 10}),
     })
     let fetchState = {
       ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
@@ -5052,7 +5009,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
           makePartition(~idx=0, ~inFlight=false),
           {
             ...makePartition(~idx=1, ~inFlight=false),
-            latestFetchedBlock: {blockNumber: 50, blockTimestamp: 0},
+            latestFetchedBlock: {blockNumber: 50},
           },
         ],
         ~maxAddrInPartition=1,
@@ -5075,7 +5032,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     let updated =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 100, blockTimestamp: 0},
+        ~latestFetchedBlock={blockNumber: 100},
         ~newItems=[],
       )
     t.expect(

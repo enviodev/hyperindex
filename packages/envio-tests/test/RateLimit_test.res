@@ -1,5 +1,11 @@
 open Vitest
 
+// The store takes 32-byte block hashes; widen the short markers these
+// fixtures use rather than making every one of them 64 digits long.
+let evmHash = hex =>
+  "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
+
+
 let chainId = 1->ChainId.fromInt
 
 // Mock source that throws Source.RateLimited on the first N calls, then
@@ -18,16 +24,14 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
       let current = callCount.contents
       callCount := current + 1
       if current < rateLimitedCalls {
-        throw(Source.RateLimited({resetMs: resetMs}))
+        throw(Source.RateLimited({resetMs: resetMs, requestStats: []}))
       }
       let data = BlockStore.fromJs(
         blockNumbers->Array.map(n => {
           let hashDigits = n->Int.toString
           {
             BlockStore.blockNumber: n,
-            blockHash: hashDigits->String.length->mod(2) === 0
-              ? `0x${hashDigits}`
-              : `0x0${hashDigits}`,
+            blockHash: evmHash(`0x${hashDigits}`),
             blockTimestamp: n,
           }
         }),
@@ -53,21 +57,21 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
 
 describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it("calls source.onReorg after an inconsistent hash response", async t => {
-    let reorgCalls = []
+    let reorgCalls = ref(0)
     let attempt = ref(0)
     let source: Source.t = {
       ...makeMockSource(~rateLimitedCalls=0, ~resetMs=0),
       getBlockHashes: (~blockNumbers, ~logger as _) => {
         let blockNumber = blockNumbers->Utils.Array.firstUnsafe
         let response = BlockStore.fromJs(
-          [{BlockStore.blockNumber, blockHash: "0x01"}],
+          [{BlockStore.blockNumber, blockHash: evmHash("0x01")}],
           ~ecosystem=Evm,
           ~shouldChecksum=false,
         )
         if attempt.contents === 0 {
           attempt := 1
           let conflictingPage = BlockStore.fromJs(
-            [{BlockStore.blockNumber, blockHash: "0x02"}],
+            [{BlockStore.blockNumber, blockHash: evmHash("0x02")}],
             ~ecosystem=Evm,
             ~shouldChecksum=false,
           )
@@ -75,9 +79,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
         }
         Promise.resolve({Source.result: Ok(response), requestStats: []})
       },
-      onReorg: (~rollbackTargetBlock) => {
-        reorgCalls->Array.push(rollbackTargetBlock)->ignore
-      },
+      onReorg: () => reorgCalls := reorgCalls.contents + 1,
     }
     let sourceManager = SourceManager.make(~sources=[source], ~isRealtime=false)
 
@@ -86,7 +88,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       ~isRealtime=false,
     )
 
-    t.expect(reorgCalls).toEqual([0])
+    t.expect(reorgCalls.contents).toEqual(1)
   })
 
   Async.it("recovers after a rate limit and tracks wait time", async t => {

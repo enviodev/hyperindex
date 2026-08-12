@@ -793,8 +793,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         Dict.fromArray([
           ("number", JSON.String("0x2710")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0b64")),
-          ("parentHash", JSON.String("0x0b63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -920,8 +920,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         Dict.fromArray([
           ("number", JSON.String("0x2710")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0b64")),
-          ("parentHash", JSON.String("0x0b63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -1041,8 +1041,8 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
     Dict.fromArray([
       ("number", JSON.String("0x2710")),
       ("timestamp", JSON.String("0x64")),
-      ("hash", JSON.String("0x0b64")),
-      ("parentHash", JSON.String("0x0b63")),
+      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+      ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
     ]),
   )
 
@@ -1189,7 +1189,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           ("blockNumber", JSON.String("0x64")),
           ("transactionHash", JSON.String(transactionHash)),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0b64")),
+          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1198,8 +1198,8 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0b64")),
-          ("parentHash", JSON.String("0x0b63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -1347,7 +1347,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
             JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
           ),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0b64")),
+          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1356,8 +1356,8 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0b64")),
-          ("parentHash", JSON.String("0x0b63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -1487,8 +1487,8 @@ describe("RpcSource - builds partition log selections end to end", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0b64")),
-          ("parentHash", JSON.String("0x0b63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
       let mock = await MockRpcServer.make(~getResult=method =>
@@ -1592,8 +1592,8 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
             Dict.fromArray([
               ("number", JSON.String(requestedBlockHex)),
               ("timestamp", JSON.String("0x64")),
-              ("hash", JSON.String("0x0b64")),
-              ("parentHash", JSON.String("0x0b63")),
+              ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+              ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
             ]),
           )
         | _ => JSON.Null
@@ -1708,7 +1708,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
             JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
           ),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0b64")),
+          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1717,8 +1717,8 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0b64")),
-          ("parentHash", JSON.String("0x0b63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 

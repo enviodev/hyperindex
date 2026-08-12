@@ -267,6 +267,7 @@ ORDER BY (id, envio_checkpoint_id)`,
       ~table=snapshotEntity.table,
       ~itemSchema=snapshotEntity.schema->S.toUnknown,
       ~pgSchema,
+      ~setQueryCache=PgStorage.makeSetQueryCache(),
     )
 
     let rawRows = await sql->Postgres.unsafe(`SELECT * FROM "${pgSchema}"."Snapshot";`)

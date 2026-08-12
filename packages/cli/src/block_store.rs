@@ -407,33 +407,16 @@ pub struct FuelBlockInput {
     pub time: Option<i64>,
 }
 
-/// Strictly decode a 0x-prefixed even-length hex string into bytes; anything
-/// else (e.g. an arbitrary marker string) is a validation error.
-pub(crate) fn decode_hex_bytes(s: &str, name: &str) -> Result<Vec<u8>> {
-    let hex = s
-        .strip_prefix("0x")
-        .with_context(|| format!("{name} '{s}' must be a 0x-prefixed hex string"))?;
-    if !hex.len().is_multiple_of(2) {
-        anyhow::bail!("{name} '{s}' must have an even number of hex digits");
-    }
-    let mut out = vec![0u8; hex.len() / 2];
-    faster_hex::hex_decode(hex.as_bytes(), &mut out)
-        .with_context(|| format!("{name} '{s}' is not valid hex"))?;
-    Ok(out)
-}
-
-/// Left-pad a `fromJsEvm` hash into the fixed 32-byte comparison key the store
-/// stores. Real observations (RPC blocks, seeded checkpoints) are already 32
-/// bytes, so this is a no-op for them; shorter values (test markers) are
-/// zero-extended to the canonical width. Anything wider than 32 bytes is a
-/// validation error.
+/// Decode a `fromJsEvm` hash into the fixed 32-byte comparison key the store
+/// stores. Width is part of the validation: a truncated hash zero-extended to
+/// the canonical width would compare unequal to the real hash for that block
+/// and surface as a reorg, hiding the malformed response behind a rollback.
 fn evm_input_hash(s: &str) -> Result<Hash> {
-    let bytes = decode_hex_bytes(s, "block.hash")?;
-    if bytes.len() > 32 {
-        anyhow::bail!("block.hash '{s}' exceeds 32 bytes");
-    }
-    let mut buf = [0u8; 32];
-    buf[32 - bytes.len()..].copy_from_slice(&bytes);
+    let bytes = crate::hex::decode_prefixed(s, "block.hash")?;
+    let buf: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("block.hash '{s}' must be 32 bytes, got {}", bytes.len()))?;
     Ok(Hash::from(buf))
 }
 
@@ -560,7 +543,7 @@ impl BlockStore {
                     id: b
                         .id
                         .as_deref()
-                        .map(|s| decode_hex_bytes(s, "block.id"))
+                        .map(|s| crate::hex::decode_prefixed(s, "block.id"))
                         .transpose()?,
                     time: b.time,
                 })
@@ -601,16 +584,8 @@ impl BlockStore {
         }
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
-        let field = self.hash_field();
         let from = u64::try_from(from_block).unwrap_or(0);
-        let cross = dst
-            .table
-            .first_field_mismatch(&src.table, field, from)
-            .map(|key| HashMismatch {
-                block_number: key as i64,
-                stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
-                received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
-            });
+        let cross = self.first_cross_mismatch(&dst.table, &src.table, from);
         debug_assert!(
             src.page.conflict.is_none(),
             "response stores must be validated before persistent merge"
@@ -635,7 +610,7 @@ impl BlockStore {
         // compared again, and long no-event ranges never reach batch-progress
         // pruning, so drop them here to keep the store bounded to the window.
         if from > 0 {
-            dst.table.prune_field_only_below(from, field);
+            dst.table.prune_field_only_below(from, self.hash_field());
         }
         Ok(cross)
     }
@@ -655,17 +630,12 @@ impl BlockStore {
         );
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
-        let field = self.hash_field();
-        let cross = dst
-            .table
-            .first_field_mismatch(&src.table, field, 0)
-            .map(|key| HashMismatch {
-                block_number: key as i64,
-                stored_hash: self.hash_display(dst.table.field_bytes(&key, field).unwrap()),
-                received_hash: self.hash_display(src.table.field_bytes(&key, field).unwrap()),
-            });
-        let conflict = lowest_conflict(cross, src.page.conflict.take());
-        if let Some(conflict) = conflict {
+        // `record_conflict` already keeps the lowest block number, so the page's
+        // own conflict and the cross-page one need no ordering between them.
+        if let Some(cross) = self.first_cross_mismatch(&dst.table, &src.table, 0) {
+            record_conflict(&mut dst.page.conflict, cross);
+        }
+        if let Some(conflict) = src.page.conflict.take() {
             record_conflict(&mut dst.page.conflict, conflict);
         }
         dst.table.append_from(&mut src.table);
@@ -752,6 +722,32 @@ impl BlockStore {
             .map(|b| self.hash_display(b))
     }
 
+    /// Every stored hash in `[from_block, below_block)`, ascending, as two
+    /// aligned columns. One call per batch, where reading the same rows through
+    /// `get_hash` would cross the napi boundary once per block.
+    #[napi]
+    pub fn get_hashes(&self, from_block: i64, below_block: i64) -> HashedBlocks {
+        let from = u64::try_from(from_block).unwrap_or(0);
+        let Ok(below) = u64::try_from(below_block) else {
+            return HashedBlocks::default();
+        };
+        let inner = self.inner.lock().unwrap();
+        let field = self.hash_field();
+        let keys = inner.table.keys_with_field(from, below, field);
+        let mut hashes = Vec::with_capacity(keys.len());
+        let mut block_numbers = Vec::with_capacity(keys.len());
+        for key in keys {
+            // `keys_with_field` already filtered to rows carrying the hash.
+            let bytes = inner.table.field_bytes(&key, field).unwrap();
+            hashes.push(self.hash_display(bytes));
+            block_numbers.push(key as i64);
+        }
+        HashedBlocks {
+            block_numbers,
+            hashes,
+        }
+    }
+
     /// Block numbers in `[from_block, below_block)` with a stored hash,
     /// ascending — the rollback candidates to re-fetch and compare.
     #[napi]
@@ -835,16 +831,29 @@ impl BlockStore {
         }
     }
 
-    /// Drop all blocks above `target_block` (rolled back), hashes included. The
-    /// rolled-back range is refetched, so its stale hashes must not linger for
-    /// reorg detection.
+    /// Drop all blocks above `target_block` (rolled back). Blocks above
+    /// `drop_hashes_above` lose their hash with the rest of the row: they sit on
+    /// a fork the rollback disproved, so keeping the hash would re-report the
+    /// same reorg against the refetch. Blocks between the two keep a hash-only
+    /// row — the rollback validated those hashes, so they still detect a source
+    /// that answers the refetch from an orphaned fork. `None` means no block is
+    /// suspect (a chain rolled back for cross-chain ordering, not a reorg), so
+    /// every rolled-back hash survives.
     #[napi]
-    pub fn rollback(&self, target_block: i64) {
+    pub fn rollback(&self, target_block: i64, drop_hashes_above: Option<i64>) {
         let mut inner = self.inner.lock().unwrap();
-        match u64::try_from(target_block) {
-            Ok(target) => inner.table.rollback(target),
-            Err(_) => inner.table.clear(),
-        }
+        let Ok(target) = u64::try_from(target_block) else {
+            inner.table.clear();
+            return;
+        };
+        let keep_through = match drop_hashes_above {
+            Some(above) => u64::try_from(above).unwrap_or(0),
+            None => u64::MAX,
+        };
+        let field = self.hash_field();
+        inner
+            .table
+            .rollback_keeping_field(target, keep_through, field);
     }
 }
 
@@ -899,6 +908,22 @@ impl BlockStore {
 
     /// A stored hash cell in the shape JS knows it by: hex for the byte-backed
     /// EVM/Fuel hashes, the raw base58 string for SVM.
+    /// The lowest block at or above `from` that both tables carry a hash for,
+    /// where they disagree.
+    fn first_cross_mismatch(
+        &self,
+        dst: &Table<u64>,
+        src: &Table<u64>,
+        from: u64,
+    ) -> Option<HashMismatch> {
+        let (key, stored, received) = dst.first_field_mismatch(src, self.hash_field(), from)?;
+        Some(HashMismatch {
+            block_number: key as i64,
+            stored_hash: self.hash_display(&stored),
+            received_hash: self.hash_display(&received),
+        })
+    }
+
     fn hash_display(&self, bytes: &[u8]) -> String {
         match self.ecosystem {
             Ecosystem::Svm => String::from_utf8_lossy(bytes).into_owned(),
@@ -980,6 +1005,12 @@ impl BlockStore {
         let mut rows = vec![simple_types::Block {
             number: Some(u64::try_from(guard.block_number).context("guard block_number negative")?),
             hash: Some(Hash::decode_hex(&guard.hash).context("decoding guard hash")?),
+            // The guard carries the head block's timestamp, and the head is
+            // often outside the queried range's returned blocks — keeping it
+            // makes the row materialisable rather than hash-only.
+            timestamp: Some(
+                Quantity::try_from(guard.timestamp).context("guard timestamp negative")?,
+            ),
             ..Default::default()
         }];
         if guard.first_block_number > 0 {
@@ -1037,6 +1068,14 @@ impl BlockStore {
     }
 }
 
+/// Stored block hashes as two aligned columns, ascending by block number.
+#[derive(Default)]
+#[napi(object)]
+pub struct HashedBlocks {
+    pub block_numbers: Vec<i64>,
+    pub hashes: Vec<String>,
+}
+
 /// A block-hash conflict recorded while building a response or comparing it
 /// with the persistent store.
 #[derive(Clone)]
@@ -1045,20 +1084,6 @@ pub struct HashMismatch {
     pub block_number: i64,
     pub stored_hash: String,
     pub received_hash: String,
-}
-
-fn lowest_conflict(
-    first: Option<HashMismatch>,
-    second: Option<HashMismatch>,
-) -> Option<HashMismatch> {
-    match (first, second) {
-        (Some(a), Some(b)) => Some(if a.block_number <= b.block_number {
-            a
-        } else {
-            b
-        }),
-        (a, b) => a.or(b),
-    }
 }
 
 fn record_conflict(target: &mut Option<HashMismatch>, conflict: HashMismatch) {
@@ -1330,7 +1355,7 @@ mod tests {
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
             .expect("materialize");
-        store.rollback(20);
+        store.rollback(20, Some(20));
         let after_rollback = store
             .materialize(vec![10, 20, 30], vec![mask, mask, mask])
             .await
@@ -1622,6 +1647,116 @@ mod tests {
     }
 
     #[test]
+    fn from_js_evm_rejects_a_truncated_hash() {
+        let reason = match BlockStore::from_js_evm(
+            vec![EvmBlockInput {
+                number: 10,
+                hash: Some("0x0b64".to_string()),
+                timestamp: None,
+            }],
+            false,
+        ) {
+            Ok(_) => panic!("a short hash is not a block hash"),
+            Err(err) => err.reason.clone(),
+        };
+        assert!(
+            reason.contains("must be 32 bytes, got 2"),
+            "unexpected reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn get_hashes_returns_aligned_columns() {
+        let store = evm_page(vec![
+            hashed_evm_block(10, 0x10),
+            hashed_evm_block(20, 0x20),
+            hashed_evm_block(30, 0x30),
+        ]);
+
+        let page = store.get_hashes(20, 40);
+        assert_eq!(
+            (page.block_numbers, page.hashes),
+            (
+                vec![20, 30],
+                vec![
+                    format!("0x{}", "20".repeat(32)),
+                    format!("0x{}", "30".repeat(32)),
+                ]
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rollback_keeps_validated_hashes_above_the_new_progress() {
+        let store = evm_page(vec![
+            hashed_evm_block(90, 0x90),
+            hashed_evm_block(93, 0x93),
+            hashed_evm_block(95, 0x95),
+            hashed_evm_block(97, 0x97),
+        ]);
+
+        // The depth search validated hashes through 95; progress only restores
+        // to 90. Blocks 93 and 95 keep their (validated) hash to compare the
+        // refetch against, block 97 sits above the fork and goes.
+        store.rollback(90, Some(95));
+
+        assert_eq!(
+            (
+                store.get_hash(93),
+                store.get_hash(95),
+                store.get_hash(97),
+                store.get_hashed_block_numbers(0, 200),
+            ),
+            (
+                Some(format!("0x{}", "93".repeat(32))),
+                Some(format!("0x{}", "95".repeat(32))),
+                None,
+                vec![90, 93, 95],
+            )
+        );
+
+        // The kept rows are hash-only — their payload was rolled back with the
+        // rest of the range.
+        let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
+        let cols = store.materialize(vec![93], vec![mask]).await.unwrap();
+        assert_eq!(
+            match column(&cols, "timestamp") {
+                Some(Column::I64(v)) => v.iter().any(|c| c.is_some()),
+                None => false,
+                _ => panic!("expected timestamp column"),
+            },
+            false
+        );
+    }
+
+    #[test]
+    fn rollback_without_a_fork_keeps_every_hash() {
+        // A chain rolled back for cross-chain ordering never reorged, so none of
+        // its scanned hashes are suspect — they stay to detect a reorg on the
+        // refetch.
+        let store = evm_page(vec![
+            hashed_evm_block(105, 0x05),
+            hashed_evm_block(106, 0x06),
+            hashed_evm_block(200, 0x20),
+        ]);
+
+        store.rollback(105, None);
+
+        assert_eq!(
+            (
+                store.get_hash(106),
+                store.get_hash(200),
+                store.get_hashed_block_numbers(0, 300),
+            ),
+            (
+                Some(format!("0x{}", "06".repeat(32))),
+                Some(format!("0x{}", "20".repeat(32))),
+                vec![105, 106, 200],
+            )
+        );
+    }
+
+    #[test]
     fn response_conflict_is_not_a_reorg() {
         // The same block observed twice with different hashes inside one page
         // (e.g. a rollback guard disagreeing with a returned block) invalidates
@@ -1852,6 +1987,40 @@ mod tests {
                 vec![Some(999)],
                 vec![Some(format!("0x{}", "ab".repeat(32)))],
                 Some(format!("0x{}", "cd".repeat(32)))
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rollback_guard_blocks_keep_the_head_timestamp() {
+        let page = BlockStore::new_evm(false);
+        page.insert_rollback_guard_blocks(&crate::evm_hypersync_source::types::RollbackGuard {
+            block_number: 20,
+            timestamp: 1_700_000_000,
+            hash: format!("0x{}", "20".repeat(32)),
+            first_block_number: 11,
+            first_parent_hash: format!("0x{}", "0a".repeat(32)),
+        })
+        .expect("guard blocks");
+
+        // The head block materialises with its timestamp; the seam block below
+        // the range carries only the parent hash the guard reports.
+        let mask = (bit(EvmBlockField::Timestamp) | bit(EvmBlockField::Hash)) as f64;
+        let cols = page
+            .materialize(vec![20, 10], vec![mask, mask])
+            .await
+            .expect("materialize");
+        assert_eq!(
+            (
+                match column(&cols, "timestamp") {
+                    Some(Column::I64(v)) => v.clone(),
+                    _ => panic!("expected timestamp column"),
+                },
+                page.get_hash(10),
+            ),
+            (
+                vec![Some(1_700_000_000), None],
+                Some(format!("0x{}", "0a".repeat(32)))
             )
         );
     }

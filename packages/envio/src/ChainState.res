@@ -322,21 +322,24 @@ let makeInternal = (
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
   // against the hashes scanned before the restart.
   if chainReorgCheckpoints->Utils.Array.notEmpty {
+    // Checkpoints arrive in id order, and nothing in the schema stops one block
+    // number carrying two hashes - a rollback interrupted between deleting the
+    // old checkpoints and writing the new ones leaves both behind. Take the
+    // most recent and let the next response re-converge detection; refusing to
+    // restore would fail this start and every one after it.
+    let latestPerBlock = Dict.make()
+    chainReorgCheckpoints->Array.forEach(cp =>
+      latestPerBlock->Utils.Dict.setByInt(
+        cp.blockNumber,
+        {BlockStore.blockNumber: cp.blockNumber, blockHash: cp.blockHash},
+      )
+    )
     let seedPage = BlockStore.fromJs(
-      chainReorgCheckpoints->Array.map((cp): BlockStore.inputBlock => {
-        blockNumber: cp.blockNumber,
-        blockHash: cp.blockHash,
-      }),
+      latestPerBlock->Dict.valuesToArray,
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     )
-    switch seedPage->BlockStore.responseConflict->Null.toOption {
-    | Some({blockNumber}) =>
-      JsError.throwWithMessage(
-        `Conflicting reorg checkpoints for block ${blockNumber->Int.toString} while restoring chain state`,
-      )
-    | None => blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)->ignore
-    }
+    blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)->ignore
   }
 
   // Seed chain density from whatever progress this chain already has (from a
@@ -915,7 +918,7 @@ let handleQueryResult = (
   ~query: FetchState.query,
   ~newItems,
   ~newRegistrations,
-  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
+  ~latestFetchedBlock: FetchState.blockRef,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
 ) => {
@@ -1048,19 +1051,15 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
 // immutable copy of the scanned in-threshold block hashes so the batch never
 // reads the live store mid-build.
 let toChainBeforeBatch = (cs: t): Batch.chainBeforeBatch => {
-  let fromBlock = Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0)
-  let blockNumbers =
-    cs.blockStore->BlockStore.getHashedBlockNumbers(
-      ~fromBlock,
+  let {blockNumbers, hashes} =
+    cs.blockStore->BlockStore.getHashes(
+      ~fromBlock=Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0),
       ~belowBlock=cs.fetchState.knownHeight + 1,
     )
   let hashByBlockNumber = Dict.make()
-  blockNumbers->Array.forEach(blockNumber => {
-    switch cs.blockStore->BlockStore.getHash(blockNumber) {
-    | Null.Value(hash) => hashByBlockNumber->Utils.Dict.setByInt(blockNumber, hash)
-    | Null.Null => ()
-    }
-  })
+  blockNumbers->Array.forEachWithIndex((blockNumber, idx) =>
+    hashByBlockNumber->Utils.Dict.setByInt(blockNumber, hashes->Array.getUnsafe(idx))
+  )
   {
     fetchState: cs.fetchState,
     progressBlockNumber: cs.committedProgressBlockNumber,
@@ -1224,6 +1223,11 @@ let rollback = (
   ~rollbackTargetBlockNumber,
   ~isReorgChain,
 ) => {
+  // Only the reorg chain has blocks on a disproved fork. Its hashes above the
+  // validated target must go, but the ones the depth search vouched for stay,
+  // and every other chain keeps all of them - they are what catches a source
+  // that serves the refetch from an orphaned fork.
+  let dropHashesAbove = isReorgChain ? Null.Value(rollbackTargetBlockNumber) : Null.Null
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
     let newTotalEventsProcessed =
@@ -1234,10 +1238,6 @@ let rollback = (
         ~message="Missing events-processed diff for rolled-back chain",
       )
 
-    // Reorg-detection state lives in the block store now; its rollback below
-    // (with `~keepHashes` gating on `isReorgChain`) subsumes the old
-    // reorgDetection rewind, and progress metrics render from the mutable
-    // counters at scrape time.
     switch cs.safeCheckpointTracking {
     | Some(safeCheckpointTracking) =>
       cs.safeCheckpointTracking = Some(
@@ -1253,7 +1253,7 @@ let rollback = (
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
-    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
+    cs.blockStore->BlockStore.rollback(newProgressBlockNumber, ~dropHashesAbove)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
@@ -1265,7 +1265,7 @@ let rollback = (
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
+      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber, ~dropHashesAbove)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

@@ -291,10 +291,16 @@ module Make = () => {
       // Mock events carry their transaction and block inline on the payload;
       // the block page carries only the observed hashes for reorg detection.
       transactionStore: None,
-      blockStore: BlockStore.fromJs(observedBlocks, ~ecosystem=Evm, ~shouldChecksum=false),
+      blockStore: BlockStore.fromJs(
+        observedBlocks->Array.map((block): BlockStore.inputBlock => {
+          ...block,
+          blockHash: ?block.blockHash->Option.map(MockIndexer.evmBlockHash),
+        }),
+        ~ecosystem=Evm,
+        ~shouldChecksum=false,
+      ),
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
-      latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: (
         {
           totalTimeElapsed: 0.,

@@ -54,7 +54,6 @@ type t = {
   stalledPollingInterval: int,
   reducedPollingInterval: int,
   getHeightRetryInterval: (~retry: int) => int,
-  maxRetries: option<int>,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
@@ -245,48 +244,10 @@ let validateResponseBlockStore = (
   }
 }
 
-// In production a failing source is retried indefinitely (backoff and failover
-// keep the indexer alive through outages). With `maxRetries` set - the test
-// indexer caps it via ENVIO_MAX_SOURCE_RETRIES - the operation gives up once
-// the cap is reached and fails the run with the underlying error, so a test
-// against an unreachable source reports the real cause instead of hanging
-// until the test-runner timeout.
-let raiseIfRetriesExhausted = (sourceManager: t, ~retry, ~logger, ~err, ~msg) =>
-  switch sourceManager.maxRetries {
-  | Some(max) if retry >= max => err->ErrorHandling.mkLogAndRaise(~logger, ~msg)
-  | _ => ()
-  }
-
-let retryInconsistentResponse = async (
-  sourceState: sourceState,
-  ~retry: int,
-  ~logger: Pino.t,
-  ~method: string,
-  ~err: exn,
-) => {
-  // A short first retry handles a provider changing forks during the query;
-  // repeated failures use the normal source health/failover cadence.
-  let backoffMillis = retry === 0 ? 100 : Pervasives.min(1000 * retry, 60_000)
-  let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
-  logger->log({
-    "msg": `Received a partial indicator of a possible reorg from the source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`,
-    "retry": retry,
-    "backOffMilliseconds": backoffMillis,
-    "err": err->Utils.prettifyExn,
-  })
-  let shouldSwitch = retry >= 2 && retry->mod(2) === 0
-  if shouldSwitch {
-    sourceState.lastFailedAt = Some(Date.now())
-  }
-  if !shouldSwitch {
-    await Utils.delay(backoffMillis)
-  }
-}
-
-let onReorg = (sourceManager: t, ~rollbackTargetBlock) => {
+let onReorg = (sourceManager: t) => {
   sourceManager.sourcesState->Array.forEach(({source}) => {
     switch source.onReorg {
-    | Some(cb) => cb(~rollbackTargetBlock)
+    | Some(cb) => cb()
     | None => ()
     }
   })
@@ -336,7 +297,6 @@ let make = (
     ~backoffMultiplicative=2,
     ~maxRetryInterval=60_000,
   ),
-  ~maxRetries=Env.maxSourceRetries,
 ) => {
   let hasRealtime = sources->Array.some(s => s.sourceFor === Realtime)
   let initialActiveSource = switch sources->Array.find(source =>
@@ -365,7 +325,6 @@ let make = (
     stalledPollingInterval,
     reducedPollingInterval,
     getHeightRetryInterval,
-    maxRetries,
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
@@ -504,22 +463,13 @@ let getSourceNewHeight = async (
           "chainId": source.chainId,
         })
         let h = ref(initialHeight)
-        let fallbackRetry = ref(0)
         while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
           try {
             let res = await source.getHeightOrThrow()
             sourceState->recordRequestStats(res.requestStats)
             h := res.height
-            fallbackRetry := 0
           } catch {
-          | exn =>
-            sourceManager->raiseIfRetriesExhausted(
-              ~retry=fallbackRetry.contents,
-              ~logger,
-              ~err=exn,
-              ~msg=`Failed to fetch the chain height from the ${source.name} source. Make sure the endpoint is reachable.`,
-            )
-            fallbackRetry := fallbackRetry.contents + 1
+          | _ => ()
           }
           if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
             await Utils.delay(source.pollingInterval)
@@ -527,10 +477,6 @@ let getSourceNewHeight = async (
         }
         h.contents
       })
-      // With a retry cap the fallback can reject after losing the race;
-      // observe that rejection so it doesn't surface as unhandled. The race
-      // still rejects normally when the fallback fails first.
-      pollingFallback->Promise.catch(_ => Promise.resolve(initialHeight))->ignore
       let height = await Promise.race([subscriptionPromise, pollingFallback])
 
       // Only accept heights greater than initialHeight
@@ -581,12 +527,6 @@ let getSourceNewHeight = async (
         }
       } catch {
       | exn =>
-        sourceManager->raiseIfRetriesExhausted(
-          ~retry=retry.contents,
-          ~logger,
-          ~err=exn,
-          ~msg=`Failed to fetch the chain height from the ${source.name} source. Make sure the endpoint is reachable.`,
-        )
         let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
         logger->Logging.childTrace({
           "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
@@ -672,6 +612,139 @@ let getNextSource = (sourceManager, ~isRealtime, ~excludedSources=?) => {
     | None => sources->Array.get(0)
     }
   }
+}
+
+let maxRetryBackoffMillis = 60_000
+
+// Floor for the retries driven by a condition the source reported itself
+// (behind the head, inconsistent response). Unlike a caller-supplied backoff of
+// 0, these must never busy-loop when there is no other source to move to.
+let minRecoverableBackoffMillis = 50
+
+// Back off before retrying the same request, failing the source over first when
+// another one can actually take over. Marking `lastFailedAt` only demotes this
+// source in the selection order - with no working alternative the next attempt
+// lands right back here, so `minBackoffMillis` is what keeps a retry loop that
+// never changes source from spinning at full speed.
+let backoffBeforeRetry = async (
+  sourceManager: t,
+  sourceState: sourceState,
+  ~retry,
+  ~isRealtime,
+  ~backoffMillis,
+  ~minBackoffMillis=0,
+  ~excludedSources=?,
+) => {
+  // Give the source two attempts before demoting it, then re-try a failover
+  // every second attempt.
+  let switchedToWorkingSource = if retry >= 2 && retry->mod(2) === 0 {
+    let now = Date.now()
+    sourceState.lastFailedAt = Some(now)
+    switch sourceManager->getNextSource(~isRealtime, ~excludedSources?) {
+    | Some(next) =>
+      switch next.lastFailedAt {
+      | None => true
+      | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
+      }
+    | None => false
+    }
+  } else {
+    false
+  }
+  if switchedToWorkingSource {
+    // The next attempt goes to a different source, which is progress on its
+    // own - only pace it when the caller asked for a floor.
+    if minBackoffMillis > 0 {
+      await Utils.delay(minBackoffMillis)
+    }
+  } else {
+    await Utils.delay(
+      backoffMillis->Pervasives.max(minBackoffMillis)->Pervasives.min(maxRetryBackoffMillis),
+    )
+  }
+}
+
+// The queried block hasn't reached the backend instance that served the
+// request. Expected around the head of a load-balanced backend, so early
+// attempts stay quiet and short; a source that stays behind fails over like any
+// other. Shared by every ecosystem's getItems and getBlockHashes.
+let retryBehindHead = async (
+  sourceManager: t,
+  sourceState: sourceState,
+  ~retry,
+  ~isRealtime,
+  ~logger: Pino.t,
+  ~blockNumber: int,
+  ~method: string,
+  ~err: exn,
+  ~excludedSources=?,
+) => {
+  let backoffMillis = retry === 0 ? 100 : 500 * retry
+  let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
+  logger->log({
+    "msg": `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected - indexing continues after an automatic retry.`,
+    "method": method,
+    "retry": retry,
+    "backOffMilliseconds": backoffMillis,
+    "err": err->Utils.prettifyExn,
+  })
+  await sourceManager->backoffBeforeRetry(
+    sourceState,
+    ~retry,
+    ~isRealtime,
+    ~backoffMillis,
+    ~minBackoffMillis=minRecoverableBackoffMillis,
+    ~excludedSources?,
+  )
+}
+
+// A source that keeps contradicting itself is not mid-reorg, it is broken, and
+// no amount of retrying moves the chain forward. Roughly ten minutes of the
+// backoff schedule below.
+let inconsistentResponseStallRetries = 25
+
+// The response contradicted itself (the same block twice with different hashes,
+// or a requested hash missing). It may be a reorg mid-request, so refetch before
+// concluding anything about the chain.
+let retryInconsistentResponse = async (
+  sourceManager: t,
+  sourceState: sourceState,
+  ~retry,
+  ~isRealtime,
+  ~logger: Pino.t,
+  ~method: string,
+  ~err: exn,
+  ~excludedSources=?,
+) => {
+  let backoffMillis = retry === 0 ? 100 : 1000 * retry
+  let msg = `Received a partial indicator of a possible reorg from the ${sourceState.source.name} source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`
+  let (log, msg) = if retry >= inconsistentResponseStallRetries {
+    (
+      Logging.childError,
+      msg ++ " It has disagreed with itself on every attempt for several minutes now, so this chain has stopped making progress - the endpoint is likely serving blocks and logs from nodes on different chains.",
+    )
+  } else {
+    (retry >= 2 ? Logging.childWarn : Logging.childTrace, msg)
+  }
+  logger->log({
+    "msg": msg,
+    "method": method,
+    "retry": retry,
+    "backOffMilliseconds": backoffMillis,
+    "err": err->Utils.prettifyExn,
+  })
+  // Before the backoff, not after: local state may point at an orphaned chain,
+  // and a sibling query on this source would keep reading it for as long as the
+  // wait lasts.
+  sourceState.source.onReorg->Option.forEach(cb => cb())
+  await sourceManager->backoffBeforeRetry(
+    sourceState,
+    ~retry,
+    ~isRealtime,
+    ~backoffMillis,
+    ~minBackoffMillis=minRecoverableBackoffMillis,
+    ~excludedSources?,
+  )
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
@@ -874,27 +947,36 @@ let executeQuery = async (
       }
       responseRef := Some(response)
     } catch {
-    | Source.RateLimited({resetMs}) as err =>
-      sourceManager->raiseIfRetriesExhausted(
-        ~retry,
-        ~logger,
-        ~err,
-        ~msg=`The ${source.name} source keeps rate-limiting item requests.`,
-      )
+    | Source.RateLimited({resetMs, requestStats}) =>
+      sourceState->recordRequestStats(requestStats)
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.InconsistentResponse(_) as err => {
-        sourceManager->raiseIfRetriesExhausted(
-          ~retry,
-          ~logger,
-          ~err,
-          ~msg=`The ${source.name} source keeps returning internally inconsistent item responses.`,
-        )
-        await retryInconsistentResponse(sourceState, ~retry, ~logger, ~method="getItems", ~err)
-        source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=query.fromBlock - 1))
-        retryRef := retryRef.contents + 1
-      }
+    | Source.SourceBehindHead({blockNumber, requestStats}) as err =>
+      sourceState->recordRequestStats(requestStats)
+      await sourceManager->retryBehindHead(
+        sourceState,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~blockNumber,
+        ~method="getItems",
+        ~err,
+        ~excludedSources=?excludedSourcesRef.contents,
+      )
+      retryRef := retryRef.contents + 1
+
+    | Source.InconsistentResponse(_) as err =>
+      await sourceManager->retryInconsistentResponse(
+        sourceState,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~method="getItems",
+        ~err,
+        ~excludedSources=?excludedSourcesRef.contents,
+      )
+      retryRef := retryRef.contents + 1
 
     | Source.GetItemsError(error) =>
       switch error {
@@ -949,12 +1031,6 @@ let executeQuery = async (
         retryRef := 0
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
-        sourceManager->raiseIfRetriesExhausted(
-          ~retry,
-          ~logger,
-          ~err=exn,
-          ~msg=`Failed to fetch items from the ${source.name} source. Make sure the endpoint is reachable.`,
-        )
         // Start displaying warnings after 4 failures
         let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
         logger->log({
@@ -964,34 +1040,13 @@ let executeQuery = async (
           "retry": retry,
           "err": exn->Utils.prettifyExn,
         })
-
-        let shouldSwitch = switch retry {
-        // Don't attempt a switch on first two failures
-        | 0 | 1 => false
-        // Then try to switch every second failure
-        | _ => retry->mod(2) === 0
-        }
-
-        if shouldSwitch {
-          let now = Date.now()
-          sourceState.lastFailedAt = Some(now)
-          // Check if there's a working (recovered) source to switch to immediately
-          let nextSource =
-            sourceManager->getNextSource(~isRealtime, ~excludedSources=?excludedSourcesRef.contents)
-          let hasWorkingAlternative = switch nextSource {
-          | Some(s) =>
-            switch s.lastFailedAt {
-            | None => true
-            | Some(failedAt) => now -. failedAt >= sourceManager.recoveryTimeout
-            }
-          | None => false
-          }
-          if !hasWorkingAlternative {
-            await Utils.delay(Pervasives.min(backoffMillis, 60_000))
-          }
-        } else {
-          await Utils.delay(Pervasives.min(backoffMillis, 60_000))
-        }
+        await sourceManager->backoffBeforeRetry(
+          sourceState,
+          ~retry,
+          ~isRealtime,
+          ~backoffMillis,
+          ~excludedSources=?excludedSourcesRef.contents,
+        )
         retryRef := retryRef.contents + 1
       }
 
@@ -1045,75 +1100,51 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       | Error(exn) => throw(exn)
       }
     } catch {
-    | Source.RateLimited({resetMs}) as err =>
-      sourceManager->raiseIfRetriesExhausted(
-        ~retry,
-        ~logger,
-        ~err,
-        ~msg=`The ${source.name} source keeps rate-limiting block-hash requests.`,
-      )
+    | Source.RateLimited({resetMs, requestStats}) =>
+      sourceState->recordRequestStats(requestStats)
       await sourceManager->waitForRateLimitReset(~resetMs, ~retry, ~logger)
       retryRef := retryRef.contents + 1
 
-    | Source.InconsistentResponse(_) as err => {
-        sourceManager->raiseIfRetriesExhausted(
-          ~retry,
-          ~logger,
-          ~err,
-          ~msg=`The ${source.name} source keeps returning internally inconsistent block-hash responses.`,
-        )
-        await retryInconsistentResponse(
-          sourceState,
-          ~retry,
-          ~logger,
-          ~method="getBlockHashes",
-          ~err,
-        )
-        let lowestRequestedBlock =
-          blockNumbers->Array.reduce(blockNumbers->Array.get(0)->Option.getOr(0), Pervasives.min)
-        source.onReorg->Option.forEach(cb => cb(~rollbackTargetBlock=lowestRequestedBlock - 1))
-        retryRef := retryRef.contents + 1
-      }
+    | Source.SourceBehindHead({blockNumber, requestStats}) as err =>
+      sourceState->recordRequestStats(requestStats)
+      await sourceManager->retryBehindHead(
+        sourceState,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~blockNumber,
+        ~method="getBlockHashes",
+        ~err,
+      )
+      retryRef := retryRef.contents + 1
+
+    | Source.InconsistentResponse(_) as err =>
+      await sourceManager->retryInconsistentResponse(
+        sourceState,
+        ~retry,
+        ~isRealtime,
+        ~logger,
+        ~method="getBlockHashes",
+        ~err,
+      )
+      retryRef := retryRef.contents + 1
 
     | exn =>
-      sourceManager->raiseIfRetriesExhausted(
-        ~retry,
-        ~logger,
-        ~err=exn,
-        ~msg=`Failed to fetch block hashes from the ${source.name} source. Make sure the endpoint is reachable.`,
-      )
-      // A short first retry covers the common transient case (e.g. a request
-      // routed to a HyperSync replica slightly behind the head), doubling from
-      // there.
       let backoffMillis = Pervasives.min(100. *. 2. ** retry->Int.toFloat, 60_000.)->Float.toInt
       let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
-      // A native failure's message is self-explanatory, so it becomes the log
-      // message itself; anything else keeps the generic message with details.
-      switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) =>
-        logger->log({
-          "msg": e->JsExn.message->Option.getOr("Failed to fetch block hashes. Retrying."),
-          "retry": retry,
-          "backOffMilliseconds": backoffMillis,
-        })
-      | exn =>
-        logger->log({
-          "msg": "Failed to fetch block hashes. Retrying.",
-          "retry": retry,
-          "backOffMilliseconds": backoffMillis,
-          "err": exn->Utils.prettifyExn,
-        })
-      }
-
-      let shouldSwitch = switch retry {
-      | 0 | 1 => false
-      | _ => retry->mod(2) === 0
-      }
-
-      if shouldSwitch {
-        sourceState.lastFailedAt = Some(Date.now())
-      }
-      await Utils.delay(backoffMillis)
+      logger->log({
+        "msg": "Failed to fetch block hashes. Retrying.",
+        "retry": retry,
+        "backOffMilliseconds": backoffMillis,
+        "err": exn->Utils.prettifyExn,
+      })
+      await sourceManager->backoffBeforeRetry(
+        sourceState,
+        ~retry,
+        ~isRealtime,
+        ~backoffMillis,
+        ~minBackoffMillis=minRecoverableBackoffMillis,
+      )
       retryRef := retryRef.contents + 1
     }
   }

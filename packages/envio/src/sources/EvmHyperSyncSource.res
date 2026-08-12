@@ -112,33 +112,23 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | HyperSync.GetLogs.Error(error) =>
+    | HyperSync.GetLogs.Error(WrongInstance) =>
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+    | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
-              let backoffMillis = switch retry {
-              | 0 => 100
-              | _ => 500 * retry
-              }
-              WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
-              })
-            },
+            retry: ImpossibleForTheQuery({
+              message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
+                  ", ",
+                )}`,
+            }),
           }),
         ),
       )
-    | Source.RateLimited(_) as exn => throw(exn)
+    | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)
     | exn =>
       throw(
         Source.GetItemsError(
@@ -173,13 +163,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     //Parse page items into queue items
     let parsedQueueItems = []
 
-    // Block headers are returned once per number; items reference them by blockNumber.
-    let blocksByNumber = Utils.Map.make()
-    pageUnsafe.blocks->Array.forEach(block => {
-      blocksByNumber->Utils.Map.set(block.number, block)->ignore
-    })
-    let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
-
     pageUnsafe.items->Array.forEach(item => {
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
@@ -188,16 +171,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    // Best-effort timestamp for the queried-range head: the last item if it
-    // happens to be in the range's last block. 0 is a tolerated placeholder
-    // otherwise (FetchState already uses 0 in several spots).
-    let latestFetchedBlockTimestamp = switch pageUnsafe.items->Array.get(
-      pageUnsafe.items->Array.length - 1,
-    ) {
-    | Some(item) if item.blockNumber == heighestBlockQueried => getBlock(item.blockNumber).timestamp
-    | _ => 0
-    }
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
@@ -208,7 +181,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp,
       parsedQueueItems,
       transactionStore: Some(pageUnsafe.transactionStore),
       // The page store also carries the rollbackGuard's blocks (head block and
@@ -222,18 +194,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = async (~blockNumbers, ~logger as _) => {
-    let (result, requestStats) = try {
-      let (blockStore, requestStats) = await client.getBlockHashes(~blockNumbers)
-      (Ok(blockStore), requestStats)
-    } catch {
-    | exn => {
-        let failure = exn->Source.unpackNativeRequestFailure
-        (Error(failure->HyperSync.mapRateLimitedFailure), failure.requestStats)
-      }
-    }
-    {Source.result, requestStats}
-  }
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=client.getBlockHashes)
 
   {
     name,

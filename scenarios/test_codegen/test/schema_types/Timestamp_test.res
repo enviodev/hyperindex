@@ -6,42 +6,45 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
       ~chainId=#1337,
     )
-    let indexerMock = await MockIndexer.Indexer.make(
+    await MockIndexer.Indexer.run(
       ~chains=[
         {
           chain: #1337,
           sourceConfig: Config.CustomSources([sourceMock.source]),
         },
       ],
-    )
-    await Utils.delay(0)
+      async indexerMock => {
+        await Utils.delay(0)
 
-    sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 100,
-          logIndex: 0,
-          handler: async ({context}) => {
-            context.\"EntityWithTimestamp".set({
-              id: "testEntity",
-              timestamp: Date.fromString("1970-01-01T00:02:03.456Z"),
-            })
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=100,
-    )
-    await indexerMock.getBatchWritePromise()
+        sourceMock.resolveGetHeightOrThrow(300)
+        await Utils.delay(0)
+        await Utils.delay(0)
+        sourceMock.resolveGetItemsOrThrow(
+          [
+            {
+              blockNumber: 100,
+              logIndex: 0,
+              handler: async ({context}) => {
+                context.\"EntityWithTimestamp".set({
+                  id: "testEntity",
+                  timestamp: Date.fromString("1970-01-01T00:02:03.456Z"),
+                })
+              },
+            },
+          ],
+          ~latestFetchedBlockNumber=100,
+        )
+        await indexerMock.getBatchWritePromise()
 
-    let entities: array<Indexer.Entities.EntityWithTimestamp.t> =
-      await indexerMock.query("EntityWithTimestamp")
-    switch entities->Array.find(e => e.id === "testEntity") {
-    | Some(entity) =>
-      t.expect(entity.timestamp->Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
-    | None => JsError.throwWithMessage("Entity should exist")
-    }
+        let entities: array<Indexer.Entities.EntityWithTimestamp.t> = await indexerMock.query(
+          "EntityWithTimestamp",
+        )
+        switch entities->Array.find(e => e.id === "testEntity") {
+        | Some(entity) =>
+          t.expect(entity.timestamp->Date.toISOString).toEqual("1970-01-01T00:02:03.456Z")
+        | None => JsError.throwWithMessage("Entity should exist")
+        }
+      },
+    )
   })
 })

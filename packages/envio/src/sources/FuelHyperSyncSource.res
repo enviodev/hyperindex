@@ -59,29 +59,19 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | FuelHyperSync.GetLogs.Error(error) =>
+    | FuelHyperSync.GetLogs.Error(WrongInstance) =>
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+    | FuelHyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
-              let backoffMillis = switch retry {
-              | 0 => 100
-              | _ => 500 * retry
-              }
-              WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in FuelHyperSync. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
-              })
-            },
+            retry: ImpossibleForTheQuery({
+              message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
+                  ", ",
+                )}`,
+            }),
           }),
         ),
       )
@@ -115,12 +105,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
     let parsingTimeRef = Performance.now()
-
-    // Blocks are returned once per height; items reference them by blockHeight.
-    let blocksByHeight = Utils.Map.make()
-    pageUnsafe.blocks->Array.forEach(block => {
-      blocksByHeight->Utils.Map.set(block.height, block)->ignore
-    })
 
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
@@ -193,11 +177,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
-    let latestFetchedBlockTimestamp = switch blocksByHeight->Utils.Map.get(heighestBlockQueried) {
-    | Some(block) => block.time
-    | None => 0
-    }
-
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
@@ -207,7 +186,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp,
       parsedQueueItems,
       // Fuel keeps transaction and block inline on the payload; the block store
       // carries only the (height, id) rows that drive reorg detection (Fuel
