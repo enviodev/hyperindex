@@ -50,20 +50,23 @@ describe("Rollback with a ClickHouse-only entity", () => {
         ~chainId=#1337,
       )
       let resolveIndexerError = ref(None)
-      let indexerErrorPromise = Promise.make((resolve, _reject) => {
-        resolveIndexerError := Some(resolve)
-      })
+      let indexerErrorPromise = Promise.make(
+        (resolve, _reject) => {
+          resolveIndexerError := Some(resolve)
+        },
+      )
       let raiseOnIndexerError = promise =>
         Promise.race([
           promise->Promise.thenResolve(_ => None),
           indexerErrorPromise->Promise.thenResolve(errHandler => Some(errHandler)),
-        ])->Promise.thenResolve(result =>
-          switch result {
-          | None => ()
-          | Some(errHandler) => errHandler->ErrorHandling.raiseExn
-          }
+        ])->Promise.thenResolve(
+          result =>
+            switch result {
+            | None => ()
+            | Some(errHandler) => errHandler->ErrorHandling.raiseExn
+            },
         )
-      let indexerMock = await MockIndexer.Indexer.make(
+      await MockIndexer.Indexer.run(
         ~config=makeConfig(),
         ~chains=[
           {
@@ -72,101 +75,104 @@ describe("Rollback with a ClickHouse-only entity", () => {
           },
         ],
         ~onError=errHandler => {
-          let resolve = resolveIndexerError.contents->Option.getOrThrow(
-            ~message="Indexer error observer was not initialized",
-          )
+          let resolve =
+            resolveIndexerError.contents->Option.getOrThrow(
+              ~message="Indexer error observer was not initialized",
+            )
           resolve(errHandler)
         },
+        async indexerMock => {
+          await Utils.delay(0)
+          await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
+
+          sourceMock.resolveGetItemsOrThrow(
+            [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async ({context}) => {
+                  context.\"SimpleEntity".set({id: "1", value: "value-1"})
+                  context.\"EntityWithTimestamp".set({
+                    id: "ch-only",
+                    timestamp: Date.fromTime(101.),
+                  })
+                },
+              },
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async ({context}) => {
+                  context.\"SimpleEntity".set({id: "1", value: "value-2"})
+                  context.\"EntityWithTimestamp".set({
+                    id: "ch-only",
+                    timestamp: Date.fromTime(102.),
+                  })
+                },
+              },
+            ],
+            ~latestFetchedBlockNumber=102,
+          )
+          await indexerMock.getBatchWritePromise()->raiseOnIndexerError
+
+          let missingHistoryRelationError = try {
+            let _ = await indexerMock.queryHistory(chOnlyEntityName)
+            "the history table exists"
+          } catch {
+          | exn =>
+            exn
+            ->JsExn.fromException
+            ->Option.flatMap(JsExn.message)
+            ->Option.getOr("unknown error")
+          }
+          t.expect(
+            (
+              missingHistoryRelationError->String.includes(
+                `relation "${indexerMock.pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
+              ),
+              await (
+                indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
+              ),
+            ),
+            ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
+          ).toEqual((true, [{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}]))
+
+          // Should trigger rollback
+          sourceMock.resolveGetItemsOrThrow(
+            [],
+            ~latestFetchedBlockNumber=103,
+            ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+          )
+          await Utils.delay(0)
+          await Utils.delay(0)
+
+          t.expect(
+            sourceMock.getBlockHashesCalls,
+            ~message="Should have called getBlockHashes to find rollback depth",
+          ).toEqual([[100]])
+          sourceMock.resolveGetBlockHashes([
+            // The block 100 is untouched so we can rollback to it
+            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          ])
+
+          await indexerMock.getRollbackReadyPromise()->raiseOnIndexerError
+
+          // Commit the rollback diff with an empty reprocessing batch. The write
+          // prunes post-target history rows, exercising the same per-entity filter.
+          sourceMock.resolveGetItemsOrThrow(
+            [],
+            ~latestFetchedBlockNumber=102,
+            ~latestFetchedBlockHash="0x102-reorged",
+          )
+          await indexerMock.getBatchWritePromise()->raiseOnIndexerError
+
+          t.expect(
+            await (
+              indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
+            ),
+            ~message="The Postgres entity created after the rollback target should be reverted",
+          ).toEqual([])
+        },
       )
-      await Utils.delay(0)
-      await MockIndexer.Helper.initialEnterReorgThreshold(~t, ~indexerMock, ~sourceMock)
-
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.\"SimpleEntity".set({id: "1", value: "value-1"})
-              context.\"EntityWithTimestamp".set({
-                id: "ch-only",
-                timestamp: Date.fromTime(101.),
-              })
-            },
-          },
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async ({context}) => {
-              context.\"SimpleEntity".set({id: "1", value: "value-2"})
-              context.\"EntityWithTimestamp".set({
-                id: "ch-only",
-                timestamp: Date.fromTime(102.),
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexerMock.getBatchWritePromise()->raiseOnIndexerError
-
-      let missingHistoryRelationError = try {
-        let _ = await indexerMock.queryHistory(chOnlyEntityName)
-        "the history table exists"
-      } catch {
-      | exn =>
-        exn
-        ->JsExn.fromException
-        ->Option.flatMap(JsExn.message)
-        ->Option.getOr("unknown error")
-      }
-      t.expect(
-        (
-          missingHistoryRelationError->String.includes(
-            `relation "public.envio_history_${chOnlyEntityName}" does not exist`,
-          ),
-          await (
-            indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
-          ),
-        ),
-        ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
-      ).toEqual((true, [{Indexer.Entities.SimpleEntity.id: "1", value: "value-2"}]))
-
-      // Should trigger rollback
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=103,
-        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100]])
-      sourceMock.resolveGetBlockHashes([
-        // The block 100 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-      ])
-
-      await indexerMock.getRollbackReadyPromise()->raiseOnIndexerError
-
-      // Commit the rollback diff with an empty reprocessing batch. The write
-      // prunes post-target history rows, exercising the same per-entity filter.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x102-reorged",
-      )
-      await indexerMock.getBatchWritePromise()->raiseOnIndexerError
-
-      t.expect(
-        await (
-          indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
-        ),
-        ~message="The Postgres entity created after the rollback target should be reverted",
-      ).toEqual([])
     },
   )
 })
