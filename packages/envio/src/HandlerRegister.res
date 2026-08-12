@@ -82,6 +82,36 @@ let startRegistration = (~config: Config.t) => {
   }
 }
 
+// A registration a caller owns, rather than the single implicit one
+// `startRegistration` installs. Tests run several indexers in one process, each
+// with its own config, and handlers must register against the config they were
+// written for.
+type registration = activeRegistration
+
+let makeRegistration = (~config: Config.t): registration => {
+  config,
+  registrationsByChainId: Dict.make(),
+  finished: false,
+}
+
+// Makes `registration` the target of `indexer.onEvent` & co. for the duration
+// of `fn`, restoring whatever was active before — so one caller's handlers
+// never land in another's registration. Concurrent scopes would still clobber
+// each other: the pointer they swap is process-global.
+let useRegistration = async (registration: registration, fn) => {
+  let previous = EnvioGlobal.value.activeRegistration
+  EnvioGlobal.value.activeRegistration = Some(registration->(Utils.magic: registration => unknown))
+  let restore = () => EnvioGlobal.value.activeRegistration = previous
+  switch await fn() {
+  | result =>
+    restore()
+    result
+  | exception exn =>
+    restore()
+    throw(exn)
+  }
+}
+
 let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainRegistrations => {
   let key = chainId->ChainId.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
