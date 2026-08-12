@@ -308,6 +308,38 @@ let internalBlockFields = ["number"]
 // selected.
 let rawEventBlockFields = ["hash", "timestamp"]
 
+let selectionKinds = ["block", "transaction"]
+
+// A handler written in plain JS gets no type error for a `blocks`/`transactions`
+// typo, and an unrecognised key would read as an empty selection — silently
+// dropping every field `config.yaml` selected. Rejected here so the option is
+// held to the same shape whether or not the project type-checks it.
+let validateFieldsShapeOrThrow = (
+  fields: Internal.evmFieldsSelection,
+  ~contractName: string,
+  ~eventName: string,
+) => {
+  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+  let raw = fields->(Utils.magic: Internal.evmFieldsSelection => unknown)
+  if typeof(raw) !== #object || raw === %raw(`null`) || Array.isArray(raw) {
+    JsError.throwWithMessage(
+      `The fields option of ${registration} must be an object of block and transaction field names.`,
+    )
+  }
+  raw
+  ->(Utils.magic: unknown => dict<unknown>)
+  ->Dict.keysToArray
+  ->Array.forEach(key =>
+    if !(selectionKinds->Array.includes(key)) {
+      JsError.throwWithMessage(
+        `Invalid "${key}" key in the fields option of ${registration}. Valid keys: ${selectionKinds->Array.joinUnsafe(
+            ", ",
+          )}.`,
+      )
+    }
+  )
+}
+
 let parseFieldsOrThrow = (
   fields: option<array<string>>,
   ~valid: array<string>,
@@ -359,6 +391,11 @@ let resolveRegistrationFieldSelection = (
       eventConfig.transactionFieldMask,
     )
   | Some(fields) =>
+    validateFieldsShapeOrThrow(
+      fields,
+      ~contractName=eventConfig.contractName,
+      ~eventName=eventConfig.name,
+    )
     let selectedBlockFields = parseFieldsOrThrow(
       fields.block,
       ~valid=Evm.blockFields,

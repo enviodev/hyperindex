@@ -104,6 +104,31 @@ describe("a rejected inline selection", () => {
       \`The fields.block option of the "Transfer" event registration on contract "Token" must be an array of field names.\`,
     );
   });
+
+  // A plain-JS handler gets no type error for the typo, and an unrecognised key
+  // would otherwise read as an empty selection — silently dropping every field
+  // config.yaml selected.
+  it("rejects a misspelled selection key", (t) => {
+    t.expect(() =>
+      indexer.onEvent(
+        { contract: "Token", event: "Transfer", fields: { blocks: ["parentHash"] } as never },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Invalid "blocks" key in the fields option of the "Transfer" event registration on contract "Token". Valid keys: block, transaction.\`,
+    );
+  });
+
+  it("rejects a fields option that isn't an object of selections", (t) => {
+    t.expect(() =>
+      indexer.onEvent(
+        { contract: "Token", event: "Transfer", fields: ["parentHash"] as never },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`The fields option of the "Transfer" event registration on contract "Token" must be an object of block and transaction field names.\`,
+    );
+  });
 });
 `,
 )
