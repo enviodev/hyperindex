@@ -585,19 +585,20 @@ impl BlockStore {
         page: &BlockStore,
         from_block: i64,
         report_only: bool,
-    ) -> Option<HashMismatch> {
+    ) -> napi::Result<Option<HashMismatch>> {
         // Merging a store into itself would lock the same Mutex twice (deadlock).
         if std::ptr::eq(self, page) {
-            return None;
+            return Ok(None);
         }
-        // A page and its persistent store are the same per-chain ecosystem, so
-        // the decoder is unaffected by the merge. Only the kind matters: the
-        // EVM checksum flag lives on the persistent store's decoder and may
-        // differ on a page built via `fromJs`.
-        debug_assert_eq!(
-            std::mem::discriminant(&self.ecosystem),
-            std::mem::discriminant(&page.ecosystem)
-        );
+        // The hash column lives at a different index and width per ecosystem, so
+        // comparing a page from another ecosystem would read one column's bytes
+        // as another's. This is a programming error, but `merge` is public over
+        // N-API, so reject it in every build before touching either table.
+        if std::mem::discriminant(&self.ecosystem) != std::mem::discriminant(&page.ecosystem) {
+            return Err(napi::Error::from_reason(
+                "BlockStore.merge: cannot merge a page from a different ecosystem",
+            ));
+        }
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         let field = self.hash_field();
@@ -615,13 +616,28 @@ impl BlockStore {
             "response stores must be validated before persistent merge"
         );
         if cross.is_none() || report_only {
+            // Detect-only mode keeps indexing through the reorg, so drop the
+            // stale old-fork rows above the divergence before merging the new
+            // page. Otherwise adjacent pages would keep comparing against them
+            // and re-report the same reorg on every response.
+            if let Some(mismatch) = &cross {
+                if let Ok(target) = u64::try_from(mismatch.block_number - 1) {
+                    dst.table.rollback(target);
+                }
+            }
             dst.table.append_from(&mut src.table);
             // The page's response-only state validates this response only. It
             // must not become persistent chain data, where the cursor coverage
             // could outlive the queried fork.
             src.page = ResponsePage::default();
         }
-        cross
+        // Hash-only observations that fell below the reorg threshold are never
+        // compared again, and long no-event ranges never reach batch-progress
+        // pruning, so drop them here to keep the store bounded to the window.
+        if from > 0 {
+            dst.table.prune_field_only_below(from, field);
+        }
+        Ok(cross)
     }
 
     /// Append a backend page to a logical response store. Unlike `merge`, this
@@ -1342,13 +1358,13 @@ mod tests {
         let mut first = raw_evm_block(20);
         first.timestamp = Some(Quantity::from(100u64));
         page1.insert_evm_blocks(vec![first]);
-        persistent.merge(&page1, 0, false);
+        persistent.merge(&page1, 0, false).unwrap();
 
         let page2 = BlockStore::new_evm(false);
         let mut second = raw_evm_block(20);
         second.timestamp = Some(Quantity::from(200u64));
         page2.insert_evm_blocks(vec![second]);
-        persistent.merge(&page2, 0, false);
+        persistent.merge(&page2, 0, false).unwrap();
 
         let mask = bit(EvmBlockField::Timestamp) as f64;
         let cols = persistent
@@ -1448,7 +1464,10 @@ mod tests {
 
         // Two conflicting blocks: the lowest one is reported.
         let page = evm_page(vec![hashed_evm_block(11, 0xbb), hashed_evm_block(12, 0xcc)]);
-        let mismatch = persistent.merge(&page, 0, false).expect("mismatch");
+        let mismatch = persistent
+            .merge(&page, 0, false)
+            .unwrap()
+            .expect("mismatch");
         assert_eq!(
             (
                 mismatch.block_number,
@@ -1472,7 +1491,7 @@ mod tests {
     fn merge_report_only_still_overwrites() {
         let persistent = evm_page(vec![hashed_evm_block(11, 0x11)]);
         let page = evm_page(vec![hashed_evm_block(11, 0xbb)]);
-        let mismatch = persistent.merge(&page, 0, true).expect("mismatch");
+        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
         assert_eq!(mismatch.block_number, 11);
         // Detect-only mode converges to the received hash, so the same
         // mismatch doesn't re-report on the next page.
@@ -1490,11 +1509,64 @@ mod tests {
         let mut no_hash = raw_evm_block(20);
         no_hash.timestamp = Some(Quantity::from(7u64));
         let page = evm_page(vec![hashed_evm_block(10, 0xaa), no_hash]);
-        assert!(persistent.merge(&page, 15, false).is_none());
-        // The page merged: the overwrite applied below the threshold too.
+        assert!(persistent.merge(&page, 15, false).unwrap().is_none());
+        // Block 10 fell below the threshold and only carried a hash, so it is
+        // pruned rather than kept as a stale observation.
+        assert_eq!(persistent.get_hash(10), None);
+        // Block 20 is inside the threshold and carries data, so it stays.
         assert_eq!(
-            persistent.get_hash(10),
-            Some(format!("0x{}", "aa".repeat(32)))
+            persistent.get_hash(20),
+            Some(format!("0x{}", "20".repeat(32)))
+        );
+    }
+
+    #[test]
+    fn merge_rejects_a_page_from_another_ecosystem() {
+        let persistent = evm_page(vec![hashed_evm_block(10, 0x10)]);
+        let svm_page = BlockStore::new_svm();
+        svm_page.insert_svm_blocks(vec![raw_svm_block(10)]);
+        // A cross-ecosystem merge would read one hash column's bytes as
+        // another's, so it errors instead of comparing or panicking.
+        assert!(persistent.merge(&svm_page, 0, false).is_err());
+    }
+
+    #[test]
+    fn merge_report_only_drops_stale_hashes_above_the_divergence() {
+        let persistent = evm_page(vec![
+            hashed_evm_block(10, 0x10),
+            hashed_evm_block(11, 0x11),
+            hashed_evm_block(12, 0x12),
+        ]);
+        // Detect-only reorg at block 10: only block 10 is re-observed on the
+        // new fork, so blocks 11-12 (old fork) must not linger and re-report.
+        let page = evm_page(vec![hashed_evm_block(10, 0xaa)]);
+        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
+        assert_eq!(mismatch.block_number, 10);
+        assert_eq!(
+            (persistent.get_hash(11), persistent.get_hash(12)),
+            (None, None)
+        );
+        // A follow-up page on the new fork merges cleanly instead of comparing
+        // block 11 against the dropped old-fork hash.
+        let next = evm_page(vec![hashed_evm_block(11, 0xbb)]);
+        assert!(persistent.merge(&next, 0, true).unwrap().is_none());
+    }
+
+    #[test]
+    fn merge_prunes_hash_only_rows_below_the_threshold() {
+        let persistent = evm_page(vec![hashed_evm_block(10, 0x10), hashed_evm_block(20, 0x20)]);
+        // A later no-event page advances the threshold to 25; the block 10 and
+        // 20 hash-only observations fall out of the window and are dropped so
+        // the store stays bounded on long no-event ranges.
+        let page = evm_page(vec![hashed_evm_block(30, 0x30)]);
+        assert!(persistent.merge(&page, 25, false).unwrap().is_none());
+        assert_eq!(
+            (
+                persistent.get_hash(10),
+                persistent.get_hash(20),
+                persistent.get_hash(30)
+            ),
+            (None, None, Some(format!("0x{}", "30".repeat(32))))
         );
     }
 
@@ -1634,7 +1706,7 @@ mod tests {
         assert!(response.missing_hashes(vec![10, 11, 12, 13, 14]).is_empty());
 
         let persistent = BlockStore::new_svm();
-        assert!(persistent.merge(&response, 0, false).is_none());
+        assert!(persistent.merge(&response, 0, false).unwrap().is_none());
         assert_eq!(
             persistent.missing_hashes(vec![10, 11, 12, 13, 14]),
             vec![10, 11, 12, 13, 14]
@@ -1681,7 +1753,7 @@ mod tests {
         }]);
 
         let persistent = BlockStore::new_fuel();
-        assert!(persistent.merge(&page, 0, false).is_none());
+        assert!(persistent.merge(&page, 0, false).unwrap().is_none());
 
         let mask = ((1u64 << (FuelBlockField::Height as u32))
             | (1u64 << (FuelBlockField::Time as u32))
@@ -1720,7 +1792,10 @@ mod tests {
             id: Some([0xdd_u8; 32].to_vec()),
             time: Some(124),
         }]);
-        let mismatch = persistent.merge(&conflicting, 0, false).expect("mismatch");
+        let mismatch = persistent
+            .merge(&conflicting, 0, false)
+            .unwrap()
+            .expect("mismatch");
         assert_eq!(mismatch.block_number, 5);
 
         // A hashless fuel row merges without detection.
@@ -1730,7 +1805,7 @@ mod tests {
             id: None,
             time: Some(125),
         }]);
-        assert!(persistent.merge(&hashless, 0, false).is_none());
+        assert!(persistent.merge(&hashless, 0, false).unwrap().is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]

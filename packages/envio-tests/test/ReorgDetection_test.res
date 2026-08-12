@@ -76,12 +76,20 @@ describe("Block store reorg detection", () => {
     })
   })
 
-  it("Mismatches below the merge threshold are not compared", t => {
+  it("Mismatches below the merge threshold are not compared and get pruned", t => {
     let store = mock(scannedHashesFixture)
     // 50 conflicts but is below fromBlock (the reorg threshold), so the merge
-    // applies without detection and the hash converges to the received one.
+    // applies without detection. Being a hash-only observation outside the
+    // threshold, it is then pruned so the store stays bounded; 400 is inside
+    // the threshold and stays.
     let store = store->mergeNoReorg([(50, "0x50-different"), (400, "0x400")], ~fromBlock=300)
-    t.expect(store->BlockStore.getHash(50)).toEqual(Null.Value("0x50-different"))
+    t.expect({
+      "below": store->BlockStore.getHash(50),
+      "inThreshold": store->BlockStore.getHash(400),
+    }).toEqual({
+      "below": Null.Null,
+      "inThreshold": Null.Value("0x400"),
+    })
   })
 
   it("Detects a reorg when a received hash doesn't match the scanned block", t => {

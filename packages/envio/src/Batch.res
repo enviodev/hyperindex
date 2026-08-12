@@ -12,7 +12,7 @@ type chainAfterBatch = {
 
 // A per-chain snapshot of the scanned block hashes still inside the reorg
 // threshold, taken when the batch is assembled. Immutable for the batch's
-// lifetime, unlike the live block store it is read from — so checkpoint hashes
+// lifetime, unlike the live block store it is read from - so checkpoint hashes
 // can't shift under a concurrent store mutation. `blockNumbers` is ascending;
 // `hashByBlockNumber` is keyed by block number.
 type reorgHashSnapshot = {

@@ -670,16 +670,27 @@ fn process_response(
         .collect::<Result<Vec<_>>>()
         .context("mapping block headers")?;
 
-    // Kept for every referenced block, not just when an event selected a field
-    // beyond the trio: number/timestamp/hash decode from the store like any
-    // other field (see `decode_evm_block_field`), so the store needs an entry
-    // for every block the config's always-included trio selection touches.
-    let mut kept_blocks = response_blocks;
-    kept_blocks.retain(|b| {
-        b.number
-            .is_some_and(|number| referenced_blocks.contains(&number))
-    });
-    block_store.insert_evm_blocks(kept_blocks);
+    // Full fields for referenced blocks, whose trio and any selected fields
+    // decode from the store like any other field. Blocks whose logs were all
+    // dropped by client-side routing keep a hash-only row so every returned
+    // header still backs reorg detection.
+    let store_blocks: Vec<simple_types::Block> = response_blocks
+        .into_iter()
+        .map(|b| {
+            if b.number
+                .is_some_and(|number| referenced_blocks.contains(&number))
+            {
+                b
+            } else {
+                simple_types::Block {
+                    number: b.number,
+                    hash: b.hash,
+                    ..Default::default()
+                }
+            }
+        })
+        .collect();
+    block_store.insert_evm_blocks(store_blocks);
 
     Ok((items, out_blocks))
 }
@@ -1179,10 +1190,11 @@ mod tests {
 
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
-    async fn unrouted_logs_keep_their_block_and_transaction_out_of_the_stores() {
+    async fn unrouted_logs_keep_a_hash_only_block_and_no_transaction() {
         // Block 1's log routes; block 2's doesn't. Both blocks and both
-        // transactions come back from the server, but only block 1's pair is
-        // ever read, so only it is stored.
+        // transactions come back from the server. Block 1 is stored in full and
+        // its transaction kept; block 2's transaction is dropped, but the block
+        // keeps a hash-only row so a fork on it can still be detected.
         let block = |number: u64| simple_types::Block {
             number: Some(number),
             hash: Some(Default::default()),
@@ -1240,8 +1252,10 @@ mod tests {
                 vec![1],
                 // Every returned block still yields a header; only the store is filtered.
                 vec![1, 2],
+                // Block 2's transaction is dropped (never read)...
                 vec![Some(zero_hash.clone()), None],
-                vec![Some(zero_hash), None],
+                // ...but its block keeps a hash-only row for reorg detection.
+                vec![Some(zero_hash.clone()), Some(zero_hash)],
             )
         );
     }

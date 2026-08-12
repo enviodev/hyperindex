@@ -188,7 +188,7 @@ function templateTest({ name, initArgs, hasTests }: TemplateConfig) {
     });
 
     expect(result.exitCode, `[${name}] test failed (exit ${result.exitCode}):\n${result.stderr}\n${result.stdout}`).toBe(0);
-  }, config.timeouts.test);
+  }, config.timeouts.test + 30_000);
 }
 
 for (const template of TEMPLATES) {

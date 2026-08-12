@@ -9,7 +9,7 @@ type t = {
   mutable fetchState: FetchState.t,
   // The chain-wide address index, kept in Rust. Not `mutable`: registration and
   // rollback mutate it in place, so the handle is stable across fetchState
-  // versions — and it's the same handle this chain's source clients hold.
+  // versions - and it's the same handle this chain's source clients hold.
   addressStore: AddressStore.t,
   sourceManager: SourceManager.t,
   chainConfig: Config.chain,
@@ -18,7 +18,7 @@ type t = {
   mutable committedProgressBlockNumber: int,
   // Progress of the batch currently being processed. The buffer is consumed at
   // batch creation (see advanceAfterBatch), so this runs ahead of
-  // committedProgressBlockNumber until the batch commits — it's the true lower
+  // committedProgressBlockNumber until the batch commits - it's the true lower
   // boundary of the remaining buffer's block span.
   mutable processingBlockNumber: int,
   mutable numEventsProcessed: float,
@@ -227,7 +227,7 @@ let makeInternal = (
     ~onBlockRegistrations,
     ~firstEventBlock,
     // Fuel and SVM route through the address store like EVM does, so the
-    // client-side path works for them — but their address counts are nowhere
+    // client-side path works for them - but their address counts are nowhere
     // near the threshold, so switching would only trade a server-side filter
     // that costs nothing today for an over-fetch. Keep them server-side until a
     // chain actually needs it.
@@ -340,7 +340,7 @@ let makeInternal = (
   }
 
   // Seed chain density from whatever progress this chain already has (from a
-  // resumed DB state, or 0 on a fresh chain) — refined per-batch afterwards.
+  // resumed DB state, or 0 on a fresh chain) - refined per-batch afterwards.
   let chainDensity = switch fetchState.firstEventBlock {
   | Some(firstEventBlock) if progressBlockNumber > firstEventBlock && numEventsProcessed > 0. =>
     Some(numEventsProcessed /. (progressBlockNumber - firstEventBlock)->Int.toFloat)
@@ -560,7 +560,7 @@ let fetchCeiling = (cs: t) => {
   }
 }
 
-// Events/block over the ready part of the buffer — a live signal that reacts
+// Events/block over the ready part of the buffer - a live signal that reacts
 // to what fetching just found, unlike the processing EMA which only moves as
 // batches commit.
 let readyBufferDensity = (cs: t) => {
@@ -575,7 +575,7 @@ let readyBufferDensity = (cs: t) => {
 
 // Density used for query sizing: the higher of the processing EMA and the
 // ready-buffer density, so a stale-low EMA can't undersize queries while the
-// buffer proves the range is dense. None means the chain is cold — no density
+// buffer proves the range is dense. None means the chain is cold - no density
 // signal at all.
 let effectiveDensity = (cs: t) =>
   switch (cs.chainDensity, cs->readyBufferDensity) {
@@ -599,7 +599,7 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
   | Some(density) if density > 0. =>
     // Decided by comparison so no unbounded value is ever converted to int:
     // at low densities chainTargetItems /. density exceeds the int range, and
-    // truncating it wraps negative — the target collapses below the frontier
+    // truncating it wraps negative - the target collapses below the frontier
     // and the chain stops querying. The division only runs when its result is
     // provably below the ceiling-bounded range.
     if density *. (fetchCeiling - bufferBlockNumber)->Int.toFloat <= chainTargetItems {
@@ -613,7 +613,7 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
 
 // Block range that cross-chain progress alignment maps fractions over: from
 // the chain's startBlock to the last block it can fetch right now. The lower
-// bound is deliberately static — anchoring it at firstEventBlock would make
+// bound is deliberately static - anchoring it at firstEventBlock would make
 // two chains sitting at the same block read different progress fractions
 // depending on whether each has discovered its first event yet, so the
 // anchor's line could map below a follower's own frontier and stall it.
@@ -624,7 +624,7 @@ let progressRange = (cs: t) => {
 
 // A degenerate range (chain already at or past its last block) maps to 1 so it
 // never constrains the other chains. Clamped at 0 for the initial -1 fetch
-// frontier — the only possible blockNumber below the range's lower bound.
+// frontier - the only possible blockNumber below the range's lower bound.
 let progressAtBlock = (cs: t, ~blockNumber) => {
   let (lower, upper) = cs->progressRange
   upper <= lower
@@ -640,7 +640,7 @@ let blockAtProgress = (cs: t, ~progress) => {
   lower + Math.ceil(progress *. (upper - lower)->Int.toFloat)->Float.toInt
 }
 
-// The fetch frontier as a fraction of the alignable range — what the
+// The fetch frontier as a fraction of the alignable range - what the
 // cross-chain waterfall aligns other chains against. Based on blocks actually
 // fetched, so it holds up even while this chain's queries are in flight.
 let frontierProgress = (cs: t) =>
@@ -659,7 +659,7 @@ let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
   | None => chainTargetBlock
   }
   // When the target block is clamped (head/endBlock/cross-chain alignment) a
-  // known-density chain can't use the whole handed budget — cap the fresh part
+  // known-density chain can't use the whole handed budget - cap the fresh part
   // at what the clamped range actually costs (in-flight reservations stay on
   // top: they're already accounted and shouldn't crowd out new partitions), so
   // the waterfall's leftover flows to the next chain in the same tick instead
@@ -733,7 +733,7 @@ let isActivelyIndexing = (cs: t) => cs.fetchState->FetchState.isActivelyIndexing
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
 
-// Reached head on a chain with no configured endBlock — used by auto-exit to
+// Reached head on a chain with no configured endBlock - used by auto-exit to
 // detect that no events were found in the start..head range.
 let isAtHeadWithoutEndBlock = (cs: t) =>
   cs.isProgressAtHead && cs.fetchState.endBlock->Option.isNone
@@ -823,7 +823,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
         }
       }
     // onBlock items build their block from the handler's own block number, not
-    // from the stores — which is what lets the sources keep only the blocks and
+    // from the stores - which is what lets the sources keep only the blocks and
     // transactions an event item references.
     | Internal.Block(_) => ()
     }
@@ -842,8 +842,8 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
 }
 
 // Materialise a `TransactionStore` against precomputed groups (see
-// `groupBatchItems`). Store-backed items always get a transaction object — the
-// selected fields, or `{}` when nothing was selected — so `event.transaction`
+// `groupBatchItems`). Store-backed items always get a transaction object - the
+// selected fields, or `{}` when nothing was selected - so `event.transaction`
 // is never `undefined` (matching the inline sources).
 let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGroups) => {
   if g.payloadGroups->Utils.Array.notEmpty {
@@ -934,7 +934,7 @@ let handleQueryResult = (
       ~addressStore=cs.addressStore,
       // This response is applied below, after the addresses land. It was routed
       // before they existed, so whatever it claims has to be inside the
-      // catch-up range — and an unbounded query can reach past the height that
+      // catch-up range - and an unbounded query can reach past the height that
       // was known when it went out.
       ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock.blockNumber),
       newRegistrations,
@@ -1111,7 +1111,7 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
   | Some(chainAfterBatch) => {
       // Calculate and set latency metrics. The payload block is materialised or
       // inline by processing time; its timestamp may still be absent (e.g. an
-      // SVM slot with no block row) — the metric is skipped then.
+      // SVM slot with no block row) - the metric is skipped then.
       switch batch
       ->Batch.findLastEventItem(~chainId)
       ->Option.flatMap(eventItem =>
@@ -1142,13 +1142,13 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       }
 
       // Chain-wide density update: seed with the batch's own events/block on
-      // the first update, then blend weighted by the batch's block span — a
+      // the first update, then blend weighted by the batch's block span - a
       // few sparse/dense blocks barely nudge the estimate, while a
       // window-sized batch replaces it.
       let deltaBlocks = chainAfterBatch.progressBlockNumber - cs.committedProgressBlockNumber
       if deltaBlocks > 0 {
         let deltaEvents = chainAfterBatch.totalEventsProcessed -. cs.numEventsProcessed
-        // Don't seed a density before the first event is seen — a progress-only
+        // Don't seed a density before the first event is seen - a progress-only
         // batch would otherwise set it to 0, matching the resume-seed guard.
         switch (cs.chainDensity, deltaEvents > 0.) {
         | (None, false) => ()
@@ -1214,7 +1214,7 @@ let markReady = (cs: t, ~readyAt) =>
 
 // Roll a chain back to a reorg target. With a progress diff, restore fetch/
 // safe-checkpoint/progress state to `newProgressBlockNumber`. A reorg chain
-// with no diff entry still rewinds fetch state + stores to the target —
+// with no diff entry still rewinds fetch state + stores to the target -
 // otherwise the stale block hash stays in the store and re-triggers the same
 // reorg.
 let rollback = (

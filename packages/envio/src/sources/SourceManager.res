@@ -200,7 +200,7 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
   let waitMs = Pervasives.min(resetMs, 300_000)
   let log = retry >= 2 ? Logging.childWarn : Logging.childTrace
   logger->log({
-    "msg": `HyperSync source is rate-limited — not critical, the indexer will retry in ${(waitMs / 1000)
+    "msg": `HyperSync source is rate-limited - not critical, the indexer will retry in ${(waitMs / 1000)
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
     "retry": retry,
     "waitMs": waitMs,
@@ -218,9 +218,7 @@ let validateResponseBlockStore = (
   ~blockStore: BlockStore.t,
   ~requiredBlockNumbers: array<int>=[],
 ) => {
-  let conflict = blockStore->BlockStore.responseConflict->Null.toOption
-  let missingBlockNumbers = blockStore->BlockStore.missingHashes(requiredBlockNumbers)
-  switch conflict {
+  switch blockStore->BlockStore.responseConflict->Null.toOption {
   | Some({blockNumber, storedHash, receivedHash}) =>
     throw(
       Source.InconsistentResponse({
@@ -228,26 +226,28 @@ let validateResponseBlockStore = (
         blockNumber: Some(blockNumber),
         storedHash: Some(storedHash),
         receivedHash: Some(receivedHash),
-        missingBlockNumbers,
+        missingBlockNumbers: [],
       }),
     )
-  | None if missingBlockNumbers->Array.length > 0 =>
-    throw(
-      Source.InconsistentResponse({
-        method,
-        blockNumber: None,
-        storedHash: None,
-        receivedHash: None,
-        missingBlockNumbers,
-      }),
-    )
-  | None => ()
+  | None =>
+    let missingBlockNumbers = blockStore->BlockStore.missingHashes(requiredBlockNumbers)
+    if missingBlockNumbers->Array.length > 0 {
+      throw(
+        Source.InconsistentResponse({
+          method,
+          blockNumber: None,
+          storedHash: None,
+          receivedHash: None,
+          missingBlockNumbers,
+        }),
+      )
+    }
   }
 }
 
 // In production a failing source is retried indefinitely (backoff and failover
-// keep the indexer alive through outages). With `maxRetries` set — the test
-// indexer caps it via ENVIO_MAX_SOURCE_RETRIES — the operation gives up once
+// keep the indexer alive through outages). With `maxRetries` set - the test
+// indexer caps it via ENVIO_MAX_SOURCE_RETRIES - the operation gives up once
 // the cap is reached and fails the run with the underlying error, so a test
 // against an unreachable source reports the real cause instead of hanging
 // until the test-runner timeout.
@@ -653,7 +653,7 @@ let getNextSources = (sourceManager, ~isRealtime, ~excludedSources=?) => {
   } else if workingSecondarySources->Array.length > 0 {
     workingSecondarySources
   } else {
-    // All primaries in recovery — sort by oldest lastFailedAt (closest to recovery first)
+    // All primaries in recovery - sort by oldest lastFailedAt (closest to recovery first)
     allPrimarySources->Array.sort(compareByOldestFailure)
     allPrimarySources
   }
@@ -804,7 +804,7 @@ let executeQuery = async (
 ) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
-  // Sources where the query is impossible — lazily allocated, excluded for the duration of this query
+  // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
   let excludedSourcesRef = ref(None)
 
   let toBlockRef = ref(query.toBlock)
@@ -931,7 +931,7 @@ let executeQuery = async (
         toBlockRef := Some(toBlock)
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
-        // Don't set lastFailedAt — the source isn't broken, the query just can't work on it
+        // Don't set lastFailedAt - the source isn't broken, the query just can't work on it
         let excludedSources = switch excludedSourcesRef.contents {
         | Some(s) => s
         | None =>

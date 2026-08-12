@@ -682,7 +682,17 @@ fn take_blocks(
         .collect::<Result<Vec<_>>>()
         .context("mapping solana block headers")?;
     if let Some(slots) = slots {
-        raw_blocks.retain(|b| slots.contains(&b.slot));
+        // Slots whose instructions were all dropped by client-side routing keep
+        // a slot+hash row so every returned header still backs reorg detection.
+        for b in raw_blocks.iter_mut() {
+            if !slots.contains(&b.slot) {
+                *b = simple::Block {
+                    slot: b.slot,
+                    blockhash: std::mem::take(&mut b.blockhash),
+                    ..Default::default()
+                };
+            }
+        }
     }
     let block_store = BlockStore::new_svm();
     block_store.insert_svm_blocks(raw_blocks);
@@ -1051,7 +1061,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn block_store_keeps_only_referenced_slots_while_headers_keep_all() {
+    async fn block_store_keeps_a_hash_only_row_for_unreferenced_slots() {
         let mut resp = simple::SolanaResponse {
             blocks: vec![
                 simple::Block {
@@ -1086,7 +1096,9 @@ mod tests {
                 // Reorg detection and the batch's latest timestamp read every
                 // returned slot, so headers aren't filtered.
                 vec![42, 43],
-                vec![Some("hash42".to_string()), None],
+                // Slot 43's instructions were all dropped, but its block keeps a
+                // hash-only row so a fork on it can still be detected.
+                vec![Some("hash42".to_string()), Some("hash43".to_string())],
             )
         );
     }

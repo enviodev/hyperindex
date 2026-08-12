@@ -95,7 +95,7 @@ type hashMismatch = {
 // Drain another store (a fetch-response page) into this one, comparing hashes
 // on the way. Blocks below `fromBlock` (outside the reorg threshold) or without
 // a hash on either side are merged without comparison. On a mismatch the page
-// is discarded — the stored hashes stay for the rollback comparison — unless
+// is discarded - the stored hashes stay for the rollback comparison - unless
 // `reportOnly` is set (detect-only mode), which merges anyway so the same
 // mismatch doesn't re-report on every response.
 @send
