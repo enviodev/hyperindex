@@ -27,6 +27,9 @@ chains:
 # events it reads, and each event fetches only the fields its tables select.
 tables:
   accounts:
+    # Handlers reach the table under this name, and it gets an `accounts_by_pk`
+    # GraphQL root. Left out, a table is still stored and queryable as a set.
+    as_entity: Account
     with:
       balance_changes:
         # Approval owners should exist even if they have never transferred.
@@ -36,14 +39,6 @@ tables:
             eventName: Approval
           select:
             account: params.owner
-            delta: 0
-        # Also create the spender because approvals.spender is non-null.
-        - from: evm.events
-          where:
-            contractName: ERC20
-            eventName: Approval
-          select:
-            account: params.spender
             delta: 0
         # Debit the sender.
         - from: evm.events
@@ -72,6 +67,7 @@ tables:
       approvals:
         _derived_from: approvals.owner
   approvals:
+    as_entity: Approval
     from: evm.events
     where:
       contractName: ERC20
@@ -89,6 +85,8 @@ tables:
         _ref:
           table: accounts
           id: params.owner
+      # Nothing creates a row for the spender, so this points at an `accounts`
+      # row that may not exist yet — as it did before `tables`.
       spender:
         _ref:
           table: accounts

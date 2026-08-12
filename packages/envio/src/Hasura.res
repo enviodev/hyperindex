@@ -265,9 +265,13 @@ let makeSelectPermission = (~responseLimit, ~allowAggregations, ~hideByPk) => {
     if allowAggregations {
       roots->Array.push("select_aggregate")->ignore
     }
-    let rootsJson = roots->(Utils.magic: array<string> => JSON.t)
-    permission->Dict.set("query_root_fields", rootsJson)
-    permission->Dict.set("subscription_root_fields", rootsJson)
+    permission->Dict.set("query_root_fields", roots->(Utils.magic: array<string> => JSON.t))
+    // Streaming has nothing to do with addressing a row by id, so the
+    // subscription list keeps it — Hasura only accepts it on this side.
+    permission->Dict.set(
+      "subscription_root_fields",
+      roots->Array.concat(["select_stream"])->(Utils.magic: array<string> => JSON.t),
+    )
   }
   permission
 }

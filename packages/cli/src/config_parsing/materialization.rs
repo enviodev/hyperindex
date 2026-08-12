@@ -24,7 +24,7 @@ use super::{
     entity_parsing::{GqlScalar, Schema, UserDefinedFieldType},
     system_config::{Contract, Event, EventKind, FieldSelection, SelectedField},
 };
-use crate::{type_schema::TypeIdent, utils::text::Capitalize};
+use crate::{type_schema::TypeIdent, utils::text};
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
 use schemars::{json_schema, JsonSchema, Schema as JsonSchemaSchema, SchemaGenerator};
@@ -128,9 +128,51 @@ impl JsonSchema for RawFilter {
 }
 
 /// `tables:`. Insertion-ordered, so generated columns follow the config.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Tables(pub IndexMap<String, TableConfig>);
+
+impl<'de> Deserialize<'de> for Tables {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Tables;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object keyed by table name")
+            }
+
+            // Streamed rather than buffered through a `Value`, so a mistake
+            // inside a table still reports the line it is on.
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                IndexMap::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(Tables)
+            }
+
+            // `tables: []` is how a config says it has no entities on purpose,
+            // which is what stops an absent schema.graphql being an error.
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                match seq.next_element::<serde::de::IgnoredAny>()? {
+                    None => Ok(Tables::default()),
+                    Some(_) => {
+                        Err(serde::de::Error::custom(
+                            "`tables` is an object keyed by table name, so only an empty `tables: \
+                             []`                          can be written as a list",
+                        ))
+                    }
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
 
 impl JsonSchema for Tables {
     fn schema_name() -> Cow<'static, str> {
@@ -165,8 +207,8 @@ pub struct TableConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Where this table is stored, overriding the top-level `storage`. `postgres` \
-                       and `clickhouse` each take true/false, or an object of settings (which also \
-                       turns the backend on)."
+                       and `clickhouse` each take true/false, or an object of settings (which \
+                       also turns the backend on)."
     )]
     pub storage: Option<TableStorage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -987,8 +1029,8 @@ impl Shape<'_> {
             Shape::Relation { name, columns } => {
                 if path.len() != 1 {
                     return Err(anyhow!(
-                        "`{}` comes from `with`, and its columns hold plain values — `{}` goes one \
-                         level too deep",
+                        "`{}` comes from `with`, and its columns hold plain values — `{}` goes \
+                         one level too deep",
                         name,
                         path.join(".")
                     ));
@@ -1108,8 +1150,7 @@ impl Shape<'_> {
 fn split_path(text: &str) -> Result<Vec<String>> {
     if text.is_empty() {
         return Err(anyhow!(
-            "an empty string is not a value. Use a field of the event, e.g. \
-                            `params.owner`."
+            "an empty string is not a value. Use a field of the event, e.g. `params.owner`."
         ));
     }
     let segments: Vec<String> = text.split('.').map(|s| s.to_string()).collect();
@@ -1253,8 +1294,7 @@ fn compile_selected(
                     let key = yaml_string(key, "a `_ref` key")?;
                     if key != "table" && key != "id" {
                         return Err(anyhow!(
-                            "`_ref` has no `{key}` option. It takes `table` and \
-                                            `id`."
+                            "`_ref` has no `{key}` option. It takes `table` and `id`."
                         ));
                     }
                 }
@@ -1402,8 +1442,8 @@ fn compile_operator(
                         let key = yaml_string(key, "a `_concat` key")?;
                         if key != "separator" && key != "values" {
                             return Err(anyhow!(
-                                "`_concat` has no `{key}` option. It takes `values` \
-                                                and `separator`."
+                                "`_concat` has no `{key}` option. It takes `values` and \
+                                 `separator`."
                             ));
                         }
                     }
@@ -1444,9 +1484,8 @@ fn compile_operator(
                     }
                     _ if part.ty.nullable => {
                         return Err(anyhow!(
-                            "`_concat.values[{index}]` is {}, and a null would make two \
-                             different rows join to the same text. Select a value that is always \
-                             set.",
+                            "`_concat.values[{index}]` is {}, and a null would make two different \
+                             rows join to the same text. Select a value that is always set.",
                             part.ty.describe()
                         ))
                     }
@@ -1472,8 +1511,8 @@ fn compile_operator(
             "`_derived_from` can only be used directly on a `select` field"
         )),
         other => Err(anyhow!(
-            "`{other}` is not one of `_value`, `_literal`, `_negate`, `_sum`, \
-                              `_concat`, `_ref`, `_derived_from`"
+            "`{other}` is not one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, \
+             `_derived_from`"
         )),
     }
 }
@@ -1602,6 +1641,17 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
     Ok(Condition::And(parts))
 }
 
+/// A `contractName`/`eventName` literal in the spelling the compiled config
+/// uses. config.yaml may write a contract's name however it likes, and
+/// `Contract::new` normalizes it, so the filter has to be normalized alongside.
+fn discriminator_value(field: &str, text: &str) -> String {
+    if field == "contractName" {
+        text::to_code_name(text)
+    } else {
+        text.to_string()
+    }
+}
+
 /// The `contractName`/`eventName` a filter can match, so a table only gets
 /// plans for events it could actually be written by.
 fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<String>)) {
@@ -1614,7 +1664,7 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
         Condition::Cmp { path, op, value } if *op == "eq" && path.len() == 1 => {
             if let Some(text) = value.as_str() {
                 if path[0] == "contractName" {
-                    out.0.insert(text.to_string());
+                    out.0.insert(discriminator_value(&path[0], text));
                 } else if path[0] == "eventName" {
                     out.1.insert(text.to_string());
                 }
@@ -1628,7 +1678,7 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
             for value in values {
                 if let Some(text) = value.as_str() {
                     if path[0] == "contractName" {
-                        out.0.insert(text.to_string());
+                        out.0.insert(discriminator_value(&path[0], text));
                     } else if path[0] == "eventName" {
                         out.1.insert(text.to_string());
                     }
@@ -1689,7 +1739,7 @@ fn evaluate(
         Condition::Cmp { path, op, value } => {
             if let Some(known) = known_discriminator(path, contract_name, event_name) {
                 if let Some(text) = value.as_str() {
-                    let matches = known == text;
+                    let matches = known == discriminator_value(&path[0], text);
                     return Ok(match (*op, matches) {
                         ("eq", true) | ("ne", false) => Residual::True,
                         ("eq", false) | ("ne", true) => Residual::False,
@@ -1733,7 +1783,7 @@ fn evaluate(
                     let text = value.as_str().ok_or_else(|| {
                         anyhow!("`{}` must be compared to strings", path.join("."))
                     })?;
-                    matches = matches || text == known;
+                    matches = matches || discriminator_value(&path[0], text) == known;
                 }
                 return Ok(if matches != *negated {
                     Residual::True
@@ -1934,9 +1984,61 @@ pub fn compile(
         }
     }
 
+    // Handlers, generated modules and the test indexer address a table by its
+    // code name, so two tables that share one are indistinguishable there even
+    // though their database tables differ. Entities from schema.graphql are in
+    // the same namespace, and `as_entity` picks the name outright.
+    let mut by_code_name: BTreeMap<String, String> = schema
+        .entities
+        .keys()
+        .map(|name| {
+            (
+                text::to_code_name(name),
+                format!("`{name}` in schema.graphql"),
+            )
+        })
+        .collect();
+    for (table_name, table) in &tables.0 {
+        let (code_name, source) = match &table.as_entity {
+            Some(as_entity) => {
+                validate_handler_name(as_entity, table_name)?;
+                (
+                    as_entity.clone(),
+                    format!("`tables.{table_name}.as_entity`"),
+                )
+            }
+            None => (text::to_code_name(table_name), format!("`{table_name}`")),
+        };
+        if let Some(existing) = by_code_name.insert(code_name.clone(), source.clone()) {
+            return Err(anyhow!(
+                "{source} and {existing} are both `{code_name}` in the generated code, which \
+                 can't tell them apart. Rename one of them, or give one a different `as_entity`."
+            ));
+        }
+    }
+
     let all_evm = FieldSelection::all_evm();
     let block_field_types = field_type_table(&all_evm.block_fields, true);
     let transaction_field_types = field_type_table(&all_evm.transaction_fields, false);
+
+    // A table's id comes from its own `select.id`, which can't itself be a
+    // `_ref` — so one pass settles every id type, and the pass that writes the
+    // plans can type-check each `_ref.id` against the table it points at.
+    let mut id_types: BTreeMap<String, Ty> = BTreeMap::new();
+    for (table_name, table) in &tables.0 {
+        let compiled = compile_table(
+            table_name,
+            table,
+            &table_names,
+            contracts,
+            &block_field_types,
+            &transaction_field_types,
+            &mut DemandByEvent::default(),
+            None,
+        )
+        .with_context(|| format!("in `tables.{table_name}`"))?;
+        id_types.insert(table_name.clone(), compiled.2);
+    }
 
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
@@ -1944,11 +2046,7 @@ pub fn compile(
     let mut handler_names = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
-        let handler_name = table.as_entity.clone();
-        if let Some(name) = &handler_name {
-            validate_handler_name(name, table_name)?;
-        }
-        handler_names.insert(table_name.clone(), handler_name);
+        handler_names.insert(table_name.clone(), table.as_entity.clone());
 
         let compiled = compile_table(
             table_name,
@@ -1958,6 +2056,7 @@ pub fn compile(
             &block_field_types,
             &transaction_field_types,
             &mut demand,
+            Some(&id_types),
         )
         .with_context(|| format!("in `tables.{table_name}`"))?;
         schemas.push(compiled.0);
@@ -2000,7 +2099,11 @@ fn compile_table(
     block_field_types: &BTreeMap<String, Ty>,
     transaction_field_types: &BTreeMap<String, Ty>,
     demand: &mut DemandByEvent,
-) -> Result<(TableSchema, Vec<Materialization>)> {
+    // Every table's id type, for checking `_ref.id` against the table it points
+    // at. `None` on the pass that is still collecting them, which leaves each
+    // `_ref.id` as written.
+    id_types: Option<&BTreeMap<String, Ty>>,
+) -> Result<(TableSchema, Vec<Materialization>, Ty)> {
     let select = &table.select;
     let from = table.from.as_str();
     if !select.contains_key("id") {
@@ -2044,8 +2147,8 @@ fn compile_table(
             }
             if from != EVM_EVENTS_SOURCE {
                 return Err(anyhow!(
-                    "`from: {from}` is not a source. Use `{EVM_EVENTS_SOURCE}`, or the name of one \
-                     of this table's `with` queries."
+                    "`from: {from}` is not a source. Use `{EVM_EVENTS_SOURCE}`, or the name of \
+                     one of this table's `with` queries."
                 ));
             }
             let condition = table
@@ -2087,29 +2190,33 @@ fn compile_table(
     let mut plans = Vec::new();
 
     for branch in &branches {
-        let contract = contracts
-            .get(&branch.contract_name)
-            .ok_or_else(|| anyhow!("contract `{}` is not configured", branch.contract_name))?;
-        let event = contract
-            .events
-            .iter()
-            .find(|event| event.name == branch.event_name)
-            .ok_or_else(|| {
-                anyhow!(
-                    "event `{}` is not configured on contract `{}`",
-                    branch.event_name,
-                    branch.contract_name
-                )
-            })?;
-        let event_shape = Shape::Event {
-            contract_name: &branch.contract_name,
-            event,
-            block_fields: block_field_types,
-            transaction_fields: transaction_field_types,
-        };
         let (shape, substitutions) = match &relation_columns {
             Some((name, columns)) => (Shape::Relation { name, columns }, Some(&branch.columns)),
-            None => (event_shape, None),
+            None => {
+                let contract = contracts.get(&branch.contract_name).ok_or_else(|| {
+                    anyhow!("contract `{}` is not configured", branch.contract_name)
+                })?;
+                let event = contract
+                    .events
+                    .iter()
+                    .find(|event| event.name == branch.event_name)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "event `{}` is not configured on contract `{}`",
+                            branch.event_name,
+                            branch.contract_name
+                        )
+                    })?;
+                (
+                    Shape::Event {
+                        contract_name: &branch.contract_name,
+                        event,
+                        block_fields: block_field_types,
+                        transaction_fields: transaction_field_types,
+                    },
+                    None,
+                )
+            }
         };
         let ctx = ExprCtx {
             shape: &shape,
@@ -2163,40 +2270,17 @@ fn compile_table(
 
         match &mut declared {
             None => declared = Some(shapes),
+            // Every branch compiles the same `select` map, so the columns and
+            // their descriptions already agree; only the types can differ,
+            // because each branch resolves the paths against its own event.
             Some(declared) => {
-                if declared.len() != shapes.len() {
-                    return Err(anyhow!(
-                        "`{table_name}` selects a different number of columns for different events"
-                    ));
-                }
                 for (existing, incoming) in declared.iter_mut().zip(shapes) {
-                    if existing.name != incoming.name {
-                        return Err(anyhow!(
-                            "`{table_name}` selects different columns for different events: `{}` \
-                             for one, `{}` for another",
-                            existing.name,
-                            incoming.name
-                        ));
-                    }
                     existing.ty = unify(&existing.ty, &incoming.ty).with_context(|| {
                         format!(
                             "`{}` has a different type for different events",
                             existing.name
                         )
                     })?;
-                    existing.description = match (existing.description.take(), incoming.description)
-                    {
-                        (Some(existing_text), Some(incoming_text))
-                            if existing_text != incoming_text =>
-                        {
-                            return Err(anyhow!(
-                                "`{}` has a different `_description` for different events",
-                                existing.name
-                            ))
-                        }
-                        (Some(text), _) | (None, Some(text)) => Some(text),
-                        (None, None) => None,
-                    };
                 }
             }
         }
@@ -2231,18 +2315,23 @@ fn compile_table(
                         .coerce(ty)
                         .with_context(|| format!("in `select.{field_name}`"))?,
                 ),
-                Selected::Ref { id, .. } => {
-                    let target = Ty {
-                        scalar: Scalar::String,
-                        nullable: ty.nullable,
-                        array: false,
+                Selected::Ref { table, id } => {
+                    let expr = match id_types.and_then(|types| types.get(&table)) {
+                        Some(target) => {
+                            let target = Ty {
+                                nullable: ty.nullable,
+                                ..target.clone()
+                            };
+                            id.coerce(&target).with_context(|| {
+                                format!(
+                                    "in `select.{field_name}._ref.id`: `{table}` has {} for an id",
+                                    target.describe()
+                                )
+                            })?
+                        }
+                        None => id.expr,
                     };
-                    (
-                        "set",
-                        None,
-                        id.coerce(&target)
-                            .with_context(|| format!("in `select.{field_name}._ref.id`"))?,
-                    )
+                    ("set", None, expr)
                 }
                 Selected::DerivedFrom { .. } => continue,
             };
@@ -2349,6 +2438,7 @@ fn compile_table(
             fields,
         },
         materializations,
+        id_ty.clone(),
     ))
 }
 
@@ -2375,8 +2465,8 @@ fn compile_relation(
     for (query_index, query) in queries.0.iter().enumerate() {
         if query.from != EVM_EVENTS_SOURCE {
             return Err(anyhow!(
-                "`with.{relation_name}[{query_index}].from` must be `{EVM_EVENTS_SOURCE}`, but got \
-                 `{}`",
+                "`with.{relation_name}[{query_index}].from` must be `{EVM_EVENTS_SOURCE}`, but \
+                 got `{}`",
                 query.from
             ));
         }
@@ -2590,23 +2680,31 @@ fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
 /// `_ref` and `_derived_from` name tables, and the generated SDL uses those
 /// names verbatim — so a table name has to be a usable GraphQL type name.
 pub fn validate_table_names(tables: &Tables) -> Result<()> {
+    let mut by_code_name: BTreeMap<String, &String> = BTreeMap::new();
     for name in tables.0.keys() {
-        // No leading underscore: capitalizing leaves `_` alone, so it would
-        // reach codegen as an invalid ReScript module name.
         let mut chars = name.chars();
-        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
             && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
         if !valid {
             return Err(anyhow!(
                 "Table name `{name}` is not a valid identifier. Use letters, digits and \
-                 underscores, starting with a letter."
+                 underscores, starting with a letter or an underscore."
             ));
         }
-        if name.capitalize() != *name && tables.0.contains_key(&name.capitalize()) {
+        // Generated code capitalizes the name and drops leading underscores, so
+        // a name that is only underscores and digits leaves nothing to call it.
+        let code_name = text::to_code_name(name);
+        if !code_name.starts_with(|c: char| c.is_ascii_alphabetic()) {
             return Err(anyhow!(
-                "tables `{name}` and `{}` differ only by case, which the generated code can't tell \
-                 apart. Rename one of them.",
-                name.capitalize()
+                "Table name `{name}` leaves the generated code nothing to call it: handlers and \
+                 tests reach a table by its name capitalized and stripped of leading underscores. \
+                 Start it with a letter."
+            ));
+        }
+        if let Some(existing) = by_code_name.insert(code_name.clone(), name) {
+            return Err(anyhow!(
+                "tables `{existing}` and `{name}` are both `{code_name}` in the generated code, \
+                 which can't tell them apart. Rename one of them."
             ));
         }
     }

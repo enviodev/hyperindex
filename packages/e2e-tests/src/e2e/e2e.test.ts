@@ -751,6 +751,36 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     ]);
   });
 
+  it("follows a reference between two config.yaml tables with a numeric id", async () => {
+    // `_block_totals` keys rows by block number, so `transfer_blocks.block_id`
+    // is an INTEGER column rather than the usual text id — and the leading
+    // underscore survives into the table name Hasura serves.
+    const columnType = await runPgSql(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_name = 'transfer_blocks' AND column_name = 'block_id'`
+    );
+    expect(columnType[0]?.[0]).toBe("integer");
+
+    const expected = await runPgSql(
+      `SELECT block_number, count(*)::text FROM "Transfer"
+       GROUP BY block_number ORDER BY block_number LIMIT 1`
+    );
+    const blockNumber = Number(expected[0]?.[0]);
+
+    const actual = await graphql.query<{
+      transfer_blocks: Array<{ block: { id: number; transfers: number } }>;
+    }>(
+      `{ transfer_blocks(where: {block_id: {_eq: ${blockNumber}}}, limit: 1) {
+           block { id transfers }
+         } }`
+    );
+
+    expect(actual.data?.transfer_blocks[0]?.block).toEqual({
+      id: blockNumber,
+      transfers: Number(expected[0]?.[1]),
+    });
+  });
+
   it("Hasura serves numeric arrays as strings", async () => {
     // NUMERIC[] columns are created as TEXT[] when Hasura is enabled, because
     // Hasura otherwise returns the elements as numbers and drops precision on

@@ -8,6 +8,9 @@ is inferred from the events it reads, so this indexer has no `schema.graphql` an
 no handlers. Tables written from handler code are declared in `schema.graphql`
 instead.
 
+`as_entity` gives each table the name handlers and tests reach it by — `Account`
+and `Approval` here, while the database and GraphQL keep the table's own name.
+
 ### Run
 
 ```bash

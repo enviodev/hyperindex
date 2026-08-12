@@ -142,7 +142,7 @@ describe("as_entity and the GraphQL roots", () => {
           "limit": None,
           "allow_aggregations": true,
           "query_root_fields": Some(["select", "select_aggregate"]),
-          "subscription_root_fields": Some(["select", "select_aggregate"]),
+          "subscription_root_fields": Some(["select", "select_aggregate", "select_stream"]),
         },
         "renamed": {
           "columns": "*",
@@ -170,7 +170,7 @@ describe("as_entity and the GraphQL roots", () => {
         "limit": 100,
         "allow_aggregations": false,
         "query_root_fields": ["select"],
-        "subscription_root_fields": ["select"],
+        "subscription_root_fields": ["select", "select_stream"],
       }->(Utils.magic: 'off => JSON.t),
     )
   })
