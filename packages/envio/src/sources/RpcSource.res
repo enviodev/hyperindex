@@ -468,6 +468,11 @@ let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 // from "absent because RPC never provides it". The always-present fields are
 // special-cased: the block carries number/timestamp/hash, and the log carries
 // the transaction's hash/transactionIndex.
+//
+// `isRpcBlockField` is total — every block field has a parser. It has no
+// caller in the runtime for that reason; `RpcFieldSelection_test.res` reads it
+// to hold the config-parse validation to the same answer, so a future block
+// field added without a parser is caught there rather than silently dropped.
 let isRpcBlockField = (name: string) =>
   switch name {
   | "number" | "timestamp" | "hash" => true

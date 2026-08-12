@@ -439,9 +439,11 @@ type eventConfig = private {
   transactionFieldMask: float,
   // Selected block fields precompiled to the block-store selection bitmask (bit
   // per ecosystem field code). `0.` for ecosystems that carry the block fully
-  // inline (RPC/Fuel). The EVM selection always includes number/timestamp/hash,
-  // so an EVM mask always has their bits set; SVM stamps slot/time/hash inline
-  // from the response and its mask is the user's selection alone.
+  // inline (RPC/Fuel). The EVM config selection always includes
+  // number/timestamp/hash, so a config-derived EVM mask has all three bits set;
+  // a registration that named its fields inline carries number/timestamp only
+  // (see `EventConfigBuilder.internalBlockFields`). SVM stamps slot/time/hash
+  // inline from the response and its mask is the user's selection alone.
   blockFieldMask: float,
 }
 

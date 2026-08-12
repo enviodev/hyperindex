@@ -269,7 +269,12 @@ expectType<IsNotSelected<TransferEvent["block"]["parentHash"]>>(true);
   it("narrows event block/transaction fields by the inline fields option", _ =>
     check(`
 import { indexer } from "envio";
-import type { EvmAllBlockFields, EvmAllTransactionFields, EvmFieldsSelection } from "envio";
+import type {
+  EvmAllBlockFields,
+  EvmAllTransactionFields,
+  EvmFieldsSelection,
+  EvmTransactionFieldName,
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
@@ -341,6 +346,40 @@ if (0) {
     // @ts-expect-error - "notAField" is not an EVM block field
     { contract: "Token", event: "Transfer", fields: { block: ["notAField"] } },
     async () => {},
+  );
+
+  // A selection read from a variable typed as EvmFieldsSelection only carries
+  // the field-name union, so every field would type as selected while the
+  // runtime selects the listed subset. Rejected rather than silently widened.
+  const widened: EvmFieldsSelection = { block: ["parentHash"] };
+  indexer.onEvent(
+    // @ts-expect-error - fields.block must be a literal array
+    { contract: "Token", event: "Transfer", fields: widened },
+    async () => {},
+  );
+  const widenedTransaction: { transaction: EvmTransactionFieldName[] } = {
+    transaction: ["to"],
+  };
+  indexer.onEvent(
+    // @ts-expect-error - fields.transaction must be a literal array
+    { contract: "Token", event: "Transfer", fields: widenedTransaction },
+    async () => {},
+  );
+  // The same selection written inline is fine, no \`as const\` needed.
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: { block: ["parentHash"] } },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+    },
+  );
+  // As does an \`as const\` variable, which keeps the literal element types.
+  const pinned = { block: ["parentHash"] } as const;
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: pinned },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+      expectType<IsNotSelected<typeof event.block.nonce>>(true);
+    },
   );
 
   indexer.contractRegister(

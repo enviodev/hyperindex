@@ -169,16 +169,25 @@ let sameEventAndFilter = (
 // Merged registrations dispatch off a single item, so it has to carry the union
 // of what both callbacks read. Each callback's type only claims its own
 // selection, so the extra fields are unread rather than unsound.
-let unionSelection = (~into: Internal.onEventRegistration, ~from: Internal.onEventRegistration) => {
-  let union = (a, b) =>
-    Utils.Set.fromArray(Array.concat(a->Utils.Set.toArray, b->Utils.Set.toArray))
-  (
-    union(into.selectedBlockFields, from.selectedBlockFields),
-    union(into.selectedTransactionFields, from.selectedTransactionFields),
-    FieldMask.orMask(into.blockFieldMask, from.blockFieldMask),
-    FieldMask.orMask(into.transactionFieldMask, from.transactionFieldMask),
-  )
-}
+//
+// The overwhelmingly common case is two registrations that never named fields
+// inline and so share their event config's sets by reference — returning those
+// unchanged keeps the merge allocation-free.
+let unionFields = (a: Utils.Set.t<string>, b: Utils.Set.t<string>) =>
+  if a === b {
+    a
+  } else {
+    let union = Utils.Set.fromArray(a->Utils.Set.toArray)
+    b->Utils.Set.forEach(name => union->Utils.Set.add(name)->ignore)
+    union
+  }
+
+let unionSelection = (a: Internal.onEventRegistration, b: Internal.onEventRegistration) => (
+  unionFields(a.selectedBlockFields, b.selectedBlockFields),
+  unionFields(a.selectedTransactionFields, b.selectedTransactionFields),
+  FieldMask.orMask(a.blockFieldMask, b.blockFieldMask),
+  FieldMask.orMask(a.transactionFieldMask, b.transactionFieldMask),
+)
 
 // Merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
@@ -207,7 +216,7 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
           selectedTransactionFields,
           blockFieldMask,
           transactionFieldMask,
-        ) = unionSelection(~into=reg, ~from=target)
+        ) = unionSelection(reg, target)
         merged :=
           merged.contents
           ->Array.filterWithIndex((_, j) => j !== i)
@@ -238,7 +247,7 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
           selectedTransactionFields,
           blockFieldMask,
           transactionFieldMask,
-        ) = unionSelection(~into=target, ~from=reg)
+        ) = unionSelection(target, reg)
         let next = merged.contents->Array.copy
         next->Array.setUnsafe(
           i,
@@ -454,9 +463,10 @@ let getSimulateOnEventRegistrations = (
 }
 
 // A chain that syncs over RPC can only deliver the fields the RPC source knows
-// how to parse; the rest are silently skipped at materialisation. Config
-// `field_selection` is checked for this at codegen, so this covers the
-// registrations that selected their fields inline.
+// how to parse; the rest are silently skipped at materialisation. The selection
+// can come from either `config.yaml` or the inline `fields` option, so the
+// message names neither. Runs on the registrations a chain actually keeps, so a
+// handler whose `where` opts out of this chain isn't held to its limits.
 let validateRpcFieldSelection = (
   chainConfig: Config.chain,
   registrations: array<Internal.onEventRegistration>,
@@ -466,23 +476,17 @@ let validateRpcFieldSelection = (
   | _ => false
   }
   if syncsOverRpc {
-    registrations->Array.forEach(reg => {
-      let check = (fields, ~isSupported, ~kind) =>
-        fields
-        ->Utils.Set.toArray
-        ->Array.forEach(name =>
-          if !isSupported(name) {
-            JsError.throwWithMessage(
-              `The "${name}" field selected by the "${reg.eventConfig.name}" event registration on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the fields.${kind} option, or index chain ${chainConfig.id->ChainId.toString} via HyperSync.`,
-            )
-          }
-        )
-      reg.selectedBlockFields->check(~isSupported=RpcSource.isRpcBlockField, ~kind="block")
-      reg.selectedTransactionFields->check(
-        ~isSupported=RpcSource.isRpcTransactionField,
-        ~kind="transaction",
+    registrations->Array.forEach(reg =>
+      reg.selectedTransactionFields
+      ->Utils.Set.toArray
+      ->Array.forEach(name =>
+        if !RpcSource.isRpcTransactionField(name) {
+          JsError.throwWithMessage(
+            `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or index chain ${chainConfig.id->ChainId.toString} via HyperSync.`,
+          )
+        }
       )
-    })
+    )
   }
 }
 
@@ -499,7 +503,6 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
         let key = chainId->ChainId.toString
 
         let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
-        validateRpcFieldSelection(chainConfig, builtRegs)
         let registeredKeys = Utils.Set.make()
         builtRegs->Array.forEach(reg =>
           registeredKeys
@@ -572,6 +575,8 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             ->ignore
           }
         })
+
+        validateRpcFieldSelection(chainConfig, onEventRegistrations)
 
         registrationsByChainId->Dict.set(
           key,

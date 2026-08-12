@@ -70,9 +70,17 @@ indexer.onEvent(
 ```
 
 `fields` **replaces** the config `field_selection` for that registration: a
-field selected in config.yaml but not listed here is not readable. Only
-`block.number` is included without listing it. Two handlers on one event can
-select different fields; the indexer fetches the union.
+field selected in config.yaml but not listed here is a compile error in this
+handler, even though it may still be present at runtime. Only `block.number` is
+readable without listing it.
+
+Two handlers on one event can select different fields. The indexer fetches the
+union, so a field one handler listed is often populated for the other too —
+the types, not the runtime, are what keep each handler to its own selection.
+
+Write the selection inline (or with `as const`). A variable typed as
+`EvmFieldsSelection` is rejected: its element types no longer name the selected
+fields, so every field would look selected.
 
 Available on `indexer.onEvent` and `indexer.contractRegister`, EVM only.
 

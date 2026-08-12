@@ -830,6 +830,40 @@ type EvmListedFields<Fields, Knob extends keyof EvmFieldsSelection> = Fields ext
   ? Name
   : never;
 
+/** The value listed under `Knob`, keeping optional keys (which a `Record<Knob, _>`
+ * conditional would miss, since an optional property doesn't satisfy a required
+ * one). `never` when the key is absent from the selection entirely. */
+type EvmListedArray<Fields, Knob extends keyof EvmFieldsSelection> = Fields[Knob &
+  keyof Fields];
+
+/** True for an unbounded `T[]` / `readonly T[]`, false for a literal tuple —
+ * and false for an absent key, so a selection that names only one knob passes. */
+type IsWidenedArray<T> = [NonNullable<T>] extends [never]
+  ? false
+  : [NonNullable<T>] extends [readonly unknown[]]
+    ? number extends NonNullable<T>["length"]
+      ? true
+      : false
+    : false;
+
+/** Rejected in place of the `fields` option when a selection isn't written as a
+ * literal. Reading it as an array type would only tell us the field union, not
+ * which fields this registration listed, so every field would type as selected
+ * while the runtime selected a subset. */
+export type EvmFieldsMustBeLiteral<Knob extends string> = {
+  readonly __fieldsMustBeLiteral: `fields.${Knob} must be a literal array, so its element types name the selected fields. Write it inline, or annotate the variable with 'as const' instead of a field-name array type.`;
+};
+
+/** `unknown` (a no-op intersection) when every listed selection is a literal
+ * array, otherwise the branded type that rejects the option. */
+type EvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
+  ? unknown
+  : IsWidenedArray<EvmListedArray<Fields, "block">> extends true
+    ? EvmFieldsMustBeLiteral<"block">
+    : IsWidenedArray<EvmListedArray<Fields, "transaction">> extends true
+      ? EvmFieldsMustBeLiteral<"transaction">
+      : unknown;
+
 /** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
  * With no `fields` option the event type passes through, so the `config.yaml`
  * `field_selection` path is unaffected. */
@@ -853,13 +887,19 @@ export type EvmEventWithFields<Event, Fields> = Fields extends EvmFieldsSelectio
  * contractName/eventName pair is constrained together — preventing invalid cross-member pairings.
  * The `Params` generic carries the indexed-parameter shape (looked up via `EvmEventFilters[C][E]["params"]`
  * by callers) so the `where` option enforces the same per-event narrowing as the inline handler signature. */
-export type EvmOnEventOptions<Event extends EventLike = _ProjectEvmEvent, Params = {}> = Event extends EventLike
+export type EvmOnEventOptions<
+  Event extends EventLike = _ProjectEvmEvent,
+  Params = {},
+  Fields extends EvmFieldsSelection | undefined = EvmFieldsSelection,
+> = Event extends EventLike
   ? {
       readonly contract: Event["contractName"];
       readonly event: Event["eventName"];
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
-      readonly fields?: EvmFieldsSelection;
+      /** Pass the selection's literal type as the `Fields` generic to get the
+       * same narrowing `indexer.onEvent` infers from the call site. */
+      readonly fields?: Fields;
     }
   : never;
 
@@ -1322,7 +1362,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
-                    readonly fields?: F;
+                    readonly fields?: F & EvmFieldsLiteralCheck<F>;
                   },
                   handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
@@ -1346,7 +1386,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
-                    readonly fields?: F;
+                    readonly fields?: F & EvmFieldsLiteralCheck<F>;
                   },
                   handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;

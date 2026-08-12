@@ -28,6 +28,23 @@ chains:
 let config = makeConfig()
 let configWithRawEvents = makeConfig(~rawEvents=true)
 
+let rpcConfig = InternalTestIndexer.fromUserApi(~configYaml=`
+name: inline-field-selection-rpc
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    start_block: 0
+    rpc:
+      url: "https://rpc.example.test"
+      for: sync
+    contracts:
+      - name: ERC20
+        address: "0x1111111111111111111111111111111111111111"
+`).config
+
 let makeHandler = (): Internal.handler => %raw(`() => Promise.resolve()`)
 let makeContractRegister = (): Internal.contractRegister => %raw(`() => Promise.resolve()`)
 
@@ -55,9 +72,9 @@ let register = (~config=config, fn) => {
 }
 
 // Per-registration selection on chain 1, as sorted field-name arrays.
-let selections = (registrations: HandlerRegister.registrationsByChainId) => {
+let selections = (registrations: HandlerRegister.registrationsByChainId, ~chainKey="1") => {
   let chainRegistrations: HandlerRegister.chainRegistrations =
-    registrations->Utils.Dict.dangerouslyGetNonOption("1")->Option.getOrThrow
+    registrations->Utils.Dict.dangerouslyGetNonOption(chainKey)->Option.getOrThrow
   chainRegistrations.onEventRegistrations->Array.map(reg => (
     reg.selectedBlockFields->Utils.Set.toArray->Array.toSorted(String.compare),
     reg.selectedTransactionFields->Utils.Set.toArray->Array.toSorted(String.compare),
@@ -69,11 +86,13 @@ let withFields = (~block=?, ~transaction=?, ()): Internal.eventOptions<JSON.t> =
 }
 
 describe("EVM inline field selection", () => {
-  it("replaces the config selection, always keeping block.number", t => {
+  it("replaces the config selection, keeping the internally required block fields", t => {
     let registrations = register(() =>
       setHandler(~eventOptions=withFields(~block=["parentHash"], ~transaction=["to"], ()), makeHandler())
     )
-    t.expect(registrations->selections).toEqual([(["number", "parentHash"], ["to"])])
+    t.expect(registrations->selections).toEqual([
+      (["number", "parentHash", "timestamp"], ["to"]),
+    ])
   })
 
   it("falls back to the config selection without the option", t => {
@@ -96,8 +115,8 @@ describe("EVM inline field selection", () => {
       setHandler(~eventOptions=withFields(~transaction=["gasUsed"], ()), makeHandler())
     })
     t.expect(registrations->selections).toEqual([
-      (["number", "parentHash"], []),
-      (["number"], ["gasUsed"]),
+      (["number", "parentHash", "timestamp"], []),
+      (["number", "timestamp"], ["gasUsed"]),
     ])
   })
 
@@ -106,7 +125,9 @@ describe("EVM inline field selection", () => {
       setHandler(~eventOptions=withFields(~block=["parentHash"], ()), makeHandler())
       setContractRegister(~eventOptions=withFields(~transaction=["gasUsed"], ()), makeContractRegister())
     })
-    t.expect(registrations->selections).toEqual([(["number", "parentHash"], ["gasUsed"])])
+    t.expect(registrations->selections).toEqual([
+      (["number", "parentHash", "timestamp"], ["gasUsed"]),
+    ])
   })
 
   it("unions the selection when a handler merges into an earlier contractRegister", t => {
@@ -114,7 +135,9 @@ describe("EVM inline field selection", () => {
       setContractRegister(~eventOptions=withFields(~transaction=["gasUsed"], ()), makeContractRegister())
       setHandler(~eventOptions=withFields(~block=["parentHash"], ()), makeHandler())
     })
-    t.expect(registrations->selections).toEqual([(["number", "parentHash"], ["gasUsed"])])
+    t.expect(registrations->selections).toEqual([
+      (["number", "parentHash", "timestamp"], ["gasUsed"]),
+    ])
   })
 
   // `toRawEvent` reads block.hash/block.timestamp off the payload, so they stay
@@ -145,7 +168,10 @@ describe("EVM inline field selection", () => {
         input.blockFields->Array.toSorted(String.compare),
         input.transactionFields->Array.toSorted(String.compare),
       ))
-    t.expect(inputs).toEqual([(["Number", "ParentHash"], []), (["Number"], ["GasUsed"])])
+    t.expect(inputs).toEqual([
+      (["Number", "ParentHash", "Timestamp"], []),
+      (["Number", "Timestamp"], ["GasUsed"]),
+    ])
   })
 
   it("rejects a field name that isn't an EVM block or transaction field", t => {
@@ -163,22 +189,6 @@ describe("EVM inline field selection", () => {
   })
 
   it("rejects a field an RPC-synced chain can't deliver", t => {
-    let rpcConfig = InternalTestIndexer.fromUserApi(~configYaml=`
-name: inline-field-selection-rpc
-contracts:
-  - name: ERC20
-    events:
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-chains:
-  - id: 1
-    start_block: 0
-    rpc:
-      url: "https://rpc.example.test"
-      for: sync
-    contracts:
-      - name: ERC20
-        address: "0x1111111111111111111111111111111111111111"
-`).config
     let message = try {
       register(~config=rpcConfig, () =>
         setHandler(~eventOptions=withFields(~transaction=["accessList"], ()), makeHandler())
@@ -188,7 +198,36 @@ chains:
     | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
     }
     t.expect(message).toBe(
-      `The "accessList" field selected by the "Transfer" event registration on contract "ERC20" is unavailable for indexing via RPC. Remove it from the fields.transaction option, or index chain 1 via HyperSync.`,
+      `The "accessList" transaction field selected for the "Transfer" event on contract "ERC20" is unavailable for indexing via RPC. Remove it from the field selection, or index chain 1 via HyperSync.`,
+    )
+  })
+
+  // The registration is dropped for this chain before it reaches the source, so
+  // the chain's RPC limits never apply to it.
+  it("skips the RPC check for a registration whose where opts out of the chain", t => {
+    let registrations = register(~config=rpcConfig, () =>
+      setHandler(
+        ~eventOptions={
+          where: %raw(`() => false`),
+          fields: {transaction: ["accessList"]},
+        },
+        makeHandler(),
+      )
+    )
+    t.expect(registrations->selections(~chainKey="1")).toEqual([])
+  })
+
+  it("rejects a fields option that isn't an array of names", t => {
+    let message = try {
+      register(() =>
+        setHandler(~eventOptions={fields: {block: %raw(`"parentHash"`)}}, makeHandler())
+      )->ignore
+      "the registration to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(message).toBe(
+      `The fields.block option of the "Transfer" event registration on contract "ERC20" must be an array of field names.`,
     )
   })
 

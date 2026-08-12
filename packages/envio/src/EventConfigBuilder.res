@@ -236,8 +236,8 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
 
 // ============== Build topic filter getters ==============
 
-let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => value =>
-  Core.getAddon().encodeIndexedTopic(~abiType, ~value)
+let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) =>
+  value => Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
 let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)
@@ -247,6 +247,7 @@ let buildTopicGetter = (p: paramMeta) => {
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
     ->Option.mapOr([], topicFilters => {
       let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+
       // A tuple filter value is itself an array, so a directly-passed tuple is
       // indistinguishable from an OR-list by shape alone. A single tuple is
       // the common case, so try it first; when the value doesn't ABI-encode as
@@ -292,15 +293,20 @@ let resolveFieldSelection = (
   )
 }
 
-// An inline `fields` selection replaces the config `field_selection`, so only
-// `number` — the item's own key — comes for free. `timestamp`/`hash` must be
-// listed, unlike on the config path where all three are always included.
-let alwaysSelectedInlineBlockFields = ["number"]
+// Block fields an inline selection carries whether or not the handler listed
+// them. `number` is the item's own key; `timestamp` backs the progress-latency
+// metric (`ChainState.applyBatchProgress`), which would go silent for a chain
+// whose every registration selects inline. Neither costs a fetch: sources
+// always request number/timestamp/hash (`REQUIRED_BLOCK_FIELDS` on the
+// HyperSync side, the whole block JSON on the RPC side), so this only widens
+// what's copied onto the payload. Runtime only — the handler's type exposes
+// `number` alone, so the extra field is unread rather than unsound.
+let internalBlockFields = ["number", "timestamp"]
 
-// `toRawEvent` reads `block.hash`/`block.timestamp` off the payload, so a
-// registration that doesn't select them still has to materialise them when the
-// project stores raw events. Runtime only — the handler's type doesn't widen.
-let rawEventBlockFields = ["timestamp", "hash"]
+// `toRawEvent` additionally reads `block.hash` off the payload, so a
+// registration that doesn't select it still has to materialise it when the
+// project stores raw events.
+let rawEventBlockFields = ["hash"]
 
 let parseFieldsOrThrow = (
   fields: option<array<string>>,
@@ -310,9 +316,15 @@ let parseFieldsOrThrow = (
   ~eventName: string,
 ) => {
   let seen = Utils.Set.make()
-  fields
-  ->Option.getOr([])
-  ->Array.forEach(name => {
+  let fields = switch fields {
+  | None => []
+  | Some(fields) if !Array.isArray(fields) =>
+    JsError.throwWithMessage(
+      `The fields.${kind} option of the "${eventName}" event registration on contract "${contractName}" must be an array of field names.`,
+    )
+  | Some(fields) => fields
+  }
+  fields->Array.forEach(name => {
     if !(valid->Array.includes(name)) {
       JsError.throwWithMessage(
         `Invalid "${name}" field in the fields.${kind} option of the "${eventName}" event registration on contract "${contractName}". Valid ${kind} fields: ${valid->Array.joinUnsafe(
@@ -361,9 +373,7 @@ let resolveRegistrationFieldSelection = (
       ~contractName=eventConfig.contractName,
       ~eventName=eventConfig.name,
     )
-    alwaysSelectedInlineBlockFields->Array.forEach(name =>
-      selectedBlockFields->Utils.Set.add(name)->ignore
-    )
+    internalBlockFields->Array.forEach(name => selectedBlockFields->Utils.Set.add(name)->ignore)
     if enableRawEvents {
       rawEventBlockFields->Array.forEach(name => selectedBlockFields->Utils.Set.add(name)->ignore)
     }
@@ -428,7 +438,7 @@ let buildEvmOnEventRegistration = (
   ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~fields: option<Internal.evmFieldsSelection>=?,
-  ~enableRawEvents: bool=false,
+  ~enableRawEvents: bool,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
   let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)

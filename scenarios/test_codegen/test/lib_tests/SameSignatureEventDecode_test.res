@@ -26,6 +26,7 @@ let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
     ~contractRegister=None,
     ~where=None,
     ~chainId=1->ChainId.fromInt,
+    ~enableRawEvents=false,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
