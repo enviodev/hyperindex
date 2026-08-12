@@ -34,7 +34,24 @@ type sourceMock = {
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
+// The ClickHouse leg indexes the same scenario with the sink switched on. It's
+// a config choice a user makes in YAML, so it's made there rather than by
+// patching the parsed config — that way the entities pick up their ClickHouse
+// storage flags through the same parse a user's would.
+let withClickHouseStorage = configYaml =>
+  if configYaml->String.match(%re("/^storage:/m"))->Option.isSome {
+    // The scenario configures storage itself; leave its choice alone.
+    configYaml
+  } else {
+    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+  }
+
 let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=[]): t => {
+  let configYaml = switch IndexerRunner.selectedBackend {
+  | #clickhouse => configYaml->withClickHouseStorage
+  | #memory | #postgres => configYaml
+  }
+
   let withIndexerTypes = handlers->Option.isSome
   let {config: configJson, indexerTypes} = Core.fromUserApi(
     ~schema?,

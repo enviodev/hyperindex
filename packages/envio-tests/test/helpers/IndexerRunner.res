@@ -93,6 +93,13 @@ let run = async (
   // previous one persisted — the same way a postgres schema does.
   let memoryState = MemoryStorage.make()
 
+  // The ClickHouse leg writes through the sink Postgres storage attaches, into
+  // a database of this run's own.
+  let clickHouseDatabase = switch backend {
+  | #clickhouse => Some(TestClickHouse.make())
+  | #memory | #postgres => None
+  }
+
   // The builder is only reachable here and from `restart`, so it takes just
   // the flag that differs between them and reads the rest off this call.
   let rec make = async (~reset) => {
@@ -484,6 +491,10 @@ let run = async (
   // that died before getting here.
   switch clients->Array.get(0) {
   | Some(sql) => await attempt(() => sql->TestPgSchema.drop(~pgSchema))
+  | None => ()
+  }
+  switch clickHouseDatabase {
+  | Some(database) => await attempt(() => TestClickHouse.drop(~database))
   | None => ()
   }
   for i in 0 to clients->Array.length - 1 {
