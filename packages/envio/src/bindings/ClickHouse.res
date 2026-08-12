@@ -20,15 +20,6 @@ external exec: (client, execParams) => promise<unit> = "exec"
 @send
 external close: client => promise<unit> = "close"
 
-type insertParams<'a> = {
-  table: string,
-  values: array<'a>,
-  format: string,
-}
-
-@send
-external insert: (client, insertParams<'a>) => promise<unit> = "insert"
-
 type queryParams = {query: string}
 type queryResult<'a>
 
@@ -161,79 +152,155 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
 
 let logger = Logging.createChild(~params={"context": "ClickHouse"})
 
-// On transient failure, split values in half and retry each half.
-// If only 1 row remains, retry with delay.
-// Delay scales from 100ms to 1000ms as retries decrease.
-let rec insertWithRetry = async (
-  client,
-  ~table: string,
-  ~values: array<'a>,
-  ~format: string,
-  ~retries=8,
-) => {
-  try {
-    await client->insert({table, values, format})
-  } catch {
-  | exn if retries > 0 =>
-    let delayMs = Math.Int.min(1000, 100 + 900 * (8 - retries) / 7)
-    if Array.length(values) > 1 {
-      logger->Logging.childWarn({
-        "msg": "ClickHouse insert failed, splitting batch in half and retrying",
-        "table": table,
-        "batchSize": Array.length(values),
-        "retriesLeft": retries,
-        "err": exn->Utils.prettifyExn,
-      })
-      await Utils.delay(delayMs)
-      let mid = Array.length(values) / 2
-      let first = values->Array.slice(~start=0, ~end=mid)
-      let second = values->Array.slice(~start=mid)
-      await insertWithRetry(client, ~table, ~values=first, ~format, ~retries=retries - 1)
-      await insertWithRetry(client, ~table, ~values=second, ~format, ~retries=retries - 1)
-    } else {
-      logger->Logging.childWarn({
-        "msg": "ClickHouse insert failed, retrying after delay",
-        "table": table,
-        "retriesLeft": retries,
-        "err": exn->Utils.prettifyExn,
-      })
-      await Utils.delay(delayMs)
-      await insertWithRetry(client, ~table, ~values, ~format, ~retries=retries - 1)
+// Column set of an entity history table, resolved once per entity and scope.
+// The builders are reused across writes: filling them and staging the batch
+// happens in one synchronous run, so no two writes ever hold the same builder.
+type entityColumns = {
+  tableName: string,
+  builders: array<ClickHouseSink.builder>,
+  convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
+  convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
+}
+
+let compileToColumnValues = schema =>
+  S.compile(
+    schema,
+    ~input=Value,
+    ~output=Json,
+    ~typeValidation=false,
+    ~mode=Sync,
+  )->(
+    Utils.magic: (Change.t<Internal.entity> => JSON.t) => Change.t<Internal.entity> => dict<unknown>
+  )
+
+let makeEntityColumns = (
+  ~entityConfig: Internal.entityConfig,
+  ~scope: Internal.chainScope,
+  ~chainIdMode: ChainId.mode,
+): entityColumns => {
+  let chainIdField = entityConfig.table->Table.getChainIdField
+  let scopeChainId = scope->Internal.chainScopeChainId
+  let idSchema = entityConfig.table->Table.getIdSchema
+
+  let builders = entityConfig.table.fields->Array.filterMap(field =>
+    switch field {
+    | Table.Field(f) =>
+      Some(
+        ClickHouseSink.makeBuilder(
+          ~name=f->Table.getClickHouseDbFieldName,
+          ~kind=ClickHouseSink.kindOfField(
+            ~fieldType=f.fieldType,
+            ~isArray=f.isArray,
+            ~chainIdMode,
+          ),
+        ),
+      )
+    | DerivedFrom(_) => None
     }
+  )
+  builders->Array.push(
+    ClickHouseSink.makeBuilder(~name=EntityHistory.checkpointIdFieldName, ~kind=U64),
+  )
+  builders->Array.push(ClickHouseSink.makeBuilder(~name=EntityHistory.changeFieldName, ~kind=Text))
+
+  {
+    tableName: EntityHistory.historyTableName(
+      ~entityName=entityConfig.name,
+      ~entityIndex=entityConfig.index,
+    ),
+    builders,
+    convertSetOrThrow: compileToColumnValues(
+      EntityHistory.makeSetUpdateSchema(~idSchema, makeClickHouseEntitySchema(entityConfig.table)),
+    ),
+    // A delete row carries no entity to stamp, so the chain id is baked into
+    // the schema instead — which is why the cache is keyed per scope. Every
+    // other column is absent and takes its ClickHouse default.
+    convertDeleteOrThrow: compileToColumnValues(
+      S.object(s => {
+        s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+        switch (chainIdField, scopeChainId) {
+        | (Some(field), Some(chainId)) => s.tag(field->Table.getClickHouseDbFieldName, chainId)
+        | _ => ()
+        }
+        Change.Delete({
+          entityId: s.field(Table.idFieldName, idSchema),
+          checkpointId: s.field(
+            EntityHistory.checkpointIdFieldName,
+            EntityHistory.unsafeCheckpointIdSchema,
+          ),
+        })
+      }),
+    ),
   }
 }
 
-let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) => {
-  let checkpointsCount = batch.checkpointIds->Array.length
-  if checkpointsCount === 0 {
+// Stages the filled builders and awaits the insert. Kept separate so the caller
+// can fill and stage without an await in between.
+let insertBuilders = async (sink, ~tableName, ~builders: array<ClickHouseSink.builder>, ~rows) => {
+  let handle =
+    sink->ClickHouseSink.stage(
+      ~table=tableName,
+      ~rows,
+      ~columns=builders->Array.map(ClickHouseSink.builderPayload),
+    )
+  let warnings = await sink->ClickHouseSink.flush(handle)
+  warnings->Array.forEach(msg =>
+    logger->Logging.childWarn({
+      "msg": msg,
+      "table": tableName,
+    })
+  )
+}
+
+let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.mode) => {
+  let rows = batch.checkpointIds->Array.length
+  if rows === 0 {
     ()
   } else {
-    // Convert columnar data to row format for JSONCompactEachRow
-    let checkpointRows = []
-    for idx in 0 to checkpointsCount - 1 {
-      checkpointRows
-      ->Array.push((
-        batch.checkpointIds->Array.getUnsafe(idx)->BigInt.toString,
-        batch.checkpointChainIds->Array.getUnsafe(idx),
-        batch.checkpointBlockNumbers->Array.getUnsafe(idx),
-        batch.checkpointBlockHashes->Array.getUnsafe(idx),
-        batch.checkpointEventsProcessed->Array.getUnsafe(idx),
-      ))
-      ->ignore
+    let tableName = InternalTable.Checkpoints.table.tableName
+    // Kinds mirror `makeCreateCheckpointsTableQuery`, where events_processed is
+    // widened to UInt64 rather than the Int32 the Postgres table uses.
+    let id = ClickHouseSink.makeBuilder(~name="id", ~kind=U64)
+    let chainId = ClickHouseSink.makeBuilder(
+      ~name="chain_id",
+      ~kind=ClickHouseSink.kindOfField(~fieldType=ChainId, ~isArray=false, ~chainIdMode),
+    )
+    let blockNumber = ClickHouseSink.makeBuilder(~name="block_number", ~kind=F64)
+    let blockHash = ClickHouseSink.makeBuilder(~name="block_hash", ~kind=Text)
+    let eventsProcessed = ClickHouseSink.makeBuilder(~name="events_processed", ~kind=U64)
+    let builders = [id, chainId, blockNumber, blockHash, eventsProcessed]
+    builders->Array.forEach(builder => builder->ClickHouseSink.allocBuilder(~rows))
+
+    for row in 0 to rows - 1 {
+      id->ClickHouseSink.writeValue(
+        ~row,
+        batch.checkpointIds->Array.getUnsafe(row)->(Utils.magic: bigint => unknown),
+      )
+      chainId->ClickHouseSink.writeValue(
+        ~row,
+        batch.checkpointChainIds->Array.getUnsafe(row)->(Utils.magic: ChainId.t => unknown),
+      )
+      blockNumber->ClickHouseSink.writeValue(
+        ~row,
+        batch.checkpointBlockNumbers->Array.getUnsafe(row)->(Utils.magic: int => unknown),
+      )
+      blockHash->ClickHouseSink.writeValue(
+        ~row,
+        batch.checkpointBlockHashes->Array.getUnsafe(row)->(Utils.magic: Null.t<string> => unknown),
+      )
+      eventsProcessed->ClickHouseSink.writeValue(
+        ~row,
+        batch.checkpointEventsProcessed->Array.getUnsafe(row)->(Utils.magic: int => unknown),
+      )
     }
 
     try {
-      await insertWithRetry(
-        client,
-        ~table=`${database}.\`${InternalTable.Checkpoints.table.tableName}\``,
-        ~values=checkpointRows,
-        ~format="JSONCompactEachRow",
-      )
+      await sink->insertBuilders(~tableName, ~builders, ~rows)
     } catch {
     | exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed to insert checkpoints into ClickHouse table "${InternalTable.Checkpoints.table.tableName}"`,
+          message: `Failed to insert checkpoints into ClickHouse table "${tableName}"`,
           reason: exn->Utils.prettifyExn,
         }),
       )
@@ -241,95 +308,82 @@ let setCheckpointsOrThrow = async (client, ~batch: Batch.t, ~database: string) =
   }
 }
 
-type setUpdatesCache = {
-  tableName: string,
-  convertOrThrow: array<Change.t<Internal.entity>> => array<JSON.t>,
-}
-
 let setUpdatesOrThrow = async (
-  client,
-  ~cache: dict<setUpdatesCache>,
+  sink,
+  ~cache: dict<entityColumns>,
   ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
-  ~database: string,
+  ~chainIdMode: ChainId.mode,
 ) => {
-  if changes->Array.length === 0 {
+  let rows = changes->Array.length
+  if rows === 0 {
     ()
   } else {
-    let chainIdField = entityConfig.table->Table.getChainIdField
-    let scopeChainId = scope->Internal.chainScopeChainId
-    // A delete row carries no entity to stamp, so the chain id is baked into
-    // the schema instead — which is why the cache is keyed per scope.
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let {convertOrThrow, tableName} = switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+    let {tableName, builders, convertSetOrThrow, convertDeleteOrThrow} = switch cache
+    ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(cached) => cached
     | None =>
-      let cached: setUpdatesCache = {
-        tableName: `${database}.\`${EntityHistory.historyTableName(
-            ~entityName=entityConfig.name,
-            ~entityIndex=entityConfig.index,
-          )}\``,
-        convertOrThrow: S.compile(
-          S.array(
-            S.union([
-              EntityHistory.makeSetUpdateSchema(
-                ~idSchema=entityConfig.table->Table.getIdSchema,
-                makeClickHouseEntitySchema(entityConfig.table),
-              ),
-              S.object(s => {
-                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                switch (chainIdField, scopeChainId) {
-                | (Some(field), Some(chainId)) =>
-                  s.tag(field->Table.getClickHouseDbFieldName, chainId)
-                | _ => ()
-                }
-                Change.Delete({
-                  entityId: s.field(Table.idFieldName, entityConfig.table->Table.getIdSchema),
-                  checkpointId: s.field(
-                    EntityHistory.checkpointIdFieldName,
-                    EntityHistory.unsafeCheckpointIdSchema,
-                  ),
-                })
-              }),
-            ]),
-          ),
-          ~input=Value,
-          ~output=Json,
-          ~typeValidation=false,
-          ~mode=Sync,
-        )->(
-          Utils.magic: (array<Change.t<Internal.entity>> => JSON.t) => array<
-            Change.t<Internal.entity>,
-          > => array<JSON.t>
-        ),
-      }
-
+      let cached = makeEntityColumns(~entityConfig, ~scope, ~chainIdMode)
       cache->Dict.set(cacheKey, cached)
       cached
     }
 
-    let changes = switch (chainIdField, scopeChainId) {
-    | (Some(field), Some(chainId)) =>
-      changes->Array.map(change =>
-        switch change {
+    let stampFieldName = switch (
+      entityConfig.table->Table.getChainIdField,
+      scope->Internal.chainScopeChainId,
+    ) {
+    | (Some(field), Some(chainId)) => Some((field.fieldName, chainId))
+    | _ => None
+    }
+
+    let handle = try {
+      builders->Array.forEach(builder => builder->ClickHouseSink.allocBuilder(~rows))
+      for row in 0 to rows - 1 {
+        let change = changes->Array.getUnsafe(row)
+        // The entity history table is the source of truth for ClickHouse, so
+        // every intermediate change must be persisted, not only the current value.
+        let values = switch change {
         | Change.Set(set) =>
-          Change.Set({
-            ...set,
-            entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
-          })
-        | Delete(_) => change
+          let change = switch stampFieldName {
+          | Some((fieldName, chainId)) =>
+            Change.Set({
+              ...set,
+              entity: set.entity->Internal.stampChainId(~fieldName, ~chainId),
+            })
+          | None => change
+          }
+          convertSetOrThrow(change)
+        | Delete(_) => convertDeleteOrThrow(change)
         }
+        builders->Array.forEach(builder =>
+          builder->ClickHouseSink.writeValue(~row, values->Dict.getUnsafe(builder.name))
+        )
+      }
+      sink->ClickHouseSink.stage(
+        ~table=tableName,
+        ~rows,
+        ~columns=builders->Array.map(ClickHouseSink.builderPayload),
       )
-    | _ => changes
+    } catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed to convert items for ClickHouse table "${tableName}"`,
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
     }
 
     try {
-      // The entity history table is the source of truth for ClickHouse, so every
-      // intermediate change must be persisted, not only the current value.
-      let values = changes->convertOrThrow
-
-      await insertWithRetry(client, ~table=tableName, ~values, ~format="JSONEachRow")
+      let warnings = await sink->ClickHouseSink.flush(handle)
+      warnings->Array.forEach(msg =>
+        logger->Logging.childWarn({
+          "msg": msg,
+          "table": tableName,
+        })
+      )
     } catch {
     | exn =>
       throw(
@@ -572,11 +626,24 @@ WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> 
 // Initialize ClickHouse tables for entities
 let initialize = async (
   client,
+  ~sink: ClickHouseSink.t,
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
+  // A reset drops and recreates the tables, so any column types the sink read
+  // earlier in this process no longer describe them.
+  entities->Array.forEach(entityConfig =>
+    sink->ClickHouseSink.invalidateSchema(
+      EntityHistory.historyTableName(
+        ~entityName=entityConfig.name,
+        ~entityIndex=entityConfig.index,
+      ),
+    )
+  )
+  sink->ClickHouseSink.invalidateSchema(InternalTable.Checkpoints.table.tableName)
+
   try {
     let databaseEngine = Env.ClickHouse.databaseEngine()
     let databaseEngineClause = switch databaseEngine {

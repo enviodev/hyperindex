@@ -10,6 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type clickHouseSinkCtor
 type addressStoreCtor
 type fromUserApiOptions = {
   schema?: string,
@@ -43,6 +44,11 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
+  @as("ClickHouseSink")
+  clickHouseSink: clickHouseSinkCtor,
+  // The wire kind Rust expects for a ClickHouse column type, so a test can pin
+  // `ClickHouseSink.kindOfField` to it.
+  clickhouseColumnKind: string => int,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,

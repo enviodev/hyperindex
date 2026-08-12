@@ -22,12 +22,17 @@ let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: Chai
   // Don't pass database to the client; it would fail if the database doesn't
   // exist yet. Each query qualifies the name explicitly or runs USE first.
 
+  // Inserts go through the Rust sink: values cross the napi boundary columnar,
+  // get encoded as RowBinary and are sent off the Node main thread. DDL, the
+  // current-state views and the reorg cleanup stay on the JS client.
+  let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+
   let cache = Dict.make()
 
   {
     name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(client, ~database, ~entities, ~enums, ~chainIdMode)
+      ClickHouse.initialize(client, ~sink, ~database, ~entities, ~enums, ~chainIdMode)
     },
     resume: (~checkpointId) => {
       ClickHouse.resume(client, ~database, ~checkpointId)
@@ -35,10 +40,20 @@ let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: Chai
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
         updatedEntities->Array.map(({entityConfig, scope, changes}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~scope, ~database)
+          ClickHouse.setUpdatesOrThrow(
+            sink,
+            ~cache,
+            ~changes,
+            ~entityConfig,
+            ~scope,
+            ~chainIdMode,
+          )
         }),
       )->Utils.Promise.ignoreValue
-      await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
+      // Checkpoints land after the rows they cover: the current-state view reads
+      // up to `max(id)`, so a checkpoint visible before its rows would expose a
+      // partial batch.
+      await ClickHouse.setCheckpointsOrThrow(sink, ~batch, ~chainIdMode)
     },
   }
 }
