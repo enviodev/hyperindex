@@ -132,9 +132,10 @@ impl EvmHyperSyncClient {
         &self,
         block_numbers: Vec<i64>,
     ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
-        paginate_block_hashes(
+        let aggregate = BlockStore::new_evm(self.enable_checksum_addresses);
+        let request_stats = paginate_block_hashes(
             &block_numbers,
-            BlockStore::new_evm(self.enable_checksum_addresses),
+            &aggregate,
             "block numbers",
             |request_from, to_block_exclusive| async move {
                 let query = Query {
@@ -158,9 +159,9 @@ impl EvmHyperSyncClient {
                     store,
                 })
             },
-            |_, _, _| Ok(()),
         )
-        .await
+        .await?;
+        Ok((aggregate, request_stats))
     }
 
     #[napi]

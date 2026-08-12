@@ -261,12 +261,14 @@ impl SvmHyperSyncClient {
             block: Some(vec!["slot".to_string(), "blockhash".to_string()]),
             ..Default::default()
         };
-        paginate_block_hashes(
+        let aggregate = BlockStore::new_svm();
+        let request_stats = paginate_block_hashes(
             &block_numbers,
-            BlockStore::new_svm(),
+            &aggregate,
             "slot numbers",
             |request_from, to_slot_exclusive| {
                 let fields = fields.clone();
+                let aggregate = &aggregate;
                 async move {
                     let query = SvmQuery {
                         from_slot: request_from,
@@ -278,6 +280,11 @@ impl SvmHyperSyncClient {
                     let response = self.get_raw(query).await?;
                     let (next, last_returned, store) =
                         block_hash_page(response).map_err(map_err)?;
+                    // Each advancing cursor proves its half-open range was
+                    // processed; block rows missing inside it are skipped slots.
+                    aggregate
+                        .mark_svm_coverage(request_from, next.min(to_slot_exclusive))
+                        .map_err(map_err)?;
                     Ok(HashPage {
                         next,
                         last_returned,
@@ -285,11 +292,9 @@ impl SvmHyperSyncClient {
                     })
                 }
             },
-            // Each advancing cursor proves its half-open range was processed;
-            // block rows missing inside that coverage are skipped slots.
-            |aggregate, request_from, next| aggregate.mark_svm_coverage(request_from, next),
         )
-        .await
+        .await?;
+        Ok((aggregate, request_stats))
     }
     #[napi]
     pub async fn get_event_items(

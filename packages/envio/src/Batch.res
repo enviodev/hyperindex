@@ -127,22 +127,6 @@ let getProgressedChainsById = {
   }
 }
 
-// Index of the first entry of an ascending array greater than `blockNumber`,
-// or the array length when there is none.
-let firstIndexAbove = (ascending: array<int>, blockNumber: int) => {
-  let low = ref(0)
-  let high = ref(ascending->Array.length)
-  while low.contents < high.contents {
-    let mid = (low.contents + high.contents) / 2
-    if ascending->Array.getUnsafe(mid) > blockNumber {
-      high := mid
-    } else {
-      low := mid + 1
-    }
-  }
-  low.contents
-}
-
 @inline
 let addReorgCheckpoints = (
   ~prevCheckpointId,
@@ -160,15 +144,12 @@ let addReorgCheckpoints = (
   if shouldRollbackOnReorg {
     let prevCheckpointId = ref(prevCheckpointId)
     // The snapshot already holds only in-threshold scanned hashes, ascending,
-    // so the gap's own slice gives the checkpoints without re-reading the store
-    // per block. A batch spans many gaps and the snapshot is up to
-    // `maxReorgDepth` long, so seek to the gap instead of scanning from 0.
+    // so a straight range filter over it gives the gap checkpoints without
+    // re-reading the store per block.
     let blockNumbers = scannedHashes.blockNumbers
-    let idx = ref(blockNumbers->firstIndexAbove(fromBlockExclusive))
-    let continue = ref(true)
-    while continue.contents {
-      switch blockNumbers->Array.get(idx.contents) {
-      | Some(blockNumber) if blockNumber < toBlockExclusive =>
+    for idx in 0 to blockNumbers->Array.length - 1 {
+      let blockNumber = blockNumbers->Array.getUnsafe(idx)
+      if blockNumber > fromBlockExclusive && blockNumber < toBlockExclusive {
         let hash =
           scannedHashes.hashByBlockNumber
           ->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber)
@@ -181,8 +162,6 @@ let addReorgCheckpoints = (
         mutCheckpointBlockNumbers->Array.push(blockNumber)
         mutCheckpointBlockHashes->Array.push(Null.Value(hash))
         mutCheckpointEventsProcessed->Array.push(0)
-        idx := idx.contents + 1
-      | _ => continue := false
       }
     }
     prevCheckpointId.contents

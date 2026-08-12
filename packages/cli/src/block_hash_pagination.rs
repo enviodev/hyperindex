@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::map_err;
@@ -29,22 +29,19 @@ pub(crate) struct HashPage {
 /// which is the caller's cue to back off and retry or fail over.
 ///
 /// `fetch_page` receives the block to request from and the exclusive upper
-/// bound. `after_page` runs once per appended page with the same two bounds,
-/// for the ecosystem's own bookkeeping.
-pub(crate) async fn paginate_block_hashes<Fetch, Fut, After>(
+/// bound, and appends whatever bookkeeping its ecosystem needs to the page.
+pub(crate) async fn paginate_block_hashes<Fetch, Fut>(
     block_numbers: &[i64],
-    aggregate: BlockStore,
+    aggregate: &BlockStore,
     unit: &str,
     mut fetch_page: Fetch,
-    mut after_page: After,
-) -> napi::Result<(BlockStore, Vec<RequestStat>)>
+) -> napi::Result<Vec<RequestStat>>
 where
     Fetch: FnMut(i64, i64) -> Fut,
     Fut: Future<Output = napi::Result<HashPage>>,
-    After: FnMut(&BlockStore, i64, i64) -> Result<()>,
 {
     let Some(from) = block_numbers.iter().copied().min() else {
-        return Ok((aggregate, Vec::new()));
+        return Ok(Vec::new());
     };
     if from < 0 {
         return Err(map_err(anyhow::anyhow!("{unit} must be non-negative")));
@@ -77,11 +74,8 @@ where
             ));
         }
         aggregate.append_page(&page.store);
-        after_page(&aggregate, request_from, page.next.min(to_exclusive))
-            .map_err(map_err)
-            .map_err(|error| error_with_request_stats(error, &request_stats))?;
         if page.next >= to_exclusive {
-            return Ok((aggregate, request_stats));
+            return Ok(request_stats);
         }
         cursor = page.next;
         // A page that returned no rows leaves the seam where it was, so the

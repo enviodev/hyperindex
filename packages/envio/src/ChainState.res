@@ -327,19 +327,15 @@ let makeInternal = (
     // old checkpoints and writing the new ones leaves both behind. Take the
     // most recent and let the next response re-converge detection; refusing to
     // restore would fail this start and every one after it.
-    let seenBlockNumbers = Utils.Set.make()
-    let latestPerBlock = []
-    for idx in chainReorgCheckpoints->Array.length - 1 downto 0 {
-      let cp = chainReorgCheckpoints->Array.getUnsafe(idx)
-      if !(seenBlockNumbers->Utils.Set.has(cp.blockNumber)) {
-        seenBlockNumbers->Utils.Set.add(cp.blockNumber)->ignore
-        latestPerBlock
-        ->Array.push({BlockStore.blockNumber: cp.blockNumber, blockHash: cp.blockHash})
-        ->ignore
-      }
-    }
+    let latestPerBlock = Dict.make()
+    chainReorgCheckpoints->Array.forEach(cp =>
+      latestPerBlock->Utils.Dict.setByInt(
+        cp.blockNumber,
+        {BlockStore.blockNumber: cp.blockNumber, blockHash: cp.blockHash},
+      )
+    )
     let seedPage = BlockStore.fromJs(
-      latestPerBlock,
+      latestPerBlock->Dict.valuesToArray,
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     )
