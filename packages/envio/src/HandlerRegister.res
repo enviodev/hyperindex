@@ -104,16 +104,9 @@ let buildOnEventRegistrationWith = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~where: option<JSON.t>,
-  ~fields: option<Internal.evmFieldsSelection>,
+  ~fieldSelection: option<Internal.fieldSelection>,
   ~startBlock=?,
 ): Internal.onEventRegistration => {
-  // Only EVM resolves a registration selection of its own; Fuel and SVM take
-  // theirs from the event config, so an inline one would be silently dropped.
-  if fields->Option.isSome && config.ecosystem.name !== Evm {
-    JsError.throwWithMessage(
-      `The fields option of the "${eventConfig.name}" event registration on contract "${eventConfig.contractName}" is only supported on EVM. Select the fields in your config instead.`,
-    )
-  }
   switch config.ecosystem.name {
   | Fuel =>
     (EventConfigBuilder.buildFuelOnEventRegistration(
@@ -142,8 +135,7 @@ let buildOnEventRegistrationWith = (
       ~where,
       ~chainId,
       ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
-      ~fields?,
-      ~enableRawEvents=config.enableRawEvents,
+      ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   }
@@ -185,16 +177,32 @@ let unionFields = (a: Utils.Set.t<string>, b: Utils.Set.t<string>) =>
     a
   } else {
     let union = Utils.Set.fromArray(a->Utils.Set.toArray)
-    b->Utils.Set.forEach(name => union->Utils.Set.add(name)->ignore)
+    union->Utils.Set.addMany(b->Utils.Set.toArray)
     union
   }
 
-let unionSelection = (a: Internal.onEventRegistration, b: Internal.onEventRegistration) => (
-  unionFields(a.selectedBlockFields, b.selectedBlockFields),
-  unionFields(a.selectedTransactionFields, b.selectedTransactionFields),
-  FieldMask.orMask(a.blockFieldMask, b.blockFieldMask),
-  FieldMask.orMask(a.transactionFieldMask, b.transactionFieldMask),
-)
+let unionSelection = (
+  a: Internal.fieldSelection,
+  b: Internal.fieldSelection,
+): Internal.fieldSelection => {
+  blockFields: unionFields(a.blockFields, b.blockFields),
+  transactionFields: unionFields(a.transactionFields, b.transactionFields),
+  blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
+  transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
+}
+
+// The merged registration keeps `base`'s handler and slot, picks up the
+// contractRegister from `other`, and carries the union of what both callbacks
+// read. Relies on `onEventRegistration` having an optional field so the spread
+// stays a runtime spread and keeps `other`'s ecosystem-only fields.
+let mergeInto = (
+  base: Internal.onEventRegistration,
+  ~other: Internal.onEventRegistration,
+): Internal.onEventRegistration => {
+  ...base,
+  contractRegister: other.contractRegister,
+  fieldSelection: unionSelection(base.fieldSelection, other.fieldSelection),
+}
 
 // Merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
@@ -218,25 +226,10 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
       | -1 => merged := merged.contents->Array.concat([reg])
       | i =>
         let target = merged.contents->Array.getUnsafe(i)
-        let (
-          selectedBlockFields,
-          selectedTransactionFields,
-          blockFieldMask,
-          transactionFieldMask,
-        ) = unionSelection(reg, target)
         merged :=
           merged.contents
           ->Array.filterWithIndex((_, j) => j !== i)
-          ->Array.concat([
-            {
-              ...reg,
-              contractRegister: target.contractRegister,
-              selectedBlockFields,
-              selectedTransactionFields,
-              blockFieldMask,
-              transactionFieldMask,
-            },
-          ])
+          ->Array.concat([reg->mergeInto(~other=target)])
       }
     } else {
       // A contractRegister merges into a matching handler registration,
@@ -249,24 +242,8 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
       | -1 => merged := merged.contents->Array.concat([reg])
       | i =>
         let target = merged.contents->Array.getUnsafe(i)
-        let (
-          selectedBlockFields,
-          selectedTransactionFields,
-          blockFieldMask,
-          transactionFieldMask,
-        ) = unionSelection(target, reg)
         let next = merged.contents->Array.copy
-        next->Array.setUnsafe(
-          i,
-          {
-            ...target,
-            contractRegister: reg.contractRegister,
-            selectedBlockFields,
-            selectedTransactionFields,
-            blockFieldMask,
-            transactionFieldMask,
-          },
-        )
+        next->Array.setUnsafe(i, target->mergeInto(~other=reg))
         merged := next
       }
     }
@@ -313,7 +290,27 @@ let addOnEventRegistration = (
 ) => {
   let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
-  let fields = eventOptions->Option.flatMap(v => v.fields)
+  // The inline selection doesn't vary by chain: resolve it once here and share
+  // the one value (and its sets) across every chain's registration.
+  let fieldSelection = switch eventOptions->Option.flatMap(v => v.fields) {
+  | None => None
+  | Some(fields) =>
+    // Only EVM resolves a registration selection of its own; Fuel and SVM take
+    // theirs from the event config, so an inline one would be silently dropped.
+    if registration.config.ecosystem.name !== Evm {
+      JsError.throwWithMessage(
+        `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
+      )
+    }
+    Some(
+      EventConfigBuilder.resolveInlineFieldSelection(
+        fields,
+        ~contractName,
+        ~eventName,
+        ~enableRawEvents=registration.config.enableRawEvents,
+      ),
+    )
+  }
   let matched = ref(false)
   registration.config.chainMap
   ->ChainMap.values
@@ -333,7 +330,7 @@ let addOnEventRegistration = (
           ~handler,
           ~contractRegister,
           ~where,
-          ~fields,
+          ~fieldSelection,
           ~startBlock=?contract.startBlock,
         )
         (registration->getChainRegistrations(~chainId=chainConfig.id)).onEventRegistrations
@@ -463,7 +460,7 @@ let getSimulateOnEventRegistrations = (
         ~handler=None,
         ~contractRegister=None,
         ~where=None,
-        ~fields=None,
+        ~fieldSelection=None,
       ),
     ]
   }
@@ -477,6 +474,12 @@ let getSimulateOnEventRegistrations = (
 // option, so the message names neither. Runs on the registrations a chain
 // actually keeps, so a handler whose `where` opts out of this chain isn't held
 // to its limits.
+//
+// The `config.yaml` half of this is also rejected at codegen, by the
+// `RpcTransactionField` subenum in `system_config.rs`. That one reports every
+// offending field at once and before the project builds; this one is the only
+// check an inline selection reaches. `RpcFieldSelection_test.res` pins the two
+// to the same field set.
 let validateRpcFieldSelection = (
   chainConfig: Config.chain,
   registrations: array<Internal.onEventRegistration>,
@@ -487,9 +490,7 @@ let validateRpcFieldSelection = (
   }
   if hasRpc {
     registrations->Array.forEach(reg =>
-      reg.selectedTransactionFields
-      ->Utils.Set.toArray
-      ->Array.forEach(name =>
+      reg.fieldSelection.transactionFields->Utils.Set.forEach(name =>
         if !RpcSource.isRpcTransactionField(name) {
           JsError.throwWithMessage(
             `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or index chain ${chainConfig.id->ChainId.toString} via HyperSync.`,
@@ -550,7 +551,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                       ~handler=None,
                       ~contractRegister=None,
                       ~where=None,
-                      ~fields=None,
+                      ~fieldSelection=None,
                       ~startBlock=?contract.startBlock,
                     ),
                   )

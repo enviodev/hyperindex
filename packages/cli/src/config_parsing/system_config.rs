@@ -2860,6 +2860,11 @@ impl FieldSelection {
         // Every block field is derivable from `eth_getBlockByNumber`, so only
         // transactions have an RPC-unavailable set: the two whose complex array
         // shape has no parser in `RpcSource`'s field registry.
+        //
+        // The runtime re-checks this over every registration in
+        // `HandlerRegister.validateRpcFieldSelection`, which is the only check
+        // an inline `fields` selection reaches. This one runs at codegen, so a
+        // `config.yaml` selection fails before a project is even built.
         if has_rpc_src {
             let invalid_rpc_tx_fields: Vec<_> = transaction_fields
                 .iter()

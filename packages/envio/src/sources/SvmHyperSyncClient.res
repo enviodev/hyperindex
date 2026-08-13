@@ -67,8 +67,8 @@ module Registration = {
             },
           )
         ),
-        transactionFields: reg.selectedTransactionFields->Utils.Set.toArray,
-        blockFields: reg.selectedBlockFields->Utils.Set.toArray,
+        transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
+        blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None

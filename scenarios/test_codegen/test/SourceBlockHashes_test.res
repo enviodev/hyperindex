@@ -70,12 +70,7 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   startBlock: None,
   handler: None,
   contractRegister: None,
-  selectedBlockFields: pairCreatedEventConfig.selectedBlockFields->(
-    Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
-  ),
-  selectedTransactionFields: pairCreatedEventConfig.selectedTransactionFields,
-  blockFieldMask: pairCreatedEventConfig.blockFieldMask,
-  transactionFieldMask: pairCreatedEventConfig.transactionFieldMask,
+  fieldSelection: EventConfigBuilder.eventConfigFieldSelection(pairCreatedEventConfig),
   resolvedWhere: {
     topicSelections: [
       {

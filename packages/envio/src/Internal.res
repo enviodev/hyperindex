@@ -557,6 +557,18 @@ type svmInstructionEventConfig = {
   definedTypes: JSON.t,
 }
 
+// What a single registration fetches and materialises. Field names are strings
+// so every ecosystem shares one type — the typed field variants are strings at
+// runtime. Each set carries its precompiled mask, and the two always describe
+// the same fields: build them together, never one without the other.
+type fieldSelection = {
+  blockFields: Utils.Set.t<string>,
+  transactionFields: Utils.Set.t<string>,
+  // The sets precompiled to the store selections `ChainState` materialises with.
+  blockMask: float,
+  transactionMask: float,
+}
+
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
@@ -591,15 +603,12 @@ type onEventRegistration = {
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
-  // Field selection for this registration: the `eventConfig` values unless the
-  // registration passed an inline `fields` option, which replaces them. Two
+  // Field selection for this registration: the `eventConfig` selection unless
+  // the registration passed an inline `fields` option, which replaces it. Two
   // registrations of one event can select different fields, so every consumer
-  // (query building, store materialisation) reads them from here rather than
-  // from the shared `eventConfig`.
-  selectedBlockFields: Utils.Set.t<string>,
-  selectedTransactionFields: Utils.Set.t<string>,
-  transactionFieldMask: float,
-  blockFieldMask: float,
+  // (query building, store materialisation) reads it from here rather than from
+  // the shared `eventConfig`.
+  fieldSelection: fieldSelection,
 }
 
 type evmOnEventRegistration = {

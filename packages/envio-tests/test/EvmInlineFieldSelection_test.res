@@ -171,13 +171,12 @@ chains:
 `,
 ).config
 
-// Per-registration selection on chain 1, as sorted field-name arrays.
 let selections = (registrations: HandlerRegister.registrationsByChainId) => {
   let chainRegistrations: HandlerRegister.chainRegistrations =
     registrations->Utils.Dict.dangerouslyGetNonOption("1")->Option.getOrThrow
   chainRegistrations.onEventRegistrations->Array.map(reg => (
-    reg.selectedBlockFields->Utils.Set.toArray->Array.toSorted(String.compare),
-    reg.selectedTransactionFields->Utils.Set.toArray->Array.toSorted(String.compare),
+    reg.fieldSelection.blockFields->Utils.Set.toArray->Array.toSorted(String.compare),
+    reg.fieldSelection.transactionFields->Utils.Set.toArray->Array.toSorted(String.compare),
   ))
 }
 
