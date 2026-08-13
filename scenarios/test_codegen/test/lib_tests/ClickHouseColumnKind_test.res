@@ -1,10 +1,10 @@
 open Vitest
 
-// `ClickHouseSink.kindOfField` decides how a column's values cross the napi
-// boundary from a `Table.fieldType`; Rust decides how to decode them from the
-// type text ClickHouse reports. The two derivations are independent, and a
-// mismatch shows up only as a wrongly encoded column, so pin them together over
-// every field type the DDL can emit.
+// `ClickHouseSink.kindOfClickHouseType` casts Rust's `ColumnKind` ordinal
+// straight into a ReScript variant, and the column types it is asked about are
+// whatever the DDL emits. So two things have to hold: every type envio can
+// generate is one Rust knows, and the ordinals still line up. Neither fails
+// loudly on its own — a reordered enum silently picks the wrong typed array.
 
 let fieldTypes: array<Table.fieldType> = [
   String,
@@ -35,8 +35,8 @@ let fieldTypes: array<Table.fieldType> = [
 ]
 
 describe("ClickHouse column kind contract", () => {
-  it("ReScript picks the wire kind Rust decodes for every field type", t => {
-    let mismatches = []
+  it("Rust resolves a wire kind for every type the DDL emits", t => {
+    let unresolved = []
     fieldTypes->Array.forEach(fieldType => {
       ([ChainId.Int32, Int64]: array<ChainId.mode>)->Array.forEach(chainIdMode => {
         [false, true]->Array.forEach(isArray => {
@@ -47,24 +47,44 @@ describe("ClickHouse column kind contract", () => {
               ~isArray,
               ~chainIdMode,
             )
-            let fromRescript =
-              ClickHouseSink.kindOfField(~fieldType, ~isArray, ~chainIdMode)->(
-                Utils.magic: ClickHouseSink.kind => int
-              )
-            let fromRust = Core.getAddon().clickhouseColumnKind(chType)
-            if fromRescript !== fromRust {
-              mismatches
-              ->Array.push({
-                "chType": chType,
-                "rescriptKind": fromRescript,
-                "rustKind": fromRust,
-              })
+            try {
+              ClickHouseSink.kindOfClickHouseType(chType)->ignore
+            } catch {
+            | exn =>
+              unresolved
+              ->Array.push({"chType": chType, "error": exn->Utils.prettifyExn})
               ->ignore
             }
           })
         })
       })
     })
-    t.expect(mismatches).toEqual([])
+    t.expect(unresolved).toEqual([])
+  })
+
+  it("the ordinals ReScript casts match the kinds Rust assigns", t => {
+    let kinds =
+      [
+        "Int32",
+        "Float64",
+        "UInt64",
+        "Int64",
+        "String",
+        "Decimal(20,0)",
+        "Array(String)",
+        "Nullable(String)",
+        "DateTime64(3, 'UTC')",
+      ]->Array.map(ClickHouseSink.kindOfClickHouseType)
+    t.expect(kinds).toEqual([
+      ClickHouseSink.F64,
+      F64,
+      U64,
+      I64,
+      Text,
+      Text,
+      Text,
+      Text,
+      F64,
+    ])
   })
 })

@@ -15,6 +15,8 @@ struct State {
     accepted: Vec<Vec<u8>>,
     /// Inserts still to be rejected before the server starts accepting.
     reject_next: usize,
+    /// Read queries still to be rejected — the `system.columns` lookup.
+    reject_next_queries: usize,
     /// Total inserts seen, accepted or not.
     seen: usize,
 }
@@ -65,8 +67,37 @@ impl MockClickHouse {
         }
     }
 
+    /// Accepts connections and reads whatever is sent, but never answers —
+    /// a server or load balancer that black-holes an established connection.
+    /// Nothing short of a client-side timeout ends a request against this.
+    pub async fn start_unresponsive() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                // Holding the stream keeps the connection open rather than
+                // closing it, which the client would see as a failure.
+                held.push(stream);
+            }
+        });
+        Self {
+            url,
+            state: Arc::new(Mutex::new(State::default())),
+            columns: Vec::new(),
+        }
+    }
+
     pub fn accepted(&self) -> Vec<Vec<u8>> {
         self.state.lock().unwrap().accepted.clone()
+    }
+
+    /// Fails the next `count` read queries before answering the schema lookup.
+    pub fn reject_next_queries(&self, count: usize) {
+        self.state.lock().unwrap().reject_next_queries = count;
     }
 
     pub fn inserts_seen(&self) -> usize {
@@ -169,12 +200,22 @@ async fn serve(
                 http_response(200, "")
             }
         } else {
-            let tsv = columns
-                .iter()
-                .map(|(name, ty)| format!("{name}\t{ty}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            http_response(200, &format!("{tsv}\n"))
+            let reject = {
+                let mut state = state.lock().unwrap();
+                let reject = state.reject_next_queries > 0;
+                state.reject_next_queries = state.reject_next_queries.saturating_sub(1);
+                reject
+            };
+            if reject {
+                http_response(500, "Code: 999. DB::Exception: mock query rejection")
+            } else {
+                let tsv = columns
+                    .iter()
+                    .map(|(name, ty)| format!("{name}\t{ty}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                http_response(200, &format!("{tsv}\n"))
+            }
         };
         stream.write_all(&response).await?;
         stream.flush().await?;

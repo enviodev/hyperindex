@@ -12,7 +12,13 @@ type t = {
   ) => promise<unit>,
 }
 
-let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: ChainId.mode=Int32): t => {
+let makeClickHouse = (
+  ~host,
+  ~database,
+  ~username,
+  ~password,
+  ~chainIdMode: ChainId.mode=Int32,
+): t => {
   let client = ClickHouse.createClient({
     url: host,
     username,
@@ -25,7 +31,9 @@ let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: Chai
   // Inserts go through the Rust sink: values cross the napi boundary columnar,
   // get encoded as RowBinary and are sent off the Node main thread. DDL, the
   // current-state views and the reorg cleanup stay on the JS client.
-  let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+  let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=msg =>
+    ClickHouse.logger->Logging.childWarn({"msg": msg})
+  )
 
   let cache = Dict.make()
 
@@ -40,14 +48,7 @@ let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: Chai
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
         updatedEntities->Array.map(({entityConfig, scope, changes}) => {
-          ClickHouse.setUpdatesOrThrow(
-            sink,
-            ~cache,
-            ~changes,
-            ~entityConfig,
-            ~scope,
-            ~chainIdMode,
-          )
+          ClickHouse.setUpdatesOrThrow(sink, ~cache, ~changes, ~entityConfig, ~scope, ~chainIdMode)
         }),
       )->Utils.Promise.ignoreValue
       // Checkpoints land after the rows they cover: the current-state view reads

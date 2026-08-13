@@ -32,9 +32,8 @@ pub enum ChType {
         precision: u32,
     },
     Decimal {
-        /// Width of the backing integer in bytes: 4, 8, 16 or 32.
-        bytes: usize,
-        /// Total digits the column accepts, which bounds the stored integer.
+        /// Total digits the column accepts, which bounds the stored integer and
+        /// fixes the width of the backing one.
         precision: u32,
         scale: u32,
     },
@@ -113,7 +112,7 @@ fn split_args(input: &str) -> Vec<&str> {
 }
 
 /// Number of bytes ClickHouse uses for a `Decimal` of the given precision.
-fn decimal_bytes(precision: u32) -> Result<usize> {
+pub fn decimal_bytes(precision: u32) -> Result<usize> {
     match precision {
         1..=9 => Ok(4),
         10..=18 => Ok(8),
@@ -174,23 +173,24 @@ pub fn parse(input: &str) -> Result<ChType> {
                     bail!("Decimal expects (precision, scale), got `{args}`");
                 }
                 let precision: u32 = parts[0].parse()?;
+                // Rejects a precision with no valid width here, so every parsed
+                // Decimal has one.
+                decimal_bytes(precision)?;
                 Ok(ChType::Decimal {
-                    bytes: decimal_bytes(precision)?,
                     precision,
                     scale: parts[1].parse()?,
                 })
             }
             "Decimal32" | "Decimal64" | "Decimal128" | "Decimal256" => {
-                // The shorthand fixes the width and takes the widest precision
-                // that width holds.
-                let (bytes, precision) = match name {
-                    "Decimal32" => (4, 9),
-                    "Decimal64" => (8, 18),
-                    "Decimal128" => (16, 38),
-                    _ => (32, 76),
+                // The shorthand fixes the width, so it stands for the widest
+                // precision that width holds.
+                let precision = match name {
+                    "Decimal32" => 9,
+                    "Decimal64" => 18,
+                    "Decimal128" => 38,
+                    _ => 76,
                 };
                 Ok(ChType::Decimal {
-                    bytes,
                     precision,
                     scale: args.trim().parse()?,
                 })
@@ -283,9 +283,8 @@ mod tests {
 
     #[test]
     fn parses_scalars() {
-        assert_eq!(parse("String").unwrap(), ChType::String);
-        assert_eq!(parse("UInt64").unwrap(), ChType::UInt64);
-        assert_eq!(parse("Bool").unwrap(), ChType::Bool);
+        let parsed = ["String", "UInt64", "Bool"].map(|input| parse(input).unwrap());
+        assert_eq!(parsed, [ChType::String, ChType::UInt64, ChType::Bool]);
     }
 
     #[test]
@@ -297,39 +296,45 @@ mod tests {
     }
 
     #[test]
-    fn parses_decimal_widths() {
+    fn parses_decimal_precision_and_scale() {
+        let parsed = [
+            "Decimal(9, 2)",
+            "Decimal(18, 0)",
+            "Decimal(50, 3)",
+            "Decimal64(4)",
+        ]
+        .map(|input| parse(input).unwrap());
         assert_eq!(
-            parse("Decimal(9, 2)").unwrap(),
-            ChType::Decimal {
-                bytes: 4,
-                precision: 9,
-                scale: 2
-            }
+            parsed,
+            [
+                ChType::Decimal {
+                    precision: 9,
+                    scale: 2
+                },
+                ChType::Decimal {
+                    precision: 18,
+                    scale: 0
+                },
+                ChType::Decimal {
+                    precision: 50,
+                    scale: 3
+                },
+                // The shorthand stands for the widest precision its width holds.
+                ChType::Decimal {
+                    precision: 18,
+                    scale: 4
+                },
+            ]
         );
-        assert_eq!(
-            parse("Decimal(18, 0)").unwrap(),
-            ChType::Decimal {
-                bytes: 8,
-                precision: 18,
-                scale: 0
-            }
-        );
-        assert_eq!(
-            parse("Decimal(38, 0)").unwrap(),
-            ChType::Decimal {
-                bytes: 16,
-                precision: 38,
-                scale: 0
-            }
-        );
-        assert_eq!(
-            parse("Decimal64(4)").unwrap(),
-            ChType::Decimal {
-                bytes: 8,
-                precision: 18,
-                scale: 4
-            }
-        );
+    }
+
+    /// The precision alone fixes the width, which is why the type does not carry
+    /// it: a pair that disagreed would shift every following column on the wire.
+    #[test]
+    fn precision_fixes_the_backing_width() {
+        let widths =
+            [9u32, 10, 18, 19, 38, 39, 76].map(|precision| decimal_bytes(precision).unwrap());
+        assert_eq!(widths, [4, 8, 8, 16, 16, 32, 32]);
     }
 
     #[test]
@@ -356,8 +361,10 @@ mod tests {
     #[test]
     fn enum_variant_may_contain_a_comma_or_paren() {
         let parsed = parse("Enum8('a,b' = 7, 'c(d)' = 9)").unwrap();
-        assert_eq!(parsed.enum_value("a,b"), Some(7));
-        assert_eq!(parsed.enum_value("c(d)"), Some(9));
+        assert_eq!(
+            (parsed.enum_value("a,b"), parsed.enum_value("c(d)")),
+            (Some(7), Some(9))
+        );
     }
 
     #[test]
@@ -367,19 +374,23 @@ mod tests {
 
     #[test]
     fn column_kind_follows_the_type() {
-        assert_eq!(parse("Int32").unwrap().column_kind(), ColumnKind::F64);
-        assert_eq!(parse("UInt64").unwrap().column_kind(), ColumnKind::U64);
+        let kinds = [
+            "Int32",
+            "UInt64",
+            "Nullable(String)",
+            "Array(String)",
+            "DateTime64(3, 'UTC')",
+        ]
+        .map(|input| parse(input).unwrap().column_kind());
         assert_eq!(
-            parse("Nullable(String)").unwrap().column_kind(),
-            ColumnKind::Text
-        );
-        assert_eq!(
-            parse("Array(String)").unwrap().column_kind(),
-            ColumnKind::Text
-        );
-        assert_eq!(
-            parse("DateTime64(3, 'UTC')").unwrap().column_kind(),
-            ColumnKind::F64
+            kinds,
+            [
+                ColumnKind::F64,
+                ColumnKind::U64,
+                ColumnKind::Text,
+                ColumnKind::Text,
+                ColumnKind::F64
+            ]
         );
     }
 

@@ -63,7 +63,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
       })
 
-      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
       await ClickHouse.setUpdatesOrThrow(
         sink,
         ~cache=Dict.make(),
@@ -92,10 +92,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         %raw(`[
           {
             id: "roundtrip-1",
-            // Not ASCII on purpose: the sink hands Rust one concatenated string per column
-  // plus each value's UTF-16 length, and Rust has to re-split it over UTF-8
-  // bytes. "é" is one UTF-16 unit over two bytes, "😀" is two units over four.
-  string: "héllo 😀",
+            string: "héllo 😀",
             optString: null,
             arrayOfStrings: ["a", "日本"],
             int_: -7,
@@ -173,7 +170,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         query: ClickHouse.makeCreateCheckpointsTableQuery(~database, ~chainIdMode=Int64),
       })
 
-      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
       await ClickHouse.setCheckpointsOrThrow(
         sink,
         ~batch={
@@ -231,7 +228,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
       await client->ClickHouse.exec({
         query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
       })
-      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
 
       let attempt = async rogue => {
         switch await ClickHouse.setUpdatesOrThrow(

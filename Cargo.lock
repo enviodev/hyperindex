@@ -1780,6 +1780,7 @@ dependencies = [
  "async-recursion",
  "bollard",
  "bs58",
+ "bytes",
  "clap",
  "clap-markdown",
  "colored",

@@ -46,8 +46,8 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
-  // The wire kind Rust expects for a ClickHouse column type, so a test can pin
-  // `ClickHouseSink.kindOfField` to it.
+  // The wire kind Rust expects for a ClickHouse column type. The JS side picks
+  // its typed array from this rather than deriving the kind a second time.
   clickhouseColumnKind: string => int,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).

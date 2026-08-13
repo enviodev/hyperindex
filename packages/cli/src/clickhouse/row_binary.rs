@@ -6,23 +6,49 @@
 //! row.
 
 use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
 
 use super::ch_type::ChType;
 
-/// One column's values for a batch, already owned by Rust.
+/// How a text column's concatenated values are delimited. JS measures UTF-16
+/// code units for free, so that is what crosses the boundary; resolving them to
+/// byte ranges is a scan over the whole column and belongs off the JS thread.
+pub trait TextBounds {
+    fn count(&self) -> usize;
+}
+
+/// UTF-16 code-unit length per value, as `String.prototype.length` reports it.
+pub type Utf16Lengths = Vec<u32>;
+/// Byte range per value into the concatenated data.
+pub type ByteSpans = Vec<(usize, usize)>;
+
+impl TextBounds for Utf16Lengths {
+    fn count(&self) -> usize {
+        self.len()
+    }
+}
+
+impl TextBounds for ByteSpans {
+    fn count(&self) -> usize {
+        self.len()
+    }
+}
+
+/// One column's values for a batch, already owned by Rust. The text delimiting
+/// is a parameter so staging and encoding share one enum: a new wire kind is one
+/// variant and one `kind` arm, not a second enum to keep in step.
 #[derive(Debug)]
-pub enum ColumnValues {
+pub enum ColumnValues<B = ByteSpans> {
     F64(Vec<f64>),
     U64(Vec<u64>),
     I64(Vec<i64>),
-    /// Concatenated values plus each value's byte range in it.
-    Text {
-        data: String,
-        spans: Vec<(u32, u32)>,
-    },
+    Text { data: String, bounds: B },
 }
 
-impl ColumnValues {
+/// A column as it arrives from JS, before the span scan.
+pub type StagedValues = ColumnValues<Utf16Lengths>;
+
+impl<B: TextBounds> ColumnValues<B> {
     /// The wire kind these values arrived as, for checking against the column's
     /// ClickHouse type.
     pub fn kind(&self) -> super::ch_type::ColumnKind {
@@ -40,15 +66,36 @@ impl ColumnValues {
             ColumnValues::F64(v) => v.len(),
             ColumnValues::U64(v) => v.len(),
             ColumnValues::I64(v) => v.len(),
-            ColumnValues::Text { spans, .. } => spans.len(),
+            ColumnValues::Text { bounds, .. } => bounds.count(),
         }
     }
+}
 
+impl StagedValues {
+    /// Resolves the UTF-16 lengths into byte spans. The only step between the two
+    /// representations, so it is also where a text column's shape is checked.
+    pub fn resolve(self) -> Result<ColumnValues> {
+        Ok(match self {
+            ColumnValues::F64(v) => ColumnValues::F64(v),
+            ColumnValues::U64(v) => ColumnValues::U64(v),
+            ColumnValues::I64(v) => ColumnValues::I64(v),
+            ColumnValues::Text { data, bounds } => {
+                let spans = spans_from_utf16_lengths(&data, &bounds)?;
+                ColumnValues::Text {
+                    data,
+                    bounds: spans,
+                }
+            }
+        })
+    }
+}
+
+impl ColumnValues {
     fn text_at(&self, row: usize) -> Result<&str> {
         match self {
-            ColumnValues::Text { data, spans } => {
-                let (start, end) = spans[row];
-                Ok(&data[start as usize..end as usize])
+            ColumnValues::Text { data, bounds } => {
+                let (start, end) = bounds[row];
+                Ok(&data[start..end])
             }
             other => bail!("expected a text column, got {other:?}"),
         }
@@ -75,7 +122,7 @@ impl Column {
 ///
 /// The scan is over UTF-8 bytes, so it cannot index by code unit directly:
 /// a character outside the BMP is two UTF-16 units and up to four UTF-8 bytes.
-pub fn spans_from_utf16_lengths(data: &str, lengths: &[u32]) -> Result<Vec<(u32, u32)>> {
+pub fn spans_from_utf16_lengths(data: &str, lengths: &[u32]) -> Result<ByteSpans> {
     let mut spans = Vec::with_capacity(lengths.len());
     let bytes = data.as_bytes();
     let mut offset = 0usize;
@@ -108,7 +155,7 @@ pub fn spans_from_utf16_lengths(data: &str, lengths: &[u32]) -> Result<Vec<(u32,
             offset += width;
             remaining -= units;
         }
-        spans.push((start as u32, offset as u32));
+        spans.push((start, offset));
     }
     if offset != bytes.len() {
         bail!(
@@ -169,20 +216,33 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         bail!("`{text}` is not a decimal");
     }
     // Exponent shifts the point; `scale` then fixes how many fractional digits
-    // the stored integer keeps.
-    let shift = scale as i32 + exponent - frac_part.len() as i32;
+    // the stored integer keeps. Widened to i64 because `exponent` is an
+    // unconstrained i32 and the subtraction would otherwise be able to overflow.
+    let shift = i64::from(scale) + i64::from(exponent) - frac_part.len() as i64;
     // An all-zero mantissa trims to the empty string, which `parse` rejects.
     let trimmed = digits.trim_start_matches('0');
-    let mut value = if trimmed.is_empty() {
-        0i128
+    // Parsed unsigned: i128::MIN's magnitude is one past i128::MAX, so parsing
+    // the digits as i128 and negating afterwards would reject a legal value.
+    let magnitude = if trimmed.is_empty() {
+        0u128
     } else {
         trimmed
-            .parse::<i128>()
+            .parse::<u128>()
             .map_err(|_| anyhow!("decimal `{text}` overflows Int128"))?
     };
+    let mut value = match negative {
+        true if magnitude <= (i128::MAX as u128) + 1 => (magnitude as i128).wrapping_neg(),
+        false if magnitude <= i128::MAX as u128 => magnitude as i128,
+        _ => bail!("decimal `{text}` overflows Int128"),
+    };
+    // Each step past zero is a no-op, so the guard also bounds the loops: an
+    // exponent may be any i32, but 39 iterations settle every reachable value.
     match shift.cmp(&0) {
         std::cmp::Ordering::Greater => {
             for _ in 0..shift {
+                if value == 0 {
+                    break;
+                }
                 value = value
                     .checked_mul(10)
                     .context("decimal overflows the column's precision")?;
@@ -191,12 +251,15 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         std::cmp::Ordering::Less => {
             // Truncates toward zero, matching ClickHouse's own cast.
             for _ in 0..-shift {
+                if value == 0 {
+                    break;
+                }
                 value /= 10;
             }
         }
         std::cmp::Ordering::Equal => {}
     }
-    Ok(if negative { -value } else { value })
+    Ok(value)
 }
 
 fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
@@ -229,14 +292,13 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::UInt128 => (0, i128::MAX),
         ChType::Date32 => (i32::MIN as i128, i32::MAX as i128),
         ChType::DateTime64 { .. } => (i64::MIN as i128, i64::MAX as i128),
-        // A Decimal's precision, not its byte width, is what it accepts.
-        ChType::Decimal { precision, .. } => {
-            let limit = 10i128
-                .checked_pow(*precision)
-                .context("decimal precision is too wide to represent")?
-                - 1;
-            (-limit, limit)
-        }
+        // A Decimal's precision, not its byte width, is what it accepts — until
+        // the precision outgrows the 128-bit value we carry, as it does for a
+        // Decimal256, and the wire width becomes the tighter bound.
+        ChType::Decimal { precision, .. } => match 10i128.checked_pow(*precision) {
+            Some(limit) => (1 - limit, limit - 1),
+            None => (i128::MIN, i128::MAX),
+        },
         ChType::Enum { bytes, .. } => {
             if *bytes == 1 {
                 (i8::MIN as i128, i8::MAX as i128)
@@ -254,6 +316,38 @@ fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
         bail!("{value} is out of range for a {ch_type:?} column");
     }
     put_int_raw(out, value, fixed_width(ch_type)?);
+    Ok(())
+}
+
+fn put_fixed_string(out: &mut Vec<u8>, text: &str, width: usize) -> Result<()> {
+    let bytes = text.as_bytes();
+    if bytes.len() > width {
+        bail!(
+            "`{text}` is {} bytes, which a FixedString({width}) column cannot hold",
+            bytes.len()
+        );
+    }
+    out.extend_from_slice(bytes);
+    out.extend(std::iter::repeat_n(0u8, width - bytes.len()));
+    Ok(())
+}
+
+/// Encodes a scalar whose value arrives as text. Every value from JS is text
+/// unless its column has a typed array, and a JSON array's elements stringify to
+/// the same thing, so both paths land here and cannot drift apart.
+fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result<()> {
+    match ch_type {
+        ChType::String => put_string(out, text),
+        ChType::FixedString(width) => put_fixed_string(out, text, *width)?,
+        ChType::Decimal { scale, .. } => put_int(out, decimal_to_i128(text, *scale)?, ch_type)?,
+        ChType::Enum { .. } => {
+            let numeric = ch_type
+                .enum_value(text)
+                .with_context(|| format!("`{text}` is not a variant of the enum column"))?;
+            put_int(out, numeric as i128, ch_type)?;
+        }
+        other => put_int(out, decimal_to_i128(text, 0)?, other)?,
+    }
     Ok(())
 }
 
@@ -277,51 +371,17 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
                 encode_json_value(out, inner, item)?;
             }
         }
-        ChType::String => match value {
-            Value::String(s) => put_string(out, s),
-            other => put_string(out, &other.to_string()),
-        },
-        ChType::FixedString(width) => {
-            let s = value.as_str().unwrap_or_default();
-            let mut bytes = s.as_bytes().to_vec();
-            bytes.resize(*width, 0);
-            out.extend_from_slice(&bytes);
-        }
+        // The three types JSON represents natively; everything else is the same
+        // text the column path encodes.
         ChType::Bool => out.push(u8::from(value.as_bool().unwrap_or(false))),
-        ChType::Decimal { scale, .. } => {
-            let text = match value {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            put_int(out, decimal_to_i128(&text, *scale)?, ch_type)?;
-        }
-        ChType::Enum { .. } => {
-            let name = value
-                .as_str()
-                .context("expected a string for an Enum column")?;
-            let numeric = ch_type
-                .enum_value(name)
-                .with_context(|| format!("`{name}` is not a variant of the enum column"))?;
-            put_int(out, numeric as i128, ch_type)?;
-        }
         ChType::Float32 => {
             out.extend_from_slice(&(value.as_f64().unwrap_or(0.0) as f32).to_le_bytes())
         }
         ChType::Float64 => out.extend_from_slice(&value.as_f64().unwrap_or(0.0).to_le_bytes()),
-        ChType::Int128 | ChType::UInt128 => {
-            let text = match value {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            put_int(out, decimal_to_i128(&text, 0)?, ch_type)?;
-        }
-        _ => {
-            let numeric = match value {
-                Value::String(s) => decimal_to_i128(s, 0)?,
-                other => other.as_f64().unwrap_or(0.0) as i128,
-            };
-            put_int(out, numeric, ch_type)?;
-        }
+        other => match value {
+            Value::String(s) => encode_text_scalar(out, other, s)?,
+            value => encode_text_scalar(out, other, &value.to_string())?,
+        },
     }
     Ok(())
 }
@@ -334,7 +394,8 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
         ChType::Int32 | ChType::UInt32 | ChType::DateTime | ChType::Date32 => 4,
         ChType::Int64 | ChType::UInt64 | ChType::DateTime64 { .. } => 8,
         ChType::Int128 | ChType::UInt128 => 16,
-        ChType::Decimal { bytes, .. } | ChType::Enum { bytes, .. } => *bytes,
+        ChType::Decimal { precision, .. } => super::ch_type::decimal_bytes(*precision)?,
+        ChType::Enum { bytes, .. } => *bytes,
         ChType::Float32 => 4,
         ChType::Float64 => 8,
         other => bail!("{other:?} has no fixed width"),
@@ -403,34 +464,12 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
             let text = column.values.text_at(row)?;
             let parsed: serde_json::Value = serde_json::from_str(text)
                 .with_context(|| format!("column `{}` row {row} is not JSON", column.name))?;
-            encode_json_value(out, ch_type, &parsed)?;
-        }
-        (ColumnValues::Text { .. }, ChType::String) => put_string(out, column.values.text_at(row)?),
-        (ColumnValues::Text { .. }, ChType::FixedString(width)) => {
-            let mut bytes = column.values.text_at(row)?.as_bytes().to_vec();
-            bytes.resize(*width, 0);
-            out.extend_from_slice(&bytes);
-        }
-        (ColumnValues::Text { .. }, ChType::Decimal { scale, .. }) => {
-            let text = column.values.text_at(row)?;
-            put_int(
-                out,
-                decimal_to_i128(text, *scale).with_context(|| {
-                    format!("column `{}` row {row} is not a decimal", column.name)
-                })?,
-                ch_type,
-            )?;
-        }
-        (ColumnValues::Text { .. }, ChType::Enum { .. }) => {
-            let name = column.values.text_at(row)?;
-            let numeric = ch_type.enum_value(name).with_context(|| {
-                format!("`{name}` is not a variant of enum column `{}`", column.name)
-            })?;
-            put_int(out, numeric as i128, ch_type)?;
+            encode_json_value(out, ch_type, &parsed)
+                .with_context(|| format!("column `{}` row {row}", column.name))?;
         }
         (ColumnValues::Text { .. }, other) => {
-            let text = column.values.text_at(row)?;
-            put_int(out, decimal_to_i128(text, 0)?, other)?;
+            encode_text_scalar(out, other, column.values.text_at(row)?)
+                .with_context(|| format!("column `{}` row {row}", column.name))?
         }
     }
     Ok(())
@@ -440,8 +479,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
 /// so a failed insert can be split at a row boundary and retried in halves.
 #[derive(Debug)]
 pub struct EncodedRows {
-    pub body: Vec<u8>,
-    pub row_offsets: Vec<u32>,
+    /// Reference-counted so a retry can take a range without copying the batch,
+    /// which for the usual single successful send is the whole body.
+    pub body: Bytes,
+    pub row_offsets: Vec<usize>,
 }
 
 impl EncodedRows {
@@ -450,13 +491,13 @@ impl EncodedRows {
     }
 
     /// The bytes of rows `start..end`.
-    pub fn slice(&self, start: usize, end: usize) -> &[u8] {
-        let from = self.row_offsets[start] as usize;
+    pub fn slice(&self, start: usize, end: usize) -> Bytes {
+        let from = self.row_offsets[start];
         let to = match self.row_offsets.get(end) {
-            Some(offset) => *offset as usize,
+            Some(offset) => *offset,
             None => self.body.len(),
         };
-        &self.body[from..to]
+        self.body.slice(from..to)
     }
 }
 
@@ -476,13 +517,16 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
     let mut body = Vec::with_capacity(rows * columns.len() * 12);
     let mut row_offsets = Vec::with_capacity(rows);
     for row in 0..rows {
-        row_offsets.push(body.len() as u32);
+        row_offsets.push(body.len());
         for column in columns {
             encode_cell(&mut body, column, row)
                 .with_context(|| format!("encoding column `{}` row {row}", column.name))?;
         }
     }
-    Ok(EncodedRows { body, row_offsets })
+    Ok(EncodedRows {
+        body: body.into(),
+        row_offsets,
+    })
 }
 
 #[cfg(test)]
@@ -501,7 +545,7 @@ mod tests {
             name: name.to_string(),
             ch_type: ch_type::parse(ty).unwrap(),
             values: ColumnValues::Text {
-                spans: spans_from_utf16_lengths(&data, &lengths).unwrap(),
+                bounds: spans_from_utf16_lengths(&data, &lengths).unwrap(),
                 data,
             },
             nulls: Vec::new(),
@@ -689,9 +733,14 @@ mod tests {
     #[test]
     fn row_offsets_allow_splitting_at_a_row_boundary() {
         let encoded = encode(&[text_column("id", "String", &["a", "bb", "ccc"])], 3).unwrap();
-        assert_eq!(encoded.rows(), 3);
-        assert_eq!(encoded.slice(0, 1), &[1, b'a']);
-        assert_eq!(encoded.slice(1, 3), &[2, b'b', b'b', 3, b'c', b'c', b'c']);
+        assert_eq!(
+            (
+                encoded.rows(),
+                encoded.slice(0, 1).to_vec(),
+                encoded.slice(1, 3).to_vec()
+            ),
+            (3, vec![1, b'a'], vec![2, b'b', b'b', 3, b'c', b'c', b'c'])
+        );
     }
 
     // RowBinary is the raw integer, so nothing downstream notices a value that
