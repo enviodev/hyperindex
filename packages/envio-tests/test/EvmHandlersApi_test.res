@@ -41,6 +41,20 @@ chains:
 
 let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
+// For the cases that must NOT type-check: returns the type errors instead of
+// throwing them.
+let checkResult = handlers =>
+  try {
+    check(handlers)
+    "no type error"
+  } catch {
+  | JsExn(e) => e->JsExn.message->Option.getOr("no message")
+  }
+
+let aliasPreamble = `import { indexer, type EvmOnEventOptions } from "envio";
+type Transfer = { contractName: "Token"; eventName: "Transfer" };
+`
+
 describe("EVM API types", () => {
   it("resolves config-bound chain/contract name and id unions", _ =>
     check(`
@@ -153,7 +167,10 @@ expectType<
       readonly event: "Synced";
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<{}, "Token">;
-      readonly fields?: EvmFieldsSelection;
+      // The alias can't infer the selection the way a call site does, so it
+      // defaults to naming no fields rather than to the widened selection —
+      // which \`onEvent\` would only reject.
+      readonly fields?: undefined;
     }
   >
 >(true);
@@ -767,6 +784,82 @@ expectType<SingleOrMultiple<Address>>(_multi);
 expectType<
   TypeEqual<Logger["info"], (message: string, params?: Record<string, unknown> | Error) => void>
 >(true);
+`)
+  )
+
+  // An options value declared through the alias has to stay assignable to what
+  // `onEvent` accepts. The selection is the part the alias can't infer, so its
+  // default decides whether the other options survive the round trip.
+  it("accepts alias-declared options that name no selection", _ =>
+    check(
+      aliasPreamble ++ `
+const plain: EvmOnEventOptions<Transfer> = { contract: "Token", event: "Transfer" };
+indexer.onEvent(plain, async () => {});
+
+const filtered: EvmOnEventOptions<Transfer> = {
+  contract: "Token",
+  event: "Transfer",
+  where: ({ chain }) => chain.id === 1,
+};
+indexer.onEvent(filtered, async () => {});
+`,
+    )
+  )
+
+  it("accepts an alias-declared selection passed as the Fields generic", _ =>
+    check(
+      aliasPreamble ++ `
+const fields = { transaction: ["to"] } as const;
+const opts: EvmOnEventOptions<Transfer, {}, typeof fields> = {
+  contract: "Token",
+  event: "Transfer",
+  fields,
+};
+indexer.onEvent(opts, async () => {});
+`,
+    )
+  )
+
+  // Rejected at the declaration rather than at the `onEvent` call: the alias
+  // widens the selection to its element types, which no longer name the fields
+  // the registration listed.
+  it("rejects an alias-declared selection without the Fields generic", t =>
+    t.expect(
+      checkResult(
+        aliasPreamble ++ `
+const opts: EvmOnEventOptions<Transfer> = {
+  contract: "Token",
+  event: "Transfer",
+  fields: { transaction: ["to"] },
+};
+indexer.onEvent(opts, async () => {});
+`,
+      )->String.includes("is not assignable to type 'undefined'"),
+    ).toBe(true)
+  )
+
+  it("accepts alias-declared contractRegister options", _ =>
+    check(`
+import { indexer, type EvmContractRegisterOptions } from "envio";
+type Transfer = { contractName: "Token"; eventName: "Transfer" };
+const opts: EvmContractRegisterOptions<Transfer> = { contract: "Token", event: "Transfer" };
+indexer.contractRegister(opts, async () => {});
+`)
+  )
+
+  // `EvmFieldsSelection`'s own keys are optional, so a selection annotated with
+  // any type derived from it lists its fields under optional keys. Those name
+  // the same selection the runtime resolves, and have to type as selected.
+  it("narrows fields listed under optional keys", _ =>
+    check(`
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+const pinned: { block?: readonly ["parentHash"] } = { block: ["parentHash"] };
+indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async ({ event }) => {
+  expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+  expectType<TypeEqual<typeof event.block.number, number>>(true);
+});
 `)
   )
 })

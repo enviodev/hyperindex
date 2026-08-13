@@ -901,12 +901,12 @@ let make = (
         async () => {
           let (block, transaction) = try await Promise.all2((
             log->getEventBlockOrThrow(
-              ~selectedBlockFields=onEventRegistration.selectedBlockFields->(
+              ~selectedBlockFields=onEventRegistration.fieldSelection.blockFields->(
                 Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmBlockField>
               ),
             ),
             log->getEventTransactionOrThrow(
-              ~selectedTransactionFields=onEventRegistration.selectedTransactionFields->(
+              ~selectedTransactionFields=onEventRegistration.fieldSelection.transactionFields->(
                 Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
               ),
             ),

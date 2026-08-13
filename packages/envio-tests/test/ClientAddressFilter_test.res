@@ -91,7 +91,6 @@ describe("the registration carries its address-param groups", () => {
       ~contractRegister=None,
       ~where=Some(eventFilters),
       ~chainId=1->ChainId.fromInt,
-      ~enableRawEvents=false,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
     )
 

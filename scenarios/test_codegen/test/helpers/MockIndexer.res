@@ -392,10 +392,12 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
     startBlock: None,
     handler: Some(handler),
     contractRegister: Some(contractRegister),
-    selectedBlockFields: Utils.Set.make(),
-    selectedTransactionFields: Utils.Set.make(),
-    transactionFieldMask: 0.,
-    blockFieldMask: 0.,
+    fieldSelection: {
+      blockFields: Utils.Set.make(),
+      transactionFields: Utils.Set.make(),
+      blockMask: 0.,
+      transactionMask: 0.,
+    },
     resolvedWhere: {topicSelections: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
@@ -1318,12 +1320,7 @@ let evmOnEventRegistration = (
     startBlock,
     handler: None,
     contractRegister: None,
-    selectedBlockFields: eventConfig.selectedBlockFields->(
-      Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
-    ),
-    selectedTransactionFields,
-    blockFieldMask: eventConfig.blockFieldMask,
-    transactionFieldMask: eventConfig.transactionFieldMask,
+    fieldSelection: EventConfigBuilder.eventConfigFieldSelection(eventConfig),
     resolvedWhere: {
       topicSelections: switch eventFilters {
       | Some(topicSelections) => topicSelections

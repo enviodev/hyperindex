@@ -254,7 +254,6 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~contractRegister=None,
       ~where=eventFilters,
       ~chainId=1->ChainId.fromInt,
-      ~enableRawEvents=false,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )
@@ -305,7 +304,6 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~contractRegister=None,
       ~where=Some(whereFn),
       ~chainId=137->ChainId.fromInt,
-      ~enableRawEvents=false,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -321,7 +319,6 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~contractRegister=None,
       ~where=Some(whereFn),
       ~chainId=1->ChainId.fromInt,
-      ~enableRawEvents=false,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -356,7 +353,6 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~contractRegister=None,
       ~where=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
       ~chainId=1->ChainId.fromInt,
-      ~enableRawEvents=false,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )

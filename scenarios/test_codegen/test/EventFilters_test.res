@@ -524,7 +524,6 @@ describe("Test eventFilters", () => {
           %raw(`{params: {from: "0x0000000000000000000000000000000000000000", to: "0x0000000000000000000000000000000000000000"}}`),
         ),
         ~chainId=137->ChainId.fromInt,
-        ~enableRawEvents=false,
         ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       )
     , `Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)

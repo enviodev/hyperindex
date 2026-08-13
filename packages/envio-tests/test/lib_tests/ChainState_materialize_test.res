@@ -3,7 +3,7 @@ open Vitest
 // Build an `Internal.item` Event. `inlineTransaction`/`inlineBlock` (when
 // given) put the payload in the "already inline" shape RPC/simulate/Fuel use;
 // omitted, the payload is store-backed for that dimension.
-// `transactionMask`/`blockMask` mirror the per-event `onEventRegistration.eventConfig`
+// `transactionMask`/`blockMask` mirror the `onEventRegistration.fieldSelection`
 // masks that `ChainState.groupBatchItems` reads for each dimension.
 let materializeChainId = 987->ChainId.fromInt
 let makeItem = (
@@ -31,8 +31,10 @@ let makeItem = (
     "chain": materializeChainId,
     "onEventRegistration":
       {
-        "transactionFieldMask": transactionMask,
-        "blockFieldMask": blockMask,
+        "fieldSelection": {
+          "transactionMask": transactionMask,
+          "blockMask": blockMask,
+        },
       }->(Utils.magic: {..} => Internal.onEventRegistration),
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)

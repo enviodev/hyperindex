@@ -291,7 +291,12 @@ let getGlobalIndexer = (): 'indexer => {
   let parseSvmIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
-        Utils.magic: 'a => {"program": unknown, "instruction": unknown, "where": option<JSON.t>}
+        Utils.magic: 'a => {
+          "program": unknown,
+          "instruction": unknown,
+          "where": option<JSON.t>,
+          "fields": option<Internal.evmFieldsSelection>,
+        }
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {
       (
@@ -303,11 +308,16 @@ let getGlobalIndexer = (): 'indexer => {
       (inst["contract"], inst["_0"])
     }
     let where = raw["where"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch where {
-    | None => None
-    | Some(_) =>
+    // SVM takes its selection from the config, so `fields` is carried through
+    // only to be rejected by the registration — dropping it here would leave a
+    // plain-JS caller with a silently ignored option.
+    let fields = raw["fields"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (where, fields) {
+    | (None, None) => None
+    | (where, fields) =>
       Some({
         where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+        ?fields,
       })
     }
     (programName, instructionName, eventOptions)
