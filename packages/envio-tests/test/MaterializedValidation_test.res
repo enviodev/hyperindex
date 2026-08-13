@@ -259,6 +259,20 @@ describe("tables: select expressions", () => {
       "in `select.total`: `_negate` needs a number, but got String",
     ),
     (
+      "rejects a `_sum` of a value that can be missing",
+      `      id: params.to
+      total:
+        _sum: transaction.maxFeePerGas`,
+      "in `select.total`: `_sum` needs a number that is always set, but got BigInt or null. Adding up a value that can be missing isn't supported yet.",
+    ),
+    (
+      "rejects a `_negate` of a value that can be missing",
+      `      id: params.to
+      total:
+        _negate: transaction.maxFeePerGas`,
+      "in `select.total`: `_negate` needs a number that is always set, but got BigInt or null. Negating a value that can be missing isn't supported yet.",
+    ),
+    (
       "rejects an integer too big for an Int column",
       `      id: params.to
       total: 5000000000`,
@@ -294,6 +308,36 @@ ${select}`->table,
         ),
     )
   })
+
+  // A query column takes its type from every branch at once, so a single
+  // branch selecting something that can be missing is what makes it nullable.
+  it("rejects a `_sum` of a query column one branch leaves unset", t =>
+    expectError(
+      t,
+      `  totals:
+    with:
+      moves:
+        - from: evm.events
+          where:
+            eventName: Transfer
+          select:
+            account: params.to
+            delta: params.value
+        - from: evm.events
+          where:
+            eventName: Approval
+          select:
+            account: params.owner
+            delta: transaction.maxFeePerGas
+    from: moves
+    select:
+      id: account
+      total:
+        _sum: delta`->table,
+      prefix ++
+      "in `select.total`: `_sum` needs a number that is always set, but got BigInt or null. Adding up a value that can be missing isn't supported yet.",
+    )
+  )
 })
 
 describe("tables: _concat", () => {

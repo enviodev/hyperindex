@@ -160,12 +160,10 @@ impl<'de> Deserialize<'de> for Tables {
             ) -> Result<Self::Value, A::Error> {
                 match seq.next_element::<serde::de::IgnoredAny>()? {
                     None => Ok(Tables::default()),
-                    Some(_) => {
-                        Err(serde::de::Error::custom(
-                            "`tables` is an object keyed by table name, so only an empty `tables: \
+                    Some(_) => Err(serde::de::Error::custom(
+                        "`tables` is an object keyed by table name, so only an empty `tables: \
                              []`                          can be written as a list",
-                        ))
-                    }
+                    )),
                 }
             }
         }
@@ -664,6 +662,23 @@ impl Ty {
             _ => None,
         }
     }
+}
+
+/// Arithmetic has no answer for a value that isn't there — the runtime would
+/// add or negate `undefined`. Rejected while there is no way to say what a
+/// missing value should count as.
+fn numeric_operand(ty: &Ty, operator: &str, verb: &str) -> Result<&'static str> {
+    let tag = ty
+        .numeric_tag()
+        .ok_or_else(|| anyhow!("`{operator}` needs a number, but got {}", ty.describe()))?;
+    if ty.nullable {
+        return Err(anyhow!(
+            "`{operator}` needs a number that is always set, but got {}. {verb} a value that can \
+             be missing isn't supported yet.",
+            ty.describe()
+        ));
+    }
+    Ok(tag)
 }
 
 /// One type that holds both. A number takes the other side's numeric type;
@@ -1266,12 +1281,7 @@ fn compile_selected(
         match operator.as_str() {
             "_sum" => {
                 let inner = compile_expr(inner, ctx, demand).context("in `_sum`")?;
-                if inner.ty.numeric_tag().is_none() {
-                    return Err(anyhow!(
-                        "`_sum` needs a number, but got {}",
-                        inner.ty.describe()
-                    ));
-                }
+                numeric_operand(&inner.ty, "_sum", "Adding up")?;
                 Selected::Sum(inner)
             }
             "_ref" => {
@@ -1419,9 +1429,7 @@ fn compile_operator(
         "_value" => compile_expr(inner, ctx, demand).context("in `_value`"),
         "_negate" => {
             let inner = compile_expr(inner, ctx, demand).context("in `_negate`")?;
-            let numeric_type = inner.ty.numeric_tag().ok_or_else(|| {
-                anyhow!("`_negate` needs a number, but got {}", inner.ty.describe())
-            })?;
+            let numeric_type = numeric_operand(&inner.ty, "_negate", "Negating")?;
             // Folded so a negated literal stays a literal and can still widen to
             // whatever numeric type its siblings settle on.
             let expr = match inner.expr {
