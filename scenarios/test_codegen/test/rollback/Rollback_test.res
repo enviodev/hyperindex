@@ -1588,13 +1588,15 @@ describe("E2E rollback tests", () => {
             },
             // Reorg checkpoint id was checkpoint id 5
             // for chain 1337. After rollback it was removed
-            // and replaced with chain id 100
+            // and replaced with chain id 100.
+            // The rollback drops every hash above its target on both chains, so
+            // chain 100 replays this block without one until it refetches.
             {
               id: 10n,
               eventsProcessed: 2,
               chainId: 100->ChainId.fromInt,
               blockNumber: 106,
-              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
+              blockHash: Js.Null.Null,
             },
             {
               id: 11n,
@@ -2029,13 +2031,15 @@ describe("E2E rollback tests", () => {
               },
               // Reorg checkpoint id was checkpoint id 5
               // for chain 1337. After rollback it was removed
-              // and replaced with chain id 100
+              // and replaced with chain id 100.
+              // The rollback drops every hash above its target on both chains,
+              // so chain 100 replays this block without one until it refetches.
               {
                 id: 10n,
                 eventsProcessed: 2,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 106,
-                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
+                blockHash: Js.Null.Null,
               },
               {
                 id: 11n,

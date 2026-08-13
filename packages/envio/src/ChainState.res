@@ -918,7 +918,7 @@ let handleQueryResult = (
   ~query: FetchState.query,
   ~newItems,
   ~newRegistrations,
-  ~latestFetchedBlock: FetchState.blockRef,
+  ~latestFetchedBlock: int,
   ~knownHeight,
   ~transactionStore as txPage: option<TransactionStore.t>,
 ) => {
@@ -939,7 +939,7 @@ let handleQueryResult = (
       // before they existed, so whatever it claims has to be inside the
       // catch-up range - and an unbounded query can reach past the height that
       // was known when it went out.
-      ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock.blockNumber),
+      ~claimCeiling=Pervasives.max(knownHeight, latestFetchedBlock),
       newRegistrations,
     )
   }
@@ -1223,11 +1223,6 @@ let rollback = (
   ~rollbackTargetBlockNumber,
   ~isReorgChain,
 ) => {
-  // Only the reorg chain has blocks on a disproved fork. Its hashes above the
-  // validated target must go, but the ones the depth search vouched for stay,
-  // and every other chain keeps all of them - they are what catches a source
-  // that serves the refetch from an orphaned fork.
-  let dropHashesAbove = isReorgChain ? Null.Value(rollbackTargetBlockNumber) : Null.Null
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
     let newTotalEventsProcessed =
@@ -1253,7 +1248,7 @@ let rollback = (
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
-    cs.blockStore->BlockStore.rollback(newProgressBlockNumber, ~dropHashesAbove)
+    cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
@@ -1265,7 +1260,7 @@ let rollback = (
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber, ~dropHashesAbove)
+      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(
         cs.committedProgressBlockNumber,
         rollbackTargetBlockNumber,

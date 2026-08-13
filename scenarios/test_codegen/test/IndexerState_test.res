@@ -106,9 +106,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
             ~query,
-            ~latestFetchedBlock={
-              blockNumber: currentBlockNumber.contents,
-            },
+            ~latestFetchedBlock=currentBlockNumber.contents,
             ~newItems=[batchItem],
           )
 
@@ -284,7 +282,7 @@ describe("IndexerState", () => {
               fetchState :=
                 fetchState.contents->FetchState.handleQueryResult(
                   ~query,
-                  ~latestFetchedBlock={blockNumber: blockNumber},
+                  ~latestFetchedBlock=blockNumber,
                   ~newItems=[
                     Internal.Event({
                       chainId: chainId,
@@ -363,7 +361,7 @@ describe("IndexerState", () => {
         cs->ChainState.handleQueryResult(
           ~query=concurrentQuery,
           ~newRegistrations=[],
-          ~latestFetchedBlock={blockNumber: 15},
+          ~latestFetchedBlock=15,
           ~newItems=[
             Internal.Event({
               chainId,

@@ -64,9 +64,7 @@ let addressStore = () =>
 // The chain the mock server currently serves. `forkFrom` is the first block
 // whose hash comes from the second fork, which is exactly how a reorg looks to
 // a client polling the same endpoint.
-// `logsBelow` silences logs from that block up, so a range can be fetched with
-// nothing but the block reads reorg detection makes on its own.
-type serverState = {mutable height: int, mutable forkFrom: int, mutable logsBelow: int}
+type serverState = {mutable height: int, mutable forkFrom: int}
 
 let forkOf = (state, blockNumber) => blockNumber >= state.forkFrom ? "b" : "a"
 
@@ -81,13 +79,12 @@ let blockJson = (state, blockNumber) =>
       )}"}`,
   )
 
-// One log per block in the requested range (up to `logsBelow`), so every block
-// in a fetched range contributes its hash to the page.
+// One log per block in the requested range, so every block in a fetched range
+// contributes its hash to the page.
 let logsJson = (state, ~fromBlock, ~toBlock) =>
   JSON.Array(
-    Array.fromInitializer(~length=toBlock - fromBlock + 1, i => fromBlock + i)
-    ->Array.filter(blockNumber => blockNumber < state.logsBelow)
-    ->Array.map(blockNumber => {
+    Array.fromInitializer(~length=toBlock - fromBlock + 1, i => {
+      let blockNumber = fromBlock + i
       JSON.parseOrThrow(
         `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"${blockNumber->hex}","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"${blockHash(
             ~blockNumber,
@@ -186,7 +183,7 @@ let makeChainState = (~source: Source.t, ~knownHeight) => {
 
 describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg from fetched hashes and finds the rollback depth", async t => {
-    let state = {height: 105, forkFrom: 999, logsBelow: 1000}
+    let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
     let source = makeSource(~url=mock.url)
     let chainState = makeChainState(~source, ~knownHeight=state.height)
@@ -234,45 +231,8 @@ describe("Rollback against a real RPC server", () => {
     await mock.closeAsync()
   })
 
-  Async.it("re-reads its own range on a retry instead of trusting the block cache", async t => {
-    // A range with no logs still contributes hashes: detection fetches the
-    // range's first and last block itself. Both are cached by block number, so
-    // a plain retry of the range — a transient failure, no InconsistentResponse
-    // and no cache drop — must not be answered from what the first attempt saw.
-    let state = {height: 105, forkFrom: 999, logsBelow: 0}
-    let mock = await startServer(state)
-    let source = makeSource(~url=mock.url)
-    let chainState = makeChainState(~source, ~knownHeight=state.height)
-
-    let page = await source->fetchRange(~fromBlock=100, ~toBlock=102, ~knownHeight=state.height)
-    t.expect(
-      (
-        chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=105),
-        chainState
-        ->ChainState.blockStore
-        ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=200),
-      ),
-      ~message="Blocks 100 and 102 are read directly, each also vouching for its parent",
-    ).toEqual((ReorgDetection.NoReorg, [99, 100, 101, 102]))
-
-    state.forkFrom = 101
-
-    let retried = await source->fetchRange(~fromBlock=100, ~toBlock=102, ~knownHeight=state.height)
-    t.expect(
-      chainState->ChainState.registerReorgGuard(~blockStore=retried.blockStore, ~knownHeight=105),
-      ~message="The retry re-reads block 102, whose parentHash puts the fork at 101",
-    ).toEqual(
-      ReorgDetection.ReorgDetected({
-        scannedBlock: {blockNumber: 101, blockHash: blockHash(~blockNumber=101, ~fork="a")},
-        receivedBlock: {blockNumber: 101, blockHash: blockHash(~blockNumber=101, ~fork="b")},
-      }),
-    )
-
-    await mock.closeAsync()
-  })
-
-  Async.it("only finds a deeper fork once the source's pre-reorg cache is dropped", async t => {
-    let state = {height: 105, forkFrom: 999, logsBelow: 1000}
+  Async.it("drops the source's pre-reorg cache before searching for the fork", async t => {
+    let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
     let source = makeSource(~url=mock.url)
     let chainState = makeChainState(~source, ~knownHeight=state.height)
@@ -288,29 +248,16 @@ describe("Rollback against a real RPC server", () => {
     state.forkFrom = 100
 
     // Answering the depth search from the cache filled while fetching would
-    // "confirm" blocks that no longer exist and stop far too shallow.
-    let staleTarget = await Rollback.getLastKnownValidBlock(
+    // "confirm" blocks that no longer exist and stop 2 blocks past the fork.
+    // `getLastKnownValidBlock` drops that cache itself before searching, so a
+    // caller cannot forget to and get the shallow answer.
+    let target = await Rollback.getLastKnownValidBlock(
       chainState,
       ~reorgBlockNumber=102,
       ~isRealtime=false,
     )
     t.expect(
-      staleTarget,
-      ~message="Cached pre-reorg blocks read as valid, stopping 2 blocks past the fork",
-    ).toEqual(101)
-
-    // Dropping the cache is what makes the search see the new chain, which is
-    // what `Rollback.rollback` does through `SourceManager.onReorg` before
-    // running the search.
-    source.onReorg->Option.forEach(cb => cb())
-
-    let freshTarget = await Rollback.getLastKnownValidBlock(
-      chainState,
-      ~reorgBlockNumber=102,
-      ~isRealtime=false,
-    )
-    t.expect(
-      freshTarget,
+      target,
       ~message="Refetched hashes place the fork at 100, so the rollback goes to 99",
     ).toEqual(99)
 

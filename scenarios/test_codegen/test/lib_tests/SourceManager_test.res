@@ -434,9 +434,7 @@ describe("SourceManager fetchNext", () => {
 
     {
       id: partitionIndex->Int.toString,
-      latestFetchedBlock: {
-        blockNumber: latestFetchedBlockNumber,
-      },
+      latestFetchedBlock:latestFetchedBlockNumber,
       selection: normalSelection,
       addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
@@ -459,7 +457,7 @@ describe("SourceManager fetchNext", () => {
     let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
     partitions->Array.forEach(partition => {
-      if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
+      if latestFullyFetchedBlock.contents > partition.latestFetchedBlock {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
     })
@@ -478,7 +476,7 @@ describe("SourceManager fetchNext", () => {
       endBlock,
       buffer,
       normalSelection,
-      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
+      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
       maxOnBlockBufferSize: targetBufferSize,
       chainId: 0->ChainId.fromInt,
       blockLag: 0,

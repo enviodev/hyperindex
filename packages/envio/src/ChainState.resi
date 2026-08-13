@@ -129,7 +129,7 @@ let handleQueryResult: (
   ~query: FetchState.query,
   ~newItems: array<Internal.item>,
   ~newRegistrations: array<AddressStore.registration>,
-  ~latestFetchedBlock: FetchState.blockRef,
+  ~latestFetchedBlock: int,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
 ) => unit

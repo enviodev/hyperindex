@@ -10,7 +10,13 @@ let getLastKnownValidBlock = async (
   ~reorgBlockNumber: int,
   ~isRealtime: bool,
 ) => {
-  // Don't include the reorg block itself — different source instances
+  // Before the search, not after: it re-fetches the scanned hashes through the
+  // sources, and a source answering from a cache it filled on the orphaned
+  // chain would confirm blocks that no longer exist - stopping the rollback
+  // short of the real fork.
+  chainState->ChainState.sourceManager->SourceManager.onReorg
+
+  // Don't include the reorg block itself - different source instances
   // may have mismatching hashes at the head, so we always rollback
   // the block where we detected the reorg.
   let scannedBlockNumbers =
@@ -20,8 +26,8 @@ let getLastKnownValidBlock = async (
   | [] => chainState->ChainState.getHighestBlockBelowThreshold
   | _ => {
       let blockStore = await chainState
-        ->ChainState.sourceManager
-        ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
+      ->ChainState.sourceManager
+      ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
 
       switch chainState->ChainState.getLatestValidScannedBlock(
         ~blockStore,
@@ -50,12 +56,6 @@ let rec rollback = async (
       let chainState = state->IndexerState.getChainState(~chainId)
 
       state->IndexerState.enterFindingReorgDepth
-
-      // Before the search, not after: it re-fetches the scanned hashes through
-      // the sources, and a source answering from a cache it filled on the
-      // orphaned chain would confirm blocks that no longer exist — stopping the
-      // rollback short of the real fork.
-      chainState->ChainState.sourceManager->SourceManager.onReorg
 
       let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
         ~reorgBlockNumber,

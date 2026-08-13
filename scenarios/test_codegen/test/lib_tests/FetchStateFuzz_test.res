@@ -62,14 +62,14 @@ let minFrontier = (run: run) =>
   run
   ->partitions
   ->Array.reduce(run.knownHeight, (min, p) =>
-    p.latestFetchedBlock.blockNumber < min ? p.latestFetchedBlock.blockNumber : min
+    p.latestFetchedBlock < min ? p.latestFetchedBlock : min
   )
 
 let describePartitions = (run: run) =>
   run
   ->partitions
   ->Array.map(p =>
-    `{id:${p.id} lfb:${p.latestFetchedBlock.blockNumber->Int.toString} merge:${switch p.mergeBlock {
+    `{id:${p.id} lfb:${p.latestFetchedBlock->Int.toString} merge:${switch p.mergeBlock {
       | Some(m) => m->Int.toString
       | None => "-"
       }} dyn:${p.dynamicContract->Option.getOr("-")} addrs:${p.addresses
@@ -162,7 +162,7 @@ let respond = (run: run, ~rng, ~index) => {
   run.fetchState =
     run.fetchState->FetchState.handleQueryResult(
       ~query=q,
-      ~latestFetchedBlock={blockNumber: latest},
+      ~latestFetchedBlock=latest,
       ~newItems=[],
     )
   run.pendingBudget = Pervasives.max(0., run.pendingBudget -. q.itemsEst->Int.toFloat)

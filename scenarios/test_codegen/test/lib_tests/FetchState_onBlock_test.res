@@ -19,9 +19,7 @@ let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThr
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 
-let getBlockData = (~blockNumber): FetchState.blockRef => {
-  blockNumber,
-}
+let getBlockData = (~blockNumber): int => blockNumber
 
 let baseEventConfig = (MockIndexer.evmOnEventRegistration(
   ~id="0",
@@ -104,7 +102,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -152,7 +150,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -201,7 +199,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -254,7 +252,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 12},
+        ~latestFetchedBlock=12,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -310,7 +308,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 

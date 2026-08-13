@@ -774,26 +774,6 @@ let make = (
     receiptLoader := makeReceiptLoader()
   }
 
-  // The two blocks reorg detection reads per range are loaded here rather than
-  // through the cache: it is keyed by block number and only dropped on a reorg,
-  // so a retry of a range would be served whatever the failed attempt saw — the
-  // very fork the retry exists to reveal. The fresh load is published back to
-  // the cache, so an event payload in the same block still costs one request.
-  let getFreshBlockInfo = blockNumber =>
-    blockLoader.contents
-    ->LazyLoader.set(
-      blockNumber,
-      getKnownRawBlockWithBackoff(
-        ~client,
-        ~sourceName=name,
-        ~chainId,
-        ~backoffMsOnFailure=1000,
-        ~blockNumber,
-        ~recordRequest,
-      ),
-    )
-    ->Promise.thenResolve(parseBlockInfo)
-
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -843,12 +823,15 @@ let make = (
 
     // The seam block (`fromBlock - 1`) is the only block this range shares with
     // what the store already scanned, so it is where a reorg at the boundary
-    // shows up. Read `fromBlock` and take the seam's hash from its `parentHash`:
-    // the seam itself was the previous range's `toBlock` and would come back
-    // from that range's view of the chain.
+    // shows up. Reading it directly would answer from the block cache — it was
+    // the previous range's `toBlock`, so it is always cached, and always on the
+    // chain that range saw. Read `fromBlock` instead, which no earlier range
+    // touched, and take the seam's hash from its `parentHash`.
     let firstBlockPromise =
       fromBlock > 0 && fromBlock <= toBlock
-        ? getFreshBlockInfo(fromBlock)->Promise.thenResolve(b => Some(b))
+        ? blockLoader.contents
+          ->LazyLoader.get(fromBlock)
+          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
     if selection.onEventRegistrations->Utils.Array.isEmpty {
@@ -898,13 +881,9 @@ let make = (
     }
     requestStats->Array.forEach(stat => recordRequest(~method=stat.method, ~seconds=stat.seconds))
 
-    // A single-block range asks for the same block as both the seam and the
-    // head, and it is only worth one request.
-    let optFirstBlock = await firstBlockPromise
-    let latestFetchedBlockInfo = switch optFirstBlock {
-    | Some(firstBlock) if firstBlock.number === queriedToBlock => firstBlock
-    | _ => await getFreshBlockInfo(queriedToBlock)
-    }
+    let latestFetchedBlockInfo = await blockLoader.contents
+    ->LazyLoader.get(queriedToBlock)
+    ->Promise.thenResolve(parseBlockInfo)
 
     let parsedQueueItems = await items
     ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
@@ -976,6 +955,8 @@ let make = (
       )()
     })
     ->Promise.all
+
+    let optFirstBlock = await firstBlockPromise
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
