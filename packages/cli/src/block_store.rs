@@ -596,17 +596,6 @@ impl BlockStore {
             "response stores must be validated before persistent merge"
         );
         if cross.is_none() || report_only {
-            // Detect-only mode keeps indexing through the reorg, so forget the
-            // stale old-fork hashes above the divergence before merging the new
-            // page. Only the hashes are cleared, not the rows: other partitions
-            // may have buffered full block data here that still materialises.
-            // Otherwise adjacent pages would keep comparing against the stale
-            // hashes and re-report the same reorg on every response.
-            if let Some(mismatch) = &cross {
-                if let Ok(above) = u64::try_from(mismatch.block_number - 1) {
-                    dst.table.clear_field_above(above, self.hash_field());
-                }
-            }
             dst.table.append_from(&mut src.table);
             // The page's response-only state validates this response only. It
             // must not become persistent chain data, where the cursor coverage
@@ -1558,45 +1547,34 @@ mod tests {
         assert!(persistent.merge(&svm_page, 0, false, 0).is_err());
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn merge_report_only_forgets_stale_hashes_but_keeps_buffered_data() {
-        // Block 12 also carries a timestamp another partition buffered.
-        let mut block12 = hashed_evm_block(12, 0x12);
-        block12.timestamp = Some(Quantity::from(120u64));
+    #[test]
+    fn merge_report_only_overwrites_without_resetting_other_hashes() {
         let persistent = evm_page(vec![
             hashed_evm_block(10, 0x10),
             hashed_evm_block(11, 0x11),
-            block12,
+            hashed_evm_block(12, 0x12),
         ]);
-        // Detect-only reorg at block 10: only block 10 is re-observed on the
-        // new fork, so blocks 11-12 (old fork) must not linger and re-report.
+        // Detect-only mode keeps indexing through the reorg. The page overwrites
+        // what it observed and nothing else is reset: blocks it did not cover
+        // keep their hashes and converge as later pages re-observe them.
         let page = evm_page(vec![hashed_evm_block(10, 0xaa)]);
         let mismatch = persistent
             .merge(&page, 0, true, 0)
             .unwrap()
             .expect("mismatch");
         assert_eq!(mismatch.block_number, 10);
-        // The stale old-fork hashes are forgotten; block 11 held only a hash so
-        // its row is gone, block 12's row stays for its buffered timestamp.
-        let cols = persistent
-            .materialize(vec![12], vec![bit(EvmBlockField::Timestamp) as f64])
-            .await
-            .expect("materialize");
         assert_eq!(
             (
+                persistent.get_hash(10),
                 persistent.get_hash(11),
                 persistent.get_hash(12),
-                match column(&cols, "timestamp") {
-                    Some(Column::I64(v)) => v.first().copied().flatten(),
-                    _ => panic!("expected timestamp column"),
-                },
             ),
-            (None, None, Some(120)),
+            (
+                Some(format!("0x{}", "aa".repeat(32))),
+                Some(format!("0x{}", "11".repeat(32))),
+                Some(format!("0x{}", "12".repeat(32))),
+            )
         );
-        // A follow-up page on the new fork merges cleanly instead of comparing
-        // block 11 against the dropped old-fork hash.
-        let next = evm_page(vec![hashed_evm_block(11, 0xbb)]);
-        assert!(persistent.merge(&next, 0, true, 0).unwrap().is_none());
     }
 
     #[test]

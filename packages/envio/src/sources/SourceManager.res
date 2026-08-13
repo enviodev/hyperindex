@@ -616,6 +616,12 @@ let getNextSource = (sourceManager, ~isRealtime, ~excludedSources=?) => {
 
 let maxRetryBackoffMillis = 60_000
 
+// One schedule for every retry of the same request, whatever made it fail:
+// 100ms doubling up to the cap. `backoffBeforeRetry` still applies the caller's
+// floor and the cap on top.
+let retryBackoffMillis = retry =>
+  Pervasives.min(100. *. 2. ** retry->Int.toFloat, maxRetryBackoffMillis->Int.toFloat)->Float.toInt
+
 // Floor for the retries driven by a condition the source reported itself
 // (behind the head, inconsistent response). Unlike a caller-supplied backoff of
 // 0, these must never busy-loop when there is no other source to move to.
@@ -679,7 +685,7 @@ let retryBehindHead = async (
   ~err: exn,
   ~excludedSources=?,
 ) => {
-  let backoffMillis = retry === 0 ? 100 : 500 * retry
+  let backoffMillis = retry->retryBackoffMillis
   let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
   logger->log({
     "msg": `Block #${blockNumber->Int.toString} is not available on the ${sourceState.source.name} source yet. Instances of a load-balanced backend drift slightly around the head, so this is expected - indexing continues after an automatic retry.`,
@@ -716,7 +722,7 @@ let retryInconsistentResponse = async (
   ~err: exn,
   ~excludedSources=?,
 ) => {
-  let backoffMillis = retry === 0 ? 100 : 1000 * retry
+  let backoffMillis = retry->retryBackoffMillis
   let msg = `Received a partial indicator of a possible reorg from the ${sourceState.source.name} source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`
   let (log, msg) = if retry >= inconsistentResponseStallRetries {
     (
@@ -1130,7 +1136,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
       retryRef := retryRef.contents + 1
 
     | exn =>
-      let backoffMillis = Pervasives.min(100. *. 2. ** retry->Int.toFloat, 60_000.)->Float.toInt
+      let backoffMillis = retry->retryBackoffMillis
       let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
       logger->log({
         "msg": "Failed to fetch block hashes. Retrying.",

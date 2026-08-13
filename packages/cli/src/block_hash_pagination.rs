@@ -73,14 +73,18 @@ where
             return Ok(request_stats);
         }
         if page.next <= cursor {
-            if request_from < cursor {
+            if request_from < cursor && page.next > request_from {
                 // Rewinding to the overlap block covered no ground the cursor
-                // had not already passed. That is this loop's own anchor
-                // failing to advance, not an instance stuck behind the head, so
-                // drop the anchor and ask again from the cursor.
+                // had not already passed, yet the page still moved past where
+                // it was asked to start. That is this loop's own anchor failing
+                // to advance, not an instance stuck behind the head, so drop
+                // the anchor and ask again from the cursor.
                 overlap = None;
                 continue;
             }
+            // The page stopped at or before its own start block: the instance
+            // has not reached this range. Reported without re-asking from the
+            // cursor, which would only repeat the same answer.
             return Err(error_with_request_stats(
                 source_behind_head_err(cursor),
                 &request_stats,
@@ -280,6 +284,36 @@ mod tests {
         .await;
 
         assert_eq!((result.is_err(), requested), (true, vec![100]));
+    }
+
+    #[tokio::test]
+    async fn a_behind_head_source_errors_on_the_overlap_request() {
+        // The EVM anchor is always `cursor - 1`, so a behind-head instance is
+        // first met on a rewound request. The page stopped before its own start
+        // block, which settles it without spending a second request from the
+        // cursor.
+        let (result, requested, _) = run(
+            &[100, 400],
+            vec![
+                (
+                    100,
+                    Canned {
+                        next: 200,
+                        blocks: vec![100, 199],
+                    },
+                ),
+                (
+                    199,
+                    Canned {
+                        next: 150,
+                        blocks: vec![],
+                    },
+                ),
+            ],
+        )
+        .await;
+
+        assert_eq!((result.is_err(), requested), (true, vec![100, 199]));
     }
 
     #[tokio::test]

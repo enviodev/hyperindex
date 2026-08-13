@@ -1,7 +1,10 @@
 open Vitest
 
 let chainId = 1->ChainId.fromInt
-let baseChainConfig = {...Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe, id: chainId}
+let baseChainConfig = {
+  ...Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe,
+  id: chainId,
+}
 
 // A registrations map with an onBlock config (no address partition) so
 // FetchState.make has something to index without needing real event configs.
@@ -9,20 +12,24 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
   let d = Dict.make()
   d->Dict.set(
     chainId->ChainId.toString,
-    ({
-      onEventRegistrations: [],
-      onBlockRegistrations: [
-        {
-          Internal.index: 0,
-          name: "chain-density-test",
-          chainId,
-          startBlock: None,
-          endBlock: None,
-          interval: 1,
-          handler: "mock onBlock handler"->(Utils.magic: string => Internal.onBlockArgs => promise<unit>),
-        },
-      ],
-    }: HandlerRegister.chainRegistrations),
+    (
+      {
+        onEventRegistrations: [],
+        onBlockRegistrations: [
+          {
+            Internal.index: 0,
+            name: "chain-density-test",
+            chainId,
+            startBlock: None,
+            endBlock: None,
+            interval: 1,
+            handler: "mock onBlock handler"->(
+              Utils.magic: string => Internal.onBlockArgs => promise<unit>
+            ),
+          },
+        ],
+      }: HandlerRegister.chainRegistrations
+    ),
   )
   d
 }
@@ -55,42 +62,6 @@ let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
     ~registrationsByChainId,
   )
 
-describe("ChainState reorg checkpoint restore", () => {
-  let checkpoint = (~checkpointId, ~blockNumber, ~blockHash): Internal.reorgCheckpoint => {
-    checkpointId,
-    chainId,
-    blockNumber,
-    blockHash,
-  }
-
-  it("resumes from the most recent hash when a block has two checkpoints", t => {
-    // A rollback interrupted between deleting the old checkpoints and writing
-    // the new ones leaves both rows behind; nothing in the schema forbids it.
-    // The restore has to pick one rather than refuse to start.
-    let cs =
-      makeResumedChainState(
-        ~progressBlockNumber=110,
-        ~numEventsProcessed=500.,
-        ~firstEventBlockNumber=Some(10),
-      )->makeChainState(
-        ~reorgCheckpoints=[
-          checkpoint(~checkpointId=1n, ~blockNumber=100, ~blockHash=MockIndexer.evmBlockHash("0x0100")),
-          checkpoint(~checkpointId=2n, ~blockNumber=101, ~blockHash=MockIndexer.evmBlockHash("0x0101a")),
-          checkpoint(~checkpointId=3n, ~blockNumber=101, ~blockHash=MockIndexer.evmBlockHash("0x0101")),
-        ],
-      )
-
-    let blockStore = cs->ChainState.blockStore
-    t.expect({
-      "blockNumbers": blockStore->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=200),
-      "restoredHash": blockStore->BlockStore.getHash(101),
-    }).toEqual({
-      "blockNumbers": [100, 101],
-      "restoredHash": Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
-    })
-  })
-})
-
 describe("ChainState chain density seed (on resume)", () => {
   it("seeds from cumulative resumed progress when there's a first event block", t => {
     let cs = makeChainState(
@@ -106,7 +77,11 @@ describe("ChainState chain density seed (on resume)", () => {
 
   it("is None on a fresh chain with no resumed progress", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=-1, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=-1,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     t.expect(cs->ChainState.chainDensity).toEqual(None)
   })
@@ -158,14 +133,16 @@ describe("ChainState chain density EMA (per batch)", () => {
       let d = Dict.make()
       d->ChainId.Dict.set(
         chainId,
-        ({
-          batchSize: 0,
-          progressBlockNumber,
-          sourceBlockNumber: 1000,
-          totalEventsProcessed,
-          fetchState,
-          isProgressAtHeadWhenBatchCreated: false,
-        }: Batch.chainAfterBatch),
+        (
+          {
+            batchSize: 0,
+            progressBlockNumber,
+            sourceBlockNumber: 1000,
+            totalEventsProcessed,
+            fetchState,
+            isProgressAtHeadWhenBatchCreated: false,
+          }: Batch.chainAfterBatch
+        ),
       )
       d
     },
@@ -179,7 +156,11 @@ describe("ChainState chain density EMA (per batch)", () => {
 
   it("seeds density from the first batch's own events/block (no prior density to blend)", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=0,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(
@@ -192,7 +173,11 @@ describe("ChainState chain density EMA (per batch)", () => {
 
   it("stays None after a progress-only batch with no events", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=0,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     let fetchState = dummyFetchState()
     // Progressed 10 blocks but processed 0 events — must not seed a 0 density.
@@ -205,7 +190,11 @@ describe("ChainState chain density EMA (per batch)", () => {
 
   it("blends with the previous density weighted by the batch's block span", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=0,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(

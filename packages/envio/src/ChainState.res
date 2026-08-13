@@ -322,24 +322,17 @@ let makeInternal = (
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
   // against the hashes scanned before the restart.
   if chainReorgCheckpoints->Utils.Array.notEmpty {
-    // Checkpoints arrive in id order, and nothing in the schema stops one block
-    // number carrying two hashes - a rollback interrupted between deleting the
-    // old checkpoints and writing the new ones leaves both behind. Take the
-    // most recent and let the next response re-converge detection; refusing to
-    // restore would fail this start and every one after it.
-    let latestPerBlock = Dict.make()
-    chainReorgCheckpoints->Array.forEach(cp =>
-      latestPerBlock->Utils.Dict.setByInt(
-        cp.blockNumber,
-        {BlockStore.blockNumber: cp.blockNumber, blockHash: cp.blockHash},
-      )
-    )
     let seedPage = BlockStore.fromJs(
-      latestPerBlock->Dict.valuesToArray,
+      chainReorgCheckpoints->Array.map((cp): BlockStore.inputBlock => {
+        blockNumber: cp.blockNumber,
+        blockHash: cp.blockHash,
+      }),
       ~ecosystem=config.ecosystem.name,
       ~shouldChecksum=!lowercaseAddresses,
     )
-    blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false, ~pruneHashesBelow=0)->ignore
+    blockStore
+    ->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false, ~pruneHashesBelow=0)
+    ->ignore
   }
 
   // Seed chain density from whatever progress this chain already has (from a

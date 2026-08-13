@@ -468,8 +468,7 @@ FROM "${pgSchema}"."${table.tableName}" cp
 INNER JOIN reorg_chains rc 
   ON cp."${(#chain_id: field :> string)}" = rc.id
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
-  AND cp."${(#block_number: field :> string)}" >= rc.safe_block
-ORDER BY cp."${(#id: field :> string)}";` // Include safe_block checkpoint to use it for safe checkpoint tracking
+  AND cp."${(#block_number: field :> string)}" >= rc.safe_block;` // Include safe_block checkpoint to use it for safe checkpoint tracking
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {

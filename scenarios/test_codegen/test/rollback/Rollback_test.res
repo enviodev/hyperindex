@@ -1589,8 +1589,9 @@ describe("E2E rollback tests", () => {
             // Reorg checkpoint id was checkpoint id 5
             // for chain 1337. After rollback it was removed
             // and replaced with chain id 100.
-            // The rollback drops every hash above its target on both chains, so
-            // chain 100 replays this block without one until it refetches.
+            // No hash: the mock source only reports the range's seam and end
+            // block, never the block an item came from, so the refetch of
+            // 106-111 never re-observes 106. A real source returns that header.
             {
               id: 10n,
               eventsProcessed: 2,
@@ -2032,8 +2033,7 @@ describe("E2E rollback tests", () => {
               // Reorg checkpoint id was checkpoint id 5
               // for chain 1337. After rollback it was removed
               // and replaced with chain id 100.
-              // The rollback drops every hash above its target on both chains,
-              // so chain 100 replays this block without one until it refetches.
+              // No hash, for the same reason as the test above.
               {
                 id: 10n,
                 eventsProcessed: 2,
