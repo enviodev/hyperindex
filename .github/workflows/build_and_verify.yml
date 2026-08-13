@@ -9,6 +9,11 @@ on:
   push:
     branches:
       - main
+      # TEMPORARY — remove before merge. `pull_request_target` runs the
+      # workflow definition from the base branch, so the three-backend
+      # envio-tests matrix added in this PR cannot run on the PR itself. A
+      # push event uses this branch's definition, which is what verifies it.
+      - claude/mock-indexer-tests-migration-ymdj4m
 
 permissions:
   contents: read
