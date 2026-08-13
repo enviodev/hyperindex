@@ -152,6 +152,27 @@ chains:
 `,
 ).config
 
+let multichainConfig = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
+name: inline-field-selection-multichain
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x1111111111111111111111111111111111111111"
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x2222222222222222222222222222222222222222"
+`,
+).config
+
 let rpcConfig = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: inline-field-selection-rpc
@@ -171,9 +192,9 @@ chains:
 `,
 ).config
 
-let selections = (registrations: HandlerRegister.registrationsByChainId) => {
+let selections = (registrations: HandlerRegister.registrationsByChainId, ~chain="1") => {
   let chainRegistrations: HandlerRegister.chainRegistrations =
-    registrations->Utils.Dict.dangerouslyGetNonOption("1")->Option.getOrThrow
+    registrations->Utils.Dict.dangerouslyGetNonOption(chain)->Option.getOrThrow
   chainRegistrations.onEventRegistrations->Array.map(reg => (
     reg.fieldSelection.blockFields->Utils.Set.toArray->Array.toSorted(String.compare),
     reg.fieldSelection.transactionFields->Utils.Set.toArray->Array.toSorted(String.compare),
@@ -191,6 +212,14 @@ let register = (~config, fn) => {
 
 let setHandler = (~fields=?, ~where=?, ()) =>
   HandlerRegister.setHandler(
+    ~contractName="Token",
+    ~eventName="Transfer",
+    %raw(`() => Promise.resolve()`),
+    ~eventOptions=Some({?fields, ?where}),
+  )
+
+let setContractRegister = (~fields=?, ~where=?, ()) =>
+  HandlerRegister.setContractRegister(
     ~contractName="Token",
     ~eventName="Transfer",
     %raw(`() => Promise.resolve()`),
@@ -254,6 +283,47 @@ describe("EVM inline field selection", () => {
     t.expect(
       message,
     ).toBe(`The "accessList" transaction field selected for the "Transfer" event on contract "Token" is unavailable for indexing via RPC. Remove it from the field selection, or index chain 1 via HyperSync.`)
+  })
+
+  // A registration resolves for every chain that configures the event, so one
+  // chain's set of registrations is rarely the next one's — a `where` can opt a
+  // registration out of a chain the others still cover.
+  it("gives every chain the selections of the registrations that chain kept", t => {
+    let registrations = register(
+      ~config=multichainConfig,
+      () => {
+        setHandler(~fields={transaction: ["to"]}, ~where=%raw(`({chain}) => chain.id === 1`), ())
+        setHandler(~fields={block: ["miner"]}, ())
+      },
+    )
+    t.expect((
+      registrations->selections,
+      registrations->selections(~chain="137"),
+    )).toEqual(([(["number"], ["to"]), (["miner", "number"], [])], [(["miner", "number"], [])]))
+  })
+
+  // The inline selection resolves once per `onEvent` call and every chain's
+  // registration shares it, so a merge (which unions two selections) has to
+  // build a new one rather than widen the shared value in place.
+  it("keeps a merge on one chain out of the same registration on another", t => {
+    let registrations = register(
+      ~config=multichainConfig,
+      () => {
+        setHandler(~fields={block: ["parentHash"]}, ())
+        setContractRegister(
+          ~fields={transaction: ["gasUsed"]},
+          ~where=%raw(`({chain}) => chain.id === 1`),
+          (),
+        )
+      },
+    )
+    t.expect((
+      registrations->selections,
+      registrations->selections(~chain="137"),
+    )).toEqual((
+      [(["number", "parentHash"], ["gasUsed"])],
+      [(["number", "parentHash"], [])],
+    ))
   })
 
   // The registration is dropped for this chain before it reaches the source, so
