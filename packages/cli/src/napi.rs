@@ -93,6 +93,78 @@ pub fn from_user_api(
     })
 }
 
+#[napi_derive::napi(object)]
+pub struct TransformTsResult {
+    pub code: String,
+    /// JSON source map, always emitted so handler stack traces point at the
+    /// user's TypeScript rather than the stripped output.
+    pub map: Option<String>,
+}
+
+/// Strips types from a TypeScript handler module and lowers the syntax Node
+/// cannot execute directly (enums, namespaces, decorators, JSX). Called by the
+/// module load hook that `HandlerLoader` registers.
+#[napi_derive::napi]
+pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformTsResult> {
+    use oxc::allocator::Allocator;
+    use oxc::codegen::{Codegen, CodegenOptions};
+    use oxc::parser::Parser;
+    use oxc::semantic::SemanticBuilder;
+    use oxc::span::SourceType;
+    use oxc::transformer::{TransformOptions, Transformer};
+    use std::path::Path;
+
+    let path = Path::new(&filename);
+    let source_type = SourceType::from_path(path).map_err(|_| {
+        napi::Error::from_reason(format!("Unsupported handler file extension: {filename}"))
+    })?;
+
+    fn report(
+        stage: &str,
+        filename: &str,
+        diagnostics: &[oxc::diagnostics::OxcDiagnostic],
+    ) -> napi::Error {
+        let message = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        napi::Error::from_reason(format!("Failed {stage} {filename}:\n{message}"))
+    }
+
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, &source, source_type).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Err(report("parsing", &filename, &parsed.diagnostics));
+    }
+
+    let mut program = parsed.program;
+    // `with_enum_eval` is what lets the transformer resolve enum member values;
+    // without it, lowering an `enum` panics.
+    let scoping = SemanticBuilder::new()
+        .with_enum_eval(true)
+        .build(&program)
+        .semantic
+        .into_scoping();
+    let transformed = Transformer::new(&allocator, path, &TransformOptions::default())
+        .build_with_scoping(scoping, &mut program);
+    if !transformed.diagnostics.is_empty() {
+        return Err(report("transforming", &filename, &transformed.diagnostics));
+    }
+
+    let generated = Codegen::new()
+        .with_options(CodegenOptions {
+            source_map_path: Some(path.to_path_buf()),
+            ..CodegenOptions::default()
+        })
+        .build(&program);
+
+    Ok(TransformTsResult {
+        code: generated.code,
+        map: generated.map.map(|map| map.to_json_string()),
+    })
+}
+
 /// Returns a JSON-encoded `Command` for JS to dispatch, or `None` when
 /// Rust has handled the command end-to-end (help/version, codegen, init,
 /// stop, docker up/down). The Node process then exits with code 0.

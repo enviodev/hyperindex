@@ -32,7 +32,7 @@
     "dapp"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.15.0"
   },
   "files": [
     "bin.mjs",
@@ -70,8 +70,7 @@
     "ink": "6.8.0",
     "ink-big-text": "2.0.0",
     "ink-spinner": "5.0.0",
-    "postgres": "3.4.8",
-    "tsx": "4.21.0"
+    "postgres": "3.4.8"
   },
   "devDependencies": {
     "rescript": "12.2.0",

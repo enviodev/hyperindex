@@ -1,6 +1,3 @@
 packages:
   - "packages/*"
   - "scenarios/*"
-onlyBuiltDependencies:
-  - rescript
-  - esbuild

@@ -24,6 +24,6 @@ expression: "template(true, \"latest\", vec![]).render_package_json()"
     "envio": "latest"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.15.0"
   }
 }
