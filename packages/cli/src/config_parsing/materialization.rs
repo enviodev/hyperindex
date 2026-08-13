@@ -1057,8 +1057,8 @@ enum FieldWrite {
 #[serde(rename_all = "camelCase")]
 pub struct Materialization {
     pub table: String,
-    pub contract_name: String,
-    pub event_name: String,
+    #[serde(flatten)]
+    pub event: EventRef,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub wildcard: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1167,6 +1167,16 @@ fn descend_abi<'a>(abi: &'a AbiType, segment: &str) -> Option<&'a AbiType> {
 }
 
 /// What one event's resolved paths cost in fetched data.
+/// The event a branch reads, and the key everything about that event is
+/// gathered under.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct EventRef {
+    #[serde(rename = "contractName")]
+    pub contract: String,
+    #[serde(rename = "eventName")]
+    pub event: String,
+}
+
 #[derive(Default)]
 pub struct Demand {
     pub block: BTreeSet<String>,
@@ -1176,17 +1186,14 @@ pub struct Demand {
 /// Keyed by event, so each `events:` entry fetches only what the tables
 /// reading it touch — rather than every event paying for the widest selection.
 #[derive(Default)]
-pub struct DemandByEvent(pub BTreeMap<(String, String), Demand>);
+pub struct DemandByEvent(pub BTreeMap<EventRef, Demand>);
 
 impl DemandByEvent {
-    fn merge(&mut self, contract_name: &str, event_name: &str, from: Demand) {
+    fn merge(&mut self, event: &EventRef, from: Demand) {
         if from.block.is_empty() && from.transaction.is_empty() {
             return;
         }
-        let into = self
-            .0
-            .entry((contract_name.to_string(), event_name.to_string()))
-            .or_default();
+        let into = self.0.entry(event.clone()).or_default();
         into.block.extend(from.block);
         into.transaction.extend(from.transaction);
     }
@@ -2200,20 +2207,61 @@ struct TableCtx<'a> {
     contracts: &'a BTreeMap<String, &'a Contract>,
     block_field_types: &'a BTreeMap<String, Ty>,
     transaction_field_types: &'a BTreeMap<String, Ty>,
-    // Every table's id type, for checking `_ref.id` against the table it points
-    // at. `None` on the pass that is still collecting them, which leaves each
-    // `_ref.id` as written.
-    id_types: Option<&'a BTreeMap<String, Ty>>,
+    pass: Pass<'a>,
     addresses: AddressCase,
+}
+
+/// A table's `select` is compiled twice: once to learn every table's id type,
+/// and once more to write the plans now that a `_ref.id` can be checked against
+/// the table it points at.
+#[derive(Clone, Copy)]
+enum Pass<'a> {
+    CollectIds,
+    WritePlans(&'a BTreeMap<String, Ty>),
 }
 
 /// One table's writes for one event.
 struct Branch {
-    contract_name: String,
-    event_name: String,
+    event: EventRef,
     filter: Option<CFilter>,
-    /// Column expressions, when the table reads a `with` query.
+}
+
+/// A branch of a `with` query, with the column expressions a table's `select`
+/// substitutes when it reads them.
+struct QueryBranch {
+    branch: Branch,
     columns: IndexMap<String, CExpr>,
+}
+
+/// Where a table's rows come from. A query's columns and its per-branch
+/// expressions only exist in the one case that has them.
+enum Source {
+    Events(Vec<Branch>),
+    Query {
+        name: String,
+        columns: IndexMap<String, Ty>,
+        branches: Vec<QueryBranch>,
+    },
+}
+
+impl Source {
+    fn is_empty(&self) -> bool {
+        match self {
+            Source::Events(branches) => branches.is_empty(),
+            Source::Query { branches, .. } => branches.is_empty(),
+        }
+    }
+
+    /// Each branch, with the columns a `select` reading it can substitute.
+    fn branches(&self) -> Vec<(&Branch, Option<&IndexMap<String, CExpr>>)> {
+        match self {
+            Source::Events(branches) => branches.iter().map(|branch| (branch, None)).collect(),
+            Source::Query { branches, .. } => branches
+                .iter()
+                .map(|QueryBranch { branch, columns }| (branch, Some(columns)))
+                .collect(),
+        }
+    }
 }
 
 pub fn compile(
@@ -2273,7 +2321,7 @@ pub fn compile(
         contracts,
         block_field_types: &block_field_types,
         transaction_field_types: &transaction_field_types,
-        id_types: None,
+        pass: Pass::CollectIds,
         addresses,
     };
 
@@ -2286,7 +2334,7 @@ pub fn compile(
             .with_context(|| format!("in `tables.{table_name}`"))?;
         id_types.insert(table_name.clone(), compiled.2);
     }
-    ctx.id_types = Some(&id_types);
+    ctx.pass = Pass::WritePlans(&id_types);
 
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
@@ -2341,7 +2389,7 @@ fn compile_table(
         contracts,
         block_field_types,
         transaction_field_types,
-        id_types,
+        pass,
         addresses,
     } = table_ctx;
     let select = &table.select;
@@ -2353,7 +2401,7 @@ fn compile_table(
     // Reading a `with` query gives one branch per query in it; reading
     // `evm.events` gives one branch per matching event, with no columns to
     // substitute.
-    let (branches, relation_columns) = match table.with.as_ref().and_then(|with| with.get(from)) {
+    let source = match table.with.as_ref().and_then(|with| with.get(from)) {
         Some(queries) => {
             // No defined meaning yet, and ignoring it would write rows the
             // user asked to exclude.
@@ -2389,21 +2437,17 @@ fn compile_table(
                 .map(|filter| parse_filter(&filter.0))
                 .transpose()
                 .context("in `where`")?;
-            let branches = resolve_event_branches(condition.as_ref(), table_ctx, demand)
-                .context("in `where`")?
-                .into_iter()
-                .map(|(contract_name, event_name, filter)| Branch {
-                    contract_name,
-                    event_name,
-                    filter,
-                    columns: IndexMap::new(),
-                })
-                .collect();
-            (branches, None)
+            Source::Events(
+                resolve_event_branches(condition.as_ref(), table_ctx, demand)
+                    .context("in `where`")?
+                    .into_iter()
+                    .map(|(event, filter)| Branch { event, filter })
+                    .collect(),
+            )
         }
     };
 
-    if branches.is_empty() {
+    if source.is_empty() {
         return Err(anyhow!(
             "`where` matches none of the configured events, so this table would never get any rows"
         ));
@@ -2414,33 +2458,33 @@ fn compile_table(
     let mut declared: Option<Vec<FieldShape>> = None;
     let mut plans = Vec::new();
 
-    for branch in &branches {
-        let (shape, substitutions) = match &relation_columns {
-            Some((name, columns)) => (Shape::Relation { name, columns }, Some(&branch.columns)),
-            None => {
-                let contract = contracts.get(&branch.contract_name).ok_or_else(|| {
-                    anyhow!("contract `{}` is not configured", branch.contract_name)
+    for (branch, substitutions) in source.branches() {
+        let shape = match &source {
+            Source::Query { name, columns, .. } => Shape::Relation {
+                name: name.as_str(),
+                columns,
+            },
+            Source::Events(_) => {
+                let contract = contracts.get(&branch.event.contract).ok_or_else(|| {
+                    anyhow!("contract `{}` is not configured", branch.event.contract)
                 })?;
                 let event = contract
                     .events
                     .iter()
-                    .find(|event| event.name == branch.event_name)
+                    .find(|event| event.name == branch.event.event)
                     .ok_or_else(|| {
                         anyhow!(
                             "event `{}` is not configured on contract `{}`",
-                            branch.event_name,
-                            branch.contract_name
+                            branch.event.event,
+                            branch.event.contract
                         )
                     })?;
-                (
-                    Shape::Event {
-                        contract_name: &branch.contract_name,
-                        event,
-                        block_fields: block_field_types,
-                        transaction_fields: transaction_field_types,
-                    },
-                    None,
-                )
+                Shape::Event {
+                    contract_name: &branch.event.contract,
+                    event,
+                    block_fields: block_field_types,
+                    transaction_fields: transaction_field_types,
+                }
             }
         };
         let ctx = ExprCtx {
@@ -2456,7 +2500,7 @@ fn compile_table(
                 .with_context(|| format!("in `select.{field_name}`"))?;
             resolved.push((field_name.clone(), selected));
         }
-        demand.merge(&branch.contract_name, &branch.event_name, branch_demand);
+        demand.merge(&branch.event, branch_demand);
 
         let shapes: Vec<FieldShape> = resolved
             .iter()
@@ -2570,8 +2614,14 @@ fn compile_table(
                         .with_context(|| format!("in `select.{field_name}`"))?,
                 },
                 Selected::Ref { table, id } => {
-                    let expr = match id_types.and_then(|types| types.get(&table)) {
-                        Some(target) => {
+                    let expr = match pass {
+                        // Still collecting the id types this would be checked
+                        // against, so it is left as written for now.
+                        Pass::CollectIds => id.expr,
+                        Pass::WritePlans(id_types) => {
+                            let target = id_types
+                                .get(&table)
+                                .expect("every table's id type was collected on the first pass");
                             let target = Ty {
                                 nullable: ty.nullable,
                                 ..target.clone()
@@ -2583,7 +2633,6 @@ fn compile_table(
                                 )
                             })?
                         }
-                        None => id.expr,
                     };
                     FieldWrite::Set { name, expr }
                 }
@@ -2604,8 +2653,7 @@ fn compile_table(
         }
         materializations.push(Materialization {
             table: table_name.to_string(),
-            contract_name: branch.contract_name.clone(),
-            event_name: branch.event_name.clone(),
+            event: branch.event.clone(),
             wildcard: table.wildcard.unwrap_or(false),
             filter: branch.filter.clone(),
             id: id.ok_or_else(|| anyhow!("every table must select an `id`"))?,
@@ -2684,13 +2732,12 @@ fn compile_table(
 }
 
 /// Compile the queries of one `with` and merge their column types.
-#[allow(clippy::type_complexity)]
 fn compile_relation(
     relation_name: &str,
     queries: &Queries,
     table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-) -> Result<(Vec<Branch>, Option<(String, IndexMap<String, Ty>)>)> {
+) -> Result<Source> {
     let &TableCtx {
         table_names,
         contracts,
@@ -2703,7 +2750,7 @@ fn compile_relation(
         return Err(anyhow!("`with.{relation_name}` needs at least one query"));
     }
 
-    let mut branches: Vec<Branch> = Vec::new();
+    let mut branches: Vec<QueryBranch> = Vec::new();
     // Merged once every query has been compiled.
     let mut column_types: Option<IndexMap<String, Typing>> = None;
     let mut pending: Vec<(usize, IndexMap<String, Typed>)> = Vec::new();
@@ -2730,19 +2777,23 @@ fn compile_relation(
             ));
         }
 
-        for (contract_name, event_name, filter) in events {
-            let contract = contracts
-                .get(&contract_name)
-                .ok_or_else(|| anyhow!("contract `{contract_name}` is not configured"))?;
+        for (event_ref, filter) in events {
+            let contract = contracts.get(&event_ref.contract).ok_or_else(|| {
+                anyhow!("contract `{}` is not configured", event_ref.contract)
+            })?;
             let event = contract
                 .events
                 .iter()
-                .find(|event| event.name == event_name)
+                .find(|event| event.name == event_ref.event)
                 .ok_or_else(|| {
-                    anyhow!("event `{event_name}` is not configured on `{contract_name}`")
+                    anyhow!(
+                        "event `{}` is not configured on `{}`",
+                        event_ref.event,
+                        event_ref.contract
+                    )
                 })?;
             let shape = Shape::Event {
-                contract_name: &contract_name,
+                contract_name: &event_ref.contract,
                 event,
                 block_fields: block_field_types,
                 transaction_fields: transaction_field_types,
@@ -2761,7 +2812,7 @@ fn compile_relation(
                     })?;
                 columns.insert(column_name.clone(), typed);
             }
-            demand.merge(&contract_name, &event_name, branch_demand);
+            demand.merge(&event_ref, branch_demand);
 
             match &mut column_types {
                 None => {
@@ -2793,10 +2844,11 @@ fn compile_relation(
                 }
             }
 
-            branches.push(Branch {
-                contract_name,
-                event_name,
-                filter,
+            branches.push(QueryBranch {
+                branch: Branch {
+                    event: event_ref,
+                    filter,
+                },
                 columns: IndexMap::new(),
             });
             pending.push((branches.len() - 1, columns));
@@ -2828,17 +2880,20 @@ fn compile_relation(
         }
     }
 
-    Ok((branches, Some((relation_name.to_string(), column_types))))
+    Ok(Source::Query {
+        name: relation_name.to_string(),
+        columns: column_types,
+        branches,
+    })
 }
 
-/// Every configured (contract, event) a filter could match, each with whatever
-/// of the filter the runtime still has to check.
-#[allow(clippy::type_complexity)]
+/// Every configured event a filter could match, each with whatever of the
+/// filter the runtime still has to check.
 fn resolve_event_branches(
     condition: Option<&Condition>,
     table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-) -> Result<Vec<(String, String, Option<CFilter>)>> {
+) -> Result<Vec<(EventRef, Option<CFilter>)>> {
     let &TableCtx {
         table_names,
         contracts,
@@ -2877,6 +2932,10 @@ fn resolve_event_branches(
     let mut branches = Vec::new();
     for (contract_name, contract) in contracts {
         for event in &contract.events {
+            let event_ref = EventRef {
+                contract: contract_name.clone(),
+                event: event.name.clone(),
+            };
             let filter = match condition {
                 None => None,
                 Some(condition) => {
@@ -2901,17 +2960,17 @@ fn resolve_event_branches(
                     match residual {
                         Residual::False => continue,
                         Residual::True => {
-                            demand.merge(contract_name, &event.name, branch_demand);
+                            demand.merge(&event_ref, branch_demand);
                             None
                         }
                         Residual::Unknown(filter) => {
-                            demand.merge(contract_name, &event.name, branch_demand);
+                            demand.merge(&event_ref, branch_demand);
                             Some(filter)
                         }
                     }
                 }
             };
-            branches.push((contract_name.clone(), event.name.clone(), filter));
+            branches.push((event_ref, filter));
         }
     }
     Ok(branches)

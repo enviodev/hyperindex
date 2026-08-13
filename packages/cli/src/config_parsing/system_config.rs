@@ -1670,7 +1670,8 @@ impl SystemConfig {
                 }
                 _ => false,
             };
-            for ((contract_name, event_name), demand) in compiled.field_demand.0 {
+            for (event_ref, demand) in compiled.field_demand.0 {
+                let (contract_name, event_name) = (event_ref.contract, event_ref.event);
                 let contract = config.contracts.get_mut(&contract_name).ok_or_else(|| {
                     anyhow!("Contract `{contract_name}` went missing while planning fetches")
                 })?;
