@@ -549,6 +549,10 @@ pub struct Query {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Scalar {
     String,
+    /// An EVM address. A String everywhere downstream, but the decoder writes
+    /// it in the casing `address_format` picks, so a literal compared to one is
+    /// normalized to match.
+    Address,
     Boolean,
     Int,
     Float,
@@ -563,23 +567,31 @@ enum Scalar {
     Null,
 }
 
+/// How many values a type holds. A list of lists has no column shape, so
+/// nesting one inside another is unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Container {
+    Single,
+    /// A list, and whether one of its elements can be null. Independent of
+    /// whether the list itself can be: a list a branch leaves unset is a
+    /// nullable list of values that are always there.
+    List { nullable_elements: bool },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ty {
     scalar: Scalar,
+    container: Container,
+    /// The value itself can be null — the column, or the whole list.
     nullable: bool,
-    array: bool,
-    /// An EVM address, which the decoder writes in the casing `address_format`
-    /// picks. A literal compared to one is normalized to the same casing.
-    address: bool,
 }
 
 impl Ty {
     fn new(scalar: Scalar) -> Self {
         Self {
             scalar,
+            container: Container::Single,
             nullable: false,
-            array: false,
-            address: false,
         }
     }
 
@@ -588,19 +600,25 @@ impl Ty {
         self
     }
 
-    fn array(mut self) -> Self {
-        self.array = true;
-        self
+    /// A list of this type. Whatever nullability this type had describes the
+    /// elements from here on; the list itself starts out non-null.
+    fn list(self) -> Self {
+        Self {
+            scalar: self.scalar,
+            container: Container::List {
+                nullable_elements: self.nullable,
+            },
+            nullable: false,
+        }
     }
 
-    fn address(mut self) -> Self {
-        self.address = true;
-        self
+    fn is_list(&self) -> bool {
+        matches!(self.container, Container::List { .. })
     }
 
     fn describe(&self) -> String {
         let base = match &self.scalar {
-            Scalar::String => "String".to_string(),
+            Scalar::String | Scalar::Address => "String".to_string(),
             Scalar::Boolean => "Boolean".to_string(),
             Scalar::Int => "Int".to_string(),
             Scalar::Float => "Float".to_string(),
@@ -611,10 +629,12 @@ impl Ty {
             Scalar::NumLit => "a number literal".to_string(),
             Scalar::Null => "null".to_string(),
         };
-        let base = if self.array {
-            format!("a list of {base}")
-        } else {
-            base
+        let base = match self.container {
+            Container::Single => base,
+            Container::List { nullable_elements } => format!(
+                "a list of {base}{}",
+                if nullable_elements { " or null" } else { "" }
+            ),
         };
         if self.nullable {
             format!("{base} or null")
@@ -626,8 +646,8 @@ impl Ty {
     /// GraphQL rendering. `id` positions render `String` as `ID`.
     fn to_gql(&self, is_id: bool) -> Result<String> {
         let base = match &self.scalar {
-            Scalar::String if is_id => "ID".to_string(),
-            Scalar::String => "String".to_string(),
+            Scalar::String | Scalar::Address if is_id => "ID".to_string(),
+            Scalar::String | Scalar::Address => "String".to_string(),
             Scalar::Boolean => "Boolean".to_string(),
             Scalar::Int => "Int".to_string(),
             Scalar::Float => "Float".to_string(),
@@ -645,10 +665,11 @@ impl Ty {
                 ))
             }
         };
-        let base = if self.array {
-            format!("[{base}{}]", if self.nullable { "" } else { "!" })
-        } else {
-            base
+        let base = match self.container {
+            Container::Single => base,
+            Container::List { nullable_elements } => {
+                format!("[{base}{}]", if nullable_elements { "" } else { "!" })
+            }
         };
         Ok(if self.nullable {
             base
@@ -659,7 +680,7 @@ impl Ty {
 
     /// The tag the runtime picks a zero and an addition by, for `_sum`/`_negate`.
     fn numeric_tag(&self) -> Option<&'static str> {
-        if self.array {
+        if self.is_list() {
             return None;
         }
         match self.scalar {
@@ -701,13 +722,28 @@ fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
         return Ok(a.clone().nullable());
     }
     let nullable = a.nullable || b.nullable;
-    if a.array != b.array {
-        return Err(anyhow!(
-            "cannot unify {} with {}",
-            a.describe(),
-            b.describe()
-        ));
-    }
+    // A list unifies with a list, and its elements can be null if either side's
+    // can.
+    let container = match (a.container, b.container) {
+        (Container::Single, Container::Single) => Container::Single,
+        (
+            Container::List {
+                nullable_elements: left,
+            },
+            Container::List {
+                nullable_elements: right,
+            },
+        ) => Container::List {
+            nullable_elements: left || right,
+        },
+        _ => {
+            return Err(anyhow!(
+                "cannot unify {} with {}",
+                a.describe(),
+                b.describe()
+            ))
+        }
+    };
     let scalar = match (&a.scalar, &b.scalar) {
         (Scalar::NumLit, other) | (other, Scalar::NumLit) => match other {
             Scalar::Int | Scalar::Float | Scalar::BigInt | Scalar::BigDecimal => other.clone(),
@@ -721,6 +757,9 @@ fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
             }
         },
         (x, y) if x == y => x.clone(),
+        // A column holding both has no single casing to normalize a literal
+        // to, so it is plain text from here on.
+        (Scalar::Address, Scalar::String) | (Scalar::String, Scalar::Address) => Scalar::String,
         _ => {
             return Err(anyhow!(
                 "cannot unify {} with {}",
@@ -731,11 +770,8 @@ fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
     };
     Ok(Ty {
         scalar,
+        container,
         nullable,
-        array: a.array,
-        // Only an address on both sides stays one: a column that also holds
-        // plain text has no casing to normalize a literal to.
-        address: a.address && b.address,
     })
 }
 
@@ -809,14 +845,14 @@ impl Typed {
         // Config.yaml is written by hand and explorers hand out both spellings,
         // so an address literal that doesn't match the decoder's casing would
         // compare unequal to every event and leave the table silently empty.
-        if target.address && !target.array {
+        if target.scalar == Scalar::Address && !target.is_list() {
             if let CExpr::LitString { value } = &expr {
                 return Ok(CExpr::LitString {
                     value: addresses.normalize(value)?,
                 });
             }
         }
-        if ty.scalar == Scalar::NumLit && !target.array {
+        if ty.scalar == Scalar::NumLit && !target.is_list() {
             let text = match &expr {
                 CExpr::LitInt { value } => value.to_string(),
                 other => {
@@ -1002,7 +1038,7 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
     // only ever nest option/array one level deep.
     match ident {
         TypeIdent::Option(inner) => ty_from_type_ident(inner).nullable(),
-        TypeIdent::Array(inner) => ty_from_type_ident(inner).array(),
+        TypeIdent::Array(inner) => ty_from_type_ident(inner).list(),
         TypeIdent::Int => Ty::new(Scalar::Int),
         TypeIdent::Float => Ty::new(Scalar::Float),
         TypeIdent::BigInt => Ty::new(Scalar::BigInt),
@@ -1010,7 +1046,7 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
         TypeIdent::Bool => Ty::new(Scalar::Boolean),
         TypeIdent::Json => Ty::new(Scalar::Json),
         TypeIdent::Timestamp => Ty::new(Scalar::Int),
-        TypeIdent::Address => Ty::new(Scalar::String).address(),
+        TypeIdent::Address => Ty::new(Scalar::Address),
         // String / ID and anything opaque are strings at runtime.
         _ => Ty::new(Scalar::String),
     }
@@ -1023,7 +1059,7 @@ fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
     fn from_gql(gql: &UserDefinedFieldType) -> Result<Ty> {
         Ok(match gql {
             UserDefinedFieldType::NonNullType(inner) => from_gql(inner)?,
-            UserDefinedFieldType::ListType(inner) => from_gql(inner)?.array(),
+            UserDefinedFieldType::ListType(inner) => from_gql(inner)?.list(),
             UserDefinedFieldType::Single(scalar) => Ty::new(match scalar {
                 GqlScalar::Boolean => Scalar::Boolean,
                 GqlScalar::BigInt(_) => Scalar::BigInt,
@@ -1041,7 +1077,10 @@ fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
     let sol_type = abi.to_dyn_sol_type();
     let ty = from_gql(&UserDefinedFieldType::from_dyn_sol_type(&sol_type)?)?;
     Ok(if matches!(sol_type, DynSolType::Address) {
-        ty.address()
+        Ty {
+            scalar: Scalar::Address,
+            ..ty
+        }
     } else {
         ty
     })
@@ -1117,7 +1156,7 @@ impl Shape<'_> {
                 let head = path[0].as_str();
                 let rest = &path[1..];
                 match head {
-                    "srcAddress" if rest.is_empty() => Ok(Ty::new(Scalar::String).address()),
+                    "srcAddress" if rest.is_empty() => Ok(Ty::new(Scalar::Address)),
                     "contractName" | "eventName" if rest.is_empty() => Ok(Ty::new(Scalar::String)),
                     "chainId" | "logIndex" if rest.is_empty() => Ok(Ty::new(Scalar::Int)),
                     "params" => {
@@ -1533,7 +1572,7 @@ fn compile_operator(
                             part.ty.describe()
                         ))
                     }
-                    _ if part.ty.array => {
+                    _ if part.ty.is_list() => {
                         return Err(anyhow!(
                             "`_concat.values[{index}]` is a list, which can't be turned into text"
                         ))
@@ -2317,9 +2356,8 @@ fn compile_table(
                         name,
                         ty: Ty {
                             scalar: Scalar::Ref(table.clone()),
+                            container: Container::Single,
                             nullable: id.ty.nullable,
-                            array: false,
-                            address: false,
                         },
                         derived_from: None,
                         is_ref: true,
@@ -2327,7 +2365,7 @@ fn compile_table(
                     },
                     Selected::DerivedFrom { table, field } => FieldShape {
                         name,
-                        ty: Ty::new(Scalar::Ref(table.clone())).array(),
+                        ty: Ty::new(Scalar::Ref(table.clone())).list(),
                         derived_from: Some(field.clone()),
                         is_ref: false,
                         description,
@@ -2443,7 +2481,7 @@ fn compile_table(
         .find(|shape| shape.name == "id")
         .expect("id is required above")
         .ty;
-    if id_ty.nullable || id_ty.array {
+    if id_ty.nullable || id_ty.is_list() {
         return Err(anyhow!(
             "`select.id` must always be set and hold a single value, but it is {}",
             id_ty.describe()
@@ -2451,7 +2489,7 @@ fn compile_table(
     }
     if !matches!(
         id_ty.scalar,
-        Scalar::String | Scalar::Int | Scalar::BigInt | Scalar::NumLit
+        Scalar::String | Scalar::Address | Scalar::Int | Scalar::BigInt | Scalar::NumLit
     ) {
         return Err(anyhow!(
             "`select.id` is {}, which can't be an id. Use String, Int or BigInt.",
