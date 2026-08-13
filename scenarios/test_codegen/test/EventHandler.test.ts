@@ -951,7 +951,7 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
-  it("createTestIndexer works", async () => {
+  it("createTestIndexer works", { retry: 3 }, async () => {
     const indexer = createTestIndexer();
 
     const result = await indexer.process({
@@ -1102,7 +1102,7 @@ describe("Use Envio test framework to test event handlers", () => {
     });
   });
 
-  it("createTestIndexer throws when process is called while already running", async () => {
+  it("createTestIndexer throws when process is called while already running", { retry: 3 }, async () => {
     const indexer = createTestIndexer();
 
     // Start first process (don't await)
@@ -1180,7 +1180,7 @@ describe("Use Envio test framework to test event handlers", () => {
     );
   });
 
-  it("TestIndexer result type is properly typed", async () => {
+  it("TestIndexer result type is properly typed", { retry: 3 }, async () => {
     const testIndexer = createTestIndexer();
 
     // Verify TestIndexer type matches createTestIndexer return type

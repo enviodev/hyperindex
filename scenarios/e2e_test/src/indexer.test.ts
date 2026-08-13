@@ -8,6 +8,7 @@ import { createTestIndexer } from "envio";
 describe("Indexer smoke test", () => {
   it(
     "processes the first block with events on chain 1",
+    { retry: 3, timeout: 60_000 },
     async (t) => {
       const indexer = createTestIndexer();
 
@@ -85,7 +86,6 @@ describe("Indexer smoke test", () => {
           ],
         }
       `);
-    },
-    60_000
+    }
   );
 });

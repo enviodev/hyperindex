@@ -3,6 +3,7 @@ let make = (
   ~endBlock: int,
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
+  ~ecosystem: Ecosystem.name=Evm,
 ): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
@@ -13,7 +14,10 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
-      Promise.resolve({Source.result: Ok([]), requestStats: []})
+      Promise.resolve({
+        Source.result: Ok(BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false)),
+        requestStats: [],
+      })
     },
     getHeightOrThrow: () => {
       // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"
@@ -101,14 +105,13 @@ let make = (
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        blockHashes: [],
         parsedQueueItems,
-        // Simulate keeps the transaction and block inline on the payload; no store pages.
+        // Simulate keeps the transaction and block inline on the payload; no
+        // transaction page and an empty block page (nothing to reorg-check).
         transactionStore: None,
-        blockStore: None,
+        blockStore: BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
         fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
-        latestFetchedBlockTimestamp: 0,
         stats: {
           totalTimeElapsed: 0.,
         },

@@ -768,6 +768,12 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
+  let resetCachedLoaders = () => {
+    blockLoader := makeBlockLoader()
+    transactionLoader := makeTransactionLoader()
+    receiptLoader := makeReceiptLoader()
+  }
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -815,10 +821,16 @@ let make = (
     | None => knownHeight
     }
 
-    let firstBlockParentPromise =
-      fromBlock > 0
+    // The seam block (`fromBlock - 1`) is the only block this range shares with
+    // what the store already scanned, so it is where a reorg at the boundary
+    // shows up. Reading it directly would answer from the block cache — it was
+    // the previous range's `toBlock`, so it is always cached, and always on the
+    // chain that range saw. Read `fromBlock` instead, which no earlier range
+    // touched, and take the seam's hash from its `parentHash`.
+    let firstBlockPromise =
+      fromBlock > 0 && fromBlock <= toBlock
         ? blockLoader.contents
-          ->LazyLoader.get(fromBlock - 1)
+          ->LazyLoader.get(fromBlock)
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
@@ -931,7 +943,7 @@ let make = (
             payload: {
               contractName: eventConfig.contractName,
               eventName: eventConfig.name,
-              chainId: chainId,
+              chainId,
               params: decoded,
               block,
               transaction,
@@ -944,55 +956,66 @@ let make = (
     })
     ->Promise.all
 
-    let optFirstBlockParent = await firstBlockParentPromise
+    let optFirstBlock = await firstBlockPromise
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    let blockHashes = []
+    // Both these blocks and the logs' own `blockHash` come from this range's
+    // responses, never from the block cache's older view of the chain. They go
+    // into a hash-only page store merged into the chain store, where hash
+    // comparison happens. The block data itself stays inline on the payload.
+    let observedBlocks: array<BlockStore.inputBlock> = []
     let pushBlockInfo = (b: blockInfo) => {
-      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      observedBlocks
+      ->Array.push({
+        BlockStore.blockNumber: b.number,
+        blockHash: b.hash,
+        blockTimestamp: b.timestamp,
+      })
+      ->ignore
       if b.number > 0 {
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        observedBlocks
+        ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
         ->ignore
       }
     }
     pushBlockInfo(latestFetchedBlockInfo)
-    switch optFirstBlockParent {
+    switch optFirstBlock {
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }
     items->Array.forEach(({log}) =>
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      observedBlocks
+      ->Array.push({BlockStore.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore
     )
 
     {
-      latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      // RPC keeps the transaction and block inline on the payload; no store pages.
+      // RPC keeps the transaction and block inline on the payload; no
+      // transaction page, and the block page carries only observed hashes.
       transactionStore: None,
-      blockStore: None,
+      blockStore: BlockStore.fromJs(
+        observedBlocks,
+        ~ecosystem=Evm,
+        ~shouldChecksum=!lowercaseAddresses,
+      ),
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats: drainRequestStats(),
     }
   }
 
-  let onReorg = (~rollbackTargetBlock as _) => {
-    // Drop cached block/transaction/receipt data — after a reorg the cached
-    // entries may refer to orphaned-chain values.
-    blockLoader := makeBlockLoader()
-    transactionLoader := makeTransactionLoader()
-    receiptLoader := makeReceiptLoader()
+  let onReorg = () => {
+    // Drop cached block/transaction/receipt data — after a reorg or an
+    // internally inconsistent response these may refer to orphaned-chain values.
+    resetCachedLoaders()
   }
 
   let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
@@ -1000,21 +1023,29 @@ let make = (
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      let result =
-        rawBlocks
-        ->Array.map(json => {
-          let b = parseBlockInfo(json)
-
-          (
-            {
-              blockNumber: b.number,
-              blockHash: b.hash,
-              blockTimestamp: b.timestamp,
-            }: ReorgDetection.blockDataWithTimestamp
-          )
+      // Each block is fetched in its own request, so responses can mix forks.
+      // The parent hash becomes a minimal extra row: when consecutive blocks
+      // are requested, the page's own hash-collision check cross-validates the
+      // separately fetched responses.
+      let observedBlocks: array<BlockStore.inputBlock> = []
+      rawBlocks->Array.forEach(json => {
+        let b = parseBlockInfo(json)
+        observedBlocks
+        ->Array.push({
+          BlockStore.blockNumber: b.number,
+          blockHash: b.hash,
+          blockTimestamp: b.timestamp,
         })
-        ->Ok
-      {Source.result, requestStats: drainRequestStats()}
+        ->ignore
+        if b.number > 0 {
+          observedBlocks
+          ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
+          ->ignore
+        }
+      })
+      let blockStore =
+        observedBlocks->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
+      {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
     })
     ->Promise.catch(exn =>
       {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve
@@ -1023,7 +1054,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId=chainId, ~onHeight)
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
     )
 
   {

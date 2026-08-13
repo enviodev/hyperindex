@@ -10,24 +10,10 @@ mod query;
 mod selection;
 pub(crate) mod types;
 
-/// Local hex helpers. Lives here so `decoder.rs` can pull them via
-/// `super::mod_helpers::hex_to_bytes` without crossing the crate boundary
-/// and without exposing a public hex parser at the napi surface.
 pub(crate) mod mod_helpers {
-    use anyhow::{anyhow, Result};
+    use anyhow::Result;
     pub fn hex_to_bytes(input: &str) -> Result<Vec<u8>> {
-        let s = input.strip_prefix("0x").unwrap_or(input);
-        if !s.len().is_multiple_of(2) {
-            return Err(anyhow!("hex string has odd length: '{input}'"));
-        }
-        (0..s.len())
-            .step_by(2)
-            .map(|i| {
-                s.get(i..i + 2)
-                    .and_then(|byte| u8::from_str_radix(byte, 16).ok())
-                    .ok_or_else(|| anyhow!("invalid hex byte at offset {i} in '{input}'"))
-            })
-            .collect()
+        crate::hex::decode_optionally_prefixed(input, "hex string")
     }
 }
 
@@ -37,8 +23,10 @@ use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
+use crate::request_stats::{source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
 use config::SvmClientConfig;
@@ -154,6 +142,22 @@ fn build_schemas(
         .collect()
 }
 
+impl SvmHyperSyncClient {
+    /// Execute one raw Solana HyperSync page. Event queries and block-hash
+    /// queries convert only the tables they actually consume.
+    async fn get_raw(&self, query: SvmQuery) -> napi::Result<simple::SolanaResponse> {
+        let query: hypersync_solana_net_types::query::SolanaQuery = query
+            .try_into()
+            .context("parse solana query")
+            .map_err(map_err)?;
+        self.inner
+            .get(&query)
+            .await
+            .context("solana get")
+            .map_err(map_err)
+    }
+}
+
 #[napi]
 pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
@@ -225,16 +229,7 @@ impl SvmHyperSyncClient {
         &self,
         query: SvmQuery,
     ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
-        let q: SolanaQuery = query
-            .try_into()
-            .context("parse solana query")
-            .map_err(map_err)?;
-        let mut resp = self
-            .inner
-            .get(&q)
-            .await
-            .context("solana get")
-            .map_err(map_err)?;
+        let mut resp = self.get_raw(query).await?;
 
         // Retain raw transactions + token balances in Rust; the store
         // materialises the parent transaction (selected fields only) at batch
@@ -254,6 +249,58 @@ impl SvmHyperSyncClient {
         Ok((out, store, block_store))
     }
 
+    /// Fetch the inclusive range spanning `block_numbers` into one response
+    /// store. Each advancing cursor proves its half-open range was processed;
+    /// missing block rows inside that coverage are skipped slots.
+    #[napi]
+    pub async fn get_block_hashes(
+        &self,
+        block_numbers: Vec<i64>,
+    ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
+        let fields = query::FieldSelection {
+            block: Some(vec!["slot".to_string(), "blockhash".to_string()]),
+            ..Default::default()
+        };
+        let aggregate = BlockStore::new_svm();
+        let request_stats = paginate_block_hashes(
+            &block_numbers,
+            &aggregate,
+            "slot numbers",
+            |request_from, to_slot_exclusive| {
+                let fields = fields.clone();
+                let aggregate = &aggregate;
+                async move {
+                    let query = SvmQuery {
+                        from_slot: request_from,
+                        to_slot: Some(to_slot_exclusive),
+                        include_all_blocks: Some(true),
+                        fields: Some(fields),
+                        ..Default::default()
+                    };
+                    let response = self.get_raw(query).await?;
+                    let (next, last_returned, store) =
+                        block_hash_page(response).map_err(map_err)?;
+                    // Each advancing cursor proves its half-open range was
+                    // processed; block rows missing inside it are skipped slots.
+                    // A cursor that didn't advance proves nothing — leave it to
+                    // the paginator, which reports it as a source behind the
+                    // head rather than a malformed coverage range.
+                    if next > request_from {
+                        aggregate
+                            .mark_svm_coverage(request_from, next.min(to_slot_exclusive))
+                            .map_err(map_err)?;
+                    }
+                    Ok(HashPage {
+                        next,
+                        last_returned,
+                        store,
+                    })
+                }
+            },
+        )
+        .await?;
+        Ok((aggregate, request_stats))
+    }
     #[napi]
     pub async fn get_event_items(
         &self,
@@ -334,6 +381,13 @@ impl SvmHyperSyncClient {
             .context("solana get")
             .map_err(map_err)?;
 
+        // The replica serving this request has not reached the queried range,
+        // so it would report negative progress. Expected around the head of a
+        // load-balanced backend; the source manager backs off and fails over.
+        if resp.next_slot <= query.from_slot {
+            return Err(source_behind_head_err(params.from_slot));
+        }
+
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
@@ -388,6 +442,23 @@ impl SvmHyperSyncClient {
         };
         Ok((response, store, block_store))
     }
+}
+
+/// Convert only the values needed by the block-hash paginator: the advancing
+/// cursor, the highest returned slot (the next page's overlap anchor), and the
+/// page store.
+fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<i64>, BlockStore)> {
+    let next_slot = i64::try_from(response.next_slot).context("convert next_slot")?;
+    let last_slot = response
+        .blocks
+        .iter()
+        .map(|b| i64::try_from(b.slot).context("convert slot"))
+        .try_fold(None, |acc: Option<i64>, slot| {
+            slot.map(|s| Some(acc.map_or(s, |a: i64| a.max(s))))
+        })?;
+    let block_store = BlockStore::new_svm();
+    block_store.insert_svm_blocks(std::mem::take(&mut response.blocks));
+    Ok((next_slot, last_slot, block_store))
 }
 
 /// The whole per-query input for `get_event_items`: the slot range and the
@@ -582,7 +653,17 @@ fn take_blocks(
         .collect::<Result<Vec<_>>>()
         .context("mapping solana block headers")?;
     if let Some(slots) = slots {
-        raw_blocks.retain(|b| slots.contains(&b.slot));
+        // Slots whose instructions were all dropped by client-side routing keep
+        // a slot+hash row so every returned header still backs reorg detection.
+        for b in raw_blocks.iter_mut() {
+            if !slots.contains(&b.slot) {
+                *b = simple::Block {
+                    slot: b.slot,
+                    blockhash: std::mem::take(&mut b.blockhash),
+                    ..Default::default()
+                };
+            }
+        }
     }
     let block_store = BlockStore::new_svm();
     block_store.insert_svm_blocks(raw_blocks);
@@ -951,7 +1032,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn block_store_keeps_only_referenced_slots_while_headers_keep_all() {
+    async fn block_store_keeps_a_hash_only_row_for_unreferenced_slots() {
         let mut resp = simple::SolanaResponse {
             blocks: vec![
                 simple::Block {
@@ -986,7 +1067,9 @@ mod tests {
                 // Reorg detection and the batch's latest timestamp read every
                 // returned slot, so headers aren't filtered.
                 vec![42, 43],
-                vec![Some("hash42".to_string()), None],
+                // Slot 43's instructions were all dropped, but its block keeps a
+                // hash-only row so a fork on it can still be detected.
+                vec![Some("hash42".to_string()), Some("hash43".to_string())],
             )
         );
     }

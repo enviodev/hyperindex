@@ -68,8 +68,7 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
       await ChainState.materializePageItems(
         ~items=[a, b, c, d],
         ~transactionStore=Some(transactionStore),
-        ~blockStore=Some(blockStore),
-        ~ecosystem=Ecosystem.Evm,
+        ~blockStore,
       )
 
       t.expect({
@@ -90,20 +89,21 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
     },
   )
 
-  Async.it("materializePageItems is a no-op for None pages (RPC/Fuel/Simulate)", async t => {
+  Async.it("materializePageItems skips the transaction side for inline sources", async t => {
     let a = makeItem(~blockNumber=1, ~transactionIndex=1, ~transactionMask=2., ~blockMask=2.)
     await ChainState.materializePageItems(
       ~items=[a],
       ~transactionStore=None,
-      ~blockStore=None,
-      ~ecosystem=Ecosystem.Fuel,
+      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Fuel, ~shouldChecksum=false),
     )
     t.expect({
       "tx": rawTx(a)->Nullable.toOption,
-      "block": rawBlock(a)->Nullable.toOption,
+      // The block side always materialises from the chain store; an empty
+      // store yields an empty block object.
+      "blockIsSet": rawBlock(a)->Nullable.toOption->Option.isSome,
     }).toEqual({
       "tx": None,
-      "block": None,
+      "blockIsSet": true,
     })
   })
 })
@@ -128,8 +128,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
         ~transactionStore=None,
-        ~blockStore=Some(blockStore),
-        ~ecosystem=Ecosystem.Evm,
+        ~blockStore,
       )
 
       t.expect({
@@ -164,8 +163,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
         ~transactionStore=None,
-        ~blockStore=Some(blockStore),
-        ~ecosystem=Ecosystem.Svm,
+        ~blockStore,
       )
 
       t.expect({
@@ -195,8 +193,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
     await ChainState.materializePageItems(
       ~items=[item],
       ~transactionStore=Some(transactionStore),
-      ~blockStore=None,
-      ~ecosystem=Ecosystem.Evm,
+      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
     )
     // Store-backed items always get a transaction object (matching the inline
     // sources) — an empty object rather than `undefined` — even with no fields.
@@ -218,8 +215,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
         ~transactionStore=Some(transactionStore),
-        ~blockStore=None,
-        ~ecosystem=Ecosystem.Evm,
+        ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
       )
 
       t.expect({
@@ -249,8 +245,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
     await ChainState.materializePageItems(
       ~items=[a, b, c],
       ~transactionStore=Some(transactionStore),
-      ~blockStore=None,
-      ~ecosystem=Ecosystem.Evm,
+      ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
     )
 
     t.expect({

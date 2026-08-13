@@ -73,11 +73,13 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo) => {
       source.resolveGetBlockHashes(
         requested
         ->Array.flat
-        ->Array.map(blockNumber => {
-          ReorgDetection.blockNumber,
+        ->Array.map((blockNumber): BlockStore.inputBlock => {
+          blockNumber,
+          // Past `validUpTo` the chain is orphaned, so the hash the source
+          // reports differs from the one the store recorded.
           blockHash: blockNumber <= validUpTo
             ? `0x${blockNumber->Int.toString}`
-            : `0x${blockNumber->Int.toString}-reorged`,
+            : `0x${blockNumber->Int.toString}a`,
           blockTimestamp: blockNumber,
         }),
       )
@@ -110,7 +112,7 @@ describe("Scenario rollback and history", () => {
       source.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=301,
-        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300-reorged"},
+        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
       )
 
       // The depth search asks which blocks still hold. Only those up to 100 do,

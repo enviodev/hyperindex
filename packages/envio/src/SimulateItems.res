@@ -350,7 +350,7 @@ let parse = (
       let liveRegistrations =
         HandlerRegister.getSimulateOnEventRegistrations(
           ~config,
-          ~chainId=chainId,
+          ~chainId,
           ~eventConfig,
         )->Array.filter(reg =>
           (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
@@ -388,7 +388,7 @@ let parse = (
                 contractName: eventConfig.contractName,
                 eventName: eventConfig.name,
                 params,
-                chainId: chainId,
+                chainId,
                 srcAddress,
                 logIndex,
                 transaction,

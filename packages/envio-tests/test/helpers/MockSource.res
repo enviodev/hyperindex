@@ -32,6 +32,13 @@ module Gate = {
   }
 }
 
+// EVM block hashes are the fixed 32-byte reorg comparison key, and the store
+// rejects anything narrower. Widen the short markers fixtures use, both on the
+// way into a mocked response and in assertions that compare against
+// `BlockStore.getHash` output (e.g. persisted reorg checkpoints).
+let evmBlockHash = hex =>
+  "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
+
 type mockSourceHandler = Internal.handlerArgs => promise<unit>
 type mockSourceContractRegister = Internal.contractRegisterArgs => promise<unit>
 type mockSourceEvent = {
@@ -183,6 +190,8 @@ type t = {
   resolveGetHeightOrThrow: int => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+  // How many times the source was told to drop orphaned-chain state.
+  reorgCallCount: unit => int,
   // TODO: Remove in favor of getItemsOrThrowCalls
   resolveGetItemsOrThrow: (
     array<itemMock>,
@@ -193,7 +202,7 @@ type t = {
     ~prevRangeLastBlock: ReorgDetection.blockData=?,
   ) => unit,
   getBlockHashesCalls: array<array<int>>,
-  resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+  resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
   triggerHeightSubscription: int => unit,
@@ -214,6 +223,7 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
   let getHeightOrThrowResolveFns = []
   let getHeightOrThrowRejectFns = []
   let getItemsOrThrowCalls = []
+  let reorgCalls = ref(0)
   let getBlockHashesCalls = []
   let getBlockHashesResolveFns = []
   // Height subscription state
@@ -262,6 +272,7 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
       getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
     },
     getItemsOrThrowCalls,
+    reorgCallCount: () => reorgCalls.contents,
     resolveGetItemsOrThrow: (
       items,
       ~resolveAt=#all,
@@ -295,8 +306,16 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
       if getBlockHashesResolveFns->Utils.Array.isEmpty {
         JsError.throwWithMessage("getBlockHashesResolveFns is empty")
       }
+      let blockStore = BlockStore.fromJs(
+        blockHashes->Array.map((block): BlockStore.inputBlock => {
+          ...block,
+          blockHash: ?block.blockHash->Option.map(evmBlockHash),
+        }),
+        ~ecosystem=Evm,
+        ~shouldChecksum=false,
+      )
       getBlockHashesResolveFns->Array.forEach(resolve =>
-        resolve({Source.result: Ok(blockHashes), requestStats: []})
+        resolve({Source.result: Ok(blockStore), requestStats: []})
       )
       getBlockHashesResolveFns->Utils.Array.clearInPlace
     },
@@ -363,28 +382,38 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
                 let latestFetchedBlockNumber =
                   latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
+                // The store takes 32-byte hashes, so widen the decimal marker.
+                let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
                 let latestFetchedBlockHash = switch latestFetchedBlockHash {
                 | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                | None => `0x${latestFetchedBlockNumber->Int.toString}`
+                | None => mockBlockHash(latestFetchedBlockNumber)
                 }
-                let blockHashes = [
+                let observedBlocks = [
                   (
                     {
                       blockNumber: latestFetchedBlockNumber,
-                      blockHash: latestFetchedBlockHash,
-                    }: ReorgDetection.blockData
+                      blockHash: evmBlockHash(latestFetchedBlockHash),
+                    }: BlockStore.inputBlock
                   ),
                 ]
                 let prevEntry = switch prevRangeLastBlock {
-                | Some(prevRangeLastBlock) => Some(prevRangeLastBlock)
+                | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
+                  Some(
+                    (
+                      {
+                        blockNumber: prevRangeLastBlock.blockNumber,
+                        blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
+                      }: BlockStore.inputBlock
+                    ),
+                  )
                 | None =>
                   if fromBlock > 0 {
                     Some(
                       (
                         {
                           blockNumber: fromBlock - 1,
-                          blockHash: `0x${(fromBlock - 1)->Int.toString}`,
-                        }: ReorgDetection.blockData
+                          blockHash: mockBlockHash(fromBlock - 1),
+                        }: BlockStore.inputBlock
                       ),
                     )
                   } else {
@@ -392,12 +421,28 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
                   }
                 }
                 switch prevEntry {
-                | Some(prev) => blockHashes->Array.unshift(prev)->ignore
+                | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
                 | None => ()
                 }
+                // A real source returns the header of every block a matched
+                // item came from, so those blocks carry a hash too. Without
+                // them the store only ever learns the range's seam and end,
+                // and reorg detection never sees the blocks events landed on.
+                items->Array.forEach(item => {
+                  if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+                    observedBlocks->Array.push({
+                      blockNumber: item.blockNumber,
+                      blockHash: mockBlockHash(item.blockNumber),
+                    })
+                  }
+                })
+                let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                observedBlocks->Array.forEach(block => {
+                  let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
+                  responseBlockStore->BlockStore.appendPage(page)
+                })
                 resolve({
                   Source.knownHeight,
-                  blockHashes,
                   parsedQueueItems: items->Array.map(
                     item => {
                       let onEventRegistration =
@@ -432,10 +477,9 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
                     },
                   ),
                   transactionStore: None,
-                  blockStore: None,
+                  blockStore: responseBlockStore,
                   fromBlockQueried: fromBlock,
                   latestFetchedBlockNumber,
-                  latestFetchedBlockTimestamp: latestFetchedBlockNumber,
                   stats: {
                     totalTimeElapsed: 0.,
                   },
@@ -446,6 +490,7 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
             }
           })
         }),
+        onReorg: () => reorgCalls := reorgCalls.contents + 1,
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
         | true =>
           Some(

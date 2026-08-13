@@ -45,7 +45,7 @@ let queryingSeconds: t => float
 
 let inFlightCount: t => int
 
-let onReorg: (t, ~rollbackTargetBlock: int) => unit
+let onReorg: t => unit
 
 let dispatch: (
   t,
@@ -77,11 +77,7 @@ let makeGetHeightRetryInterval: (
   ~maxRetryInterval: int,
 ) => (~retry: int) => int
 
-let getBlockHashes: (
-  t,
-  ~blockNumbers: array<int>,
-  ~isRealtime: bool,
-) => promise<array<ReorgDetection.blockDataWithTimestamp>>
+let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise<BlockStore.t>
 
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.

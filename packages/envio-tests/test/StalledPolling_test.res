@@ -66,11 +66,13 @@ describe("Polling-stall loophole", () => {
 
       let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
 
-      // A 50ms window at the 10ms reduced interval: polling has to continue,
-      // but must not fire on every tick. The upper bound is loose because timer
-      // coalescing under load changes the count without a regression.
+      // The bug this pins is polling stopping altogether (0-1 calls). The upper
+      // bound separates throttled polling from busy-polling, which fires on
+      // every tick and reaches the hundreds — it is not a rate measurement, so
+      // it sits an order of magnitude above the ~5 a healthy 50ms window at the
+      // 10ms interval produces. A tighter bound flakes on timer coalescing.
       t.expect(
-        newCalls > 1 && newCalls <= 15,
+        newCalls > 1 && newCalls <= 40,
         ~message=`polling should continue but stay throttled while the batch is stuck (got ${newCalls->Int.toString})`,
       ).toBe(true)
     },

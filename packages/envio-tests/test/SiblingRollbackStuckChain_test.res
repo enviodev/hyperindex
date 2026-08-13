@@ -178,7 +178,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       sibling.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=301,
-        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300-reorged"},
+        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
       )
       await Utils.delay(0)
       // The victim's in-flight response lands inside the rollback window —

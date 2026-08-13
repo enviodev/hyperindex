@@ -12,6 +12,8 @@ let entityConfigByName = IndexerRunner.entityConfigByName
 
 let entityConfig = (name: string): Internal.entityConfig => config->entityConfigByName(name)
 
+let evmBlockHash = MockSource.evmBlockHash
+
 // The store requires a persistence/config even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use it.
 // Its schema is never created — a query through this persistence means a test is
@@ -237,6 +239,7 @@ module Source = {
     resolveGetHeightOrThrow: int => unit,
     rejectGetHeightOrThrow: 'exn. 'exn => unit,
     getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+    reorgCallCount: unit => int,
     resolveGetItemsOrThrow: (
       array<itemMock>,
       ~resolveAt: [#first | #all | #last]=?,
@@ -246,7 +249,7 @@ module Source = {
       ~prevRangeLastBlock: ReorgDetection.blockData=?,
     ) => unit,
     getBlockHashesCalls: array<array<int>>,
-    resolveGetBlockHashes: array<ReorgDetection.blockDataWithTimestamp> => unit,
+    resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
     heightSubscriptionCalls: array<bool>,
     triggerHeightSubscription: int => unit,
     unsubscribeHeightSubscription: unit => unit,
