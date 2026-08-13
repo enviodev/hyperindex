@@ -24,7 +24,6 @@ pub enum ChType {
     Bool,
     String,
     FixedString(usize),
-    Uuid,
     Date,
     Date32,
     DateTime,
@@ -35,6 +34,8 @@ pub enum ChType {
     Decimal {
         /// Width of the backing integer in bytes: 4, 8, 16 or 32.
         bytes: usize,
+        /// Total digits the column accepts, which bounds the stored integer.
+        precision: u32,
         scale: u32,
     },
     /// Variant name to its stored numeric value, plus the width in bytes (1 or 2).
@@ -172,20 +173,25 @@ pub fn parse(input: &str) -> Result<ChType> {
                 if parts.len() != 2 {
                     bail!("Decimal expects (precision, scale), got `{args}`");
                 }
+                let precision: u32 = parts[0].parse()?;
                 Ok(ChType::Decimal {
-                    bytes: decimal_bytes(parts[0].parse()?)?,
+                    bytes: decimal_bytes(precision)?,
+                    precision,
                     scale: parts[1].parse()?,
                 })
             }
             "Decimal32" | "Decimal64" | "Decimal128" | "Decimal256" => {
-                let bytes = match name {
-                    "Decimal32" => 4,
-                    "Decimal64" => 8,
-                    "Decimal128" => 16,
-                    _ => 32,
+                // The shorthand fixes the width and takes the widest precision
+                // that width holds.
+                let (bytes, precision) = match name {
+                    "Decimal32" => (4, 9),
+                    "Decimal64" => (8, 18),
+                    "Decimal128" => (16, 38),
+                    _ => (32, 76),
                 };
                 Ok(ChType::Decimal {
                     bytes,
+                    precision,
                     scale: args.trim().parse()?,
                 })
             }
@@ -216,7 +222,6 @@ pub fn parse(input: &str) -> Result<ChType> {
         "Float64" => Ok(ChType::Float64),
         "Bool" | "Boolean" => Ok(ChType::Bool),
         "String" => Ok(ChType::String),
-        "UUID" => Ok(ChType::Uuid),
         "Date" => Ok(ChType::Date),
         "Date32" => Ok(ChType::Date32),
         "DateTime" => Ok(ChType::DateTime),
@@ -261,7 +266,6 @@ impl ChType {
             ChType::Int64 => ColumnKind::I64,
             ChType::String
             | ChType::FixedString(_)
-            | ChType::Uuid
             | ChType::Int128
             | ChType::UInt128
             | ChType::Decimal { .. }
@@ -296,22 +300,35 @@ mod tests {
     fn parses_decimal_widths() {
         assert_eq!(
             parse("Decimal(9, 2)").unwrap(),
-            ChType::Decimal { bytes: 4, scale: 2 }
+            ChType::Decimal {
+                bytes: 4,
+                precision: 9,
+                scale: 2
+            }
         );
         assert_eq!(
             parse("Decimal(18, 0)").unwrap(),
-            ChType::Decimal { bytes: 8, scale: 0 }
+            ChType::Decimal {
+                bytes: 8,
+                precision: 18,
+                scale: 0
+            }
         );
         assert_eq!(
             parse("Decimal(38, 0)").unwrap(),
             ChType::Decimal {
                 bytes: 16,
+                precision: 38,
                 scale: 0
             }
         );
         assert_eq!(
             parse("Decimal64(4)").unwrap(),
-            ChType::Decimal { bytes: 8, scale: 4 }
+            ChType::Decimal {
+                bytes: 8,
+                precision: 18,
+                scale: 4
+            }
         );
     }
 

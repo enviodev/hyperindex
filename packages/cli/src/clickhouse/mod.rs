@@ -17,7 +17,7 @@ pub mod ch_type;
 mod mock_server;
 pub mod row_binary;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -117,6 +117,10 @@ pub struct ClickHouseSink {
     database: String,
     /// Column name and type per table, read from `system.columns` on first use.
     schemas: Mutex<HashMap<String, TableSchema>>,
+    /// Tables whose column mismatch has already been reported. A mismatch is a
+    /// property of the table, so repeating it once per batch would be noise for
+    /// the rest of the run.
+    reported: Mutex<HashSet<String>>,
     staged: Mutex<HashMap<u32, Staged>>,
     next_handle: AtomicU32,
     retry: RetryPolicy,
@@ -161,6 +165,7 @@ impl ClickHouseSink {
             password: options.password,
             database: options.database,
             schemas: Mutex::new(HashMap::new()),
+            reported: Mutex::new(HashSet::new()),
             staged: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(1),
             retry,
@@ -240,6 +245,7 @@ impl ClickHouseSink {
     #[napi]
     pub fn invalidate_schema(&self, table: String) {
         self.schemas.lock().unwrap().remove(&table);
+        self.reported.lock().unwrap().remove(&table);
     }
 }
 
@@ -256,6 +262,9 @@ impl ClickHouseSink {
                 staged.table
             )
         })?;
+        if !warnings.is_empty() && !self.reported.lock().unwrap().insert(staged.table.clone()) {
+            warnings.clear();
+        }
         if encoded.rows() == 0 {
             return Ok(warnings);
         }
@@ -272,7 +281,12 @@ impl ClickHouseSink {
             return Ok(cached.clone());
         }
         let query = format!(
-            "SELECT name, type FROM system.columns WHERE database = {} AND table = {} ORDER BY position FORMAT TSVRaw",
+            // MATERIALIZED and ALIAS columns are computed, not stored, so a
+            // `FORMAT RowBinary` row must not carry a value for them.
+            "SELECT name, type FROM system.columns \
+             WHERE database = {} AND table = {} \
+               AND default_kind NOT IN ('MATERIALIZED', 'ALIAS') \
+             ORDER BY position FORMAT TSVRaw",
             quote_literal(&self.database),
             quote_literal(table)
         );
@@ -331,7 +345,14 @@ impl ClickHouseSink {
             let body = encoded.slice(start, end).to_vec();
             match self.post_rows(table, body).await {
                 Ok(()) => continue,
-                Err(err) if retries == 0 => return Err(err),
+                Err(err) if retries == 0 => {
+                    // The attempts leading here are the diagnosis; returning the
+                    // last error alone would drop them.
+                    return Err(match warnings.is_empty() {
+                        true => err,
+                        false => err.context(format!("after {}", warnings.join("; "))),
+                    });
+                }
                 Err(err) => {
                     let rows = end - start;
                     warnings.push(format!(

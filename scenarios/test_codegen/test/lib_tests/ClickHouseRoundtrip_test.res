@@ -262,11 +262,12 @@ describe("ClickHouse RowBinary roundtrip", () => {
         ...entity,
         enumField: "NOT_A_VARIANT"->(Utils.magic: string => Indexer.Enums.AccountType.t),
       })
-      // Valid BigDecimal, but `Decimal(10, 8)` scales it past what the column's
-      // 128-bit integer can hold — only the encoder can catch that.
+      // Valid BigDecimal, but past what `Decimal(10, 8)` accepts. RowBinary
+      // carries the raw integer, so only the encoder can catch it — the server
+      // would store whatever the bytes happen to mean.
       let (encoderMessage, encoderReason) = await attempt({
         ...entity,
-        bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1e31"),
+        bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1e5"),
       })
 
       await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
@@ -276,7 +277,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         schemaMessage,
         schemaReason->String.includes("NOT_A_VARIANT"),
         encoderMessage,
-        encoderReason->String.includes("overflows"),
+        encoderReason->String.includes("out of range for a Decimal"),
       )).toEqual((
         `Failed to convert items for ClickHouse table "${tableName}"`,
         true,

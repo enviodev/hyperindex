@@ -199,7 +199,7 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     Ok(if negative { -value } else { value })
 }
 
-fn put_int(out: &mut Vec<u8>, value: i128, bytes: usize) {
+fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
     let le = value.to_le_bytes();
     out.extend_from_slice(&le[..bytes.min(16)]);
     if bytes > 16 {
@@ -207,6 +207,54 @@ fn put_int(out: &mut Vec<u8>, value: i128, bytes: usize) {
         let fill = if value < 0 { 0xFF } else { 0x00 };
         out.extend(std::iter::repeat_n(fill, bytes - 16));
     }
+}
+
+/// What the column accepts. RowBinary is just the raw integer, so nothing on the
+/// server side rejects an out-of-range value: it wraps into whatever the bytes
+/// happen to mean. The JSONEachRow path this replaced had ClickHouse do the
+/// check, so the encoder has to do it here or an `Int!` set to 3e9 lands as a
+/// negative number.
+fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
+    Ok(match ch_type {
+        ChType::Int8 => (i8::MIN as i128, i8::MAX as i128),
+        ChType::Int16 => (i16::MIN as i128, i16::MAX as i128),
+        ChType::Int32 => (i32::MIN as i128, i32::MAX as i128),
+        ChType::Int64 => (i64::MIN as i128, i64::MAX as i128),
+        ChType::Int128 => (i128::MIN, i128::MAX),
+        ChType::UInt8 | ChType::Bool => (0, u8::MAX as i128),
+        ChType::UInt16 | ChType::Date => (0, u16::MAX as i128),
+        ChType::UInt32 | ChType::DateTime => (0, u32::MAX as i128),
+        ChType::UInt64 => (0, u64::MAX as i128),
+        // The wire value is 128 bits, so that is the widest we can carry.
+        ChType::UInt128 => (0, i128::MAX),
+        ChType::Date32 => (i32::MIN as i128, i32::MAX as i128),
+        ChType::DateTime64 { .. } => (i64::MIN as i128, i64::MAX as i128),
+        // A Decimal's precision, not its byte width, is what it accepts.
+        ChType::Decimal { precision, .. } => {
+            let limit = 10i128
+                .checked_pow(*precision)
+                .context("decimal precision is too wide to represent")?
+                - 1;
+            (-limit, limit)
+        }
+        ChType::Enum { bytes, .. } => {
+            if *bytes == 1 {
+                (i8::MIN as i128, i8::MAX as i128)
+            } else {
+                (i16::MIN as i128, i16::MAX as i128)
+            }
+        }
+        other => bail!("{other:?} is not an integer column"),
+    })
+}
+
+fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
+    let (min, max) = int_bounds(ch_type)?;
+    if value < min || value > max {
+        bail!("{value} is out of range for a {ch_type:?} column");
+    }
+    put_int_raw(out, value, fixed_width(ch_type)?);
+    Ok(())
 }
 
 fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Value) -> Result<()> {
@@ -229,7 +277,7 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
                 encode_json_value(out, inner, item)?;
             }
         }
-        ChType::String | ChType::Uuid => match value {
+        ChType::String => match value {
             Value::String(s) => put_string(out, s),
             other => put_string(out, &other.to_string()),
         },
@@ -240,21 +288,21 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             out.extend_from_slice(&bytes);
         }
         ChType::Bool => out.push(u8::from(value.as_bool().unwrap_or(false))),
-        ChType::Decimal { bytes, scale } => {
+        ChType::Decimal { scale, .. } => {
             let text = match value {
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
-            put_int(out, decimal_to_i128(&text, *scale)?, *bytes);
+            put_int(out, decimal_to_i128(&text, *scale)?, ch_type)?;
         }
-        ChType::Enum { bytes, .. } => {
+        ChType::Enum { .. } => {
             let name = value
                 .as_str()
                 .context("expected a string for an Enum column")?;
             let numeric = ch_type
                 .enum_value(name)
                 .with_context(|| format!("`{name}` is not a variant of the enum column"))?;
-            put_int(out, numeric as i128, *bytes);
+            put_int(out, numeric as i128, ch_type)?;
         }
         ChType::Float32 => {
             out.extend_from_slice(&(value.as_f64().unwrap_or(0.0) as f32).to_le_bytes())
@@ -265,14 +313,14 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
-            put_int(out, decimal_to_i128(&text, 0)?, 16);
+            put_int(out, decimal_to_i128(&text, 0)?, ch_type)?;
         }
         _ => {
             let numeric = match value {
                 Value::String(s) => decimal_to_i128(s, 0)?,
                 other => other.as_f64().unwrap_or(0.0) as i128,
             };
-            put_int(out, numeric, fixed_width(ch_type)?);
+            put_int(out, numeric, ch_type)?;
         }
     }
     Ok(())
@@ -287,6 +335,8 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
         ChType::Int64 | ChType::UInt64 | ChType::DateTime64 { .. } => 8,
         ChType::Int128 | ChType::UInt128 => 16,
         ChType::Decimal { bytes, .. } | ChType::Enum { bytes, .. } => *bytes,
+        ChType::Float32 => 4,
+        ChType::Float64 => 8,
         other => bail!("{other:?} has no fixed width"),
     })
 }
@@ -298,13 +348,13 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
     match ch_type {
         ChType::Nullable(_) => out.push(1),
         ChType::Array(_) => put_varint(out, 0),
-        ChType::String | ChType::Uuid => put_varint(out, 0),
+        ChType::String => put_varint(out, 0),
         ChType::FixedString(width) => out.extend(std::iter::repeat_n(0u8, *width)),
         ChType::Float32 => out.extend_from_slice(&0f32.to_le_bytes()),
         ChType::Float64 => out.extend_from_slice(&0f64.to_le_bytes()),
         // An Enum's default is its first variant, which is how ClickHouse fills
         // an omitted enum column.
-        ChType::Enum { bytes, variants } => put_int(out, variants[0].1 as i128, *bytes),
+        ChType::Enum { bytes, variants } => put_int_raw(out, variants[0].1 as i128, *bytes),
         other => out.extend(std::iter::repeat_n(0u8, fixed_width(other)?)),
     }
     Ok(())
@@ -335,50 +385,52 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
             out.extend_from_slice(&(v[row] as f32).to_le_bytes())
         }
         (ColumnValues::F64(v), ChType::Float64) => out.extend_from_slice(&v[row].to_le_bytes()),
-        (ColumnValues::F64(v), other) => put_int(out, v[row] as i128, fixed_width(other)?),
+        (ColumnValues::F64(v), other) => {
+            let value = v[row];
+            // A non-integral float would truncate silently; the column has no
+            // fractional part to put it in.
+            if value.fract() != 0.0 || !value.is_finite() {
+                bail!("{value} is not an integer, which a {other:?} column requires");
+            }
+            put_int(out, value as i128, other)?
+        }
         (ColumnValues::U64(v), ChType::Float64) => {
             out.extend_from_slice(&(v[row] as f64).to_le_bytes())
         }
-        (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, fixed_width(other)?),
-        (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, fixed_width(other)?),
+        (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, other)?,
+        (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::Text { .. }, ChType::Array(_)) => {
             let text = column.values.text_at(row)?;
             let parsed: serde_json::Value = serde_json::from_str(text)
                 .with_context(|| format!("column `{}` row {row} is not JSON", column.name))?;
             encode_json_value(out, ch_type, &parsed)?;
         }
-        (ColumnValues::Text { .. }, ChType::String | ChType::Uuid) => {
-            put_string(out, column.values.text_at(row)?)
-        }
+        (ColumnValues::Text { .. }, ChType::String) => put_string(out, column.values.text_at(row)?),
         (ColumnValues::Text { .. }, ChType::FixedString(width)) => {
             let mut bytes = column.values.text_at(row)?.as_bytes().to_vec();
             bytes.resize(*width, 0);
             out.extend_from_slice(&bytes);
         }
-        (ColumnValues::Text { .. }, ChType::Decimal { bytes, scale }) => {
+        (ColumnValues::Text { .. }, ChType::Decimal { scale, .. }) => {
             let text = column.values.text_at(row)?;
             put_int(
                 out,
                 decimal_to_i128(text, *scale).with_context(|| {
                     format!("column `{}` row {row} is not a decimal", column.name)
                 })?,
-                *bytes,
-            );
+                ch_type,
+            )?;
         }
-        (ColumnValues::Text { .. }, ChType::Enum { bytes, .. }) => {
+        (ColumnValues::Text { .. }, ChType::Enum { .. }) => {
             let name = column.values.text_at(row)?;
             let numeric = ch_type.enum_value(name).with_context(|| {
                 format!("`{name}` is not a variant of enum column `{}`", column.name)
             })?;
-            put_int(out, numeric as i128, *bytes);
-        }
-        (ColumnValues::Text { .. }, ChType::Int128 | ChType::UInt128) => {
-            let text = column.values.text_at(row)?;
-            put_int(out, decimal_to_i128(text, 0)?, 16);
+            put_int(out, numeric as i128, ch_type)?;
         }
         (ColumnValues::Text { .. }, other) => {
             let text = column.values.text_at(row)?;
-            put_int(out, decimal_to_i128(text, 0)?, fixed_width(other)?);
+            put_int(out, decimal_to_i128(text, 0)?, other)?;
         }
     }
     Ok(())
@@ -640,6 +692,74 @@ mod tests {
         assert_eq!(encoded.rows(), 3);
         assert_eq!(encoded.slice(0, 1), &[1, b'a']);
         assert_eq!(encoded.slice(1, 3), &[2, b'b', b'b', 3, b'c', b'c', b'c']);
+    }
+
+    // RowBinary is the raw integer, so nothing downstream notices a value that
+    // does not fit — it silently becomes a different number. These are the cases
+    // ClickHouse itself used to reject on the JSONEachRow path.
+    #[test]
+    fn rejects_an_integer_wider_than_its_column() {
+        let too_big = encode(&[f64_column("n", "Int32", &[3e9])], 1).unwrap_err();
+        let negative_unsigned = encode(&[f64_column("n", "UInt32", &[-1.0])], 1).unwrap_err();
+        assert_eq!(
+            (
+                format!("{too_big:#}").contains("out of range"),
+                format!("{negative_unsigned:#}").contains("out of range")
+            ),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn accepts_the_exact_bounds_of_a_column() {
+        let encoded = encode(
+            &[
+                f64_column("min", "Int32", &[f64::from(i32::MIN)]),
+                f64_column("max", "UInt32", &[f64::from(u32::MAX)]),
+            ],
+            1,
+        )
+        .unwrap();
+        let mut expected = i32::MIN.to_le_bytes().to_vec();
+        expected.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(encoded.body, expected);
+    }
+
+    // A Decimal's precision bounds it, not the width of its backing integer:
+    // Decimal(10, 8) is 8 bytes but only accepts 10 digits.
+    #[test]
+    fn rejects_a_decimal_past_the_columns_precision() {
+        let err = encode(&[text_column("d", "Decimal(10, 8)", &["1e11"])], 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("out of range"),
+            "expected a range error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_decimal_at_the_columns_precision() {
+        let encoded = encode(&[text_column("d", "Decimal(10, 8)", &["99.99999999"])], 1).unwrap();
+        assert_eq!(encoded.body, 9_999_999_999i64.to_le_bytes().to_vec());
+    }
+
+    // Past the range check too: scaling the literal overflows the 128 bits the
+    // encoder carries before there is anything to compare against a bound.
+    #[test]
+    fn rejects_a_decimal_that_overflows_while_scaling() {
+        let err = encode(&[text_column("d", "Decimal(38, 8)", &["1e40"])], 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("overflows"),
+            "expected an overflow error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_fractional_value_for_an_integer_column() {
+        let err = encode(&[f64_column("n", "Int32", &[1.5])], 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("is not an integer"),
+            "expected an integrality error, got: {err:#}"
+        );
     }
 
     #[test]
