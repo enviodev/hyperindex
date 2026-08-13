@@ -41,6 +41,17 @@ type TransferChOnly @crossChain @storage(clickhouse: true) {
   value: BigInt!
 }
 
+# Written under the sender's address on every transfer, so ids repeat across
+# events and the two backends have to agree on which write won: Postgres keeps
+# one upserted row, ClickHouse keeps every change and its view picks the highest
+# checkpoint. A zero-value transfer deletes the row, which is the only way a
+# DELETE row reaches the ClickHouse history table.
+type Holder @crossChain @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  lastBlock: Int!
+  lastValue: BigInt!
+}
+
 # NUMERIC[] columns are created as TEXT[] when Hasura is enabled, so Hasura
 # returns the elements as strings rather than numbers that lose precision.
 # https://github.com/enviodev/hyperindex/issues/788

@@ -13,6 +13,8 @@
 //! and the HTTP round trip on the tokio pool.
 
 pub mod ch_type;
+#[cfg(test)]
+mod mock_server;
 pub mod row_binary;
 
 use std::collections::HashMap;
@@ -33,6 +35,35 @@ use row_binary::{Column, ColumnValues, EncodedRows};
 /// Retries an insert this many times before giving up, matching the JS client's
 /// policy: halve the batch while more than one row remains, otherwise wait.
 const MAX_RETRIES: u32 = 8;
+
+/// How hard to retry a failed insert. Only the tests vary it, to skip the waits.
+#[derive(Debug, Clone, Copy)]
+struct RetryPolicy {
+    attempts: u32,
+    wait: bool,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: MAX_RETRIES,
+            wait: true,
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// Grows from 100ms to 1s as the remaining retries run down.
+    fn delay(&self, retries_left: u32) -> Duration {
+        if !self.wait || self.attempts < 2 {
+            return Duration::ZERO;
+        }
+        Duration::from_millis(
+            (100 + 900 * u64::from(self.attempts - retries_left) / u64::from(self.attempts - 1))
+                .min(1000),
+        )
+    }
+}
 
 /// One column of a batch as it crosses the napi boundary. Exactly one of the
 /// value fields is set, chosen from the column's ClickHouse type so both sides
@@ -88,6 +119,7 @@ pub struct ClickHouseSink {
     schemas: Mutex<HashMap<String, TableSchema>>,
     staged: Mutex<HashMap<u32, Staged>>,
     next_handle: AtomicU32,
+    retry: RetryPolicy,
 }
 
 #[napi(object)]
@@ -106,6 +138,10 @@ fn to_napi(err: anyhow::Error) -> napi::Error {
 impl ClickHouseSink {
     #[napi(factory)]
     pub fn new(options: ClickHouseSinkOptions) -> napi::Result<Self> {
+        Self::build(options, RetryPolicy::default())
+    }
+
+    fn build(options: ClickHouseSinkOptions, retry: RetryPolicy) -> napi::Result<Self> {
         let client = reqwest::Client::builder()
             // The sink writes continuously; keeping sockets warm avoids a TLS
             // handshake per batch against a remote cluster.
@@ -127,6 +163,7 @@ impl ClickHouseSink {
             schemas: Mutex::new(HashMap::new()),
             staged: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(1),
+            retry,
         })
     }
 
@@ -289,7 +326,7 @@ impl ClickHouseSink {
         let mut warnings: Vec<String> = Vec::new();
         // Ranges still to send, most recent first; a failed range is replaced by
         // its two halves so the retry never re-sends rows that already landed.
-        let mut pending = vec![(0usize, encoded.rows(), MAX_RETRIES)];
+        let mut pending = vec![(0usize, encoded.rows(), self.retry.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
             let body = encoded.slice(start, end).to_vec();
             match self.post_rows(table, body).await {
@@ -302,11 +339,7 @@ impl ClickHouseSink {
                          {} retries left: {err:#}",
                         retries - 1
                     ));
-                    let delay = Duration::from_millis(
-                        (100 + 900 * u64::from(MAX_RETRIES - retries) / u64::from(MAX_RETRIES - 1))
-                            .min(1000),
-                    );
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep(self.retry.delay(retries)).await;
                     if rows > 1 {
                         let mid = start + rows / 2;
                         pending.push((mid, end, retries - 1));
@@ -538,6 +571,163 @@ mod tests {
             format!("{err:#}"),
             "Column `surprise` is not part of the target table"
         );
+    }
+
+    fn sink_for(server: &mock_server::MockClickHouse, attempts: u32) -> ClickHouseSink {
+        ClickHouseSink::build(
+            ClickHouseSinkOptions {
+                url: server.url.clone(),
+                username: "default".to_string(),
+                password: String::new(),
+                database: "mock".to_string(),
+            },
+            RetryPolicy {
+                attempts,
+                // The waits are the policy's, not the encoder's; skipping them
+                // keeps the test at milliseconds.
+                wait: false,
+            },
+        )
+        .unwrap()
+    }
+
+    /// Stages `values` as a single `String` column named `id`.
+    fn stage_ids(sink: &ClickHouseSink, values: &[&str]) -> u32 {
+        sink.stage(
+            "t".to_string(),
+            values.len() as u32,
+            vec![ColumnInput {
+                name: "id".to_string(),
+                numbers: None,
+                unsigned64: None,
+                signed64: None,
+                text: Some(values.concat()),
+                lengths: Some(
+                    values
+                        .iter()
+                        .map(|v| v.len() as u32)
+                        .collect::<Vec<u32>>()
+                        .into(),
+                ),
+                nulls: None,
+            }],
+        )
+        .unwrap()
+    }
+
+    // A rejected insert is replaced by its two halves, so the rows in the half
+    // that already landed must not be sent again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejected_insert_is_retried_as_halves_and_every_row_lands_once() {
+        let server = mock_server::MockClickHouse::start(&[("id", "String")], 1).await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let warnings = sink.flush(handle).await.unwrap();
+
+        assert_eq!(
+            (
+                server.accepted_strings(),
+                server.inserts_seen(),
+                warnings.len()
+            ),
+            // One rejection, then the two halves; four rows, each exactly once.
+            (
+                vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ],
+                3,
+                1
+            )
+        );
+    }
+
+    // Halving bottoms out at a single row, which is then retried whole.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_single_row_is_retried_in_place_until_it_lands() {
+        let server = mock_server::MockClickHouse::start(&[("id", "String")], 2).await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["only"]);
+
+        sink.flush(handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_strings(), server.inserts_seen()),
+            (vec!["only".to_string()], 3)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_that_never_succeeds_surfaces_the_error() {
+        let server = mock_server::MockClickHouse::start(&[("id", "String")], usize::MAX).await;
+        let sink = sink_for(&server, 2);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        let err = sink.flush(handle).await.unwrap_err();
+
+        assert!(
+            err.reason.contains("mock rejection"),
+            "expected the server's message, got: {}",
+            err.reason
+        );
+        assert_eq!(server.accepted_strings(), Vec::<String>::new());
+    }
+
+    // The column types come from the server, so a table the sink has never seen
+    // costs one lookup and no more.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_column_types_are_read_once_per_table() {
+        let server = mock_server::MockClickHouse::start(&[("id", "String")], 0).await;
+        let sink = sink_for(&server, 4);
+        for _ in 0..3 {
+            let handle = stage_ids(&sink, &["x"]);
+            sink.flush(handle).await.unwrap();
+        }
+        let cached = sink.schemas.lock().unwrap();
+        assert_eq!(
+            (
+                cached.len(),
+                cached["t"]
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                server.column_types().len()
+            ),
+            (1, vec!["id"], 1)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_value_the_column_cannot_hold_fails_before_anything_is_sent() {
+        let server = mock_server::MockClickHouse::start(&[("e", "Enum8('SET' = 1)")], 0).await;
+        let sink = sink_for(&server, 4);
+        let handle = sink
+            .stage(
+                "t".to_string(),
+                1,
+                vec![ColumnInput {
+                    name: "e".to_string(),
+                    numbers: None,
+                    unsigned64: None,
+                    signed64: None,
+                    text: Some("NOPE".to_string()),
+                    lengths: Some(vec![4u32].into()),
+                    nulls: None,
+                }],
+            )
+            .unwrap();
+
+        let err = sink.flush(handle).await.unwrap_err();
+
+        assert!(
+            err.reason.contains("not a variant"),
+            "expected the encoder's message, got: {}",
+            err.reason
+        );
+        assert_eq!(server.inserts_seen(), 0);
     }
 
     #[test]

@@ -90,43 +90,35 @@ let toText = (value: unknown) =>
     value->(Utils.magic: unknown => JSON.t)->JSON.stringify
   }
 
-// One column's storage for a batch. Allocated per write at the batch's row count
-// so the typed arrays reach Rust without a copy.
+// One column's storage for one batch, sized to the batch's row count so the
+// typed arrays reach Rust without a copy. A builder belongs to a single write:
+// `stage` copies it into Rust memory, and nothing reads it afterwards.
 type builder = {
   name: string,
   kind: kind,
-  mutable floats: Float64Array.t,
-  mutable unsigned: BigUint64Array.t,
-  mutable signed: BigInt64Array.t,
-  mutable texts: array<string>,
-  mutable lengths: Uint32Array.t,
+  floats: Float64Array.t,
+  unsigned: BigUint64Array.t,
+  signed: BigInt64Array.t,
+  texts: array<string>,
+  lengths: Uint32Array.t,
   // Allocated on the first null; a column with none sends no mask at all.
   mutable nulls: option<Uint8Array.t>,
-  mutable rows: int,
+  rows: int,
 }
 
-let makeBuilder = (~name, ~kind) => {
-  name,
-  kind,
-  floats: Float64Array.fromLength(0),
-  unsigned: BigUint64Array.fromLength(0),
-  signed: BigInt64Array.fromLength(0),
-  texts: [],
-  lengths: Uint32Array.fromLength(0),
-  nulls: None,
-  rows: 0,
-}
-
-let allocBuilder = (builder, ~rows) => {
-  builder.rows = rows
-  builder.nulls = None
-  switch builder.kind {
-  | F64 => builder.floats = Float64Array.fromLength(rows)
-  | U64 => builder.unsigned = BigUint64Array.fromLength(rows)
-  | I64 => builder.signed = BigInt64Array.fromLength(rows)
-  | Text =>
-    builder.texts = Array.make(~length=rows, "")
-    builder.lengths = Uint32Array.fromLength(rows)
+// Only the storage the column's kind uses is allocated; the rest stay empty.
+let makeBuilder = (~name, ~kind, ~rows) => {
+  let empty = 0
+  {
+    name,
+    kind,
+    floats: Float64Array.fromLength(kind === F64 ? rows : empty),
+    unsigned: BigUint64Array.fromLength(kind === U64 ? rows : empty),
+    signed: BigInt64Array.fromLength(kind === I64 ? rows : empty),
+    texts: kind === Text ? Array.make(~length=rows, "") : [],
+    lengths: Uint32Array.fromLength(kind === Text ? rows : empty),
+    nulls: None,
+    rows,
   }
 }
 

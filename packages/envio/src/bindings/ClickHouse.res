@@ -153,11 +153,11 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
 let logger = Logging.createChild(~params={"context": "ClickHouse"})
 
 // Column set of an entity history table, resolved once per entity and scope.
-// The builders are reused across writes: filling them and staging the batch
-// happens in one synchronous run, so no two writes ever hold the same builder.
+// Only the column list and the compiled serializers are cached; each write
+// allocates its own builders, so two writes can never share storage.
 type entityColumns = {
   tableName: string,
-  builders: array<ClickHouseSink.builder>,
+  columns: array<(string, ClickHouseSink.kind)>,
   convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
   convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
 }
@@ -182,33 +182,25 @@ let makeEntityColumns = (
   let scopeChainId = scope->Internal.chainScopeChainId
   let idSchema = entityConfig.table->Table.getIdSchema
 
-  let builders = entityConfig.table.fields->Array.filterMap(field =>
+  let columns = entityConfig.table.fields->Array.filterMap(field =>
     switch field {
     | Table.Field(f) =>
-      Some(
-        ClickHouseSink.makeBuilder(
-          ~name=f->Table.getClickHouseDbFieldName,
-          ~kind=ClickHouseSink.kindOfField(
-            ~fieldType=f.fieldType,
-            ~isArray=f.isArray,
-            ~chainIdMode,
-          ),
-        ),
-      )
+      Some((
+        f->Table.getClickHouseDbFieldName,
+        ClickHouseSink.kindOfField(~fieldType=f.fieldType, ~isArray=f.isArray, ~chainIdMode),
+      ))
     | DerivedFrom(_) => None
     }
   )
-  builders->Array.push(
-    ClickHouseSink.makeBuilder(~name=EntityHistory.checkpointIdFieldName, ~kind=U64),
-  )
-  builders->Array.push(ClickHouseSink.makeBuilder(~name=EntityHistory.changeFieldName, ~kind=Text))
+  columns->Array.push((EntityHistory.checkpointIdFieldName, ClickHouseSink.U64))
+  columns->Array.push((EntityHistory.changeFieldName, Text))
 
   {
     tableName: EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     ),
-    builders,
+    columns,
     convertSetOrThrow: compileToColumnValues(
       EntityHistory.makeSetUpdateSchema(~idSchema, makeClickHouseEntitySchema(entityConfig.table)),
     ),
@@ -234,8 +226,6 @@ let makeEntityColumns = (
   }
 }
 
-// Stages the filled builders and awaits the insert. Kept separate so the caller
-// can fill and stage without an await in between.
 let insertBuilders = async (sink, ~tableName, ~builders: array<ClickHouseSink.builder>, ~rows) => {
   let handle =
     sink->ClickHouseSink.stage(
@@ -260,16 +250,16 @@ let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.
     let tableName = InternalTable.Checkpoints.table.tableName
     // Kinds mirror `makeCreateCheckpointsTableQuery`, where events_processed is
     // widened to UInt64 rather than the Int32 the Postgres table uses.
-    let id = ClickHouseSink.makeBuilder(~name="id", ~kind=U64)
+    let id = ClickHouseSink.makeBuilder(~name="id", ~kind=U64, ~rows)
     let chainId = ClickHouseSink.makeBuilder(
       ~name="chain_id",
       ~kind=ClickHouseSink.kindOfField(~fieldType=ChainId, ~isArray=false, ~chainIdMode),
+      ~rows,
     )
-    let blockNumber = ClickHouseSink.makeBuilder(~name="block_number", ~kind=F64)
-    let blockHash = ClickHouseSink.makeBuilder(~name="block_hash", ~kind=Text)
-    let eventsProcessed = ClickHouseSink.makeBuilder(~name="events_processed", ~kind=U64)
+    let blockNumber = ClickHouseSink.makeBuilder(~name="block_number", ~kind=F64, ~rows)
+    let blockHash = ClickHouseSink.makeBuilder(~name="block_hash", ~kind=Text, ~rows)
+    let eventsProcessed = ClickHouseSink.makeBuilder(~name="events_processed", ~kind=U64, ~rows)
     let builders = [id, chainId, blockNumber, blockHash, eventsProcessed]
-    builders->Array.forEach(builder => builder->ClickHouseSink.allocBuilder(~rows))
 
     for row in 0 to rows - 1 {
       id->ClickHouseSink.writeValue(
@@ -321,7 +311,7 @@ let setUpdatesOrThrow = async (
     ()
   } else {
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let {tableName, builders, convertSetOrThrow, convertDeleteOrThrow} = switch cache
+    let {tableName, columns, convertSetOrThrow, convertDeleteOrThrow} = switch cache
     ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(cached) => cached
     | None =>
@@ -339,7 +329,8 @@ let setUpdatesOrThrow = async (
     }
 
     let handle = try {
-      builders->Array.forEach(builder => builder->ClickHouseSink.allocBuilder(~rows))
+      let builders =
+        columns->Array.map(((name, kind)) => ClickHouseSink.makeBuilder(~name, ~kind, ~rows))
       for row in 0 to rows - 1 {
         let change = changes->Array.getUnsafe(row)
         // The entity history table is the source of truth for ClickHouse, so

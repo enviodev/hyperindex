@@ -155,4 +155,134 @@ describe("ClickHouse RowBinary roundtrip", () => {
       )
     },
   )
+  // The chain-id column widens to UInt64 in Int64 mode, which is a different
+  // wire kind — a chain id past Int32 has to survive it.
+  Async.it_skipIf(chHost->Option.isNone)(
+    "Stores a chain id beyond Int32 when the config widens the column",
+    async t => {
+      let host = chHost->Option.getUnsafe
+      let database = "test_codegen_roundtrip_int64"
+      // Past Int32, so it needs the widened column; ReScript's `int` cannot
+      // hold it, which is why it comes in through the chain-id schema.
+      let bigChainId = "4294967296"->ChainId.normalizeOrThrow
+
+      let client = ClickHouse.createClient({url: host, username, password})
+      await client->ClickHouse.exec({query: `DROP DATABASE IF EXISTS ${database}`})
+      await client->ClickHouse.exec({query: `CREATE DATABASE ${database}`})
+      await client->ClickHouse.exec({
+        query: ClickHouse.makeCreateCheckpointsTableQuery(~database, ~chainIdMode=Int64),
+      })
+
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      await ClickHouse.setCheckpointsOrThrow(
+        sink,
+        ~batch={
+          totalBatchSize: 1,
+          items: [],
+          progressedChainsById: Dict.make(),
+          isInReorgThreshold: false,
+          checkpointIds: [18446744073709551615n],
+          checkpointChainIds: [bigChainId],
+          checkpointBlockNumbers: [123],
+          checkpointBlockHashes: [Null.make("0xabc")],
+          checkpointEventsProcessed: [7],
+        },
+        ~chainIdMode=Int64,
+      )
+
+      let result = await client->ClickHouse.query({
+        query: `SELECT toString(id) AS id, toString(chain_id) AS chain_id, block_number, block_hash, toString(events_processed) AS events_processed FROM ${database}.envio_checkpoints`,
+      })
+      let rows = (await result->ClickHouse.json)["data"]
+      await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
+      await client->ClickHouse.close
+
+      t.expect(rows).toEqual(
+        %raw(`[
+          {
+            id: "18446744073709551615",
+            chain_id: "4294967296",
+            block_number: 123,
+            block_hash: "0xabc",
+            events_processed: "7"
+          }
+        ]`),
+      )
+    },
+  )
+
+  // The indexer's error handling matches on StorageError, so both ways a value
+  // can be rejected have to arrive as one: the entity schema refuses it while
+  // building the columns, or the RowBinary encoder refuses it in Rust.
+  Async.it_skipIf(chHost->Option.isNone)(
+    "Reports a value neither side can encode as a StorageError",
+    async t => {
+      let host = chHost->Option.getUnsafe
+      let database = "test_codegen_roundtrip_reject"
+      let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+      let tableName = EntityHistory.historyTableName(
+        ~entityName=entityConfig.name,
+        ~entityIndex=entityConfig.index,
+      )
+
+      let client = ClickHouse.createClient({url: host, username, password})
+      await client->ClickHouse.exec({query: `DROP DATABASE IF EXISTS ${database}`})
+      await client->ClickHouse.exec({query: `CREATE DATABASE ${database}`})
+      await client->ClickHouse.exec({
+        query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
+      })
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+
+      let attempt = async rogue => {
+        switch await ClickHouse.setUpdatesOrThrow(
+          sink,
+          ~cache=Dict.make(),
+          ~changes=[
+            Set({
+              entityId: entity.id->EntityId.unsafeOfString,
+              checkpointId: 1n,
+              entity: rogue->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity),
+            }),
+          ],
+          ~entityConfig,
+          ~scope=CrossChain,
+          ~chainIdMode=Int32,
+        ) {
+        | () => ("no error", "")
+        | exception Persistence.StorageError({message, reason}) => (
+            message,
+            reason->(Utils.magic: exn => {"message": string})->(r => r["message"]),
+          )
+        | exception _ => ("not a StorageError", "")
+        }
+      }
+
+      // Outside the schema's enum, so the entity schema rejects it first.
+      let (schemaMessage, schemaReason) = await attempt({
+        ...entity,
+        enumField: "NOT_A_VARIANT"->(Utils.magic: string => Indexer.Enums.AccountType.t),
+      })
+      // Valid BigDecimal, but `Decimal(10, 8)` scales it past what the column's
+      // 128-bit integer can hold — only the encoder can catch that.
+      let (encoderMessage, encoderReason) = await attempt({
+        ...entity,
+        bigDecimalWithConfig: BigDecimal.fromStringUnsafe("1e31"),
+      })
+
+      await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
+      await client->ClickHouse.close
+
+      t.expect((
+        schemaMessage,
+        schemaReason->String.includes("NOT_A_VARIANT"),
+        encoderMessage,
+        encoderReason->String.includes("overflows"),
+      )).toEqual((
+        `Failed to convert items for ClickHouse table "${tableName}"`,
+        true,
+        `Failed to insert items into ClickHouse table "${tableName}"`,
+        true,
+      ))
+    },
+  )
 })

@@ -13,6 +13,7 @@
   "devDependencies": {
     "@types/node": "24.12.2",
     "envio": "file:../../packages/envio",
+    "postgres": "3.4.8",
     "tsx": "^4.19.0",
     "typescript": "6.0.3",
     "vitest": "4.1.0"
