@@ -148,10 +148,12 @@ describe("Rollback with a ClickHouse-only entity", () => {
           t.expect(
             sourceMock.getBlockHashesCalls,
             ~message="Should have called getBlockHashes to find rollback depth",
-          ).toEqual([[100]])
+          ).toEqual([[100, 101]])
           sourceMock.resolveGetBlockHashes([
-            // The block 100 is untouched so we can rollback to it
+            // The block 100 is untouched so we can rollback to it; 101 came
+            // back on a different hash, so it is part of the reorg.
             {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
           ])
 
           await indexerMock.getRollbackReadyPromise()->raiseOnIndexerError

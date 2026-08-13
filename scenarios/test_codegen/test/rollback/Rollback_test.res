@@ -116,7 +116,7 @@ describe("E2E rollback tests", () => {
       [
         {
           id: firstHistoryCheckpointId,
-          blockHash: Null.null,
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
           eventsProcessed: 2,
@@ -219,10 +219,12 @@ describe("E2E rollback tests", () => {
     t.expect(
       sourceMock.getBlockHashesCalls,
       ~message="Should have called getBlockHashes to find rollback depth",
-    ).toEqual([[100]])
+    ).toEqual([[100, 101]])
     sourceMock.resolveGetBlockHashes([
-      // The block 100 is untouched so we can rollback to it
+      // The block 100 is untouched so we can rollback to it; 101 came back on a
+      // different hash, so it belongs to the reorg.
       {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -607,9 +609,10 @@ describe("E2E rollback tests", () => {
         t.expect(
           sourceMock.getBlockHashesCalls,
           ~message="Should query the scanned blocks below the reorg",
-        ).toEqual([[100, 102]])
+        ).toEqual([[100, 101, 102]])
         sourceMock.resolveGetBlockHashes([
           {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
           {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
         ])
 
@@ -1340,7 +1343,7 @@ describe("E2E rollback tests", () => {
               eventsProcessed: 1,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 107,
-              blockHash: Js.Null.Null,
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0107")),
             },
             // Block 108 is skipped, since we don't have
             // ether events processed or block hash for it
@@ -1589,15 +1592,12 @@ describe("E2E rollback tests", () => {
             // Reorg checkpoint id was checkpoint id 5
             // for chain 1337. After rollback it was removed
             // and replaced with chain id 100.
-            // No hash: the mock source only reports the range's seam and end
-            // block, never the block an item came from, so the refetch of
-            // 106-111 never re-observes 106. A real source returns that header.
             {
               id: 10n,
               eventsProcessed: 2,
               chainId: 100->ChainId.fromInt,
               blockNumber: 106,
-              blockHash: Js.Null.Null,
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
             },
             {
               id: 11n,
@@ -1829,7 +1829,7 @@ describe("E2E rollback tests", () => {
                 eventsProcessed: 1,
                 chainId: 1337->ChainId.fromInt,
                 blockNumber: 107,
-                blockHash: Js.Null.Null,
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0107")),
               },
               // Block 108 is skipped, since we don't have
               // ether events processed or block hash for it
@@ -2033,13 +2033,12 @@ describe("E2E rollback tests", () => {
               // Reorg checkpoint id was checkpoint id 5
               // for chain 1337. After rollback it was removed
               // and replaced with chain id 100.
-              // No hash, for the same reason as the test above.
               {
                 id: 10n,
                 eventsProcessed: 2,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 106,
-                blockHash: Js.Null.Null,
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
               },
               {
                 id: 11n,
@@ -2380,10 +2379,12 @@ describe("E2E rollback tests", () => {
           await Utils.delay(0)
           await Utils.delay(0)
 
-          // getBlockHashes called with [100] (only stored block in threshold below 103)
-          // Block 100 hash matches → rollback target = 100
+          // getBlockHashes called with [100, 102]: both are stored in the
+          // threshold below 103. Block 100 still matches and 102 came back on
+          // the new fork → rollback target = 100.
           sourceMock1337.resolveGetBlockHashes([
             {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
           ])
 
           // Clean up pending calls from before rollback
@@ -2627,6 +2628,7 @@ describe("E2E rollback tests", () => {
 
         sourceMock1337.resolveGetBlockHashes([
           {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
         ])
 
         await indexerMock.getRollbackReadyPromise()
@@ -2776,12 +2778,14 @@ describe("E2E rollback tests", () => {
         t.expect(
           sourceMock.getBlockHashesCalls,
           ~message="Should have called getBlockHashes to find rollback depth",
-        ).toEqual([[100, 103, 106, 112]])
+        ).toEqual([[100, 101, 103, 104, 106, 112]])
 
         // Rollback to block 112
         sourceMock.resolveGetBlockHashes([
           {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
           {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+          {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
           {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
           {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
         ])
@@ -2904,12 +2908,14 @@ describe("E2E rollback tests", () => {
           t.expect(
             sourceMock.getBlockHashesCalls,
             ~message="Should have called getBlockHashes to find rollback depth",
-          ).toEqual([[100, 103, 106, 112, 115]])
+          ).toEqual([[100, 101, 103, 104, 106, 112, 115]])
 
           // All searched blocks are valid, so the reorg is shallow (only block 118).
           sourceMock.resolveGetBlockHashes([
             {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
             {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+            {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
             {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
             {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
             {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
