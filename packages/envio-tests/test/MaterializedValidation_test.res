@@ -518,6 +518,17 @@ describe("tables: where conditions", () => {
         _gt: Transfer`,
       "`eventName` only supports `_eq`/`_neq`/`_in`",
     ),
+    // An address literal is normalized to the casing the decoder writes, so
+    // one that isn't an address at all has no casing to be given.
+    (
+      "rejects a literal that isn't an address where an address is compared",
+      `      eventName: Transfer
+      params:
+        from:
+          _eq:
+            _literal: "0xnope"`,
+      "in `where.params.from`: `0xnope` is not an address, so it can never equal one. Check the spelling.",
+    ),
   ]->Array.forEach(((name, condition, message)) => {
     it(
       name,

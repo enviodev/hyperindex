@@ -25,6 +25,7 @@ use super::{
     system_config::{Contract, Event, EventKind, FieldSelection, SelectedField},
 };
 use crate::{type_schema::TypeIdent, utils::text};
+use alloy_dyn_abi::DynSolType;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
 use schemars::{json_schema, JsonSchema, Schema as JsonSchemaSchema, SchemaGenerator};
@@ -567,6 +568,9 @@ struct Ty {
     scalar: Scalar,
     nullable: bool,
     array: bool,
+    /// An EVM address, which the decoder writes in the casing `address_format`
+    /// picks. A literal compared to one is normalized to the same casing.
+    address: bool,
 }
 
 impl Ty {
@@ -575,6 +579,7 @@ impl Ty {
             scalar,
             nullable: false,
             array: false,
+            address: false,
         }
     }
 
@@ -585,6 +590,11 @@ impl Ty {
 
     fn array(mut self) -> Self {
         self.array = true;
+        self
+    }
+
+    fn address(mut self) -> Self {
+        self.address = true;
         self
     }
 
@@ -723,6 +733,9 @@ fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
         scalar,
         nullable,
         array: a.array,
+        // Only an address on both sides stays one: a column that also holds
+        // plain text has no casing to normalize a literal to.
+        address: a.address && b.address,
     })
 }
 
@@ -770,10 +783,39 @@ struct Typed {
     ty: Ty,
 }
 
+/// The casing the decoder writes addresses in, from `address_format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressCase {
+    Checksum,
+    Lowercase,
+}
+
+impl AddressCase {
+    fn normalize(&self, value: &str) -> Result<String> {
+        let address = crate::evm::address::Address::new(value).map_err(|_| {
+            anyhow!("`{value}` is not an address, so it can never equal one. Check the spelling.")
+        })?;
+        Ok(match self {
+            AddressCase::Checksum => address.to_checksum_hex_string(),
+            AddressCase::Lowercase => format!("{:#x}", address.as_alloy_address()),
+        })
+    }
+}
+
 impl Typed {
     /// Give a literal the column's type. Anything else must already match it.
-    fn coerce(self, target: &Ty) -> Result<CExpr> {
+    fn coerce(self, target: &Ty, addresses: AddressCase) -> Result<CExpr> {
         let Typed { expr, ty } = self;
+        // Config.yaml is written by hand and explorers hand out both spellings,
+        // so an address literal that doesn't match the decoder's casing would
+        // compare unequal to every event and leave the table silently empty.
+        if target.address && !target.array {
+            if let CExpr::LitString { value } = &expr {
+                return Ok(CExpr::LitString {
+                    value: addresses.normalize(value)?,
+                });
+            }
+        }
         if ty.scalar == Scalar::NumLit && !target.array {
             let text = match &expr {
                 CExpr::LitInt { value } => value.to_string(),
@@ -968,7 +1010,8 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
         TypeIdent::Bool => Ty::new(Scalar::Boolean),
         TypeIdent::Json => Ty::new(Scalar::Json),
         TypeIdent::Timestamp => Ty::new(Scalar::Int),
-        // Address / String / ID and anything opaque are strings at runtime.
+        TypeIdent::Address => Ty::new(Scalar::String).address(),
+        // String / ID and anything opaque are strings at runtime.
         _ => Ty::new(Scalar::String),
     }
 }
@@ -993,9 +1036,15 @@ fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
             }),
         })
     }
-    from_gql(&UserDefinedFieldType::from_dyn_sol_type(
-        &abi.to_dyn_sol_type(),
-    )?)
+    // `address` is a String everywhere downstream, so the ABI type is the last
+    // place that still knows a param holds one.
+    let sol_type = abi.to_dyn_sol_type();
+    let ty = from_gql(&UserDefinedFieldType::from_dyn_sol_type(&sol_type)?)?;
+    Ok(if matches!(sol_type, DynSolType::Address) {
+        ty.address()
+    } else {
+        ty
+    })
 }
 
 /// Walk into a tuple param by component name.
@@ -1068,9 +1117,8 @@ impl Shape<'_> {
                 let head = path[0].as_str();
                 let rest = &path[1..];
                 match head {
-                    "contractName" | "eventName" | "srcAddress" if rest.is_empty() => {
-                        Ok(Ty::new(Scalar::String))
-                    }
+                    "srcAddress" if rest.is_empty() => Ok(Ty::new(Scalar::String).address()),
+                    "contractName" | "eventName" if rest.is_empty() => Ok(Ty::new(Scalar::String)),
                     "chainId" | "logIndex" if rest.is_empty() => Ok(Ty::new(Scalar::Int)),
                     "params" => {
                         let params = match &event.kind {
@@ -1706,6 +1754,7 @@ fn evaluate(
     shape: &Shape,
     demand: &mut Demand,
     table_names: &[String],
+    addresses: AddressCase,
 ) -> Result<Residual> {
     match condition {
         // A sibling discriminator narrows what the other conjuncts are typed
@@ -1716,7 +1765,15 @@ fn evaluate(
             let mut resolved = Vec::with_capacity(parts.len());
             let mut first_error = None;
             for part in parts {
-                match evaluate(part, contract_name, event_name, shape, demand, table_names) {
+                match evaluate(
+                    part,
+                    contract_name,
+                    event_name,
+                    shape,
+                    demand,
+                    table_names,
+                    addresses,
+                ) {
                     Ok(Residual::False) => return Ok(Residual::False),
                     Ok(part) => resolved.push(part),
                     Err(error) => first_error = first_error.or(Some(error)),
@@ -1733,7 +1790,15 @@ fn evaluate(
             let mut resolved = Vec::with_capacity(parts.len());
             let mut first_error = None;
             for part in parts {
-                match evaluate(part, contract_name, event_name, shape, demand, table_names) {
+                match evaluate(
+                    part,
+                    contract_name,
+                    event_name,
+                    shape,
+                    demand,
+                    table_names,
+                    addresses,
+                ) {
                     Ok(Residual::True) => return Ok(Residual::True),
                     Ok(part) => resolved.push(part),
                     Err(error) => first_error = first_error.or(Some(error)),
@@ -1772,7 +1837,7 @@ fn evaluate(
             let compiled = compile_expr(value, &ctx, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             let value = compiled
-                .coerce(&target)
+                .coerce(&target, addresses)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             Ok(Residual::Unknown(CFilter::Cmp {
                 path: path.clone(),
@@ -1810,7 +1875,8 @@ fn evaluate(
             let compiled = values
                 .iter()
                 .map(|value| {
-                    compile_expr(value, &ctx, demand).and_then(|compiled| compiled.coerce(&target))
+                    compile_expr(value, &ctx, demand)
+                        .and_then(|compiled| compiled.coerce(&target, addresses))
                 })
                 .collect::<Result<Vec<_>>>()
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
@@ -1980,6 +2046,7 @@ struct TableCtx<'a> {
     // at. `None` on the pass that is still collecting them, which leaves each
     // `_ref.id` as written.
     id_types: Option<&'a BTreeMap<String, Ty>>,
+    addresses: AddressCase,
 }
 
 /// One table's writes for one event.
@@ -1995,6 +2062,7 @@ pub fn compile(
     tables: &Tables,
     contracts: &BTreeMap<String, &Contract>,
     schema: &Schema,
+    addresses: AddressCase,
 ) -> Result<Compiled> {
     let table_names: Vec<String> = tables.0.keys().cloned().collect();
     for name in &table_names {
@@ -2048,6 +2116,7 @@ pub fn compile(
         block_field_types: &block_field_types,
         transaction_field_types: &transaction_field_types,
         id_types: None,
+        addresses,
     };
 
     // A table's id comes from its own `select.id`, which can't itself be a
@@ -2115,6 +2184,7 @@ fn compile_table(
         block_field_types,
         transaction_field_types,
         id_types,
+        addresses,
     } = table_ctx;
     let select = &table.select;
     let from = table.from.as_str();
@@ -2249,6 +2319,7 @@ fn compile_table(
                             scalar: Scalar::Ref(table.clone()),
                             nullable: id.ty.nullable,
                             array: false,
+                            address: false,
                         },
                         derived_from: None,
                         is_ref: true,
@@ -2302,14 +2373,14 @@ fn compile_table(
                     "set",
                     None,
                     typed
-                        .coerce(ty)
+                        .coerce(ty, addresses)
                         .with_context(|| format!("in `select.{field_name}`"))?,
                 ),
                 Selected::Sum(typed) => (
                     "sum",
                     ty.numeric_tag(),
                     typed
-                        .coerce(ty)
+                        .coerce(ty, addresses)
                         .with_context(|| format!("in `select.{field_name}`"))?,
                 ),
                 Selected::Ref { table, id } => {
@@ -2319,7 +2390,7 @@ fn compile_table(
                                 nullable: ty.nullable,
                                 ..target.clone()
                             };
-                            id.coerce(&target).with_context(|| {
+                            id.coerce(&target, addresses).with_context(|| {
                                 format!(
                                     "in `select.{field_name}._ref.id`: `{table}` has {} for an id",
                                     target.describe()
@@ -2452,6 +2523,7 @@ fn compile_relation(
         contracts,
         block_field_types,
         transaction_field_types,
+        addresses,
         ..
     } = table_ctx;
     if queries.0.is_empty() {
@@ -2566,7 +2638,7 @@ fn compile_relation(
                 .get(&name)
                 .expect("every branch selects the same columns");
             let expr = typed
-                .coerce(target)
+                .coerce(target, addresses)
                 .with_context(|| format!("in `with.{relation_name}` column `{name}`"))?;
             branch.columns.insert(name, expr);
         }
@@ -2640,6 +2712,7 @@ fn resolve_event_branches(
                         &shape,
                         &mut branch_demand,
                         table_names,
+                        table_ctx.addresses,
                     )?;
                     match residual {
                         Residual::False => continue,

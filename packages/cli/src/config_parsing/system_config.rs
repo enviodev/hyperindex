@@ -1643,8 +1643,17 @@ impl SystemConfig {
                 .iter()
                 .map(|(name, contract)| (name.clone(), contract))
                 .collect();
-            let compiled = materialization::compile(&tables, &contracts, &config.schema)
-                .context("Failed compiling `tables`")?;
+            let compiled = materialization::compile(
+                &tables,
+                &contracts,
+                &config.schema,
+                if config.lowercase_addresses {
+                    materialization::AddressCase::Lowercase
+                } else {
+                    materialization::AddressCase::Checksum
+                },
+            )
+            .context("Failed compiling `tables`")?;
             config.schema = config
                 .schema
                 .extended_with(&compiled.sdl)
