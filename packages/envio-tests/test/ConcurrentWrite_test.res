@@ -129,9 +129,10 @@ describe("Concurrent batch write and processing", () => {
         ~latestFetchedBlockNumber=102,
         ~resolveAt=#first,
       )
-      while writeBatchCalls.contents == writeBatchCallsBeforeStall {
-        await Utils.delay(1)
-      }
+      await Scenario.waitUntil(
+        () => writeBatchCalls.contents != writeBatchCallsBeforeStall,
+        ~message="the delete's batch write to start",
+      )
 
       // Re-create the entity while the delete's write is still in flight
       let recreateProcessed = ref(false)
@@ -152,9 +153,10 @@ describe("Concurrent batch write and processing", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      while !recreateProcessed.contents {
-        await Utils.delay(1)
-      }
+      await Scenario.waitUntil(
+        () => recreateProcessed.contents,
+        ~message="the recreate handler to run",
+      )
       // Let the processed batch get queued for the next write
       await Utils.delay(1)
 

@@ -178,7 +178,8 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
 
       source.resolveGetHeightOrThrow(1000)
       await MockSource.waitItemsQuery(source)
-      // Pre-threshold blockLag is 200, so the chain queries up to block 800.
+      // max_reorg_depth holds the chain 200 blocks below head before the
+      // threshold, so it queries up to block 800.
       t.expect(
         source.getItemsOrThrowCalls->Array.map(call => call.payload["toBlock"]),
         ~message="pre-threshold query stops at the lagged head",

@@ -73,7 +73,10 @@ describe("Dynamic-registration partition split queue aliasing", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       let processed = []
-      let record = id => (async _ => processed->Array.push(id)->ignore)->Obj.magic
+      let record = id =>
+        (async _ => processed->Array.push(id)->ignore)->(
+          Utils.magic: (Internal.handlerArgs => promise<unit>) => MockSource.mockSourceHandler
+        )
 
       let gravatarAddress =
         "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow
@@ -189,7 +192,11 @@ describe("Dynamic-registration partition split queue aliasing", () => {
             c.payload->MockSource.CallPayload.addresses->Array.length,
           ),
         )
-        ->Array.toSorted(((_, a, _), (_, b, _)) => Int.compare(a, b)),
+        // Two partitions share fromBlock 24,001, and their relative order is
+        // an enqueue detail this test doesn't describe — break the tie on id.
+        ->Array.toSorted(((pA, a, _), (pB, b, _)) =>
+          a === b ? String.compare(pA, pB) : Int.compare(a, b)
+        ),
         ~message="the registration splits partition '0' into Gravatar ('0') and NftFactory ('3')",
       ).toEqual([
         ("4", 20_050, 1),

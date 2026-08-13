@@ -30,6 +30,15 @@ type Gravatar {
   owner: String!
 }
 `,
+  // A dynamically registered address only spawns a partition when some
+  // registration depends on its contract, so both contracts are indexed here
+  // rather than relying on the mock source's synthetic registration.
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
+indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () => {});
+`,
 )
 
 let queryAddresses = (indexer: IndexerRunner.t) =>

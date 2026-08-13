@@ -1,11 +1,3 @@
-// A scenario is a whole indexer described the way a user describes one — a
-// config.yaml, a schema.graphql and handler source — run against the real
-// indexer loop with its sources mocked.
-//
-// Everything the user can configure belongs in the YAML. The arguments `run`
-// takes are the knobs a user has no say over: test-only timings and fault
-// injection.
-//
 // Note: `handlers` is a ReScript template string, so a literal `${` in the
 // source must be escaped.
 
@@ -88,7 +80,34 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
 
 // Swap every mocked chain's source for the test double. The rest of the config
 // — chains, contracts, block ranges, reorg settings — is whatever the YAML said.
+//
+// The runner starts every chain in the config, so a chain left unmocked would
+// query the source its YAML names — a live URL. Requiring the two sets to match
+// exactly turns that into a failure at setup rather than a hanging test.
 let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) => {
+  let configured = config.chainMap->ChainMap.keys
+  let mocked = sources->Array.map(((chain, _)) => chain->ChainId.fromInt)
+
+  let missing =
+    configured
+    ->Array.filter(chainId => !(mocked->Array.some(mock => mock == chainId)))
+    ->Array.map(ChainId.toString)
+  if missing->Utils.Array.notEmpty {
+    JsError.throwWithMessage(
+      `Chains ${missing->Array.join(", ")} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
+    )
+  }
+
+  let unknown =
+    mocked
+    ->Array.filter(chainId => !(configured->Array.some(configured => configured == chainId)))
+    ->Array.map(ChainId.toString)
+  if unknown->Utils.Array.notEmpty {
+    JsError.throwWithMessage(
+      `Mock sources given for chains ${unknown->Array.join(", ")}, which the scenario's YAML doesn't configure.`,
+    )
+  }
+
   let chainMap = config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) =>
     switch sources->Array.find(((mockedChain, _)) => mockedChain->ChainId.fromInt == chainId) {
     | Some((_, mock)) => {...chainConfig, sourceConfig: Config.CustomSources([mock.source])}
@@ -250,6 +269,7 @@ let enterReorgThreshold = async (
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
+  await Utils.delay(0)
   t.expect(
     source.getHeightOrThrowCalls->Array.length,
     ~message="should have called getHeightOrThrow to get initial height",
@@ -264,4 +284,16 @@ let enterReorgThreshold = async (
   ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
   source.resolveGetItemsOrThrow([])
   await indexer.getBatchWritePromise()
+}
+
+// Polls until `predicate` holds. Bounded so a condition that never arrives
+// fails with what it was waiting for, rather than as a suite-level timeout.
+let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
+  let deadline = Date.now() +. timeoutMs
+  while !predicate() {
+    if Date.now() > deadline {
+      JsError.throwWithMessage(`Timed out waiting for ${message}`)
+    }
+    await Utils.delay(1)
+  }
 }
