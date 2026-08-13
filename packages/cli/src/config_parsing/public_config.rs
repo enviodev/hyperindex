@@ -1,3 +1,4 @@
+use super::materialization;
 use super::{
     entity_parsing::{self, IndexFieldDirection},
     field_types,
@@ -107,16 +108,15 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
-    // The name handlers, generated types and the test-indexer accessor use.
-    // Omitted when it's the capitalized entity name the runtime falls back to,
-    // so every project predating `as_entity` keeps producing the same JSON.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    handler_name: Option<String>,
+    // What handlers, generated types and the test-indexer accessor call it,
+    // while `name` stays the database and GraphQL spelling. Always emitted: the
+    // rule that derives it lives in the CLI, so the runtime never has to guess.
+    code_name: String,
 
-    // A materialized table without `as_entity` is queryable and stored but never
-    // reachable from a handler.
-    #[serde(skip_serializing_if = "is_false")]
-    hidden_from_handlers: bool,
+    // Who writes the rows. Absent when handlers do, which is every entity in
+    // schema.graphql.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    written: Option<&'static str>,
     // Emitted only when the entity's resolved scope differs from
     // `defaultCrossChain`, which the runtime falls back to. Repeating the
     // default would diff against every project that predates the field.
@@ -875,17 +875,19 @@ impl SystemConfig {
                     }
                 };
 
-                let handler_name = cfg.entity_handler_name(&entity.name);
-                // Every entity has a code name, hidden or not: the test indexer
-                // and the generated types still have to call it something.
-                let code_name = handler_name
-                    .clone()
-                    .unwrap_or_else(|| crate::utils::text::to_code_name(&entity.name));
+                let access = cfg.entity_access(&entity.name);
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    handler_name: Some(code_name)
-                        .filter(|name| name != &entity.name.clone().capitalize()),
-                    hidden_from_handlers: handler_name.is_none(),
+                    code_name: access.code_name,
+                    written: match access.written {
+                        materialization::Written::Handlers => None,
+                        materialization::Written::Materialized { hidden: false } => {
+                            Some("materialized")
+                        }
+                        materialization::Written::Materialized { hidden: true } => {
+                            Some("materializedHidden")
+                        }
+                    },
                     cross_chain: Some(system_config::entity_is_cross_chain(
                         entity,
                         cfg.default_cross_chain,

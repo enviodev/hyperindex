@@ -203,8 +203,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     // which builds the context with `isMaterializer` — so the guard closes the
     // write operations of the ordinary `context.<Table>` accessor only.
     | "set" | "getOrCreate" | "deleteUnsafe"
-      if params.config.materializedTables->Dict.has(params.entityConfig.name) &&
-      !params.isMaterializer =>
+      if switch params.entityConfig.written {
+      | Materialized(_) => !params.isMaterializer
+      | Handlers | Internal => false
+      } =>
       (
         (_: unknown) => throwMaterializedReadOnly(params.entityConfig, prop)
       )->(Utils.magic: (unknown => unit) => unknown)
@@ -392,7 +394,10 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         // A materialized table that didn't opt in is absent on purpose, so say
         // that rather than sending the user to regenerate code.
         switch params.config.userEntities->Array.find(entityConfig =>
-          entityConfig.hiddenFromHandlers && entityConfig.codeName === prop
+          switch entityConfig.written {
+          | Materialized({hidden: true}) => entityConfig.codeName === prop
+          | Handlers | Materialized({hidden: false}) | Internal => false
+          }
         ) {
         | Some(entityConfig) =>
           JsError.throwWithMessage(

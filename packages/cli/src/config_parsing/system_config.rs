@@ -401,7 +401,7 @@ pub struct SystemConfig {
     // Per-table handler exposure from `as_entity`, keyed by table name. A table
     // absent from the map (every entity in schema.graphql) is reachable under
     // its capitalized name; `None` keeps it out of the handler context.
-    pub handler_names: HashMap<String, Option<String>>,
+    pub entity_access: HashMap<String, materialization::EntityAccess>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1045,13 +1045,12 @@ impl SystemConfig {
         self.schema.entities.get(entity_name)
     }
 
-    /// The name handlers reach an entity by, or `None` when a materialized table
-    /// stays out of the handler context. Also the name the generated types,
-    /// modules and test-indexer accessor use.
-    pub fn entity_handler_name(&self, entity_name: &str) -> Option<String> {
-        match self.handler_names.get(entity_name) {
-            Some(handler_name) => handler_name.clone(),
-            None => Some(text::to_code_name(entity_name)),
+    /// What code calls an entity and who writes it. Everything not declared in
+    /// `tables` is an ordinary entity handlers own.
+    pub fn entity_access(&self, entity_name: &str) -> materialization::EntityAccess {
+        match self.entity_access.get(entity_name) {
+            Some(access) => access.clone(),
+            None => materialization::EntityAccess::handlers(entity_name),
         }
     }
 
@@ -1327,7 +1326,7 @@ impl SystemConfig {
                     human_config,
                     is_rescript,
                     materializations: vec![],
-                    handler_names: HashMap::new(),
+                    entity_access: HashMap::new(),
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
@@ -1476,7 +1475,7 @@ impl SystemConfig {
                     human_config,
                     is_rescript,
                     materializations: vec![],
-                    handler_names: HashMap::new(),
+                    entity_access: HashMap::new(),
                 })
             }
             HumanConfig::Svm(ref svm_config) => {
@@ -1624,7 +1623,7 @@ impl SystemConfig {
                     human_config,
                     is_rescript,
                     materializations: vec![],
-                    handler_names: HashMap::new(),
+                    entity_access: HashMap::new(),
                 })
             }
         };
@@ -1659,7 +1658,7 @@ impl SystemConfig {
                 .extended_with(&compiled.sdl)
                 .context("Failed adding the tables from config.yaml to the schema")?;
             config.materializations = compiled.materializations;
-            config.handler_names = compiled.handler_names.into_iter().collect();
+            config.entity_access = compiled.entity_access.into_iter().collect();
 
             // Fetch demand lands on the events the tables actually read, so an
             // event no table touches keeps whatever selection it already had.

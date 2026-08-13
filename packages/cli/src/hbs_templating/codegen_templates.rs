@@ -19,7 +19,7 @@ use crate::{
     constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
     project_paths::ParsedProjectPaths,
     type_schema::{RecordField, TypeExpr, TypeIdent},
-    utils::text::{self, Capitalize, CapitalizedOptions, CaseOptions},
+    utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{Context, Result};
 use convert_case::{Case, Casing};
@@ -337,13 +337,11 @@ impl EntityRecordTypeTemplate {
             .collect();
         let get_where_filter_code = format!("{{{}}}", get_where_filter_fields.join(", "));
 
-        let handler_name = config.entity_handler_name(&entity.name);
+        let access = config.entity_access(&entity.name);
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
-            code_name: handler_name
-                .clone()
-                .unwrap_or_else(|| text::to_code_name(&entity.name)),
-            hidden_from_handlers: handler_name.is_none(),
+            hidden_from_handlers: access.is_hidden(),
+            code_name: access.code_name,
             postgres_fields,
             type_code,
             get_where_filter_code,

@@ -1067,13 +1067,59 @@ pub struct Materialization {
     fields: Vec<FieldWrite>,
 }
 
+/// What code calls an entity, and who writes its rows. Both answers come from
+/// the same place, so a name can't disagree with the access it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityAccess {
+    /// Keys `context.<X>`, `indexer.<X>` and the generated types, while the
+    /// entity's own name stays the database and GraphQL spelling.
+    pub code_name: String,
+    pub written: Written,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Written {
+    /// By handler code, through `context.<X>`.
+    Handlers,
+    /// By the runtime, from the table's `select`. Handlers can read it only
+    /// when the table opted in with `as_entity`, and can never write it.
+    Materialized { hidden: bool },
+}
+
+impl EntityAccess {
+    /// An entity from schema.graphql, which handlers own outright.
+    pub fn handlers(entity_name: &str) -> Self {
+        Self {
+            code_name: text::to_code_name(entity_name),
+            written: Written::Handlers,
+        }
+    }
+
+    fn materialized(table_name: &str, table: &TableConfig) -> Self {
+        Self {
+            // Hidden or not, the generated types and the test indexer still
+            // have to call the table something.
+            code_name: table
+                .as_entity
+                .clone()
+                .unwrap_or_else(|| text::to_code_name(table_name)),
+            written: Written::Materialized {
+                hidden: table.as_entity.is_none(),
+            },
+        }
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        matches!(self.written, Written::Materialized { hidden: true })
+    }
+}
+
 pub struct Compiled {
     /// GraphQL SDL for every table declared in `tables`.
     pub sdl: String,
     pub materializations: Vec<Materialization>,
-    /// The name handlers reach each table by, or `None` when the table stays out
-    /// of the handler context. Keyed by table name.
-    pub handler_names: BTreeMap<String, Option<String>>,
+    /// How each declared table is written and named, keyed by table name.
+    pub entity_access: BTreeMap<String, EntityAccess>,
     /// Per-event block/transaction fields the materializations read, so each
     /// event fetches exactly what its tables select.
     pub field_demand: DemandByEvent,
@@ -2339,10 +2385,10 @@ pub fn compile(
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
     let mut demand = DemandByEvent::default();
-    let mut handler_names = BTreeMap::new();
+    let mut entity_access = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
-        handler_names.insert(table_name.clone(), table.as_entity.clone());
+        entity_access.insert(table_name.clone(), EntityAccess::materialized(table_name, table));
 
         let compiled = compile_table(table_name, table, &ctx, &mut demand)
             .with_context(|| format!("in `tables.{table_name}`"))?;
@@ -2359,7 +2405,7 @@ pub fn compile(
     Ok(Compiled {
         sdl,
         materializations,
-        handler_names,
+        entity_access,
         field_demand: demand,
     })
 }
