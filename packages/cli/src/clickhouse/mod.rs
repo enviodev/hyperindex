@@ -111,6 +111,11 @@ impl ClickHouseSink {
             // handshake per batch against a remote cluster.
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(8)
+            // reqwest picks up HTTP_PROXY/HTTPS_PROXY by default; Node's http
+            // client never did, so honouring them here would silently start
+            // routing a deployment's inserts through a proxy that nothing asked
+            // to be in the path.
+            .no_proxy()
             .build()
             .map_err(|e| napi::Error::from_reason(format!("Failed building HTTP client: {e}")))?;
         Ok(Self {
