@@ -822,13 +822,17 @@ type EvmSelectedFields<All, Selected extends string, Knob extends string> = {
         string}' is not selected for this handler. Add it to fields.${Knob} in the registration options.`>;
 };
 
-/** Field names listed under `Knob`, or `never` when the key is absent. */
-type EvmListedFields<Fields, Knob extends keyof EvmFieldsSelection> = Fields extends Record<
-  Knob,
-  readonly (infer Name extends string)[]
->
-  ? Name
-  : never;
+/** Field names listed under `Knob`, or `never` when the key is absent or lists
+ * nothing. Reads the value through `EvmListedArray` for the same reason that
+ * type exists: an optional property doesn't satisfy a `Record<Knob, _>`
+ * conditional, which would type every listed field as unselected for a
+ * selection whose keys are optional. Element access rather than `infer`, which
+ * falls back to its `string` constraint on an absent key — naming every field
+ * as selected. */
+type EvmListedFields<Fields, Knob extends keyof EvmFieldsSelection> = NonNullable<
+  EvmListedArray<Fields, Knob>
+>[number] &
+  string;
 
 /** The value listed under `Knob`, keeping optional keys (which a `Record<Knob, _>`
  * conditional would miss, since an optional property doesn't satisfy a required
@@ -890,7 +894,7 @@ export type EvmEventWithFields<Event, Fields> = Fields extends EvmFieldsSelectio
 export type EvmOnEventOptions<
   Event extends EventLike = _ProjectEvmEvent,
   Params = {},
-  Fields extends EvmFieldsSelection | undefined = EvmFieldsSelection,
+  Fields extends EvmFieldsSelection | undefined = undefined,
 > = Event extends EventLike
   ? {
       readonly contract: Event["contractName"];
@@ -898,8 +902,11 @@ export type EvmOnEventOptions<
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
       /** Pass the selection's literal type as the `Fields` generic to get the
-       * same narrowing `indexer.onEvent` infers from the call site. */
-      readonly fields?: Fields;
+       * same narrowing `indexer.onEvent` infers from the call site. Defaults to
+       * no selection, mirroring the call-site default: `EvmFieldsSelection`
+       * names no fields in particular, so an options value declared with it
+       * would carry a selection `onEvent` can only reject. */
+      readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
     }
   : never;
 
@@ -913,7 +920,7 @@ export type EvmOnEventHandler<
 export type EvmContractRegisterOptions<
   Event extends EventLike = _ProjectEvmEvent,
   Params = {},
-  Fields extends EvmFieldsSelection | undefined = EvmFieldsSelection,
+  Fields extends EvmFieldsSelection | undefined = undefined,
 > = EvmOnEventOptions<Event, Params, Fields>;
 
 /** Handler function for an EVM contractRegister registration. */
