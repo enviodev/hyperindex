@@ -30,8 +30,8 @@ describe("E2E blockLag tests", () => {
     "Chain with blockLag=1 should be marked as synced to head when at knownHeight - blockLag",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     // The processing loop reaches the post-catch-up height poll on its own
-    // cadence, so the test answers polls as they come (see driveToFetch
-    // below) rather than at a fixed tick. Keep the re-poll fast.
+    // cadence, so the test answers polls as they come rather than at a fixed
+    // tick. Keep the re-poll fast.
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)

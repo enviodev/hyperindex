@@ -234,6 +234,7 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
+  ~timeout=?,
   body: (
     ~t: Vitest.testContext,
     ~indexer: IndexerRunner.t,
@@ -247,7 +248,9 @@ let it = (
       async _ => (),
     )
   | None =>
-    Vitest.Async.it(name, async t =>
+    Vitest.Async.it(
+      name,
+      async t =>
       await scenario->run(
         ~sources,
         ~reducedPollingInterval?,
@@ -259,7 +262,8 @@ let it = (
         ~onExit?,
         ~mapStorage?,
         (~indexer, ~source) => body(~t, ~indexer, ~source),
-      )
+      ),
+      ~timeout?,
     )
   }
 }

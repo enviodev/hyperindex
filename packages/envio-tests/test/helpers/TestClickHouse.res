@@ -57,19 +57,24 @@ let query = statement => exec(~host=host(), ~username=username(), ~password=pass
 // sweeper logic recognises a leftover database.
 let make = () => {
   counter := counter.contents + 1
-  let database = `${prefix}${Date.now()->Float.toString}_${pid->Int.toString}_${counter.contents->Int.toString}`
+  `${prefix}${Date.now()->Float.toString}_${pid->Int.toString}_${counter.contents->Int.toString}`
+}
+
+// Points the runtime at `database`. The env is process-global, so this must run
+// with no await between it and the storage that reads it — otherwise a second
+// run starting in between would redirect this one's writes.
+let use = (~database) => {
   setEnv("ENVIO_CLICKHOUSE_HOST", host())
   setEnv("ENVIO_CLICKHOUSE_USERNAME", username())
   setEnv("ENVIO_CLICKHOUSE_PASSWORD", password())
   setEnv("ENVIO_CLICKHOUSE_DATABASE", database)
-  database
 }
 
 let drop = async (~database) => {
   let _ = await query(`DROP DATABASE IF EXISTS \`${database}\``)
 }
 
-// The database the current run is pointed at, set by `make`.
+// The database the current run is pointed at, set by `use`.
 let currentDatabase = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_DATABASE`)->Nullable.toOption {
   | Some("") | None =>

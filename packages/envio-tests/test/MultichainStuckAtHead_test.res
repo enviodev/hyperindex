@@ -65,6 +65,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       },
     ],
     ~reducedPollingInterval=1,
+    // A 5s wait for the subscription plus a 25s polling fallback doesn't fit
+    // the suite's default budget.
+    ~timeout=60_000,
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)

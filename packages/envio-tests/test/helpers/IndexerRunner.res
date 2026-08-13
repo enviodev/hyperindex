@@ -120,6 +120,10 @@ let run = async (
         None,
       )
     | #postgres | #clickhouse =>
+      switch clickHouseDatabase {
+      | Some(database) => TestClickHouse.use(~database)
+      | None => ()
+      }
       let sql = PgStorage.makeClient()
       clients->Array.push(sql)->ignore
       let storage = mapStorage(

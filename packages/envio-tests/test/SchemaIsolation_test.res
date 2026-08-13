@@ -68,7 +68,11 @@ describe("Schema isolation between indexers in one process", () => {
     let onError = (errHandler: ErrorHandling.t) => {
       errors
       ->Array.push(
-        errHandler.exn->Utils.prettifyExn->Utils.magic->JsExn.message->Option.getOr("unknown"),
+        errHandler.exn
+        ->Utils.prettifyExn
+        ->(Utils.magic: exn => JsExn.t)
+        ->JsExn.message
+        ->Option.getOr("unknown"),
       )
       ->ignore
     }

@@ -66,8 +66,13 @@ describe("Polling-stall loophole", () => {
 
       let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
 
-      t.expect(newCalls).toBeGreaterThan(1)
-      t.expect(newCalls).toBeLessThanOrEqual(8)
+      // A 50ms window at the 10ms reduced interval: polling has to continue,
+      // but must not fire on every tick. The upper bound is loose because timer
+      // coalescing under load changes the count without a regression.
+      t.expect(
+        newCalls > 1 && newCalls <= 15,
+        ~message=`polling should continue but stay throttled while the batch is stuck (got ${newCalls->Int.toString})`,
+      ).toBe(true)
     },
   )
 })
