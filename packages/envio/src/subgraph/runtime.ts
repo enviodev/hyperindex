@@ -292,6 +292,15 @@ function shaped(fields: ShapeField[], raw: Record<string, unknown> | undefined) 
 }
 
 /**
+ * envio capitalizes a contract name for the config it stores, so a data source
+ * whose manifest name starts lowercase — `crvUSD` — is `CrvUSD` by the time the
+ * runtime looks it up. Register under the name the config actually holds.
+ */
+function contractName(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/**
  * The graph-ts `ethereum.Event` a mapping sees, built per event kind so the
  * refusals and conversions live on a prototype rather than being installed on
  * every event.
@@ -758,7 +767,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       });
 
       indexer.onEvent(
-        { contract: source.name, event: handler.name },
+        { contract: contractName(source.name), event: handler.name },
         async ({ event, context }: any) => {
           const graphEvent = new SubgraphEvent(event);
           await (context as any).runSync(() =>
@@ -772,7 +781,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // register mode, where writes and logs are no-ops and reads are null.
       if (templateNames.size > 0) {
         indexer.contractRegister(
-          { contract: source.name, event: handler.name },
+          { contract: contractName(source.name), event: handler.name },
           async ({ event, context }: any) => {
             const graphEvent = new SubgraphEvent(event);
             await runRegisterRounds(makeScope(event, context, "register"), () => fn(graphEvent));
