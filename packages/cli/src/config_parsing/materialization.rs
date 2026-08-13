@@ -845,9 +845,12 @@ enum CExpr {
     LitString { value: String },
     #[serde(rename = "bool")]
     LitBool { value: bool },
-    #[serde(rename = "int")]
+    // Both are JSON numbers and stay JS numbers, so they share a tag; the
+    // split is only so an integer literal can be negated and range-checked
+    // exactly on this side.
+    #[serde(rename = "number")]
     LitInt { value: i64 },
-    #[serde(rename = "float")]
+    #[serde(rename = "number")]
     LitFloat { value: f64 },
     /// Decimal text: JSON has no bigint, and the runtime needs an exact value.
     #[serde(rename = "bigint")]
@@ -972,7 +975,7 @@ enum CFilter {
     #[serde(rename = "cmp")]
     Cmp {
         path: Vec<String>,
-        op: &'static str,
+        op: Comparison,
         value: CExpr,
     },
     #[serde(rename = "in")]
@@ -1030,17 +1033,23 @@ fn residual_or(parts: Vec<Residual>) -> Residual {
 // ── Compiled output ────────────────────────────────────────────────────────
 //
 
+/// How one column of one row is written. The name is spelled as the entity API
+/// does (`owner_id` for a reference).
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct FieldWrite {
-    /// Column name as the entity API spells it (`owner_id` for a reference).
-    name: String,
-    /// `set` overwrites; `sum` adds to what the row already holds.
-    op: &'static str,
-    /// How to add. Only emitted for `sum`.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    numeric_type: Option<&'static str>,
-    expr: CExpr,
+#[serde(tag = "op")]
+enum FieldWrite {
+    /// Overwrites whatever the row holds.
+    #[serde(rename = "set")]
+    Set { name: String, expr: CExpr },
+    /// Adds to whatever the row holds, which is why only this one needs to know
+    /// the numeric type its zero comes from.
+    #[serde(rename = "sum")]
+    Sum {
+        name: String,
+        #[serde(rename = "type")]
+        numeric_type: &'static str,
+        expr: CExpr,
+    },
 }
 
 /// One write, bound to one event on one table.
@@ -1685,14 +1694,49 @@ fn compile_operator(
 // ── Filter parsing ─────────────────────────────────────────────────────────
 //
 
-const COMPARISON_OPS: &[(&str, &str)] = &[
-    ("_eq", "eq"),
-    ("_neq", "ne"),
-    ("_gt", "gt"),
-    ("_gte", "gte"),
-    ("_lt", "lt"),
-    ("_lte", "lte"),
-];
+/// A comparison, in the spelling config.yaml uses and the one the plan JSON
+/// does — rather than a `&str` that could hold neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+enum Comparison {
+    #[serde(rename = "eq")]
+    Eq,
+    #[serde(rename = "ne")]
+    Ne,
+    #[serde(rename = "gt")]
+    Gt,
+    #[serde(rename = "gte")]
+    Gte,
+    #[serde(rename = "lt")]
+    Lt,
+    #[serde(rename = "lte")]
+    Lte,
+}
+
+impl Comparison {
+    const ALL: [(&'static str, Comparison); 6] = [
+        ("_eq", Comparison::Eq),
+        ("_neq", Comparison::Ne),
+        ("_gt", Comparison::Gt),
+        ("_gte", Comparison::Gte),
+        ("_lt", Comparison::Lt),
+        ("_lte", Comparison::Lte),
+    ];
+
+    fn from_key(key: &str) -> Option<Comparison> {
+        Self::ALL
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, op)| *op)
+    }
+
+    fn keys() -> String {
+        Self::ALL
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
 
 /// A single condition, before it is evaluated against a candidate event.
 enum Condition {
@@ -1700,7 +1744,7 @@ enum Condition {
     Or(Vec<Condition>),
     Cmp {
         path: Vec<String>,
-        op: &'static str,
+        op: Comparison,
         value: Yaml,
     },
     In {
@@ -1758,7 +1802,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
         scalar => {
             return Ok(Condition::Cmp {
                 path: path.to_vec(),
-                op: "eq",
+                op: Comparison::Eq,
                 value: scalar.clone(),
             })
         }
@@ -1766,7 +1810,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
     let mut parts = Vec::with_capacity(map.len());
     for (key, item) in map {
         let key = yaml_string(key, "a `where` key")?;
-        if let Some((_, op)) = COMPARISON_OPS.iter().find(|(name, _)| *name == key) {
+        if let Some(op) = Comparison::from_key(&key) {
             parts.push(Condition::Cmp {
                 path: path.to_vec(),
                 op,
@@ -1784,11 +1828,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
         } else if key.starts_with('_') {
             return Err(anyhow!(
                 "`{key}` is not a known filter operator. Available: {}, _in, _nin",
-                COMPARISON_OPS
-                    .iter()
-                    .map(|(name, _)| *name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                Comparison::keys()
             ));
         } else {
             let mut nested = path.to_vec();
@@ -1825,7 +1865,7 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
                 discriminators(part, out);
             }
         }
-        Condition::Cmp { path, op, value } if *op == "eq" && path.len() == 1 => {
+        Condition::Cmp { path, op, value } if *op == Comparison::Eq && path.len() == 1 => {
             if let Some(text) = value.as_str() {
                 if path[0] == "contractName" {
                     out.0.insert(discriminator_value(&path[0], text));
@@ -1922,8 +1962,8 @@ fn evaluate(
                 if let Some(text) = value.as_str() {
                     let matches = known == discriminator_value(&path[0], text);
                     return Ok(match (*op, matches) {
-                        ("eq", true) | ("ne", false) => Residual::True,
-                        ("eq", false) | ("ne", true) => Residual::False,
+                        (Comparison::Eq, true) | (Comparison::Ne, false) => Residual::True,
+                        (Comparison::Eq, false) | (Comparison::Ne, true) => Residual::False,
                         _ => {
                             return Err(anyhow!(
                                 "`{}` only supports `_eq`/`_neq`/`_in`",
@@ -1949,7 +1989,7 @@ fn evaluate(
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             Ok(Residual::Unknown(CFilter::Cmp {
                 path: path.clone(),
-                op,
+                op: *op,
                 value,
             }))
         }
@@ -2503,23 +2543,32 @@ fn compile_table(
         let mut fields = Vec::new();
         for ((field_name, (selected, _)), shape) in resolved.into_iter().zip(&declared) {
             let ty = &shape.ty;
-            // A `_sum` adds in the column's type, not this branch's own: a `0`
-            // in one branch and a BigInt in another must agree on the zero.
-            let (op, numeric_type, expr) = match selected {
-                Selected::Value(typed) => (
-                    "set",
-                    None,
-                    typed
+            // A reference is written to the `_id` column, as the entity API
+            // spells it.
+            let name = if shape.is_ref {
+                format!("{field_name}_id")
+            } else {
+                field_name.clone()
+            };
+            let write = match selected {
+                Selected::Value(typed) => FieldWrite::Set {
+                    name,
+                    expr: typed
                         .coerce(ty, addresses)
                         .with_context(|| format!("in `select.{field_name}`"))?,
-                ),
-                Selected::Sum(typed) => (
-                    "sum",
-                    ty.numeric_tag(),
-                    typed
+                },
+                // A `_sum` adds in the column's type, not this branch's own: a
+                // `0` in one branch and a BigInt in another must agree on the
+                // zero.
+                Selected::Sum(typed) => FieldWrite::Sum {
+                    name,
+                    numeric_type: ty
+                        .numeric_tag()
+                        .expect("a `_sum` column is numeric, checked when it was selected"),
+                    expr: typed
                         .coerce(ty, addresses)
                         .with_context(|| format!("in `select.{field_name}`"))?,
-                ),
+                },
                 Selected::Ref { table, id } => {
                     let expr = match id_types.and_then(|types| types.get(&table)) {
                         Some(target) => {
@@ -2536,31 +2585,22 @@ fn compile_table(
                         }
                         None => id.expr,
                     };
-                    ("set", None, expr)
+                    FieldWrite::Set { name, expr }
                 }
                 Selected::DerivedFrom { .. } => continue,
             };
             if field_name == "id" {
-                if op == "sum" {
-                    return Err(anyhow!(
-                        "`select.id` can't be a `_sum`: the id names the row, it isn't added up"
-                    ));
-                }
-                id = Some(expr);
+                id = Some(match write {
+                    FieldWrite::Set { expr, .. } => expr,
+                    FieldWrite::Sum { .. } => {
+                        return Err(anyhow!(
+                            "`select.id` can't be a `_sum`: the id names the row, it isn't added up"
+                        ))
+                    }
+                });
                 continue;
             }
-            fields.push(FieldWrite {
-                // A reference is written to the `_id` column, as the entity API
-                // spells it.
-                name: if shape.is_ref {
-                    format!("{field_name}_id")
-                } else {
-                    field_name.clone()
-                },
-                op,
-                numeric_type,
-                expr,
-            });
+            fields.push(write);
         }
         materializations.push(Materialization {
             table: table_name.to_string(),
