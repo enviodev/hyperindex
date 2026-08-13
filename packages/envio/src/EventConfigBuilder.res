@@ -335,9 +335,12 @@ let validateFieldsShapeOrThrow = (fields: Internal.evmFieldsSelection, ~registra
   )
 }
 
+let validBlockFields = Utils.Set.fromArray(Evm.blockFields)
+let validTransactionFields = Utils.Set.fromArray(Evm.transactionFields)
+
 let parseFieldsOrThrow = (
   fields: option<array<string>>,
-  ~valid: array<string>,
+  ~valid: Utils.Set.t<string>,
   ~kind: string,
   ~registration: string,
 ) => {
@@ -351,11 +354,11 @@ let parseFieldsOrThrow = (
   | Some(fields) => fields
   }
   fields->Array.forEach(name => {
-    if !(valid->Array.includes(name)) {
+    if !(valid->Utils.Set.has(name)) {
       JsError.throwWithMessage(
-        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${valid->Array.joinUnsafe(
-            ", ",
-          )}.`,
+        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${valid
+          ->Utils.Set.toArray
+          ->Array.joinUnsafe(", ")}.`,
       )
     }
     if seen->Utils.Set.has(name) {
@@ -394,13 +397,13 @@ let resolveInlineFieldSelection = (
   validateFieldsShapeOrThrow(fields, ~registration)
   let blockFields = parseFieldsOrThrow(
     fields.block,
-    ~valid=Evm.blockFields,
+    ~valid=validBlockFields,
     ~kind="block",
     ~registration,
   )
   let transactionFields = parseFieldsOrThrow(
     fields.transaction,
-    ~valid=Evm.transactionFields,
+    ~valid=validTransactionFields,
     ~kind="transaction",
     ~registration,
   )
