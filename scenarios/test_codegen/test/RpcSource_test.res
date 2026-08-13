@@ -351,6 +351,61 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     ).toEqual({"effectiveGasPrice": 17699339493n})
   })
 
+  // Pre-Bedrock Optimism (blocks below 105235063) predates EIP-1559, so its
+  // receipts carry no `effectiveGasPrice`. Values are from block 1000000.
+  Async.it("Falls back to the transaction's gasPrice when the receipt omits it", async t => {
+    let transactionCalls = ref(0)
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => {
+        transactionCalls := transactionCalls.contents + 1
+        Promise.resolve(%raw(`{"gasPrice": "0xf4240"}`))
+      },
+      ~getReceiptJson=_ =>
+        Promise.resolve(
+          %raw(`{"cumulativeGasUsed": "0x26aed", "gasUsed": "0x26aed", "status": "0x1"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+
+    let transaction =
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (EffectiveGasPrice: Internal.evmTransactionField),
+          GasUsed,
+          Status,
+        ]),
+      )
+    t.expect((transaction, transactionCalls.contents)).toEqual((
+      {
+        "effectiveGasPrice": 1000000n,
+        "gasUsed": 158445n,
+        "status": 1,
+      },
+      1,
+    ))
+  })
+
+  Async.it("Throws when neither effectiveGasPrice nor gasPrice is available", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => Promise.resolve(%raw(`{}`)),
+      ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
+      ~lowercaseAddresses=false,
+    )
+
+    let message = try {
+      let _ =
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]),
+        )
+      "the call to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(message).toBe(
+      `Neither "effectiveGasPrice" nor "gasPrice" is present in the RPC response for the transaction. Remove "effectiveGasPrice" from the field selection, or index this chain via HyperSync.`,
+    )
+  })
+
   Async.it(
     "Fetches from both transaction and receipt when fields from both are needed",
     async t => {
@@ -719,22 +774,42 @@ describe("RpcSource - getEventBlockOrThrow", () => {
   )
 
   // `eth_getBlockByNumber` carries every block field the config can select, so
-  // none of them are RPC-unavailable. Pinned against a real response because
-  // the config validation is only as good as what the endpoint actually returns.
-  Async.itWithOptions(
-    "Queries the block fields with no HyperSync equivalent (with real RPC)",
-    {retry: 3},
+  // none of them are RPC-unavailable. Pinned against the real mainnet response
+  // for block 21758655, trimmed of its `transactions`, `withdrawals` and
+  // `logsBloom` payloads, because the config validation is only as good as what
+  // an endpoint actually returns.
+  Async.it(
+    "Queries the block fields with no HyperSync equivalent",
     async t => {
-      let rpcUrl = `https://eth.rpc.hypersync.xyz/${testApiToken}`
-      let client = Rpc.makeClient(rpcUrl)
-
       let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
-        ~getBlockJson=async blockNumber =>
-          switch await Rpc.getRawBlock(~client, ~blockNumber) {
-          | Some(json) => json
-          | None =>
-            JsError.throwWithMessage(`Block not found for number: ${blockNumber->Int.toString}`)
-          },
+        ~getBlockJson=_ =>
+          Promise.resolve(
+            %raw(`{
+              "baseFeePerGas": "0xc0f55feb",
+              "blobGasUsed": "0xc0000",
+              "excessBlobGas": "0x3e00000",
+              "parentBeaconBlockRoot": "0xaf040950a84627a7cc2dd0884a830df31986bf0a8672da50e5f8560f9cfa1233",
+              "withdrawalsRoot": "0x8cdf00ffc923f4bedfe91ec276c860451f98c8cdcfe8e2cee54fdd6c7a521009",
+              "mixHash": "0xfea0481418a65cc4b9e4c5d5960f639aa5d9b649474bf7231ce8105d63570f74",
+              "difficulty": "0x0",
+              "extraData": "0x546974616e2028746974616e6275696c6465722e78797a29",
+              "gasLimit": "0x1cf2651",
+              "gasUsed": "0x1686262",
+              "hash": "0x806a18dd9f7bb88e35e08658783c556974ea46a222f1f85a0bccb1da31bbde5f",
+              "miner": "0x4838b106fce9647bdf1e7877bf73ce8b0bad5f97",
+              "nonce": "0x0000000000000000",
+              "number": "0x14c02bf",
+              "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949",
+              "receiptsRoot": "0x9d845c74774f03ed99d16af07747dbfe7d1825392360b901ed1d72087819cbcf",
+              "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+              "size": "0x1be72",
+              "stateRoot": "0x26174afbfa3756ef8ef51ec7b10b74b857531bdeb4b96dd217b819c6a84b4449",
+              "timestamp": "0x679f5ccb",
+              "totalDifficulty": "0xc70d815d562d3cfa955",
+              "transactionsRoot": "0x4adb6fa9a977f828f28575406e90b48a636920f8fa05877aa5aae7cbc3afb7c6",
+              "uncles": []
+            }`),
+          ),
         ~lowercaseAddresses=false,
       )
 

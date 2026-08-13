@@ -603,11 +603,9 @@ type onEventRegistration = {
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
-  // Field selection for this registration: the `eventConfig` selection unless
-  // the registration passed an inline `fields` option, which replaces it. Two
-  // registrations of one event can select different fields, so every consumer
-  // (query building, store materialisation) reads it from here rather than from
-  // the shared `eventConfig`.
+  // The `eventConfig` selection unless the registration passed an inline
+  // `fields` option, which replaces it. Two registrations of one event can
+  // select different fields, so this is per-registration rather than shared.
   fieldSelection: fieldSelection,
 }
 

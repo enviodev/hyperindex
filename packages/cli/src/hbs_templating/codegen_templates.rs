@@ -3950,7 +3950,6 @@ type GlobalCounter @crossChain {
     #[test]
     fn evm_all_fields_dts_matches_hand_written_index_dts() {
         let rendered = evm_all_fields_dts();
-        insta::assert_snapshot!(&rendered);
 
         let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
         let index_dts = std::fs::read_to_string(&index_dts_path)

@@ -176,9 +176,7 @@ let unionFields = (a: Utils.Set.t<string>, b: Utils.Set.t<string>) =>
   if a === b {
     a
   } else {
-    let union = Utils.Set.fromArray(a->Utils.Set.toArray)
-    union->Utils.Set.addMany(b->Utils.Set.toArray)
-    union
+    a->Utils.Set.union(b)
   }
 
 let unionSelection = (
@@ -493,7 +491,7 @@ let validateRpcFieldSelection = (
       reg.fieldSelection.transactionFields->Utils.Set.forEach(name =>
         if !RpcSource.isRpcTransactionField(name) {
           JsError.throwWithMessage(
-            `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or index chain ${chainConfig.id->ChainId.toString} via HyperSync.`,
+            `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or remove chain ${chainConfig.id->ChainId.toString}'s RPC source — even an RPC the chain only falls back to has to deliver the selection.`,
           )
         }
       )

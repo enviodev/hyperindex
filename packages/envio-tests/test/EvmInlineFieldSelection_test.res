@@ -1,9 +1,7 @@
 open Vitest
 
-// The inline `fields` option of `onEvent`/`contractRegister`: it replaces the
-// config `field_selection` for that registration, so two registrations of one
-// event can read different fields. Registered through a real handler module,
-// which is the only path the option takes in a project.
+// Registered through a real handler module, which is the only path the inline
+// `fields` option takes in a project.
 
 let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
   ~configYaml=`
@@ -282,7 +280,7 @@ describe("EVM inline field selection", () => {
     }
     t.expect(
       message,
-    ).toBe(`The "accessList" transaction field selected for the "Transfer" event on contract "Token" is unavailable for indexing via RPC. Remove it from the field selection, or index chain 1 via HyperSync.`)
+    ).toBe(`The "accessList" transaction field selected for the "Transfer" event on contract "Token" is unavailable for indexing via RPC. Remove it from the field selection, or remove chain 1's RPC source — even an RPC the chain only falls back to has to deliver the selection.`)
   })
 
   // A registration resolves for every chain that configures the event, so one
