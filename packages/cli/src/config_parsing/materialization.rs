@@ -1961,6 +1961,19 @@ struct FieldShape {
     is_ref: bool,
 }
 
+/// What every table compiles against: the other tables it may reference, the
+/// configured contracts, and the types of the block and transaction fields.
+struct TableCtx<'a> {
+    table_names: &'a [String],
+    contracts: &'a BTreeMap<String, &'a Contract>,
+    block_field_types: &'a BTreeMap<String, Ty>,
+    transaction_field_types: &'a BTreeMap<String, Ty>,
+    // Every table's id type, for checking `_ref.id` against the table it points
+    // at. `None` on the pass that is still collecting them, which leaves each
+    // `_ref.id` as written.
+    id_types: Option<&'a BTreeMap<String, Ty>>,
+}
+
 /// One table's writes for one event.
 struct Branch {
     contract_name: String,
@@ -2021,24 +2034,24 @@ pub fn compile(
     let block_field_types = field_type_table(&all_evm.block_fields, true);
     let transaction_field_types = field_type_table(&all_evm.transaction_fields, false);
 
+    let mut ctx = TableCtx {
+        table_names: &table_names,
+        contracts,
+        block_field_types: &block_field_types,
+        transaction_field_types: &transaction_field_types,
+        id_types: None,
+    };
+
     // A table's id comes from its own `select.id`, which can't itself be a
     // `_ref` — so one pass settles every id type, and the pass that writes the
     // plans can type-check each `_ref.id` against the table it points at.
     let mut id_types: BTreeMap<String, Ty> = BTreeMap::new();
     for (table_name, table) in &tables.0 {
-        let compiled = compile_table(
-            table_name,
-            table,
-            &table_names,
-            contracts,
-            &block_field_types,
-            &transaction_field_types,
-            &mut DemandByEvent::default(),
-            None,
-        )
-        .with_context(|| format!("in `tables.{table_name}`"))?;
+        let compiled = compile_table(table_name, table, &ctx, &mut DemandByEvent::default())
+            .with_context(|| format!("in `tables.{table_name}`"))?;
         id_types.insert(table_name.clone(), compiled.2);
     }
+    ctx.id_types = Some(&id_types);
 
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
@@ -2048,17 +2061,8 @@ pub fn compile(
     for (table_name, table) in &tables.0 {
         handler_names.insert(table_name.clone(), table.as_entity.clone());
 
-        let compiled = compile_table(
-            table_name,
-            table,
-            &table_names,
-            contracts,
-            &block_field_types,
-            &transaction_field_types,
-            &mut demand,
-            Some(&id_types),
-        )
-        .with_context(|| format!("in `tables.{table_name}`"))?;
+        let compiled = compile_table(table_name, table, &ctx, &mut demand)
+            .with_context(|| format!("in `tables.{table_name}`"))?;
         schemas.push(compiled.0);
         materializations.extend(compiled.1);
     }
@@ -2094,16 +2098,16 @@ fn field_type_table(fields: &[SelectedField], is_block: bool) -> BTreeMap<String
 fn compile_table(
     table_name: &str,
     table: &TableConfig,
-    table_names: &[String],
-    contracts: &BTreeMap<String, &Contract>,
-    block_field_types: &BTreeMap<String, Ty>,
-    transaction_field_types: &BTreeMap<String, Ty>,
+    table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-    // Every table's id type, for checking `_ref.id` against the table it points
-    // at. `None` on the pass that is still collecting them, which leaves each
-    // `_ref.id` as written.
-    id_types: Option<&BTreeMap<String, Ty>>,
 ) -> Result<(TableSchema, Vec<Materialization>, Ty)> {
+    let &TableCtx {
+        table_names,
+        contracts,
+        block_field_types,
+        transaction_field_types,
+        id_types,
+    } = table_ctx;
     let select = &table.select;
     let from = table.from.as_str();
     if !select.contains_key("id") {
@@ -2123,15 +2127,7 @@ fn compile_table(
                      conditions into the `with` queries."
                 ));
             }
-            compile_relation(
-                from,
-                queries,
-                table_names,
-                contracts,
-                block_field_types,
-                transaction_field_types,
-                demand,
-            )?
+            compile_relation(from, queries, table_ctx, demand)?
         }
         None => {
             // A `with` query is only reachable through `from`, so declaring
@@ -2157,23 +2153,16 @@ fn compile_table(
                 .map(|filter| parse_filter(&filter.0))
                 .transpose()
                 .context("in `where`")?;
-            let branches = resolve_event_branches(
-                condition.as_ref(),
-                contracts,
-                block_field_types,
-                transaction_field_types,
-                demand,
-                table_names,
-            )
-            .context("in `where`")?
-            .into_iter()
-            .map(|(contract_name, event_name, filter)| Branch {
-                contract_name,
-                event_name,
-                filter,
-                columns: IndexMap::new(),
-            })
-            .collect();
+            let branches = resolve_event_branches(condition.as_ref(), table_ctx, demand)
+                .context("in `where`")?
+                .into_iter()
+                .map(|(contract_name, event_name, filter)| Branch {
+                    contract_name,
+                    event_name,
+                    filter,
+                    columns: IndexMap::new(),
+                })
+                .collect();
             (branches, None)
         }
     };
@@ -2447,12 +2436,16 @@ fn compile_table(
 fn compile_relation(
     relation_name: &str,
     queries: &Queries,
-    table_names: &[String],
-    contracts: &BTreeMap<String, &Contract>,
-    block_field_types: &BTreeMap<String, Ty>,
-    transaction_field_types: &BTreeMap<String, Ty>,
+    table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
 ) -> Result<(Vec<Branch>, Option<(String, IndexMap<String, Ty>)>)> {
+    let &TableCtx {
+        table_names,
+        contracts,
+        block_field_types,
+        transaction_field_types,
+        ..
+    } = table_ctx;
     if queries.0.is_empty() {
         return Err(anyhow!("`with.{relation_name}` needs at least one query"));
     }
@@ -2476,15 +2469,8 @@ fn compile_relation(
             .map(|filter| parse_filter(&filter.0))
             .transpose()
             .with_context(|| format!("in `with.{relation_name}[{query_index}].where`"))?;
-        let events = resolve_event_branches(
-            condition.as_ref(),
-            contracts,
-            block_field_types,
-            transaction_field_types,
-            demand,
-            table_names,
-        )
-        .with_context(|| format!("in `with.{relation_name}[{query_index}]`"))?;
+        let events = resolve_event_branches(condition.as_ref(), table_ctx, demand)
+            .with_context(|| format!("in `with.{relation_name}[{query_index}]`"))?;
         if events.is_empty() {
             return Err(anyhow!(
                 "`with.{relation_name}[{query_index}].where` matches none of the configured events"
@@ -2586,12 +2572,16 @@ fn compile_relation(
 #[allow(clippy::type_complexity)]
 fn resolve_event_branches(
     condition: Option<&Condition>,
-    contracts: &BTreeMap<String, &Contract>,
-    block_field_types: &BTreeMap<String, Ty>,
-    transaction_field_types: &BTreeMap<String, Ty>,
+    table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-    table_names: &[String],
 ) -> Result<Vec<(String, String, Option<CFilter>)>> {
+    let &TableCtx {
+        table_names,
+        contracts,
+        block_field_types,
+        transaction_field_types,
+        ..
+    } = table_ctx;
     let mut named = (BTreeSet::new(), BTreeSet::new());
     if let Some(condition) = condition {
         discriminators(condition, &mut named);
