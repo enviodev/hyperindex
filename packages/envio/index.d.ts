@@ -774,7 +774,7 @@ export type EvmAllTransactionFields = {
   readonly maxPriorityFeePerGas: bigint | undefined;
   readonly maxFeePerGas: bigint | undefined;
   readonly cumulativeGasUsed: bigint;
-  readonly effectiveGasPrice: bigint;
+  readonly effectiveGasPrice: bigint | undefined;
   readonly gasUsed: bigint;
   readonly input: string;
   readonly nonce: bigint;

@@ -351,6 +351,40 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
     ).toEqual({"effectiveGasPrice": 17699339493n})
   })
 
+  // Pre-Bedrock Optimism (blocks below 105235063) predates EIP-1559, so its
+  // receipts carry no `effectiveGasPrice` at all. HyperSync backfills the field
+  // from `gasPrice`; the chain's own RPC does not.
+  Async.it("Receipt without effectiveGasPrice (pre-Bedrock Optimism) parses", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=neverGetTransactionJson,
+      ~getReceiptJson=_ =>
+        Promise.resolve(
+          %raw(`{"cumulativeGasUsed": "0x26aed", "gasUsed": "0x26aed", "l1Fee": "0x18e24985c2af0", "status": "0x1"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+
+    t.expect(
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (EffectiveGasPrice: Internal.evmTransactionField),
+          GasUsed,
+          CumulativeGasUsed,
+          L1Fee,
+          Status,
+        ]),
+      ),
+    ).toEqual(
+      %raw(`{
+        cumulativeGasUsed: 158445n,
+        effectiveGasPrice: undefined,
+        gasUsed: 158445n,
+        l1Fee: 437762802854640n,
+        status: 1,
+      }`),
+    )
+  })
+
   Async.it(
     "Fetches from both transaction and receipt when fields from both are needed",
     async t => {
