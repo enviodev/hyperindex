@@ -1,10 +1,10 @@
-open Vitest
-
 // A table is stored and queryable whether or not it opts in; `as_entity` only
 // decides whether handlers see it, and under what name. Test-indexer accessors
 // are always there — output has to be assertable — so this fixture reads both
-// tables from the test but only one from the handler.
-let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
+// tables from the test but only one from the handler. Both are served over
+// GraphQL exactly like a schema.graphql entity, `_by_pk` and streaming
+// included — being invisible to handlers says nothing about the public API.
+let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: as-entity
 disable_default_cross_chain: true
@@ -111,67 +111,3 @@ describe("as_entity", () => {
 });
 `,
 )
-
-// A table nobody named is still a GraphQL citizen — it's just queried as a set.
-// `<table>_by_pk` only makes sense for a table whose ids a caller can name, so
-// Hasura gets an explicit root-field list for the ones that stayed hidden.
-describe("as_entity and the GraphQL roots", () => {
-  let permissionOf = tableName => {
-    let entityConfig =
-      config.userEntities
-      ->Array.find((e: Internal.entityConfig) => e.table.tableName === tableName)
-      ->Option.getOrThrow
-    Hasura.makeSelectPermission(
-      ~responseLimit=None,
-      ~allowAggregations=true,
-      ~hideByPk=entityConfig.hiddenFromHandlers,
-    )->(Utils.magic: dict<JSON.t> => JSON.t)
-  }
-
-  it("Drops by_pk for a table without as_entity, and keeps every root for one with it", t => {
-    t.expect(
-      {
-        "hidden": permissionOf("hidden_totals"),
-        "renamed": permissionOf("renamed_totals"),
-      }->(Utils.magic: 'actual => JSON.t),
-    ).toEqual(
-      {
-        "hidden": {
-          "columns": "*",
-          "filter": Object.make(),
-          "limit": None,
-          "allow_aggregations": true,
-          "query_root_fields": Some(["select", "select_aggregate"]),
-          "subscription_root_fields": Some(["select", "select_aggregate", "select_stream"]),
-        },
-        "renamed": {
-          "columns": "*",
-          "filter": Object.make(),
-          "limit": None,
-          "allow_aggregations": true,
-          "query_root_fields": None,
-          "subscription_root_fields": None,
-        },
-      }->(Utils.magic: 'expected => JSON.t),
-    )
-  })
-
-  it("Only lists select when aggregations are off", t => {
-    t.expect(
-      Hasura.makeSelectPermission(
-        ~responseLimit=Some(100),
-        ~allowAggregations=false,
-        ~hideByPk=true,
-      )->(Utils.magic: dict<JSON.t> => JSON.t),
-    ).toEqual(
-      {
-        "columns": "*",
-        "filter": Object.make(),
-        "limit": 100,
-        "allow_aggregations": false,
-        "query_root_fields": ["select"],
-        "subscription_root_fields": ["select", "select_stream"],
-      }->(Utils.magic: 'off => JSON.t),
-    )
-  })
-})

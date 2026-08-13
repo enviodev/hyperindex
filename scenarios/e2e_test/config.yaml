@@ -40,17 +40,15 @@ tables:
       received:
         _sum: params.value
         _description: "Total received by this account"
-  # Leading underscores keep a derived table out of the way alphabetically;
-  # generated code reaches it as `Block_totals`. Its id is an Int, so the
-  # reference below has to carry an Int too.
+  # No `where` at all, so every configured event feeds this table — which
+  # works because `select` reads nothing event-specific. Leading underscores
+  # keep it out of the way alphabetically; generated code reaches it as
+  # `Block_totals`. Its id is an Int, so the reference below carries an Int.
   _block_totals:
     storage:
       postgres: true
       clickhouse: false
     from: evm.events
-    where:
-      contractName: ERC20
-      eventName: Transfer
     select:
       id: block.number
       transfers:

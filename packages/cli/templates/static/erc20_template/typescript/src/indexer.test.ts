@@ -74,7 +74,7 @@ describe("Transfers", () => {
 });
 
 describe("Approvals", () => {
-  it("Approval records the amount and creates the owner account", async (t) => {
+  it("Approval records the amount and creates both accounts", async (t) => {
     const indexer = createTestIndexer();
 
     const owner = Addresses.mockAddresses[0]!;
@@ -97,8 +97,8 @@ describe("Approvals", () => {
     t.expect({
       approvals: await indexer.Approval.getAll(),
       // `_ref` doesn't create the referenced row, so the config contributes a
-      // zero-valued balance change for the owner. The spender gets none, so
-      // `spender_id` names a row that isn't there yet.
+      // zero-valued balance change for each side of the approval — otherwise
+      // `owner` and `spender` would resolve to nothing.
       accounts: await indexer.Account.getAll(),
     }).toEqual({
       approvals: [
@@ -110,7 +110,10 @@ describe("Approvals", () => {
           chainId: 1,
         },
       ],
-      accounts: [{ id: owner, balance: 0n, chainId: 1 }],
+      accounts: [
+        { id: owner, balance: 0n, chainId: 1 },
+        { id: spender, balance: 0n, chainId: 1 },
+      ],
     });
   });
 });

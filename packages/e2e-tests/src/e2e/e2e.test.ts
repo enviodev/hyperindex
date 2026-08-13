@@ -709,8 +709,8 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     `);
   });
 
-  it("serves a config.yaml table as a set, with no by_pk root", async () => {
-    // As the `public` role, not admin: the root fields are restricted by the
+  it("serves a config.yaml table with the same roots as any other entity", async () => {
+    // As the `public` role, not admin: root fields are restricted by the
     // table's select permission, and admin bypasses permissions entirely.
     const asPublic = new GraphQLClient({
       endpoint: config.graphqlEndpoint,
@@ -721,15 +721,24 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
       __schema: { queryType: { fields: Array<{ name: string }> } };
     }>(`{ __schema { queryType { fields { name } } } }`);
 
-    const roots = result
-      .data!.__schema.queryType.fields.map((f) => f.name)
-      .filter((name) => name.startsWith("transfer_totals"))
-      .sort();
+    const rootsFor = (table: string) =>
+      result
+        .data!.__schema.queryType.fields.map((f) => f.name)
+        .filter((name) => name === table || name.startsWith(`${table}_`))
+        .sort();
 
-    // `_aggregate` is absent because aggregations are off for every table here
-    // (ENVIO_HASURA_PUBLIC_AGGREGATE is unset), not because the table is
-    // materialized. `_by_pk` is absent because it is.
-    expect(roots).toEqual(["transfer_totals"]);
+    // A table written by config.yaml is a GraphQL citizen like any other, so
+    // its roots match a hand-written entity's rather than being a subset.
+    // `_aggregate` is absent from both because aggregations are off here
+    // (ENVIO_HASURA_PUBLIC_AGGREGATE is unset).
+    expect(rootsFor("transfer_totals")).toEqual([
+      "transfer_totals",
+      "transfer_totals_by_pk",
+    ]);
+    expect(rootsFor("TransferPgOnly")).toEqual([
+      "TransferPgOnly",
+      "TransferPgOnly_by_pk",
+    ]);
 
     // The rows are the indexer's own work: `received` must equal what the
     // handler-written Transfer entity says the account received.
