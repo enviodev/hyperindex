@@ -561,10 +561,6 @@ enum Scalar {
     Json,
     /// Reference to another table, by that table's name.
     Ref(String),
-    /// A YAML integer. Becomes whichever numeric type it is used alongside.
-    NumLit,
-    /// A YAML `null`, with nothing yet to take a type from.
-    Null,
 }
 
 /// How many values a type holds. A list of lists has no column shape, so
@@ -626,8 +622,6 @@ impl Ty {
             Scalar::BigDecimal => "BigDecimal".to_string(),
             Scalar::Json => "Json".to_string(),
             Scalar::Ref(target) => target.clone(),
-            Scalar::NumLit => "a number literal".to_string(),
-            Scalar::Null => "null".to_string(),
         };
         let base = match self.container {
             Container::Single => base,
@@ -644,7 +638,7 @@ impl Ty {
     }
 
     /// GraphQL rendering. `id` positions render `String` as `ID`.
-    fn to_gql(&self, is_id: bool) -> Result<String> {
+    fn to_gql(&self, is_id: bool) -> String {
         let base = match &self.scalar {
             Scalar::String | Scalar::Address if is_id => "ID".to_string(),
             Scalar::String | Scalar::Address => "String".to_string(),
@@ -655,15 +649,6 @@ impl Ty {
             Scalar::BigDecimal => "BigDecimal".to_string(),
             Scalar::Json => "Json".to_string(),
             Scalar::Ref(target) => target.clone(),
-            // Nothing widened it, so it keeps the narrowest type that fits
-            // rather than silently becoming a BigInt column.
-            Scalar::NumLit => "Int".to_string(),
-            Scalar::Null => {
-                return Err(anyhow!(
-                    "this is always null, so its type is unknown. Select a value that has a type, \
-                     or drop the field."
-                ))
-            }
         };
         let base = match self.container {
             Container::Single => base,
@@ -671,11 +656,11 @@ impl Ty {
                 format!("[{base}{}]", if nullable_elements { "" } else { "!" })
             }
         };
-        Ok(if self.nullable {
+        if self.nullable {
             base
         } else {
             format!("{base}!")
-        })
+        }
     }
 
     /// The tag the runtime picks a zero and an addition by, for `_sum`/`_negate`.
@@ -686,7 +671,7 @@ impl Ty {
         match self.scalar {
             // The type `to_gql` would give it, so a `_sum` over a literal that
             // never widened still agrees with its column.
-            Scalar::Int | Scalar::NumLit => Some("int"),
+            Scalar::Int => Some("int"),
             Scalar::Float => Some("float"),
             Scalar::BigInt => Some("bigint"),
             Scalar::BigDecimal => Some("bigdecimal"),
@@ -698,29 +683,124 @@ impl Ty {
 /// Arithmetic has no answer for a value that isn't there — the runtime would
 /// add or negate `undefined`. Rejected while there is no way to say what a
 /// missing value should count as.
-fn numeric_operand(ty: &Ty, operator: &str, verb: &str) -> Result<&'static str> {
-    let tag = ty
-        .numeric_tag()
-        .ok_or_else(|| anyhow!("`{operator}` needs a number, but got {}", ty.describe()))?;
-    if ty.nullable {
+fn numeric_operand(typing: &Typing, operator: &str, verb: &str) -> Result<&'static str> {
+    let (tag, nullable) = match typing {
+        // The type `to_gql` would give it, so a `_sum` over a literal that
+        // never widened still agrees with its column.
+        Typing::Number { nullable } => ("int", *nullable),
+        Typing::Known(ty) => (
+            ty.numeric_tag().ok_or_else(|| {
+                anyhow!("`{operator}` needs a number, but got {}", typing.describe())
+            })?,
+            ty.nullable,
+        ),
+        Typing::Null => {
+            return Err(anyhow!(
+                "`{operator}` needs a number, but got {}",
+                typing.describe()
+            ))
+        }
+    };
+    if nullable {
         return Err(anyhow!(
             "`{operator}` needs a number that is always set, but got {}. {verb} a value that can \
              be missing isn't supported yet.",
-            ty.describe()
+            typing.describe()
         ));
     }
     Ok(tag)
 }
 
-/// One type that holds both. A number takes the other side's numeric type;
+/// What a compiled expression is, before it meets the column it lands in. A
+/// YAML number or `null` has no type of its own: it takes one from whatever it
+/// is used alongside, which is why neither is a `Scalar`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Typing {
+    Known(Ty),
+    /// A YAML integer, which becomes whichever numeric type it meets. Nullable
+    /// once a sibling branch selects null for the same column.
+    Number { nullable: bool },
+    /// A YAML `null`, with nothing yet to take a type from.
+    Null,
+}
+
+impl Typing {
+    fn describe(&self) -> String {
+        match self {
+            Typing::Known(ty) => ty.describe(),
+            Typing::Number { .. } => "a number literal".to_string(),
+            Typing::Null => "null".to_string(),
+        }
+    }
+
+    /// The type a column of this shape settles on once every branch has been
+    /// seen.
+    fn resolve(&self) -> Result<Ty> {
+        match self {
+            Typing::Known(ty) => Ok(ty.clone()),
+            // Nothing widened it, so it keeps the narrowest type that fits
+            // rather than silently becoming a BigInt column.
+            Typing::Number { nullable } => Ok(Ty {
+                nullable: *nullable,
+                ..Ty::new(Scalar::Int)
+            }),
+            Typing::Null => Err(anyhow!(
+                "this is always null, so its type is unknown. Select a value that has a type, or \
+                 drop the field."
+            )),
+        }
+    }
+
+    fn or_null(self) -> Self {
+        match self {
+            Typing::Known(ty) => Typing::Known(ty.nullable()),
+            Typing::Number { .. } => Typing::Number { nullable: true },
+            Typing::Null => Typing::Null,
+        }
+    }
+}
+
+/// One typing that holds both. A number takes the other side's numeric type;
 /// `null` makes the other side nullable.
-fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
-    if a.scalar == Scalar::Null {
-        return Ok(b.clone().nullable());
-    }
-    if b.scalar == Scalar::Null {
-        return Ok(a.clone().nullable());
-    }
+fn unify(a: &Typing, b: &Typing) -> Result<Typing> {
+    let cannot = || {
+        anyhow!(
+            "cannot unify {} with {}",
+            a.describe(),
+            b.describe()
+        )
+    };
+    let (a, b) = match (a, b) {
+        (Typing::Null, Typing::Null) => return Ok(Typing::Null),
+        (Typing::Null, other) | (other, Typing::Null) => return Ok(other.clone().or_null()),
+        (
+            Typing::Number { nullable: left },
+            Typing::Number {
+                nullable: right,
+            },
+        ) => {
+            return Ok(Typing::Number {
+                nullable: *left || *right,
+            })
+        }
+        // A number literal beside a typed value takes that type, as long as it
+        // is a single number to take.
+        (Typing::Number { nullable }, Typing::Known(ty))
+        | (Typing::Known(ty), Typing::Number { nullable }) => {
+            return match ty.scalar {
+                Scalar::Int | Scalar::Float | Scalar::BigInt | Scalar::BigDecimal
+                    if !ty.is_list() =>
+                {
+                    Ok(Typing::Known(Ty {
+                        nullable: ty.nullable || *nullable,
+                        ..ty.clone()
+                    }))
+                }
+                _ => Err(cannot()),
+            }
+        }
+        (Typing::Known(a), Typing::Known(b)) => (a, b),
+    };
     let nullable = a.nullable || b.nullable;
     // A list unifies with a list, and its elements can be null if either side's
     // can.
@@ -736,43 +816,20 @@ fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
         ) => Container::List {
             nullable_elements: left || right,
         },
-        _ => {
-            return Err(anyhow!(
-                "cannot unify {} with {}",
-                a.describe(),
-                b.describe()
-            ))
-        }
+        _ => return Err(cannot()),
     };
     let scalar = match (&a.scalar, &b.scalar) {
-        (Scalar::NumLit, other) | (other, Scalar::NumLit) => match other {
-            Scalar::Int | Scalar::Float | Scalar::BigInt | Scalar::BigDecimal => other.clone(),
-            Scalar::NumLit => Scalar::NumLit,
-            _ => {
-                return Err(anyhow!(
-                    "cannot unify {} with {}",
-                    a.describe(),
-                    b.describe()
-                ))
-            }
-        },
         (x, y) if x == y => x.clone(),
         // A column holding both has no single casing to normalize a literal
         // to, so it is plain text from here on.
         (Scalar::Address, Scalar::String) | (Scalar::String, Scalar::Address) => Scalar::String,
-        _ => {
-            return Err(anyhow!(
-                "cannot unify {} with {}",
-                a.describe(),
-                b.describe()
-            ))
-        }
+        _ => return Err(cannot()),
     };
-    Ok(Ty {
+    Ok(Typing::Known(Ty {
         scalar,
         container,
         nullable,
-    })
+    }))
 }
 
 //
@@ -816,7 +873,7 @@ enum CExpr {
 #[derive(Debug, Clone, PartialEq)]
 struct Typed {
     expr: CExpr,
-    ty: Ty,
+    typing: Typing,
 }
 
 /// The casing the decoder writes addresses in, from `address_format`.
@@ -841,7 +898,7 @@ impl AddressCase {
 impl Typed {
     /// Give a literal the column's type. Anything else must already match it.
     fn coerce(self, target: &Ty, addresses: AddressCase) -> Result<CExpr> {
-        let Typed { expr, ty } = self;
+        let Typed { expr, typing } = self;
         // Config.yaml is written by hand and explorers hand out both spellings,
         // so an address literal that doesn't match the decoder's casing would
         // compare unequal to every event and leave the table silently empty.
@@ -852,52 +909,52 @@ impl Typed {
                 });
             }
         }
-        if ty.scalar == Scalar::NumLit && !target.is_list() {
-            let text = match &expr {
-                CExpr::LitInt { value } => value.to_string(),
-                other => {
-                    // NumLit is only ever produced by an integer literal.
-                    return Err(anyhow!("unexpected number literal expression {other:?}"));
-                }
-            };
-            return Ok(match target.scalar {
-                Scalar::BigInt => CExpr::LitBigInt { value: text },
-                Scalar::BigDecimal => CExpr::LitBigDecimal { value: text },
-                Scalar::Float => CExpr::LitFloat {
-                    value: text.parse().context("number literal out of float range")?,
-                },
-                // A literal that never met a wider sibling becomes an Int
-                // column, so it has to fit one.
-                Scalar::Int | Scalar::NumLit => {
-                    let value: i64 = text.parse().expect("came from an i64 literal");
-                    if i32::try_from(value).is_err() {
-                        return Err(anyhow!(
-                            "{value} is too big for an Int column. Select a BigInt value (a \
-                             uint256 param, say) into the same column so the column becomes \
-                             BigInt."
-                        ));
+        match typing {
+            Typing::Null => Ok(CExpr::LitNull),
+            Typing::Number { .. } if !target.is_list() => {
+                let text = match &expr {
+                    CExpr::LitInt { value } => value.to_string(),
+                    // `Number` is only ever produced by an integer literal.
+                    other => return Err(anyhow!("unexpected number literal expression {other:?}")),
+                };
+                Ok(match target.scalar {
+                    Scalar::BigInt => CExpr::LitBigInt { value: text },
+                    Scalar::BigDecimal => CExpr::LitBigDecimal { value: text },
+                    Scalar::Float => CExpr::LitFloat {
+                        value: text.parse().context("number literal out of float range")?,
+                    },
+                    // A literal that never met a wider sibling becomes an Int
+                    // column, so it has to fit one.
+                    Scalar::Int => {
+                        let value: i64 = text.parse().expect("came from an i64 literal");
+                        if i32::try_from(value).is_err() {
+                            return Err(anyhow!(
+                                "{value} is too big for an Int column. Select a BigInt value (a \
+                                 uint256 param, say) into the same column so the column becomes \
+                                 BigInt."
+                            ));
+                        }
+                        expr
                     }
-                    expr
-                }
-                _ => {
-                    return Err(anyhow!(
-                        "a number can't be used where {} is expected",
-                        target.describe()
-                    ))
-                }
-            });
+                    _ => {
+                        return Err(anyhow!(
+                            "a number can't be used where {} is expected",
+                            target.describe()
+                        ))
+                    }
+                })
+            }
+            typing => {
+                unify(&typing, &Typing::Known(target.clone())).with_context(|| {
+                    format!(
+                        "expected {} but the expression is {}",
+                        target.describe(),
+                        typing.describe()
+                    )
+                })?;
+                Ok(expr)
+            }
         }
-        if ty.scalar == Scalar::Null {
-            return Ok(CExpr::LitNull);
-        }
-        unify(&ty, target).with_context(|| {
-            format!(
-                "expected {} but the expression is {}",
-                target.describe(),
-                ty.describe()
-            )
-        })?;
-        Ok(expr)
     }
 }
 
@@ -1368,7 +1425,7 @@ fn compile_selected(
         match operator.as_str() {
             "_sum" => {
                 let inner = compile_expr(inner, ctx, demand).context("in `_sum`")?;
-                numeric_operand(&inner.ty, "_sum", "Adding up")?;
+                numeric_operand(&inner.typing, "_sum", "Adding up")?;
                 Selected::Sum(inner)
             }
             "_ref" => {
@@ -1450,30 +1507,30 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
                     let ty = ctx.shape.resolve(&path, demand)?;
                     return Ok(Typed {
                         expr: expr.clone(),
-                        ty,
+                        typing: Typing::Known(ty),
                     });
                 }
             }
             let ty = ctx.shape.resolve(&path, demand)?;
             Ok(Typed {
                 expr: CExpr::Path { path },
-                ty,
+                typing: Typing::Known(ty),
             })
         }
         Yaml::Bool(value) => Ok(Typed {
             expr: CExpr::LitBool { value: *value },
-            ty: Ty::new(Scalar::Boolean),
+            typing: Typing::Known(Ty::new(Scalar::Boolean)),
         }),
         Yaml::Number(number) => {
             if let Some(value) = number.as_i64() {
                 Ok(Typed {
                     expr: CExpr::LitInt { value },
-                    ty: Ty::new(Scalar::NumLit),
+                    typing: Typing::Number { nullable: false },
                 })
             } else if let Some(value) = number.as_f64() {
                 Ok(Typed {
                     expr: CExpr::LitFloat { value },
-                    ty: Ty::new(Scalar::Float),
+                    typing: Typing::Known(Ty::new(Scalar::Float)),
                 })
             } else {
                 Err(anyhow!("`{number:?}` is not a supported number"))
@@ -1481,7 +1538,7 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
         }
         Yaml::Null => Ok(Typed {
             expr: CExpr::LitNull,
-            ty: Ty::new(Scalar::Null),
+            typing: Typing::Null,
         }),
         Yaml::Sequence(_) => Err(anyhow!(
             "a list is not a value. Use `_concat` to join several values into one."
@@ -1509,14 +1566,14 @@ fn compile_operator(
             )?;
             Ok(Typed {
                 expr: CExpr::LitString { value },
-                ty: Ty::new(Scalar::String),
+                typing: Typing::Known(Ty::new(Scalar::String)),
             })
         }
         // The identity, so a plain path can carry a `_description`.
         "_value" => compile_expr(inner, ctx, demand).context("in `_value`"),
         "_negate" => {
             let inner = compile_expr(inner, ctx, demand).context("in `_negate`")?;
-            let numeric_type = numeric_operand(&inner.ty, "_negate", "Negating")?;
+            let numeric_type = numeric_operand(&inner.typing, "_negate", "Negating")?;
             // Folded so a negated literal stays a literal and can still widen to
             // whatever numeric type its siblings settle on.
             let expr = match inner.expr {
@@ -1527,7 +1584,10 @@ fn compile_operator(
                     expr: Box::new(expr),
                 },
             };
-            Ok(Typed { ty: inner.ty, expr })
+            Ok(Typed {
+                typing: inner.typing,
+                expr,
+            })
         }
         "_concat" => {
             let (separator, values) = match inner {
@@ -1565,26 +1625,35 @@ fn compile_operator(
             for (index, value) in values.iter().enumerate() {
                 let part = compile_expr(value, ctx, demand)
                     .with_context(|| format!("in `_concat.values[{index}]`"))?;
-                match part.ty.scalar {
-                    Scalar::Json | Scalar::Null | Scalar::Ref(_) => {
-                        return Err(anyhow!(
-                            "`_concat.values[{index}]` is {}, which can't be turned into text",
-                            part.ty.describe()
-                        ))
-                    }
-                    _ if part.ty.is_list() => {
+                let text_like = match &part.typing {
+                    Typing::Number { nullable } => Ok(*nullable),
+                    Typing::Null => Err(false),
+                    Typing::Known(ty) => match ty.scalar {
+                        Scalar::Json | Scalar::Ref(_) => Err(false),
+                        _ if ty.is_list() => Err(true),
+                        _ => Ok(ty.nullable),
+                    },
+                };
+                match text_like {
+                    Err(is_list) if is_list => {
                         return Err(anyhow!(
                             "`_concat.values[{index}]` is a list, which can't be turned into text"
                         ))
                     }
-                    _ if part.ty.nullable => {
+                    Err(_) => {
+                        return Err(anyhow!(
+                            "`_concat.values[{index}]` is {}, which can't be turned into text",
+                            part.typing.describe()
+                        ))
+                    }
+                    Ok(true) => {
                         return Err(anyhow!(
                             "`_concat.values[{index}]` is {}, and a null would make two different \
                              rows join to the same text. Select a value that is always set.",
-                            part.ty.describe()
+                            part.typing.describe()
                         ))
                     }
-                    _ => (),
+                    Ok(false) => (),
                 }
                 compiled.push(part.expr);
             }
@@ -1593,7 +1662,7 @@ fn compile_operator(
                     separator,
                     values: compiled,
                 },
-                ty: Ty::new(Scalar::String),
+                typing: Typing::Known(Ty::new(Scalar::String)),
             })
         }
         "_sum" => Err(anyhow!(
@@ -2063,10 +2132,20 @@ impl TableSchema {
     }
 }
 
-/// A `select` field's resolved shape, merged across every matching event.
-struct FieldShape {
+/// A `select` field once every branch has agreed on its type.
+struct Column {
     name: String,
     ty: Ty,
+    /// The target field on the other table, for `_derived_from`.
+    derived_from: Option<String>,
+    is_ref: bool,
+    description: Option<String>,
+}
+
+/// A `select` field as it is being merged across the matching events.
+struct FieldShape {
+    name: String,
+    typing: Typing,
     description: Option<String>,
     /// For `_derived_from`, the field on the other table. Such a field is in
     /// the schema but never written.
@@ -2347,25 +2426,26 @@ fn compile_table(
                 match selected {
                     Selected::Value(typed) | Selected::Sum(typed) => FieldShape {
                         name,
-                        ty: typed.ty.clone(),
+                        typing: typed.typing.clone(),
                         derived_from: None,
                         is_ref: false,
                         description,
                     },
                     Selected::Ref { table, id } => FieldShape {
                         name,
-                        ty: Ty {
+                        typing: Typing::Known(Ty {
                             scalar: Scalar::Ref(table.clone()),
                             container: Container::Single,
-                            nullable: id.ty.nullable,
-                        },
+                            nullable: matches!(id.typing, Typing::Null)
+                                || matches!(&id.typing, Typing::Known(ty) if ty.nullable),
+                        }),
                         derived_from: None,
                         is_ref: true,
                         description,
                     },
                     Selected::DerivedFrom { table, field } => FieldShape {
                         name,
-                        ty: Ty::new(Scalar::Ref(table.clone())).list(),
+                        typing: Typing::Known(Ty::new(Scalar::Ref(table.clone())).list()),
                         derived_from: Some(field.clone()),
                         is_ref: false,
                         description,
@@ -2381,7 +2461,7 @@ fn compile_table(
             // because each branch resolves the paths against its own event.
             Some(declared) => {
                 for (existing, incoming) in declared.iter_mut().zip(shapes) {
-                    existing.ty = unify(&existing.ty, &incoming.ty).with_context(|| {
+                    existing.typing = unify(&existing.typing, &incoming.typing).with_context(|| {
                         format!(
                             "`{}` has a different type for different events",
                             existing.name
@@ -2394,10 +2474,29 @@ fn compile_table(
         plans.push((branch, resolved));
     }
 
-    let declared = declared.expect("branches is non-empty");
+    // Column types are final only once every branch has been seen, so this is
+    // where a literal that never widened settles on one — and where a column
+    // that is only ever null has to admit it has no type.
+    let declared = declared
+        .expect("branches is non-empty")
+        .into_iter()
+        .map(|shape| {
+            let ty = shape
+                .typing
+                .resolve()
+                .with_context(|| format!("in `select.{}`", shape.name))?;
+            Ok(Column {
+                name: shape.name,
+                ty,
+                derived_from: shape.derived_from,
+                is_ref: shape.is_ref,
+                description: shape.description,
+            })
+        })
+        .collect::<Result<Vec<Column>>>()?;
 
-    // Column types are final only once every branch has been seen, so the plans
-    // are written here — a literal serializes as the type it widened to.
+    // The plans are written against those final types — a literal serializes as
+    // the type it widened to.
     let mut materializations = Vec::with_capacity(plans.len());
     for (branch, resolved) in plans {
         let mut id = None;
@@ -2489,7 +2588,7 @@ fn compile_table(
     }
     if !matches!(
         id_ty.scalar,
-        Scalar::String | Scalar::Address | Scalar::Int | Scalar::BigInt | Scalar::NumLit
+        Scalar::String | Scalar::Address | Scalar::Int | Scalar::BigInt
     ) {
         return Err(anyhow!(
             "`select.id` is {}, which can't be an id. Use String, Int or BigInt.",
@@ -2523,18 +2622,14 @@ fn compile_table(
     let fields = declared
         .iter()
         .map(|shape| {
-            let gql_type = shape
-                .ty
-                .to_gql(shape.name == "id")
-                .with_context(|| format!("in `select.{}`", shape.name))?;
-            Ok(SchemaField {
+            SchemaField {
                 name: shape.name.clone(),
-                gql_type,
+                gql_type: shape.ty.to_gql(shape.name == "id"),
                 derived_from: shape.derived_from.clone(),
                 description: shape.description.clone(),
-            })
+            }
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
 
     Ok((
         TableSchema {
@@ -2570,7 +2665,7 @@ fn compile_relation(
 
     let mut branches: Vec<Branch> = Vec::new();
     // Merged once every query has been compiled.
-    let mut column_types: Option<IndexMap<String, Ty>> = None;
+    let mut column_types: Option<IndexMap<String, Typing>> = None;
     let mut pending: Vec<(usize, IndexMap<String, Typed>)> = Vec::new();
 
     for (query_index, query) in queries.0.iter().enumerate() {
@@ -2633,7 +2728,7 @@ fn compile_relation(
                     column_types = Some(
                         columns
                             .iter()
-                            .map(|(name, typed)| (name.clone(), typed.ty.clone()))
+                            .map(|(name, typed)| (name.clone(), typed.typing.clone()))
                             .collect(),
                     );
                 }
@@ -2646,9 +2741,9 @@ fn compile_relation(
                             columns.keys().cloned().collect::<Vec<_>>().join(", ")
                         ));
                     }
-                    for (name, ty) in existing.iter_mut() {
-                        let incoming = &columns.get(name).expect("keys were compared above").ty;
-                        *ty = unify(ty, incoming).with_context(|| {
+                    for (name, typing) in existing.iter_mut() {
+                        let incoming = &columns.get(name).expect("keys were compared above").typing;
+                        *typing = unify(typing, incoming).with_context(|| {
                             format!(
                                 "the branches of `with.{relation_name}` disagree on the type of \
                                  `{name}`"
@@ -2668,7 +2763,18 @@ fn compile_relation(
         }
     }
 
-    let column_types = column_types.expect("queries is non-empty");
+    // A table reading this query sees columns with real types, so a literal
+    // that never widened settles here rather than inside the table's `select`.
+    let column_types = column_types
+        .expect("queries is non-empty")
+        .into_iter()
+        .map(|(name, typing)| {
+            let ty = typing
+                .resolve()
+                .with_context(|| format!("in `with.{relation_name}` column `{name}`"))?;
+            Ok((name, ty))
+        })
+        .collect::<Result<IndexMap<String, Ty>>>()?;
     for (branch_index, columns) in pending {
         let branch = &mut branches[branch_index];
         for (name, typed) in columns {
