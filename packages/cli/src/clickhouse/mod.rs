@@ -204,9 +204,9 @@ impl ClickHouseSink {
 impl ClickHouseSink {
     async fn insert_staged(&self, staged: Staged) -> Result<Vec<String>> {
         let schema = self.table_schema(&staged.table).await?;
-        let encoded = tokio::task::block_in_place(|| {
-            let columns = align_to_schema(&schema, staged.columns, staged.rows)?;
-            row_binary::encode(&columns, staged.rows)
+        let (encoded, mut warnings) = tokio::task::block_in_place(|| {
+            let (columns, warnings) = align_to_schema(&schema, staged.columns, staged.rows)?;
+            row_binary::encode(&columns, staged.rows).map(|encoded| (encoded, warnings))
         })
         .with_context(|| {
             format!(
@@ -215,9 +215,10 @@ impl ClickHouseSink {
             )
         })?;
         if encoded.rows() == 0 {
-            return Ok(Vec::new());
+            return Ok(warnings);
         }
-        self.insert_with_retry(&staged.table, &encoded).await
+        warnings.extend(self.insert_with_retry(&staged.table, &encoded).await?);
+        Ok(warnings)
     }
 
     /// Reads a table's column types from the server. Doing this instead of
@@ -361,22 +362,39 @@ fn quote_literal(value: &str) -> String {
 }
 
 /// Puts the staged columns in the target table's column order and pairs each
-/// with its type. Every table column must be present: a missing one would be
-/// silently defaulted, which is how a schema drift turns into wrong data.
+/// with its type.
+///
+/// A table column the caller has no values for takes the type's default for
+/// every row, which is what omitting it from a JSONEachRow row used to do — a
+/// table carrying a column envio no longer writes must keep working. It is still
+/// reported, since for an envio-created table the columns cannot legitimately
+/// diverge from the DDL. The reverse is an error: a value with no column to go in
+/// would shift every following column on the wire.
 fn align_to_schema(
     schema: &[(String, ChType)],
     columns: Vec<StagedColumn>,
     rows: usize,
-) -> Result<Vec<Column>> {
+) -> Result<(Vec<Column>, Vec<String>)> {
     let mut by_name: HashMap<String, StagedColumn> = columns
         .into_iter()
         .map(|column| (column.name.clone(), column))
         .collect();
     let mut aligned = Vec::with_capacity(schema.len());
+    let mut defaulted = Vec::new();
     for (name, ch_type) in schema {
-        let staged = by_name
-            .remove(name)
-            .ok_or_else(|| anyhow!("No values supplied for column `{name}`"))?;
+        let staged = match by_name.remove(name) {
+            Some(staged) => staged,
+            None => {
+                defaulted.push(name.clone());
+                aligned.push(Column {
+                    name: name.clone(),
+                    ch_type: ch_type.clone(),
+                    values: default_values(ch_type, rows),
+                    nulls: vec![1; rows],
+                });
+                continue;
+            }
+        };
         let values = match staged.values {
             StagedValues::F64(v) => ColumnValues::F64(v),
             StagedValues::U64(v) => ColumnValues::U64(v),
@@ -410,7 +428,29 @@ fn align_to_schema(
     if let Some(extra) = by_name.keys().next() {
         bail!("Column `{extra}` is not part of the target table");
     }
-    Ok(aligned)
+    let warnings = if defaulted.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!(
+            "No values supplied for ClickHouse column(s) {}; every row took the column's default",
+            defaulted.join(", ")
+        )]
+    };
+    Ok((aligned, warnings))
+}
+
+/// Placeholder values for a column with nothing to write. Every row is masked as
+/// null, so the encoder never reads them — only the kind has to match the type.
+fn default_values(ch_type: &ChType, rows: usize) -> ColumnValues {
+    match ch_type.column_kind() {
+        ch_type::ColumnKind::F64 => ColumnValues::F64(vec![0.0; rows]),
+        ch_type::ColumnKind::U64 => ColumnValues::U64(vec![0; rows]),
+        ch_type::ColumnKind::I64 => ColumnValues::I64(vec![0; rows]),
+        ch_type::ColumnKind::Text => ColumnValues::Text {
+            data: String::new(),
+            spans: vec![(0, 0); rows],
+        },
+    }
 }
 
 #[cfg(test)]
@@ -446,17 +486,35 @@ mod tests {
             },
             text("id", &["a"]),
         ];
-        let aligned = align_to_schema(&schema(), columns, 1).unwrap();
+        let (aligned, warnings) = align_to_schema(&schema(), columns, 1).unwrap();
         assert_eq!(
-            aligned.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-            vec!["id", "n"]
+            (
+                aligned.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+                warnings
+            ),
+            (vec!["id", "n"], Vec::<String>::new())
         );
     }
 
+    // A table carrying a column envio does not write — an older version's field,
+    // or one a user added — kept working under JSONEachRow because an omitted
+    // column takes its default. RowBinary has no way to omit one, so the encoder
+    // has to fill it, and say so.
     #[test]
-    fn rejects_a_missing_column() {
-        let err = align_to_schema(&schema(), vec![text("id", &["a"])], 1).unwrap_err();
-        assert_eq!(format!("{err:#}"), "No values supplied for column `n`");
+    fn defaults_a_table_column_with_no_values_and_reports_it() {
+        let (aligned, warnings) = align_to_schema(&schema(), vec![text("id", &["a"])], 1).unwrap();
+        let encoded = row_binary::encode(&aligned, 1).unwrap();
+        assert_eq!(
+            (encoded.body, warnings),
+            (
+                vec![1, b'a', 0, 0, 0, 0],
+                vec![
+                    "No values supplied for ClickHouse column(s) n; every row took the column's \
+                     default"
+                        .to_string()
+                ]
+            )
+        );
     }
 
     #[test]

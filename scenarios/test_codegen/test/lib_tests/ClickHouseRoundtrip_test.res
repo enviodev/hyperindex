@@ -17,9 +17,12 @@ let timestamp = Date.fromTime(1234567890123.0)
 
 let entity: Indexer.Entities.EntityWithAllTypes.t = {
   id: "roundtrip-1",
-  string: "hello",
+  // Not ASCII on purpose: the sink hands Rust one concatenated string per column
+  // plus each value's UTF-16 length, and Rust has to re-split it over UTF-8
+  // bytes. "é" is one UTF-16 unit over two bytes, "😀" is two units over four.
+  string: "héllo 😀",
   optString: None,
-  arrayOfStrings: ["a", "b"],
+  arrayOfStrings: ["a", "日本"],
   int_: -7,
   optInt: Some(3),
   arrayOfInts: [1, 2],
@@ -89,9 +92,12 @@ describe("ClickHouse RowBinary roundtrip", () => {
         %raw(`[
           {
             id: "roundtrip-1",
-            string: "hello",
+            // Not ASCII on purpose: the sink hands Rust one concatenated string per column
+  // plus each value's UTF-16 length, and Rust has to re-split it over UTF-8
+  // bytes. "é" is one UTF-16 unit over two bytes, "😀" is two units over four.
+  string: "héllo 😀",
             optString: null,
-            arrayOfStrings: ["a", "b"],
+            arrayOfStrings: ["a", "日本"],
             int_: -7,
             optInt: 3,
             arrayOfInts: [1, 2],
