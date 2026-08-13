@@ -41,12 +41,7 @@ describe("ChainState reorg threshold", () => {
       ~ecosystem=Svm,
       ~shouldChecksum=false,
     )
-    switch blockStore->BlockStore.merge(
-      seedPage,
-      ~fromBlock=0,
-      ~reportOnly=false,
-      ~pruneHashesBelow=0,
-    ) {
+    switch blockStore->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false) {
     | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected in test setup")
     | Null.Null => ()
     }

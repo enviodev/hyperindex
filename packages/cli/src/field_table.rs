@@ -694,24 +694,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         }
     }
 
-    /// Drop rows with keys `< below` whose only field is `field`, i.e.
-    /// hash-only reorg observations that fell out of the threshold window.
-    /// Rows carrying other fields are data awaiting batch-progress pruning
-    /// and are kept.
-    pub(crate) fn prune_field_only_below(&mut self, below: K, field: usize) {
-        let only = 1u64 << field;
-        let dead: Vec<K> = self
-            .order
-            .range(..below)
-            .filter(|(_, &slot)| self.masks[slot as usize] == only)
-            .map(|(k, _)| k.clone())
-            .collect();
-        for k in dead {
-            let slot = self.by_key[&k];
-            self.drop_row(&k, slot);
-        }
-    }
-
     /// Keys in `[from, below)` whose row carries `field`, ascending.
     pub(crate) fn keys_with_field(&self, from: K, below: K, field: usize) -> Vec<K> {
         let bit = 1u64 << field;

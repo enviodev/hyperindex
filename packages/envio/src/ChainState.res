@@ -331,7 +331,7 @@ let makeInternal = (
       ~shouldChecksum=!lowercaseAddresses,
     )
     blockStore
-    ->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false, ~pruneHashesBelow=0)
+    ->BlockStore.merge(seedPage, ~fromBlock=0, ~reportOnly=false)
     ->ignore
   }
 
@@ -953,14 +953,10 @@ let handleQueryResult = (
 // detect-only mode the page still merges, so the overwritten hash doesn't
 // re-report on every response.
 let registerReorgGuard = (cs: t, ~blockStore, ~knownHeight): ReorgDetection.reorgResult => {
-  let reorgThreshold = Pervasives.max(knownHeight - cs.maxReorgDepth, 0)
   switch cs.blockStore->BlockStore.merge(
     blockStore,
-    ~fromBlock=reorgThreshold,
+    ~fromBlock=Pervasives.max(knownHeight - cs.maxReorgDepth, 0),
     ~reportOnly=!cs.shouldRollbackOnReorg,
-    // A backfill sits far below the threshold, and those blocks are still to be
-    // read, so the prune stops at the committed progress.
-    ~pruneHashesBelow=Pervasives.min(reorgThreshold, cs.committedProgressBlockNumber + 1),
   ) {
   | Null.Null => NoReorg
   | Null.Value({blockNumber, storedHash, receivedHash}) =>
