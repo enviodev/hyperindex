@@ -701,12 +701,9 @@ fn transaction_field_missing(
 ) -> Option<&'static str> {
     use TransactionField::*;
     match field {
-        // `EffectiveGasPrice` is absent from pre-EIP-1559 receipts, so it is
-        // nullable per-row like the rest; HyperSync backfills it from
-        // `gasPrice` where the chain's own RPC omits it.
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
-        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type | EffectiveGasPrice => None,
+        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
         BlockHash => tx.block_hash.is_none().then_some("blockHash"),
         BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
         Gas => tx.gas.is_none().then_some("gas"),
@@ -725,6 +722,10 @@ fn transaction_field_missing(
             .cumulative_gas_used
             .is_none()
             .then_some("cumulativeGasUsed"),
+        EffectiveGasPrice => tx
+            .effective_gas_price
+            .is_none()
+            .then_some("effectiveGasPrice"),
         GasUsed => tx.gas_used.is_none().then_some("gasUsed"),
         LogsBloom => tx.logs_bloom.is_none().then_some("logsBloom"),
         // Enum variants not represented on simple_types::Transaction in this

@@ -222,10 +222,6 @@ let evmNullableTransactionFields = Utils.Set.fromArray(
       From,
       To,
       Type,
-      // Pre-EIP-1559 chains (notably Optimism below the Bedrock migration at
-      // block 105235063) omit it from the receipt entirely. HyperSync backfills
-      // it from `gasPrice`; an RPC node does not.
-      EffectiveGasPrice,
     ]: array<evmTransactionField>
   ),
 )

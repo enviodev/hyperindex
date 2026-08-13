@@ -352,36 +352,57 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
   })
 
   // Pre-Bedrock Optimism (blocks below 105235063) predates EIP-1559, so its
-  // receipts carry no `effectiveGasPrice` at all. HyperSync backfills the field
-  // from `gasPrice`; the chain's own RPC does not.
-  Async.it("Receipt without effectiveGasPrice (pre-Bedrock Optimism) parses", async t => {
+  // receipts carry no `effectiveGasPrice`. Values are from block 1000000.
+  Async.it("Falls back to the transaction's gasPrice when the receipt omits it", async t => {
+    let transactionCalls = ref(0)
     let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
-      ~getTransactionJson=neverGetTransactionJson,
+      ~getTransactionJson=_ => {
+        transactionCalls := transactionCalls.contents + 1
+        Promise.resolve(%raw(`{"gasPrice": "0xf4240"}`))
+      },
       ~getReceiptJson=_ =>
         Promise.resolve(
-          %raw(`{"cumulativeGasUsed": "0x26aed", "gasUsed": "0x26aed", "l1Fee": "0x18e24985c2af0", "status": "0x1"}`),
+          %raw(`{"cumulativeGasUsed": "0x26aed", "gasUsed": "0x26aed", "status": "0x1"}`),
         ),
       ~lowercaseAddresses=false,
     )
 
-    t.expect(
+    let transaction =
       await mockLog()->getEventTransactionOrThrow(
         ~selectedTransactionFields=Utils.Set.fromArray([
           (EffectiveGasPrice: Internal.evmTransactionField),
           GasUsed,
-          CumulativeGasUsed,
-          L1Fee,
           Status,
         ]),
-      ),
-    ).toEqual(
-      %raw(`{
-        cumulativeGasUsed: 158445n,
-        effectiveGasPrice: undefined,
-        gasUsed: 158445n,
-        l1Fee: 437762802854640n,
-        status: 1,
-      }`),
+      )
+    t.expect((transaction, transactionCalls.contents)).toEqual((
+      {
+        "effectiveGasPrice": 1000000n,
+        "gasUsed": 158445n,
+        "status": 1,
+      },
+      1,
+    ))
+  })
+
+  Async.it("Throws when neither effectiveGasPrice nor gasPrice is available", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => Promise.resolve(%raw(`{}`)),
+      ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
+      ~lowercaseAddresses=false,
+    )
+
+    let message = try {
+      let _ =
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]),
+        )
+      "the call to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(message).toBe(
+      `Neither "effectiveGasPrice" nor "gasPrice" is present in the RPC response for the transaction. Remove "effectiveGasPrice" from the field selection, or index this chain via HyperSync.`,
     )
   })
 

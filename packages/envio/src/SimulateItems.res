@@ -73,6 +73,7 @@ let evmSimulateTransactionSchema = S.schema(s =>
     "nonce": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
     "value": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
     "cumulativeGasUsed": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
+    "effectiveGasPrice": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
     "gasUsed": s.matches(S.null(S.bigint)->S.Option.getOr(0n)),
     "logsBloom": s.matches(S.null(S.string)->S.Option.getOr("")),
     "accessList": s.matches(S.null(S.json(~validate=false))->S.Option.getOr(JSON.Encode.null)),
@@ -93,7 +94,6 @@ let evmSimulateTransactionSchema = S.schema(s =>
     "blobVersionedHashes": s.matches(S.null(S.array(S.string))),
     "root": s.matches(S.null(S.string)),
     "status": s.matches(S.null(S.int)),
-    "effectiveGasPrice": s.matches(S.null(S.bigint)),
     "type": s.matches(S.null(S.int)),
     // L2 fields
     "l1Fee": s.matches(S.null(S.bigint)),
@@ -350,7 +350,7 @@ let parse = (
       let liveRegistrations =
         HandlerRegister.getSimulateOnEventRegistrations(
           ~config,
-          ~chainId,
+          ~chainId=chainId,
           ~eventConfig,
         )->Array.filter(reg =>
           (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
@@ -388,7 +388,7 @@ let parse = (
                 contractName: eventConfig.contractName,
                 eventName: eventConfig.name,
                 params,
-                chainId,
+                chainId: chainId,
                 srcAddress,
                 logIndex,
                 transaction,
