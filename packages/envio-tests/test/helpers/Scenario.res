@@ -39,9 +39,16 @@ let withClickHouseStorage = configYaml =>
   }
 
 let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=[]): t => {
+  let isUnsupported =
+    unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
+
+  // A scenario that can't run on ClickHouse doesn't get shaped for it: some
+  // schemas the other backends accept (an unbounded BigInt id, say) fail the
+  // parse outright once ClickHouse storage is on, which would take the whole
+  // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
-  | #clickhouse => configYaml->withClickHouseStorage
-  | #memory | #postgres => configYaml
+  | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
+  | #clickhouse | #memory | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome
