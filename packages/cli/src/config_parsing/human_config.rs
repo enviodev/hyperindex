@@ -417,6 +417,15 @@ pub mod evm {
     use strum::Display;
     use subenum::subenum;
 
+    /// Serde only calls this when the key is there, so `tables:` with nothing
+    /// under it reads as an empty set rather than as no `tables` at all — the
+    /// difference between "this indexer has no entities" and "it forgot to say".
+    fn deserialize_declared_tables<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<crate::config_parsing::materialization::Tables>, D::Error> {
+        Ok(Some(Option::deserialize(deserializer)?.unwrap_or_default()))
+    }
+
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
         title = "Envio Config Schema",
@@ -473,12 +482,17 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "deserialize_declared_tables"
+        )]
         #[schemars(
             description = "Tables the indexer materializes from `evm.events` with no handler \
                            code: each declares `from` + `select`, and its schema is inferred from \
                            the events it reads. Requires `disable_default_cross_chain: true`. \
-                           Tables written by handlers stay in schema.graphql."
+                           Tables written by handlers stay in schema.graphql. Present but empty \
+                           means the indexer has no entities on purpose."
         )]
         pub tables: Option<crate::config_parsing::materialization::Tables>,
     }

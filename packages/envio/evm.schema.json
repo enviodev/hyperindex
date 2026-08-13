@@ -128,7 +128,7 @@
       ]
     },
     "tables": {
-      "description": "Tables the indexer materializes from `evm.events` with no handler code: each declares `from` + `select`, and its schema is inferred from the events it reads. Requires `disable_default_cross_chain: true`. Tables written by handlers stay in schema.graphql.",
+      "description": "Tables the indexer materializes from `evm.events` with no handler code: each declares `from` + `select`, and its schema is inferred from the events it reads. Requires `disable_default_cross_chain: true`. Tables written by handlers stay in schema.graphql. Present but empty means the indexer has no entities on purpose.",
       "anyOf": [
         {
           "$ref": "#/$defs/Tables"

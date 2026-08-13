@@ -709,8 +709,8 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     `);
   });
 
-  it("serves a config.yaml table as a set, with no by_pk root", async () => {
-    // As the `public` role, not admin: the root fields are restricted by the
+  it("serves a config.yaml table with the same roots as any other entity", async () => {
+    // As the `public` role, not admin: root fields are restricted by the
     // table's select permission, and admin bypasses permissions entirely.
     const asPublic = new GraphQLClient({
       endpoint: config.graphqlEndpoint,
@@ -721,15 +721,24 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
       __schema: { queryType: { fields: Array<{ name: string }> } };
     }>(`{ __schema { queryType { fields { name } } } }`);
 
-    const roots = result
-      .data!.__schema.queryType.fields.map((f) => f.name)
-      .filter((name) => name.startsWith("transfer_totals"))
-      .sort();
+    const rootsFor = (table: string) =>
+      result
+        .data!.__schema.queryType.fields.map((f) => f.name)
+        .filter((name) => name === table || name.startsWith(`${table}_`))
+        .sort();
 
-    // `_aggregate` is absent because aggregations are off for every table here
-    // (ENVIO_HASURA_PUBLIC_AGGREGATE is unset), not because the table is
-    // materialized. `_by_pk` is absent because it is.
-    expect(roots).toEqual(["transfer_totals"]);
+    // A table written by config.yaml is a GraphQL citizen like any other, so
+    // its roots match a hand-written entity's rather than being a subset.
+    // `_aggregate` is absent from both because aggregations are off here
+    // (ENVIO_HASURA_PUBLIC_AGGREGATE is unset).
+    expect(rootsFor("transfer_totals")).toEqual([
+      "transfer_totals",
+      "transfer_totals_by_pk",
+    ]);
+    expect(rootsFor("TransferPgOnly")).toEqual([
+      "TransferPgOnly",
+      "TransferPgOnly_by_pk",
+    ]);
 
     // The rows are the indexer's own work: `received` must equal what the
     // handler-written Transfer entity says the account received.
@@ -749,6 +758,36 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     expect(actual.data?.transfer_totals).toEqual([
       { received: expected[0]?.[0] },
     ]);
+  });
+
+  it("follows a reference between two config.yaml tables with a numeric id", async () => {
+    // `_block_totals` keys rows by block number, so `transfer_blocks.block_id`
+    // is an INTEGER column rather than the usual text id — and the leading
+    // underscore survives into the table name Hasura serves.
+    const columnType = await runPgSql(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_name = 'transfer_blocks' AND column_name = 'block_id'`
+    );
+    expect(columnType[0]?.[0]).toBe("integer");
+
+    const expected = await runPgSql(
+      `SELECT block_number, count(*)::text FROM "Transfer"
+       GROUP BY block_number ORDER BY block_number LIMIT 1`
+    );
+    const blockNumber = Number(expected[0]?.[0]);
+
+    const actual = await graphql.query<{
+      transfer_blocks: Array<{ block: { id: number; transfers: number } }>;
+    }>(
+      `{ transfer_blocks(where: {block_id: {_eq: ${blockNumber}}}, limit: 1) {
+           block { id transfers }
+         } }`
+    );
+
+    expect(actual.data?.transfer_blocks[0]?.block).toEqual({
+      id: blockNumber,
+      transfers: Number(expected[0]?.[1]),
+    });
   });
 
   it("Hasura serves numeric arrays as strings", async () => {

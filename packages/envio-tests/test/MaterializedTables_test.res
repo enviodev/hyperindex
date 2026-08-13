@@ -1,7 +1,7 @@
-// The ERC-20 template's `tables` config, with no schema.graphql and no
-// handlers: the config alone is the indexer. Exercises keyed overwrite,
-// two events, a union, an aggregate, references, zero-value row creation and
-// multiple writes per event.
+// An ERC-20 `tables` config with no schema.graphql and no handlers: the config
+// alone is the indexer. Exercises keyed overwrite, two events, a union, an
+// aggregate, references, zero-value row creation and multiple writes per event.
+// No `as_entity`, so it also pins the name a table is reached by by default.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: erc20-indexer

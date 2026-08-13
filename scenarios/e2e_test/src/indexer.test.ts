@@ -78,11 +78,27 @@ describe("Indexer smoke test", () => {
                   },
                 ],
               },
+              "Transfer_blocks": {
+                "sets": [
+                  {
+                    "block_id": 10861674,
+                    "id": "0x4b37d2f343608457ca3322accdab2811c707acf3eb07a40dd8d9567093ea5b82-23",
+                  },
+                ],
+              },
               "Transfer_totals": {
                 "sets": [
                   {
                     "id": "0x41653c7d61609D856f29355E404F310Ec4142Cfb",
                     "received": 1000000000000000000000000000n,
+                  },
+                ],
+              },
+              "_block_totals": {
+                "sets": [
+                  {
+                    "id": 10861674,
+                    "transfers": 1,
                   },
                 ],
               },

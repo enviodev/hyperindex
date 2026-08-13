@@ -18,7 +18,7 @@ describe("Indexer Testing", () => {
     });
 
     t.expect(
-      await indexer.Accounts.getAll(),
+      await indexer.Account.getAll(),
       "The mint at block 10_861_674 debits the zero address and credits the recipient"
     ).toEqual([
       {
@@ -63,8 +63,8 @@ describe("Transfers", () => {
       },
     });
 
-    const account1 = await indexer.Accounts.getOrThrow(userAddress1, { chainId: 1 });
-    const account2 = await indexer.Accounts.getOrThrow(userAddress2, { chainId: 1 });
+    const account1 = await indexer.Account.getOrThrow(userAddress1);
+    const account2 = await indexer.Account.getOrThrow(userAddress2);
 
     t.expect(
       { first: account1.balance, second: account2.balance },
@@ -95,10 +95,11 @@ describe("Approvals", () => {
     });
 
     t.expect({
-      approvals: await indexer.Approvals.getAll(),
+      approvals: await indexer.Approval.getAll(),
       // `_ref` doesn't create the referenced row, so the config contributes a
-      // zero-valued balance change for each side of the approval.
-      accounts: await indexer.Accounts.getAll(),
+      // zero-valued balance change for each side of the approval — otherwise
+      // `owner` and `spender` would resolve to nothing.
+      accounts: await indexer.Account.getAll(),
     }).toEqual({
       approvals: [
         {

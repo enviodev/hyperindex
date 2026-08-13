@@ -112,6 +112,7 @@ struct EntityJson {
     // so every project predating `as_entity` keeps producing the same JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
     handler_name: Option<String>,
+
     // A materialized table without `as_entity` is queryable and stored but never
     // reachable from a handler.
     #[serde(skip_serializing_if = "is_false")]
@@ -875,10 +876,14 @@ impl SystemConfig {
                 };
 
                 let handler_name = cfg.entity_handler_name(&entity.name);
+                // Every entity has a code name, hidden or not: the test indexer
+                // and the generated types still have to call it something.
+                let code_name = handler_name
+                    .clone()
+                    .unwrap_or_else(|| crate::utils::text::to_code_name(&entity.name));
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    handler_name: handler_name
-                        .clone()
+                    handler_name: Some(code_name)
                         .filter(|name| name != &entity.name.clone().capitalize()),
                     hidden_from_handlers: handler_name.is_none(),
                     cross_chain: Some(system_config::entity_is_cross_chain(

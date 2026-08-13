@@ -1,9 +1,11 @@
-// schema.graphql is optional whether or not the config declares `tables`: an
-// indexer whose handlers only call effects, log, or register contracts has no
-// entities to declare, and shouldn't have to ship an empty file to say so.
+// An indexer whose handlers only call effects, log, or register contracts has
+// no entities to declare, and shouldn't have to ship an empty schema.graphql to
+// say so — but it does have to say so, with an empty `tables`. Otherwise an
+// absent schema.graphql is indistinguishable from a renamed one.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: no-schema
+tables: []
 contracts:
   - name: ERC20
     events:
