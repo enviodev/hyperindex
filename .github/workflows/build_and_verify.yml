@@ -267,7 +267,9 @@ jobs:
   e2e-test:
     runs-on: ubuntu-latest
     needs: build-envio-package
-    timeout-minutes: 9
+    # The e2e suites run one at a time (they share the indexer port and the
+    # containers), and the ClickHouse parity run indexes 100 blocks of its own.
+    timeout-minutes: 14
 
     services:
       postgres:
