@@ -20,8 +20,10 @@ external toPayload: Internal.eventPayload => payload = "%identity"
 let blockFields = ["height", "id", "time"]
 
 // Fuel has no per-event block field selection: every event materialises the
-// full (height, time, id) trio, matching what the source always queries.
-let fullBlockFieldMask = BlockStore.makeMaskFn(blockFields)(Utils.Set.fromArray(blockFields))
+// full (height, time, id) trio, matching what the source always queries. Kept
+// as a mask function like the other ecosystems so `Internal.makeFieldSelection`
+// derives the mask from the same set it stores.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.id

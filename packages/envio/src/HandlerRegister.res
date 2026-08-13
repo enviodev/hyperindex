@@ -165,30 +165,6 @@ let sameEventAndFilter = (
   | Fuel | Svm => true
   }
 
-// Merged registrations dispatch off a single item, so it has to carry the union
-// of what both callbacks read. Each callback's type only claims its own
-// selection, so the extra fields are unread rather than unsound.
-//
-// The overwhelmingly common case is two registrations that never named fields
-// inline and so share their event config's sets by reference — returning those
-// unchanged keeps the merge allocation-free.
-let unionFields = (a: Utils.Set.t<string>, b: Utils.Set.t<string>) =>
-  if a === b {
-    a
-  } else {
-    a->Utils.Set.union(b)
-  }
-
-let unionSelection = (
-  a: Internal.fieldSelection,
-  b: Internal.fieldSelection,
-): Internal.fieldSelection => {
-  blockFields: unionFields(a.blockFields, b.blockFields),
-  transactionFields: unionFields(a.transactionFields, b.transactionFields),
-  blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
-  transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
-}
-
 // The merged registration keeps `base`'s handler and slot, picks up the
 // contractRegister from `other`, and carries the union of what both callbacks
 // read. Relies on `onEventRegistration` having an optional field so the spread
@@ -199,7 +175,7 @@ let mergeInto = (
 ): Internal.onEventRegistration => {
   ...base,
   contractRegister: other.contractRegister,
-  fieldSelection: unionSelection(base.fieldSelection, other.fieldSelection),
+  fieldSelection: Internal.unionFieldSelection(base.fieldSelection, other.fieldSelection),
 }
 
 // Merge each contractRegister into a matching handler registration (either

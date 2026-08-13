@@ -416,6 +416,51 @@ type indexingContract = {
   effectiveStartBlock: int,
 }
 
+// What a single registration fetches and materialises. Field names are strings
+// so every ecosystem shares one type — the typed field variants are strings at
+// runtime. Each set carries its precompiled mask, and the two always describe
+// the same fields: build them together, never one without the other.
+type fieldSelection = {
+  blockFields: Utils.Set.t<string>,
+  transactionFields: Utils.Set.t<string>,
+  // The sets precompiled to the store selections `ChainState` materialises with.
+  blockMask: float,
+  transactionMask: float,
+}
+
+// The only way to build a `fieldSelection`, so a set and its mask can never be
+// derived from different inputs. `~blockMaskFn`/`~transactionMaskFn` are the
+// ecosystem's `Evm`/`Svm`/`Fuel` mask functions, which the ecosystem modules
+// pass in (they depend on this module, so it can't reach them).
+let makeFieldSelection = (
+  ~blockFields: Utils.Set.t<string>,
+  ~transactionFields: Utils.Set.t<string>,
+  ~blockMaskFn: Utils.Set.t<string> => float,
+  ~transactionMaskFn: Utils.Set.t<string> => float,
+): fieldSelection => {
+  blockFields,
+  transactionFields,
+  blockMask: blockMaskFn(blockFields),
+  transactionMask: transactionMaskFn(transactionFields),
+}
+
+// Two registrations merged into one dispatch off a single item, so it has to
+// carry the union of what both callbacks read. Each callback's type only claims
+// its own selection, so the extra fields are unread rather than unsound.
+//
+// The overwhelmingly common case is two registrations that never named fields
+// inline and so share their event config's sets by reference — returning those
+// unchanged keeps the merge allocation-free.
+let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection => {
+  let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
+  {
+    blockFields: unionFields(a.blockFields, b.blockFields),
+    transactionFields: unionFields(a.transactionFields, b.transactionFields),
+    blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
+    transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
+  }
+}
+
 // Definition of an event/instruction we know how to decode: identity + decode
 // schemas + chain-independent field selection. A pure function of the ABI +
 // config, shared across chains. `private` so it can only be coerced from an
@@ -427,24 +472,12 @@ type eventConfig = private {
   contractName: string,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
-  // Field names selected for the chain's transaction-store materialisation
-  // (camelCase, matching the ecosystem's `transactionFields`). Stored as a
-  // string set so the shared mask logic is ecosystem-agnostic; sources recover
-  // the typed view where they need it.
-  selectedTransactionFields: Utils.Set.t<string>,
-  // `selectedTransactionFields` precompiled to the transaction-store selection
-  // bitmask (bit per ecosystem field code). Materialisation reads this per item
-  // so each transaction decodes only the fields its event selected. `0.` when
-  // nothing is selected or the ecosystem carries the transaction inline (Fuel).
-  transactionFieldMask: float,
-  // Selected block fields precompiled to the block-store selection bitmask (bit
-  // per ecosystem field code). `0.` for ecosystems that carry the block fully
-  // inline (RPC/Fuel). The EVM config selection always includes
-  // number/timestamp/hash, so a config-derived EVM mask has all three bits set;
-  // a registration that named its fields inline carries `number` only (see
-  // `EventConfigBuilder.internalBlockFields`). SVM stamps slot/time/hash
-  // inline from the response and its mask is the user's selection alone.
-  blockFieldMask: float,
+  // The `config.yaml` selection, which every registration of this event
+  // inherits unless it names its own fields inline. Held by reference, so two
+  // un-customized registrations share one set — which is what keeps a merge
+  // allocation-free and the per-source parser caches (keyed on set identity)
+  // effective.
+  fieldSelection: fieldSelection,
 }
 
 type fuelEventKind =
@@ -499,7 +532,6 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type evmEventConfig = {
   ...eventConfig,
-  selectedBlockFields: Utils.Set.t<evmBlockField>,
   sighash: string,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
@@ -527,10 +559,6 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
-  /** Block fields selected via `field_selection.block_fields` (`slot` is always
-   included and excluded from this set). Drives the block query columns;
-   precompiled to `blockFieldMask` for store materialisation. */
-  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
@@ -555,18 +583,6 @@ type svmInstructionEventConfig = {
    Duplicated on every event of the same program — the runtime dedups by
    `programId` when registering. `JSON.Null` when empty. */
   definedTypes: JSON.t,
-}
-
-// What a single registration fetches and materialises. Field names are strings
-// so every ecosystem shares one type — the typed field variants are strings at
-// runtime. Each set carries its precompiled mask, and the two always describe
-// the same fields: build them together, never one without the other.
-type fieldSelection = {
-  blockFields: Utils.Set.t<string>,
-  transactionFields: Utils.Set.t<string>,
-  // The sets precompiled to the store selections `ChainState` materialises with.
-  blockMask: float,
-  transactionMask: float,
 }
 
 // Per-(event, chain) registration produced when user handler code registers an

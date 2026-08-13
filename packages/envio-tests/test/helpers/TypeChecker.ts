@@ -140,3 +140,42 @@ export function checkSources(
 
   return diagnostics.map((d) => ts.formatDiagnostic(d, formatHost).trim());
 }
+
+/**
+ * The member names an editor offers at the `/*HERE*\/` marker in `handlers`,
+ * sorted. Drives the language service rather than the checker, because a
+ * contextual type can type-check perfectly and still offer the editor nothing
+ * to complete — which is what an over-eager type-parameter default does.
+ */
+export function completionsAt(typesDts: string, handlers: string): string[] {
+  const marker = "/*HERE*/";
+  const position = handlers.indexOf(marker);
+  if (position === -1) throw new Error(`completionsAt source has no ${marker} marker`);
+  const text = handlers.replace(marker, "");
+  virtualFiles = new Map<string, string>([
+    [typesPath, typesDts],
+    [handlersPath, text],
+  ]);
+
+  const serviceHost: ts.LanguageServiceHost = {
+    getScriptFileNames: () => [typesPath, handlersPath],
+    // Keyed on content so the service re-reads whenever a fixture changes.
+    getScriptVersion: (fileName) => String(virtualFiles.get(fileName)?.length ?? 0),
+    getScriptSnapshot: (fileName) => {
+      const contents = virtualFiles.get(fileName) ?? baseReadFile(fileName);
+      return contents === undefined ? undefined : ts.ScriptSnapshot.fromString(contents);
+    },
+    getCurrentDirectory: () => helpersDir,
+    getCompilationSettings: () => compilerOptions,
+    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+    fileExists: host.fileExists,
+    readFile: host.readFile,
+    readDirectory: ts.sys.readDirectory,
+    directoryExists: ts.sys.directoryExists,
+    getDirectories: ts.sys.getDirectories,
+  };
+
+  const service = ts.createLanguageService(serviceHost, ts.createDocumentRegistry());
+  const completions = service.getCompletionsAtPosition(handlersPath, position, {});
+  return (completions?.entries ?? []).map((entry) => entry.name).sort();
+}

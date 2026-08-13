@@ -47,13 +47,13 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   simulateParamsSchema: S.unknown
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-  selectedBlockFields: pairCreatedSelectedBlockFields,
-  selectedTransactionFields: Utils.Set.make(),
-  transactionFieldMask: 0.,
-  blockFieldMask: Evm.eventBlockFieldMask(
-    pairCreatedSelectedBlockFields->(
+  fieldSelection: Internal.makeFieldSelection(
+    ~blockFields=pairCreatedSelectedBlockFields->(
       Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
     ),
+    ~transactionFields=Utils.Set.make(),
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
   ),
   sighash: pairCreatedTopic0,
   topicCount: 3,
@@ -70,7 +70,7 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   startBlock: None,
   handler: None,
   contractRegister: None,
-  fieldSelection: EventConfigBuilder.eventConfigFieldSelection(pairCreatedEventConfig),
+  fieldSelection: pairCreatedEventConfig.fieldSelection,
   resolvedWhere: {
     topicSelections: [
       {

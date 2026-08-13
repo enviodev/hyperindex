@@ -871,7 +871,7 @@ type EvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
 /** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
  * With no `fields` option the event type passes through, so the `config.yaml`
  * `field_selection` path is unaffected. */
-export type EvmEventWithFields<Event, Fields> = Fields extends EvmFieldsSelection
+export type EvmEventWithFields<Event, Fields> = [Fields] extends [EvmFieldsSelection]
   ? Omit<Event, "block" | "transaction"> & {
       readonly block: EvmSelectedFields<
         EvmAllBlockFields,
@@ -1354,7 +1354,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 readonly onEvent: <
                   C extends keyof Contracts & string,
                   E extends keyof Contracts[C] & string,
-                  const F extends EvmFieldsSelection | undefined = undefined
+                  const F extends EvmFieldsSelection | undefined
                 >(
                   options: {
                     readonly contract: C;
@@ -1378,7 +1378,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 readonly contractRegister: <
                   C extends keyof Contracts & string,
                   E extends keyof Contracts[C] & string,
-                  const F extends EvmFieldsSelection | undefined = undefined
+                  const F extends EvmFieldsSelection | undefined
                 >(
                   options: {
                     readonly contract: C;

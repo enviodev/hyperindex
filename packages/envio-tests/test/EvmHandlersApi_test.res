@@ -425,6 +425,35 @@ if (0) {
 `)
   )
 
+  // A contextual type can type-check perfectly and still offer the editor
+  // nothing — an over-eager default on the `fields` type parameter did exactly
+  // that, leaving `fields: {}` with global-scope completions instead of the two
+  // knobs. No type assertion catches it, so the language service is asked
+  // directly.
+  it("offers the fields knobs and field names to an editor", t => {
+    let completions = handlers =>
+      InternalTestIndexer.completionsAt(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)
+    let at = source => completions(`
+import { indexer } from "envio";
+indexer.onEvent(${source}, async () => {});
+`)
+    t.expect((
+      at(`{ contract: "Token", event: "Transfer", fields: { /*HERE*/ } }`),
+      at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`)->Array.slice(
+        ~start=0,
+        ~end=4,
+      ),
+      at(`{ contract: "Token", event: "Transfer", fields: { transaction: ["/*HERE*/"] } }`)->Array.slice(
+        ~start=0,
+        ~end=4,
+      ),
+    )).toEqual((
+      ["block", "transaction"],
+      ["baseFeePerGas", "blobGasUsed", "difficulty", "excessBlobGas"],
+      ["accessList", "authorizationList", "blobVersionedHashes", "contractAddress"],
+    ))
+  })
+
   it("binds Entity / EntityName / Enum / EnumName to the schema", _ =>
     check(`
 import type { Account, Entity, EntityName, Enum, EnumName } from "envio";
