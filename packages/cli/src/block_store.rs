@@ -562,12 +562,17 @@ impl BlockStore {
     /// mismatch nothing is merged — the stored (scanned) hashes stay intact for
     /// rollback — unless `report_only` is set (detect-only mode), which merges
     /// anyway so the overwritten hash doesn't re-report on every response.
+    ///
+    /// Hash-only rows below `prune_hashes_below` are dropped afterwards. The
+    /// caller bounds that by what it has processed, so a hash for a block it
+    /// has not reached yet survives even when it falls outside the threshold.
     #[napi]
     pub fn merge(
         &self,
         page: &BlockStore,
         from_block: i64,
         report_only: bool,
+        prune_hashes_below: i64,
     ) -> napi::Result<Option<HashMismatch>> {
         // Merging a store into itself would lock the same Mutex twice (deadlock).
         if std::ptr::eq(self, page) {
@@ -608,11 +613,16 @@ impl BlockStore {
             // could outlive the queried fork.
             src.page = ResponsePage::default();
         }
-        // Hash-only observations that fell below the reorg threshold are never
-        // compared again, and long no-event ranges never reach batch-progress
-        // pruning, so drop them here to keep the store bounded to the window.
-        if from > 0 {
-            dst.table.prune_field_only_below(from, self.hash_field());
+        // Hash-only observations below `prune_hashes_below` are never compared
+        // again, and long no-event ranges never reach batch-progress pruning,
+        // so drop them here to keep the store bounded. The caller bounds this
+        // by what it has processed: a block past the processed progress can
+        // still be read, even when it sits outside the reorg threshold.
+        if let Ok(prune_below) = u64::try_from(prune_hashes_below) {
+            if prune_below > 0 {
+                dst.table
+                    .prune_field_only_below(prune_below, self.hash_field());
+            }
         }
         Ok(cross)
     }
@@ -1373,13 +1383,13 @@ mod tests {
         let mut first = raw_evm_block(20);
         first.timestamp = Some(Quantity::from(100u64));
         page1.insert_evm_blocks(vec![first]);
-        persistent.merge(&page1, 0, false).unwrap();
+        persistent.merge(&page1, 0, false, 0).unwrap();
 
         let page2 = BlockStore::new_evm(false);
         let mut second = raw_evm_block(20);
         second.timestamp = Some(Quantity::from(200u64));
         page2.insert_evm_blocks(vec![second]);
-        persistent.merge(&page2, 0, false).unwrap();
+        persistent.merge(&page2, 0, false, 0).unwrap();
 
         let mask = bit(EvmBlockField::Timestamp) as f64;
         let cols = persistent
@@ -1480,7 +1490,7 @@ mod tests {
         // Two conflicting blocks: the lowest one is reported.
         let page = evm_page(vec![hashed_evm_block(11, 0xbb), hashed_evm_block(12, 0xcc)]);
         let mismatch = persistent
-            .merge(&page, 0, false)
+            .merge(&page, 0, false, 0)
             .unwrap()
             .expect("mismatch");
         assert_eq!(
@@ -1506,7 +1516,10 @@ mod tests {
     fn merge_report_only_still_overwrites() {
         let persistent = evm_page(vec![hashed_evm_block(11, 0x11)]);
         let page = evm_page(vec![hashed_evm_block(11, 0xbb)]);
-        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
+        let mismatch = persistent
+            .merge(&page, 0, true, 0)
+            .unwrap()
+            .expect("mismatch");
         assert_eq!(mismatch.block_number, 11);
         // Detect-only mode converges to the received hash, so the same
         // mismatch doesn't re-report on the next page.
@@ -1524,7 +1537,7 @@ mod tests {
         let mut no_hash = raw_evm_block(20);
         no_hash.timestamp = Some(Quantity::from(7u64));
         let page = evm_page(vec![hashed_evm_block(10, 0xaa), no_hash]);
-        assert!(persistent.merge(&page, 15, false).unwrap().is_none());
+        assert!(persistent.merge(&page, 15, false, 15).unwrap().is_none());
         // Block 10 fell below the threshold and only carried a hash, so it is
         // pruned rather than kept as a stale observation.
         assert_eq!(persistent.get_hash(10), None);
@@ -1542,7 +1555,7 @@ mod tests {
         svm_page.insert_svm_blocks(vec![raw_svm_block(10)]);
         // A cross-ecosystem merge would read one hash column's bytes as
         // another's, so it errors instead of comparing or panicking.
-        assert!(persistent.merge(&svm_page, 0, false).is_err());
+        assert!(persistent.merge(&svm_page, 0, false, 0).is_err());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1558,7 +1571,10 @@ mod tests {
         // Detect-only reorg at block 10: only block 10 is re-observed on the
         // new fork, so blocks 11-12 (old fork) must not linger and re-report.
         let page = evm_page(vec![hashed_evm_block(10, 0xaa)]);
-        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
+        let mismatch = persistent
+            .merge(&page, 0, true, 0)
+            .unwrap()
+            .expect("mismatch");
         assert_eq!(mismatch.block_number, 10);
         // The stale old-fork hashes are forgotten; block 11 held only a hash so
         // its row is gone, block 12's row stays for its buffered timestamp.
@@ -1580,7 +1596,7 @@ mod tests {
         // A follow-up page on the new fork merges cleanly instead of comparing
         // block 11 against the dropped old-fork hash.
         let next = evm_page(vec![hashed_evm_block(11, 0xbb)]);
-        assert!(persistent.merge(&next, 0, true).unwrap().is_none());
+        assert!(persistent.merge(&next, 0, true, 0).unwrap().is_none());
     }
 
     #[test]
@@ -1590,7 +1606,7 @@ mod tests {
         // 20 hash-only observations fall out of the window and are dropped so
         // the store stays bounded on long no-event ranges.
         let page = evm_page(vec![hashed_evm_block(30, 0x30)]);
-        assert!(persistent.merge(&page, 25, false).unwrap().is_none());
+        assert!(persistent.merge(&page, 25, false, 25).unwrap().is_none());
         assert_eq!(
             (
                 persistent.get_hash(10),
@@ -1598,6 +1614,20 @@ mod tests {
                 persistent.get_hash(30)
             ),
             (None, None, Some(format!("0x{}", "30".repeat(32))))
+        );
+    }
+
+    #[test]
+    fn merge_keeps_hashes_for_blocks_past_the_processed_progress() {
+        let persistent = evm_page(vec![hashed_evm_block(10, 0x10), hashed_evm_block(20, 0x20)]);
+        // A backfill sits far below the reorg threshold: the chain has only
+        // committed block 10, so block 20 is still to be read and keeps its
+        // hash even though the threshold has moved past it.
+        let page = evm_page(vec![hashed_evm_block(30, 0x30)]);
+        assert!(persistent.merge(&page, 25, false, 11).unwrap().is_none());
+        assert_eq!(
+            (persistent.get_hash(10), persistent.get_hash(20)),
+            (None, Some(format!("0x{}", "20".repeat(32))))
         );
     }
 
@@ -1712,12 +1742,7 @@ mod tests {
                 store.get_hash(97),
                 store.get_hashed_block_numbers(0, 200),
             ),
-            (
-                Some(format!("0x{}", "90".repeat(32))),
-                None,
-                None,
-                vec![90],
-            )
+            (Some(format!("0x{}", "90".repeat(32))), None, None, vec![90],)
         );
     }
 
@@ -1806,7 +1831,7 @@ mod tests {
         assert!(response.missing_hashes(vec![10, 11, 12, 13, 14]).is_empty());
 
         let persistent = BlockStore::new_svm();
-        assert!(persistent.merge(&response, 0, false).unwrap().is_none());
+        assert!(persistent.merge(&response, 0, false, 0).unwrap().is_none());
         assert_eq!(
             persistent.missing_hashes(vec![10, 11, 12, 13, 14]),
             vec![10, 11, 12, 13, 14]
@@ -1853,7 +1878,7 @@ mod tests {
         }]);
 
         let persistent = BlockStore::new_fuel();
-        assert!(persistent.merge(&page, 0, false).unwrap().is_none());
+        assert!(persistent.merge(&page, 0, false, 0).unwrap().is_none());
 
         let mask = ((1u64 << (FuelBlockField::Height as u32))
             | (1u64 << (FuelBlockField::Time as u32))
@@ -1893,7 +1918,7 @@ mod tests {
             time: Some(124),
         }]);
         let mismatch = persistent
-            .merge(&conflicting, 0, false)
+            .merge(&conflicting, 0, false, 0)
             .unwrap()
             .expect("mismatch");
         assert_eq!(mismatch.block_number, 5);
@@ -1905,7 +1930,7 @@ mod tests {
             id: None,
             time: Some(125),
         }]);
-        assert!(persistent.merge(&hashless, 0, false).unwrap().is_none());
+        assert!(persistent.merge(&hashless, 0, false, 0).unwrap().is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]

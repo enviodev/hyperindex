@@ -119,6 +119,9 @@ let make = (
       ~addressSet,
     ) catch {
     | exn =>
+      // A rate limit or a replica behind the head is recoverable and has its own
+      // backoff and failover, so it must not be buried in a generic retry.
+      HyperSync.reraiseIfRecoverable(exn)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({

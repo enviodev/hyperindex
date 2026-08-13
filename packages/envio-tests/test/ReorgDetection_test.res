@@ -15,7 +15,12 @@ describe("Block store reorg detection", () => {
 
   let mock = entries => {
     let store = BlockStore.make(~ecosystem=Svm, ~shouldChecksum=false)
-    switch store->BlockStore.merge(makePage(entries), ~fromBlock=0, ~reportOnly=false) {
+    switch store->BlockStore.merge(
+      makePage(entries),
+      ~fromBlock=0,
+      ~reportOnly=false,
+      ~pruneHashesBelow=0,
+    ) {
     | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected in mock setup")
     | Null.Null => ()
     }
@@ -23,7 +28,12 @@ describe("Block store reorg detection", () => {
   }
 
   let mergeNoReorg = (store, entries, ~fromBlock) => {
-    switch store->BlockStore.merge(makePage(entries), ~fromBlock, ~reportOnly=false) {
+    switch store->BlockStore.merge(
+      makePage(entries),
+      ~fromBlock,
+      ~reportOnly=false,
+      ~pruneHashesBelow=fromBlock,
+    ) {
     | Null.Value(_) => JsError.throwWithMessage("Unexpected reorg detected")
     | Null.Null => store
     }
@@ -104,13 +114,20 @@ describe("Block store reorg detection", () => {
         makePage([(10, "0x10")]),
         ~fromBlock=0,
         ~reportOnly=false,
+        ~pruneHashesBelow=0,
       ),
     ).toEqual(Null.Value(reorgDetected))
 
     // Rollback mode discards the page: the stored hash stays, so the same
     // mismatch re-reports until the store is rolled back.
     let store = mock([(10, "0x10-invalid")])
-    let _ = store->BlockStore.merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=false)
+    let _ =
+      store->BlockStore.merge(
+        makePage([(10, "0x10")]),
+        ~fromBlock=0,
+        ~reportOnly=false,
+        ~pruneHashesBelow=0,
+      )
     t.expect(
       store->BlockStore.getHash(10),
       ~message="Rollback mode keeps the scanned hash for the rollback comparison",
@@ -120,11 +137,21 @@ describe("Block store reorg detection", () => {
     // same hash no longer reports.
     let store = mock([(10, "0x10-invalid")])
     t.expect(
-      store->BlockStore.merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=true),
+      store->BlockStore.merge(
+        makePage([(10, "0x10")]),
+        ~fromBlock=0,
+        ~reportOnly=true,
+        ~pruneHashesBelow=0,
+      ),
     ).toEqual(Null.Value(reorgDetected))
     t.expect(store->BlockStore.getHash(10)).toEqual(Null.Value("0x10"))
     t.expect(
-      store->BlockStore.merge(makePage([(10, "0x10")]), ~fromBlock=0, ~reportOnly=true),
+      store->BlockStore.merge(
+        makePage([(10, "0x10")]),
+        ~fromBlock=0,
+        ~reportOnly=true,
+        ~pruneHashesBelow=0,
+      ),
       ~message="After the overwrite the same page merges cleanly",
     ).toEqual(Null.Null)
   })
@@ -135,6 +162,7 @@ describe("Block store reorg detection", () => {
         makePage([(12, "0x12-different"), (11, "0x11-different")]),
         ~fromBlock=0,
         ~reportOnly=false,
+        ~pruneHashesBelow=0,
       ),
     ).toEqual(
       Null.Value({

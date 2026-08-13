@@ -98,8 +98,18 @@ type hashMismatch = {
 // is discarded - the stored hashes stay for the rollback comparison - unless
 // `reportOnly` is set (detect-only mode), which merges anyway so the same
 // mismatch doesn't re-report on every response.
+//
+// Hash-only rows below `pruneHashesBelow` are dropped afterwards, bounded by
+// what the chain has processed - a block it hasn't reached yet keeps its hash
+// even when it falls outside the reorg threshold.
 @send
-external merge: (t, t, ~fromBlock: int, ~reportOnly: bool) => Null.t<hashMismatch> = "merge"
+external merge: (
+  t,
+  t,
+  ~fromBlock: int,
+  ~reportOnly: bool,
+  ~pruneHashesBelow: int,
+) => Null.t<hashMismatch> = "merge"
 
 // Append a backend page to a logical response store. This always appends rows;
 // any conflict is retained as response metadata for SourceManager to validate.

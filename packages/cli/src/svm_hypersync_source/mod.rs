@@ -26,7 +26,7 @@ use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
-use crate::request_stats::RequestStat;
+use crate::request_stats::{source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
 use config::SvmClientConfig;
@@ -380,6 +380,13 @@ impl SvmHyperSyncClient {
             .await
             .context("solana get")
             .map_err(map_err)?;
+
+        // The replica serving this request has not reached the queried range,
+        // so it would report negative progress. Expected around the head of a
+        // load-balanced backend; the source manager backs off and fails over.
+        if resp.next_slot <= query.from_slot {
+            return Err(source_behind_head_err(params.from_slot));
+        }
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
