@@ -15,23 +15,40 @@ open Vitest
 // Skipped by default: it pushes ~600MB through Postgres to cross the V8 string
 // limit, which is too slow/heavy for every CI run. Run it manually to guard the
 // fix for #1242.
+let scenario = Scenario.make(
+  ~configYaml=`
+name: dynamic-contracts-startup-size
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+`,
+  ~schema=`
+type Gravatar {
+  id: ID!
+  owner: String!
+}
+`,
+  ~unsupported=[
+    {backend: #memory, reason: "reproduces a Postgres json_agg decoding limit"},
+  ],
+)
+
 describe("Dynamic contracts startup size", () => {
   Async.it_skip(
     "getInitialState loads all dynamic contracts when the aggregate exceeds the V8 string limit",
     async t => {
-      let sourceMock = MockIndexer.Source.make(
-        [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        ~chainId=#1337,
-      )
-      await MockIndexer.Indexer.run(
-        ~chains=[
-          {
-            chain: #1337,
-            sourceConfig: Config.CustomSources([sourceMock.source]),
-          },
-        ],
-        async indexerMock => {
-          let {sql, pgSchema} = indexerMock->IndexerRunner.pgOrThrow
+      await scenario->Scenario.run(
+        ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+        async (~indexer, ~source as _) => {
+          let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
 
           let chainId = 1337->ChainId.fromInt
           let rowCount = 120

@@ -25,24 +25,6 @@ type Gravatar {
 `,
 )
 
-// Head 300 with maxReorgDepth 200: the pre-threshold fetch stops at block 100.
-let initialEnterReorgThreshold = async (~t: Vitest.testContext, ~indexer: IndexerRunner.t, ~sourceMock: MockSource.t) => {
-  t.expect(
-    sourceMock.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
-  sourceMock.resolveGetHeightOrThrow(300)
-  await Utils.delay(0)
-  await Utils.delay(0)
-
-  t.expect(
-    sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message="Should request items until reorg threshold",
-  ).toEqual([{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}])
-  sourceMock.resolveGetItemsOrThrow([])
-  await indexer.getBatchWritePromise()
-}
-
 describe("E2E blockLag tests", () => {
   scenario->Scenario.it(
     "Chain with blockLag=1 should be marked as synced to head when at knownHeight - blockLag",
@@ -56,7 +38,7 @@ describe("E2E blockLag tests", () => {
       await Utils.delay(0)
       // Enter reorg threshold the standard way:
       // knownHeight=300, maxReorgDepth=200, so initial fetch is blocks 1-100
-      await initialEnterReorgThreshold(~t, ~indexer, ~sourceMock)
+      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),

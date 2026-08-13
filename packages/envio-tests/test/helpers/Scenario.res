@@ -237,3 +237,31 @@ let it = (
     )
   }
 }
+
+// Drives a chain through the reorg-threshold transition: the first query stops
+// `maxReorgDepth` short of the head, and the response commits before the
+// post-threshold range opens up. Several scenarios need to be past this point
+// before the behaviour they test is reachable.
+let enterReorgThreshold = async (
+  ~t: Vitest.testContext,
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~head=300,
+  ~preThresholdTo=100,
+  ~fromBlock=1,
+) => {
+  t.expect(
+    source.getHeightOrThrowCalls->Array.length,
+    ~message="should have called getHeightOrThrow to get initial height",
+  ).toEqual(1)
+  source.resolveGetHeightOrThrow(head)
+  await Utils.delay(0)
+  await Utils.delay(0)
+
+  t.expect(
+    source.getItemsOrThrowCalls->Array.map(call => call.payload),
+    ~message="Should request items until reorg threshold",
+  ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
+  source.resolveGetItemsOrThrow([])
+  await indexer.getBatchWritePromise()
+}
