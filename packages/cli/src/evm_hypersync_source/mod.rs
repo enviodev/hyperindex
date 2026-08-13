@@ -6,7 +6,9 @@ use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache};
+use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
+use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -19,10 +21,7 @@ use config::ClientConfig;
 use decode::{Decoder, LogAddress, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{
-    encode_address, map_hex_string, map_i64, Block, OnEventRegistrationInput, ParamValue,
-    RollbackGuard,
-};
+use types::{encode_address, Block, OnEventRegistrationInput, ParamValue, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -47,6 +46,24 @@ pub struct EvmHyperSyncClient {
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
+}
+
+impl EvmHyperSyncClient {
+    /// Execute one raw HyperSync page. Public methods decide how much of the
+    /// response to convert for their specific caller.
+    async fn get_raw(&self, query: Query) -> napi::Result<hypersync_client::QueryResponse> {
+        let query = query.try_into().context("parse query").map_err(map_err)?;
+        let res = self
+            .inner
+            .get_with_rate_limit(&query)
+            .await
+            .context("run inner query")
+            .map_err(map_err)?;
+        match res {
+            RateLimitResponse::Success { response, .. } => Ok(response),
+            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
+        }
+    }
 }
 
 #[napi]
@@ -101,21 +118,50 @@ impl EvmHyperSyncClient {
 
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
-        match res {
-            RateLimitResponse::Success { response, .. } => {
-                convert_response(response, self.enable_checksum_addresses)
-                    .context("convert response")
-                    .map_err(map_err)
-            }
-            RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
-        }
+        convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
+            .context("convert response")
+            .map_err(map_err)
+    }
+
+    /// Fetch the complete inclusive range spanning `block_numbers` into one
+    /// response store. Query construction, pagination, and the no-progress
+    /// retry stay on the Rust side so block-only response data never needs to
+    /// cross into ReScript.
+    #[napi]
+    pub async fn get_block_hashes(
+        &self,
+        block_numbers: Vec<i64>,
+    ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
+        let aggregate = BlockStore::new_evm(self.enable_checksum_addresses);
+        let request_stats = paginate_block_hashes(
+            &block_numbers,
+            &aggregate,
+            "block numbers",
+            |request_from, to_block_exclusive| async move {
+                let query = Query {
+                    from_block: request_from,
+                    to_block: Some(to_block_exclusive),
+                    include_all_blocks: Some(true),
+                    field_selection: query::FieldSelection {
+                        block: Some(vec![BlockField::Number, BlockField::Hash]),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let response = self.get_raw(query).await?;
+                let (next, store) =
+                    block_hash_page(response, self.enable_checksum_addresses).map_err(map_err)?;
+                // `include_all_blocks` leaves no gaps, so the last block the
+                // page covered is the one before where it stopped.
+                Ok(HashPage {
+                    next,
+                    last_returned: Some(next - 1),
+                    store,
+                })
+            },
+        )
+        .await?;
+        Ok((aggregate, request_stats))
     }
 
     #[napi]
@@ -215,7 +261,7 @@ impl EvmHyperSyncClient {
 
         let transaction_store = TransactionStore::new_evm(self.enable_checksum_addresses);
         let block_store = BlockStore::new_evm(self.enable_checksum_addresses);
-        let (items, blocks) = tokio::task::block_in_place(|| {
+        let items = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
@@ -231,6 +277,24 @@ impl EvmHyperSyncClient {
         })
         .map_err(convert_error_to_napi)?;
 
+        let rollback_guard = response
+            .rollback_guard
+            .map(RollbackGuard::try_from)
+            .transpose()
+            .context("convert rollback guard")
+            .map_err(map_err)?;
+
+        // The rollback guard's blocks are reorg-detection inputs like any
+        // other: keep them in the page store so merging compares their hashes.
+        // The guard's head block covers the tip of the scanned range; the
+        // parent of the first in-memory block covers the seam right below it.
+        if let Some(g) = &rollback_guard {
+            block_store
+                .insert_rollback_guard_blocks(g)
+                .context("insert rollback guard blocks")
+                .map_err(map_err)?;
+        }
+
         let event_items = EventItemsResponse {
             archive_height: response
                 .archive_height
@@ -243,14 +307,7 @@ impl EvmHyperSyncClient {
                 .try_into()
                 .context("convert next_block")
                 .map_err(map_err)?,
-            blocks,
             items,
-            rollback_guard: response
-                .rollback_guard
-                .map(RollbackGuard::try_from)
-                .transpose()
-                .context("convert rollback guard")
-                .map_err(map_err)?,
         };
         Ok((event_items, transaction_store, block_store))
     }
@@ -283,9 +340,8 @@ fn log_selection_from_built(
     })
 }
 
-// The only caller of `get` is the block-hash query, which selects block fields
-// only — so the response carries just blocks. Event items (with their
-// transactions in the store) flow through `get_event_items` instead.
+// Generic query DTO retained for direct native-addon callers. HyperIndex's
+// event and block-hash paths use their dedicated lean methods instead.
 #[napi(object)]
 pub struct QueryResponseData {
     pub blocks: Vec<Block>,
@@ -318,28 +374,11 @@ pub struct EventItem {
 
 /// The always-needed block fields, surfaced per block number so the consumer can
 /// set each item's `timestamp`/`blockHash`, feed reorg detection, and stamp
-/// `event.block`'s number/timestamp/hash — without the full block crossing the
-/// napi boundary. The block's remaining fields stay raw in the per-chain
-/// `BlockStore` and are materialised field-by-field on demand.
-#[napi(object)]
-pub struct BlockHeader {
-    pub number: i64,
-    pub timestamp: i64,
-    pub hash: String,
-}
-
 #[napi(object)]
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    /// The page's block headers, one per returned block number — including
-    /// blocks no item references, which reorg detection still reads. Items
-    /// reference theirs by `block_number`; the full blocks live in the
-    /// `BlockStore` returned alongside this response, which keeps only the
-    /// blocks items reference.
-    pub blocks: Vec<BlockHeader>,
     pub items: Vec<EventItem>,
-    pub rollback_guard: Option<RollbackGuard>,
 }
 
 fn convert_response(
@@ -375,6 +414,25 @@ fn convert_response(
     })
 }
 
+/// Convert only the two values needed by the block-hash paginator. Raw blocks
+/// move directly into the response store without constructing napi block DTOs.
+fn block_hash_page(
+    mut response: hypersync_client::QueryResponse,
+    should_checksum: bool,
+) -> Result<(i64, BlockStore)> {
+    let next_block = response
+        .next_block
+        .try_into()
+        .context("convert next_block")?;
+    let blocks = std::mem::take(&mut response.data.blocks)
+        .into_iter()
+        .flatten()
+        .collect();
+    let block_store = BlockStore::new_evm(should_checksum);
+    block_store.insert_evm_blocks(blocks);
+    Ok((next_block, block_store))
+}
+
 fn push_unique(missing: &mut Vec<String>, name: String) {
     if !missing.contains(&name) {
         missing.push(name);
@@ -401,7 +459,7 @@ fn process_response(
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
     set_cache: &SetCache,
-) -> std::result::Result<(Vec<EventItem>, Vec<BlockHeader>), ConvertError> {
+) -> std::result::Result<Vec<EventItem>, ConvertError> {
     let mut missing: Vec<String> = Vec::new();
 
     // Route before touching the joined tables: routing is what decides which
@@ -482,10 +540,8 @@ fn process_response(
         transaction_store.insert_evm_txs(kept);
     }
 
-    // The server returns one block per number. Every returned block still
-    // yields a header — reorg detection reads them all, items or not — so keep
-    // them owned, validate them all, and track which numbers are present for
-    // coverage.
+    // The server returns one block per number. Every returned block is
+    // validated, items or not, and its number tracked for coverage.
     let response_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
     let present_block_numbers: HashSet<u64> =
         response_blocks.iter().filter_map(|b| b.number).collect();
@@ -531,39 +587,29 @@ fn process_response(
         return Err(ConvertError::MissingFields(missing));
     }
 
-    // Lean headers (number/timestamp/hash) for the page, one per number; items
-    // reference them by number. The required trio is validated present above.
-    let out_blocks: Vec<BlockHeader> = response_blocks
-        .iter()
-        .map(|b| -> Result<BlockHeader> {
-            Ok(BlockHeader {
-                number: b
-                    .number
-                    .map(i64::try_from)
-                    .transpose()
-                    .context("block.number overflow")?
-                    .context("block.number missing")?,
-                timestamp: map_i64(&b.timestamp)
-                    .context("block.timestamp overflow")?
-                    .context("block.timestamp missing")?,
-                hash: map_hex_string(&b.hash).context("block.hash missing")?,
-            })
+    // Full fields for referenced blocks, whose trio and any selected fields
+    // decode from the store like any other field. Blocks whose logs were all
+    // dropped by client-side routing keep a hash-only row so every returned
+    // header still backs reorg detection.
+    let store_blocks: Vec<simple_types::Block> = response_blocks
+        .into_iter()
+        .map(|b| {
+            if b.number
+                .is_some_and(|number| referenced_blocks.contains(&number))
+            {
+                b
+            } else {
+                simple_types::Block {
+                    number: b.number,
+                    hash: b.hash,
+                    ..Default::default()
+                }
+            }
         })
-        .collect::<Result<Vec<_>>>()
-        .context("mapping block headers")?;
+        .collect();
+    block_store.insert_evm_blocks(store_blocks);
 
-    // Kept for every referenced block, not just when an event selected a field
-    // beyond the trio: number/timestamp/hash decode from the store like any
-    // other field (see `decode_evm_block_field`), so the store needs an entry
-    // for every block the config's always-included trio selection touches.
-    let mut kept_blocks = response_blocks;
-    kept_blocks.retain(|b| {
-        b.number
-            .is_some_and(|number| referenced_blocks.contains(&number))
-    });
-    block_store.insert_evm_blocks(kept_blocks);
-
-    Ok((items, out_blocks))
+    Ok(items)
 }
 
 /// Key into the `TransactionStore`. The log side (which decides what a routed
@@ -935,7 +981,7 @@ mod tests {
         block.hash = Some(Default::default());
         block.timestamp = Some(Default::default());
         // base_fee_per_gas left None
-        let (items, _blocks) = process_response(
+        let items = process_response(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -1036,7 +1082,7 @@ mod tests {
         tx.transaction_index = Some(0u64.into());
 
         let store = TransactionStore::new_evm(false);
-        let (items, blocks) = process_response(
+        let items = process_response(
             vec![vec![block]],
             vec![vec![tx]],
             vec![vec![full_log(7)]],
@@ -1051,20 +1097,18 @@ mod tests {
         .expect("expected success when block and transaction join");
 
         assert_eq!(
-            (
-                items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
-                blocks.iter().map(|b| b.number).collect::<Vec<_>>(),
-            ),
-            (vec![7], vec![7])
+            items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
+            vec![7]
         );
     }
 
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
-    async fn unrouted_logs_keep_their_block_and_transaction_out_of_the_stores() {
+    async fn unrouted_logs_keep_a_hash_only_block_and_no_transaction() {
         // Block 1's log routes; block 2's doesn't. Both blocks and both
-        // transactions come back from the server, but only block 1's pair is
-        // ever read, so only it is stored.
+        // transactions come back from the server. Block 1 is stored in full and
+        // its transaction kept; block 2's transaction is dropped, but the block
+        // keeps a hash-only row so a fork on it can still be detected.
         let block = |number: u64| simple_types::Block {
             number: Some(number),
             hash: Some(Default::default()),
@@ -1080,7 +1124,7 @@ mod tests {
 
         let transaction_store = TransactionStore::new_evm(false);
         let block_store = BlockStore::new_evm(false);
-        let (items, blocks) = process_response(
+        let items = process_response(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
             vec![vec![full_log(1), unrouted_log(2)]],
@@ -1114,16 +1158,15 @@ mod tests {
         assert_eq!(
             (
                 items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
-                blocks.iter().map(|b| b.number).collect::<Vec<_>>(),
                 str_column(&stored_transaction_hashes, "hash"),
                 str_column(&stored_block_hashes, "hash"),
             ),
             (
                 vec![1],
-                // Every returned block still yields a header; only the store is filtered.
-                vec![1, 2],
+                // Block 2's transaction is dropped (never read)...
                 vec![Some(zero_hash.clone()), None],
-                vec![Some(zero_hash), None],
+                // ...but its block keeps a hash-only row for reorg detection.
+                vec![Some(zero_hash.clone()), Some(zero_hash)],
             )
         );
     }
@@ -1135,7 +1178,7 @@ mod tests {
         // routes nowhere, so nothing will ever read them and the page stands.
         // Without this, filtering the stores would silently diverge from what
         // the coverage check still insists the source deliver.
-        let (items, blocks) = process_response(
+        let items = process_response(
             vec![],
             vec![],
             vec![vec![unrouted_log(1)]],
@@ -1149,14 +1192,14 @@ mod tests {
         )
         .expect("an unrouted log's absent block and transaction are not missing fields");
 
-        assert_eq!((items.len(), blocks.len()), (0, 0));
+        assert_eq!(items.len(), 0);
     }
 
     #[test]
-    fn unreferenced_block_is_judged_only_on_its_header_fields() {
+    fn unreferenced_block_is_judged_only_on_its_required_fields() {
         // Block 2 backs no item, so its absent `gasUsed` can't fail the page —
-        // nothing can read it. The header trio is still required of it, since
-        // every returned block yields a header.
+        // nothing can read it. The required trio is still demanded of every
+        // returned block, referenced or not.
         let block = |number: u64| simple_types::Block {
             number: Some(number),
             hash: Some(Default::default()),
@@ -1164,7 +1207,7 @@ mod tests {
             gas_used: (number == 1).then(Default::default),
             ..Default::default()
         };
-        let (items, blocks) = process_response(
+        let items = process_response(
             vec![vec![block(1), block(2)]],
             vec![],
             vec![vec![full_log(1), unrouted_log(2)]],
@@ -1183,13 +1226,7 @@ mod tests {
         )
         .expect("an unreferenced block's absent selected field is not a missing field");
 
-        assert_eq!(
-            (
-                items.len(),
-                blocks.iter().map(|b| b.number).collect::<Vec<_>>()
-            ),
-            (1, vec![1, 2])
-        );
+        assert_eq!(items.len(), 1);
     }
 
     #[test]
@@ -1205,7 +1242,7 @@ mod tests {
         let mut keyless = simple_types::Transaction::default();
         keyless.hash = None;
 
-        let (items, _blocks) = process_response(
+        let items = process_response(
             vec![vec![block]],
             vec![vec![
                 simple_types::Transaction {

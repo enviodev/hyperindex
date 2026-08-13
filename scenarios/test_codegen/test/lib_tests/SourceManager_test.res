@@ -85,6 +85,28 @@ let onNewBlockMock = () => {
   }
 }
 
+describe("native request failures", () => {
+  it("keeps timings and maps a wrapped HyperSync rate limit", t => {
+    let exn = try {
+      JsError.throwWithMessage(
+        `ENVIO_NATIVE_FAILURE:{"message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
+      )
+    } catch {
+    | exn => exn
+    }
+    t.expect({
+      "requestStats": (exn->Source.unpackNativeRequestFailure).requestStats,
+      "mapped": exn->HyperSync.mapNativeFailureExn,
+    }).toEqual({
+      "requestStats": [{Source.method: "getBlockHashes", seconds: 0.25}],
+      "mapped": Source.RateLimited({
+        resetMs: 2500,
+        requestStats: [{Source.method: "getBlockHashes", seconds: 0.25}],
+      }),
+    })
+  })
+})
+
 describe("SourceManager creation", () => {
   it("Successfully creates with a sync source", t => {
     let source = MockIndexer.Source.make([]).source
@@ -412,10 +434,7 @@ describe("SourceManager fetchNext", () => {
 
     {
       id: partitionIndex->Int.toString,
-      latestFetchedBlock: {
-        blockNumber: latestFetchedBlockNumber,
-        blockTimestamp: latestFetchedBlockNumber * 15,
-      },
+      latestFetchedBlock:latestFetchedBlockNumber,
       selection: normalSelection,
       addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
@@ -438,7 +457,7 @@ describe("SourceManager fetchNext", () => {
     let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
     partitions->Array.forEach(partition => {
-      if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
+      if latestFullyFetchedBlock.contents > partition.latestFetchedBlock {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
     })
@@ -457,7 +476,7 @@ describe("SourceManager fetchNext", () => {
       endBlock,
       buffer,
       normalSelection,
-      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
+      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
       maxOnBlockBufferSize: targetBufferSize,
       chainId: 0->ChainId.fromInt,
       blockLag: 0,
@@ -1462,6 +1481,88 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
+  Async.it("calls source.onReorg before retrying an inconsistent response", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    t.expect(sourceMock.reorgCallCount()).toEqual(0)
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] =>
+      // The response contains block 9 twice with different hashes: once as the
+      // range's parent guard and once as the reported latest block.
+      call.resolve([], ~latestFetchedBlockNumber=9, ~latestFetchedBlockHash="0x0a")
+    | _ => JsError.throwWithMessage("Expected the first source call")
+    }
+
+    await Utils.delay(200)
+    t.expect(sourceMock.reorgCallCount()).toEqual(1)
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected the retry after cache invalidation")
+    }
+    t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("Retries a source that hasn't reached the queried block yet", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    // Every ecosystem's source raises this instead of building its own backoff,
+    // so the retry cadence lives in one place.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({blockNumber: 10, requestStats: []}),
+    )
+    await Utils.delay(200)
+
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
+    }
+    t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("counts the requests a failed getItems still made", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    // The native client reports the timings of the requests it made before
+    // giving up, so a source failing under load still shows up in its metrics.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({
+        blockNumber: 10,
+        requestStats: [{Source.method: "getLogs", seconds: 0.5}],
+      }),
+    )
+    await Utils.delay(200)
+
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
+    }
+    let _ = await p
+
+    t.expect(
+      sourceManager
+      ->SourceManager.getRequestStatSamples
+      ->Array.map(({method, count, seconds}) => (method, count, seconds)),
+    ).toEqual([("getLogs", 1, 0.5)])
+  })
+
   Async.it("Rethrows unknown errors", async t => {
     let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
@@ -1561,7 +1662,7 @@ describe("SourceManager.executeQuery", () => {
       )
 
       // Retries 0, 1, 2 on sync (primary)
-      for idx in 0 to 2 {
+      for _idx in 0 to 2 {
         switch syncMock.getItemsOrThrowCalls {
         | [call] => {
             handledGetItemsOrThrowCalls->Array.push({
@@ -1575,9 +1676,7 @@ describe("SourceManager.executeQuery", () => {
         | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
         }
         await Promise.resolve()
-        if idx !== 2 {
-          await Utils.delay(0)
-        }
+        await Utils.delay(0)
       }
 
       // Retry 3 on fallback (sync failed, fallback is recovered secondary)

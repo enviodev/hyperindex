@@ -1,8 +1,10 @@
 type logsQueryPage = {
   items: array<FuelHyperSyncClient.EventItems.item>,
-  blocks: array<FuelHyperSyncClient.EventItems.block>,
   nextBlock: int,
   archiveHeight: int,
+  // Page store owning this page's raw blocks (built on the Rust side); its ids
+  // drive reorg detection when merged into the chain store.
+  blockStore: BlockStore.t,
 }
 
 module GetLogs: {

@@ -106,10 +106,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         fetchState :=
           fetchState.contents->FetchState.handleQueryResult(
             ~query,
-            ~latestFetchedBlock={
-              blockNumber: currentBlockNumber.contents,
-              blockTimestamp: currentTime.contents,
-            },
+            ~latestFetchedBlock=currentBlockNumber.contents,
             ~newItems=[batchItem],
           )
 
@@ -130,11 +127,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~addressStore,
       ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
       // This is quite a hack - but it works!
-      ~reorgDetection=ReorgDetection.make(
-        ~chainReorgCheckpoints=[],
-        ~maxReorgDepth=200,
-        ~shouldRollbackOnReorg=false,
-      ),
+      ~maxReorgDepth=200,
+      ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
       ~logger=Logging.getLogger(),
     )
@@ -288,7 +282,7 @@ describe("IndexerState", () => {
               fetchState :=
                 fetchState.contents->FetchState.handleQueryResult(
                   ~query,
-                  ~latestFetchedBlock={blockNumber, blockTimestamp: blockNumber * 15},
+                  ~latestFetchedBlock=blockNumber,
                   ~newItems=[
                     Internal.Event({
                       chainId: chainId,
@@ -321,11 +315,8 @@ describe("IndexerState", () => {
                 ~fetchState,
                 ~addressStore,
                 ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
-                ~reorgDetection=ReorgDetection.make(
-                  ~chainReorgCheckpoints=[],
-                  ~maxReorgDepth=200,
-                  ~shouldRollbackOnReorg=false,
-                ),
+                ~maxReorgDepth=200,
+                ~shouldRollbackOnReorg=false,
                 ~committedProgressBlockNumber=-1,
                 ~logger=Logging.getLogger(),
               )
@@ -370,7 +361,7 @@ describe("IndexerState", () => {
         cs->ChainState.handleQueryResult(
           ~query=concurrentQuery,
           ~newRegistrations=[],
-          ~latestFetchedBlock={blockNumber: 15, blockTimestamp: 15 * 15},
+          ~latestFetchedBlock=15,
           ~newItems=[
             Internal.Event({
               chainId,
@@ -386,7 +377,6 @@ describe("IndexerState", () => {
           ],
           ~knownHeight=cs->ChainState.knownHeight,
           ~transactionStore=None,
-          ~blockStore=None,
         )
 
         state->IndexerState.applyBatchProgress(~batch)

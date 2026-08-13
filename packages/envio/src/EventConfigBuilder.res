@@ -655,11 +655,11 @@ let buildFuelEventConfig = (
     contractName,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    // Fuel keeps the transaction and block inline on the payload; nothing to
-    // materialise.
+    // Fuel keeps the transaction inline on the payload; the block is
+    // materialised from the store with the full always-queried trio.
     selectedTransactionFields: Utils.Set.make(),
     transactionFieldMask: 0.,
-    blockFieldMask: 0.,
+    blockFieldMask: Fuel.fullBlockFieldMask,
     kind: fuelKind,
   }
 }
@@ -682,7 +682,9 @@ let buildFuelOnEventRegistration = (
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
   startBlock,
   fieldSelection: {
-    // Fuel carries the block on the payload, so nothing is fetched for it.
+    // The Fuel source queries a fixed block shape rather than a per-event
+    // selection, so only the mask (the store's full always-queried trio) is
+    // meaningful here; nothing reads the field names.
     blockFields: Utils.Set.make(),
     transactionFields: eventConfig.selectedTransactionFields,
     blockMask: eventConfig.blockFieldMask,

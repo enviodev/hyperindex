@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -13,16 +14,22 @@ export default defineConfig({
       "test/integration-raw-events.test.ts",
       "test/topic-hashing.test.ts",
     ],
-    // Run tests sequentially - both file-wide and test-wide
-    fileParallelism: false,
+    // Files run in parallel: every indexer gets a Postgres schema of its own
+    // (see MockIndexer.Indexer.run), so they no longer share one. Tests within
+    // a file stay sequential — they share the process-global config and
+    // handler registry.
     sequence: {
       concurrent: false,
     },
     pool: "forks",
-    maxWorkers: 1,
+    // Vitest defaults to one fewer worker than the machine has; the suite is
+    // not CPU-saturated enough for that to pay off, and the extra worker is
+    // worth ~20% of the wall clock.
+    maxWorkers: availableParallelism(),
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
+    globalSetup: ["test/GlobalSetup.res.mjs"],
     passWithNoTests: true,
     server: {
       deps: {

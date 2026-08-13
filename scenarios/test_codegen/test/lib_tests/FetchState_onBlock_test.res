@@ -19,10 +19,7 @@ let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThr
 
 let getTimestamp = (~blockNumber) => blockNumber * 15
 
-let getBlockData = (~blockNumber): FetchState.blockNumberAndTimestamp => {
-  blockNumber,
-  blockTimestamp: getTimestamp(~blockNumber),
-}
+let getBlockData = (~blockNumber): int => blockNumber
 
 let baseEventConfig = (MockIndexer.evmOnEventRegistration(
   ~id="0",
@@ -105,7 +102,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -153,7 +150,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -202,7 +199,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -255,7 +252,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 12, blockTimestamp: 12 * 15},
+        ~latestFetchedBlock=12,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 
@@ -311,7 +308,7 @@ describe("FetchState onBlock functionality", () => {
     let updatedFetchState =
       fetchState->FetchState.handleQueryResult(
         ~query,
-        ~latestFetchedBlock={blockNumber: 10, blockTimestamp: 10 * 15},
+        ~latestFetchedBlock=10,
         ~newItems=[mockEvent(~blockNumber=5)],
       )
 

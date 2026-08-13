@@ -19,7 +19,7 @@ describe("Sparse-density target overflow", () => {
         ~chainId=#1337,
         ~pollingInterval=1,
       )
-      let indexerMock = await MockIndexer.Indexer.make(
+      await MockIndexer.Indexer.run(
         ~chains=[
           {
             chain: #1337,
@@ -30,39 +30,39 @@ describe("Sparse-density target overflow", () => {
         ~shouldRollbackOnReorg=false,
         ~targetBufferSize=100_000,
         ~reducedPollingInterval=1,
+        async indexerMock => {
+          await Utils.delay(0)
+
+          sourceMock.resolveGetHeightOrThrow(30_000)
+          await Utils.delay(0)
+          await Utils.delay(0)
+
+          // One event over the whole 30k-block range: the batch seeds the chain
+          // density at ~1/30000 events per block.
+          await MockIndexer.Helper.waitItemsQuery(sourceMock)
+          sourceMock.resolveGetItemsOrThrow(
+            [{blockNumber: 5, logIndex: 0}],
+            ~latestFetchedBlockNumber=30_000,
+          )
+          await indexerMock.getBatchWritePromise()
+
+          // A new block arrives. The chain is one block behind the head and must
+          // query it — on the broken version the wrapped target block leaves every
+          // partition out of range and the chain only ever waits.
+          let attempts = ref(0)
+          while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 2000 {
+            attempts := attempts.contents + 1
+            try sourceMock.resolveGetHeightOrThrow(30_001) catch {
+            | _ => ()
+            }
+            await Utils.delay(1)
+          }
+          t.expect(
+            sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+            ~message="the chain should query the new head block despite its low event density",
+          ).toEqual([30_001])
+        },
       )
-      await Utils.delay(0)
-
-      sourceMock.resolveGetHeightOrThrow(30_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // One event over the whole 30k-block range: the batch seeds the chain
-      // density at ~1/30000 events per block.
-      await MockIndexer.Helper.waitItemsQuery(sourceMock)
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 5, logIndex: 0}],
-        ~latestFetchedBlockNumber=30_000,
-      )
-      await indexerMock.getBatchWritePromise()
-
-      // A new block arrives. The chain is one block behind the head and must
-      // query it — on the broken version the wrapped target block leaves every
-      // partition out of range and the chain only ever waits.
-      let attempts = ref(0)
-      while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 2000 {
-        attempts := attempts.contents + 1
-        try sourceMock.resolveGetHeightOrThrow(30_001) catch {
-        | _ => ()
-        }
-        await Utils.delay(1)
-      }
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="the chain should query the new head block despite its low event density",
-      ).toEqual([30_001])
-
-      await indexerMock.stop()
     },
     ~timeout=30_000,
   )
