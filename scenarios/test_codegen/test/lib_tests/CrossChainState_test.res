@@ -43,7 +43,9 @@ let makeChainState = (
         startBlock: None,
         endBlock: None,
         interval: 1,
-        handler: "mock onBlock handler"->(Utils.magic: string => Internal.onBlockArgs => promise<unit>),
+        handler: "mock onBlock handler"->(
+          Utils.magic: string => Internal.onBlockArgs => promise<unit>
+        ),
       },
     ],
     ~startBlock=0,
@@ -68,11 +70,8 @@ let makeChainState = (
     ~onEventRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
-    ~reorgDetection=ReorgDetection.make(
-      ~chainReorgCheckpoints=[],
-      ~maxReorgDepth=200,
-      ~shouldRollbackOnReorg=false,
-    ),
+    ~maxReorgDepth=200,
+    ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
     ~logger=Logging.getLogger(),
@@ -98,7 +97,7 @@ let makeFetchingChainState = (
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
     id: "0",
-    latestFetchedBlock: {blockNumber: latestFetchedBlock, blockTimestamp: 0},
+    latestFetchedBlock:latestFetchedBlock,
     selection: normalSelection,
     addresses: TestAddresses.setOf(~contractName="MockContract", [address]),
     mergeBlock: None,
@@ -141,11 +140,8 @@ let makeFetchingChainState = (
     ~fetchState,
     ~addressStore,
     ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
-    ~reorgDetection=ReorgDetection.make(
-      ~chainReorgCheckpoints=[],
-      ~maxReorgDepth=200,
-      ~shouldRollbackOnReorg=false,
-    ),
+    ~maxReorgDepth=200,
+    ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
@@ -399,10 +395,9 @@ describe("CrossChainState fetch control", () => {
       ~query=releasedQuery,
       ~newItems=[],
       ~newRegistrations=[],
-      ~latestFetchedBlock={blockNumber: 1000, blockTimestamp: 0},
+      ~latestFetchedBlock=1000,
       ~knownHeight=1000,
       ~transactionStore=None,
-      ~blockStore=None,
     )
 
     let secondTickChains = []
@@ -431,7 +426,7 @@ describe("CrossChainState fetch control", () => {
       let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
       let partition1: FetchState.partition = {
         id: "0",
-        latestFetchedBlock: {blockNumber: 0, blockTimestamp: 0},
+        latestFetchedBlock:0,
         selection: normalSelection,
         addresses: TestAddresses.setOf(~contractName="MockContract", [address1]),
         mergeBlock: None,
@@ -474,11 +469,8 @@ describe("CrossChainState fetch control", () => {
         ~fetchState=fetchState1,
         ~addressStore=addressStore1,
         ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
-        ~reorgDetection=ReorgDetection.make(
-          ~chainReorgCheckpoints=[],
-          ~maxReorgDepth=200,
-          ~shouldRollbackOnReorg=false,
-        ),
+        ~maxReorgDepth=200,
+        ~shouldRollbackOnReorg=false,
         ~committedProgressBlockNumber=-1,
         ~logger=Logging.getLogger(),
       )

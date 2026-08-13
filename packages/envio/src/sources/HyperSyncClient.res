@@ -169,65 +169,7 @@ module QueryTypes = {
   }
 }
 
-module ResponseTypes = {
-  type withdrawal = {
-    index?: string,
-    validatorIndex?: string,
-    address?: Address.t,
-    amount?: string,
-  }
-
-  type block = {
-    number?: int,
-    hash?: string,
-    parentHash?: string,
-    nonce?: bigint,
-    sha3Uncles?: string,
-    logsBloom?: string,
-    transactionsRoot?: string,
-    stateRoot?: string,
-    receiptsRoot?: string,
-    miner?: Address.t,
-    difficulty?: bigint,
-    totalDifficulty?: bigint,
-    extraData?: string,
-    size?: bigint,
-    gasLimit?: bigint,
-    gasUsed?: bigint,
-    timestamp?: int,
-    uncles?: array<string>,
-    baseFeePerGas?: bigint,
-    blobGasUsed?: bigint,
-    excessBlobGas?: bigint,
-    parentBeaconBlockRoot?: string,
-    withdrawalsRoot?: string,
-    withdrawals?: array<withdrawal>,
-    l1BlockNumber?: int,
-    sendCount?: string,
-    sendRoot?: string,
-    mixHash?: string,
-  }
-
-  type rollbackGuard = {
-    blockNumber: int,
-    timestamp: int,
-    hash: string,
-    firstBlockNumber: int,
-    firstParentHash: string,
-  }
-}
-
 type query = QueryTypes.query
-
-type queryResponseData = {blocks: array<ResponseTypes.block>}
-
-type queryResponse = {
-  archiveHeight: option<int>,
-  nextBlock: int,
-  totalExecutionTime: int,
-  data: queryResponseData,
-  rollbackGuard: option<ResponseTypes.rollbackGuard>,
-}
 
 module Registration = {
   // One topic position of the resolved `where`: static topic values, or
@@ -338,28 +280,19 @@ module EventItems = {
     params: Internal.eventParams,
   }
 
-  // The always-needed block fields, one per block number. The block's remaining
-  // fields live raw in the block store and are materialised on demand.
-  type blockHeader = {
-    number: int,
-    timestamp: int,
-    hash: string,
-  }
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One header per returned block number, including blocks no item
-    // references — reorg detection reads them all. The block store keeps only
-    // the ones items reference.
-    blocks: array<blockHeader>,
     items: array<item>,
-    rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
 }
 
 type t = {
-  get: (~query: query) => promise<queryResponse>,
+  // Block-hash query construction and pagination live in Rust; only the
+  // aggregate response store crosses the boundary.
+  getBlockHashes: (
+    ~blockNumbers: array<int>,
+  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
   getEventItems: (

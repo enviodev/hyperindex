@@ -116,14 +116,14 @@ describe("E2E rollback tests", () => {
       [
         {
           id: firstHistoryCheckpointId,
-          blockHash: Null.null,
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
           eventsProcessed: 2,
         },
         {
           id: firstHistoryCheckpointId->BigInt.add(1n),
-          blockHash: Js.Null.Value("0x102"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0102")),
           blockNumber: 102,
           chainId,
           eventsProcessed: 1,
@@ -210,7 +210,7 @@ describe("E2E rollback tests", () => {
       ],
       ~prevRangeLastBlock={
         blockNumber: 102,
-        blockHash: "0x102-reorged",
+        blockHash: "0x102a",
       },
     )
     await Utils.delay(0)
@@ -219,10 +219,12 @@ describe("E2E rollback tests", () => {
     t.expect(
       sourceMock.getBlockHashesCalls,
       ~message="Should have called getBlockHashes to find rollback depth",
-    ).toEqual([[100]])
+    ).toEqual([[100, 101]])
     sourceMock.resolveGetBlockHashes([
-      // The block 100 is untouched so we can rollback to it
-      {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+      // The block 100 is untouched so we can rollback to it; 101 came back on a
+      // different hash, so it belongs to the reorg.
+      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
     ])
 
     await indexerMock.getRollbackReadyPromise()
@@ -275,7 +277,7 @@ describe("E2E rollback tests", () => {
       [
         {
           id: firstHistoryCheckpointId->BigInt.add(3n),
-          blockHash: Js.Null.Value("0x101"),
+          blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
           eventsProcessed: 1,
@@ -599,7 +601,7 @@ describe("E2E rollback tests", () => {
         sourceMock.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=104,
-          ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x103-reorged"},
+          ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x0103ee"},
         )
         await Utils.delay(0)
         await Utils.delay(0)
@@ -607,10 +609,11 @@ describe("E2E rollback tests", () => {
         t.expect(
           sourceMock.getBlockHashesCalls,
           ~message="Should query the scanned blocks below the reorg",
-        ).toEqual([[100, 102]])
+        ).toEqual([[100, 101, 102]])
         sourceMock.resolveGetBlockHashes([
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-          {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+          {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
         ])
 
         switch await Promise.race([
@@ -625,7 +628,7 @@ describe("E2E rollback tests", () => {
         sourceMock.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=103,
-          ~latestFetchedBlockHash="0x103-reorged",
+          ~latestFetchedBlockHash="0x0103ee",
         )
         await indexerMock.getBatchWritePromise()
 
@@ -672,7 +675,7 @@ describe("E2E rollback tests", () => {
             },
           ],
           ~latestFetchedBlockNumber=101,
-          ~latestFetchedBlockHash="0x101",
+          ~latestFetchedBlockHash="0x0101",
         )
 
         // Wait until the processing loop has launched the next fetch — the batch is now
@@ -685,7 +688,7 @@ describe("E2E rollback tests", () => {
         sourceMock.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=102,
-          ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101-reorged"},
+          ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
         )
         await Utils.delay(0)
         await Utils.delay(0)
@@ -696,7 +699,7 @@ describe("E2E rollback tests", () => {
           ~message="a reorg detected mid-batch should start finding the rollback depth",
         ).toEqual([[100]])
         sourceMock.resolveGetBlockHashes([
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         ])
 
         // Releasing the handler lets the batch finish; its progress is applied and the
@@ -777,7 +780,7 @@ describe("E2E rollback tests", () => {
               eventsProcessed: 0,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 102,
-              blockHash: Js.Null.Value("0x102"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0102")),
             },
           ])
         },
@@ -810,7 +813,7 @@ describe("E2E rollback tests", () => {
           ~latestFetchedBlockNumber=103,
           ~prevRangeLastBlock={
             blockNumber: 102,
-            blockHash: "0x102-reorged",
+            blockHash: "0x102a",
           },
         )
         await Utils.delay(0)
@@ -822,7 +825,7 @@ describe("E2E rollback tests", () => {
         ).toEqual([[100]])
         sourceMock.resolveGetBlockHashes([
           // The block 100 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         ])
 
         await indexerMock.getRollbackReadyPromise()
@@ -842,7 +845,7 @@ describe("E2E rollback tests", () => {
         sourceMock.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102-reorged",
+          ~latestFetchedBlockHash="0x102a",
         )
         await indexerMock.getBatchWritePromise()
 
@@ -855,7 +858,7 @@ describe("E2E rollback tests", () => {
             eventsProcessed: 0,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 102,
-            blockHash: Js.Null.Value("0x102-reorged"),
+            blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x102a")),
           },
         ])
       },
@@ -1078,7 +1081,7 @@ describe("E2E rollback tests", () => {
           ~resolveAt=#first,
           ~prevRangeLastBlock={
             blockNumber: 103,
-            blockHash: "0x103-reorged",
+            blockHash: "0x103a",
           },
         )
         await Utils.delay(0)
@@ -1090,9 +1093,9 @@ describe("E2E rollback tests", () => {
         ).toEqual([[100, 101, 102]])
         sourceMock.resolveGetBlockHashes([
           // The block 102 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-          {blockNumber: 102, blockHash: "0x102", blockTimestamp: 102},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+          {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
         ])
 
         sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
@@ -1312,35 +1315,35 @@ describe("E2E rollback tests", () => {
               eventsProcessed: 1,
               chainId: 100->ChainId.fromInt,
               blockNumber: 103,
-              blockHash: Js.Null.Value("0x103"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
             },
             {
               id: 4n,
               eventsProcessed: 2,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 103,
-              blockHash: Js.Null.Value("0x103"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
             },
             {
               id: 5n,
               eventsProcessed: 1,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 106,
-              blockHash: Js.Null.Value("0x106"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
             },
             {
               id: 6n,
               eventsProcessed: 1,
               chainId: 100->ChainId.fromInt,
               blockNumber: 106,
-              blockHash: Js.Null.Value("0x106"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
             },
             {
               id: 7n,
               eventsProcessed: 1,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 107,
-              blockHash: Js.Null.Null,
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0107")),
             },
             // Block 108 is skipped, since we don't have
             // ether events processed or block hash for it
@@ -1349,7 +1352,7 @@ describe("E2E rollback tests", () => {
               eventsProcessed: 0,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 109,
-              blockHash: Js.Null.Value("0x109"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0109")),
             },
           ],
           [
@@ -1450,7 +1453,7 @@ describe("E2E rollback tests", () => {
           [],
           ~prevRangeLastBlock={
             blockNumber: 106,
-            blockHash: "0x106-reorged",
+            blockHash: "0x106a",
           },
           ~resolveAt=#first,
         )
@@ -1463,8 +1466,8 @@ describe("E2E rollback tests", () => {
         ).toEqual([[100, 103]])
         sourceMock1337.resolveGetBlockHashes([
           // The block 103 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-          {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
         ])
 
         // Clean up pending calls from before rollback
@@ -1577,31 +1580,31 @@ describe("E2E rollback tests", () => {
               eventsProcessed: 1,
               chainId: 100->ChainId.fromInt,
               blockNumber: 103,
-              blockHash: Js.Null.Value("0x103"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
             },
             {
               id: 4n,
               eventsProcessed: 2,
               chainId: 1337->ChainId.fromInt,
               blockNumber: 103,
-              blockHash: Js.Null.Value("0x103"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
             },
             // Reorg checkpoint id was checkpoint id 5
             // for chain 1337. After rollback it was removed
-            // and replaced with chain id 100
+            // and replaced with chain id 100.
             {
               id: 10n,
               eventsProcessed: 2,
               chainId: 100->ChainId.fromInt,
               blockNumber: 106,
-              blockHash: Js.Null.Value("0x106"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
             },
             {
               id: 11n,
               eventsProcessed: 0,
               chainId: 100->ChainId.fromInt,
               blockNumber: 111,
-              blockHash: Js.Null.Value("0x111"),
+              blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0111")),
             },
           ],
           [
@@ -1798,35 +1801,35 @@ describe("E2E rollback tests", () => {
                 eventsProcessed: 1,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 103,
-                blockHash: Js.Null.Value("0x103"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
               },
               {
                 id: 4n,
                 eventsProcessed: 2,
                 chainId: 1337->ChainId.fromInt,
                 blockNumber: 103,
-                blockHash: Js.Null.Value("0x103"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
               },
               {
                 id: 5n,
                 eventsProcessed: 1,
                 chainId: 1337->ChainId.fromInt,
                 blockNumber: 106,
-                blockHash: Js.Null.Value("0x106"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
               },
               {
                 id: 6n,
                 eventsProcessed: 2,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 106,
-                blockHash: Js.Null.Value("0x106"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
               },
               {
                 id: 7n,
                 eventsProcessed: 1,
                 chainId: 1337->ChainId.fromInt,
                 blockNumber: 107,
-                blockHash: Js.Null.Null,
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0107")),
               },
               // Block 108 is skipped, since we don't have
               // ether events processed or block hash for it
@@ -1835,7 +1838,7 @@ describe("E2E rollback tests", () => {
                 eventsProcessed: 0,
                 chainId: 1337->ChainId.fromInt,
                 blockNumber: 109,
-                blockHash: Js.Null.Value("0x109"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0109")),
               },
             ],
             [
@@ -1925,7 +1928,7 @@ describe("E2E rollback tests", () => {
             [],
             ~prevRangeLastBlock={
               blockNumber: 106,
-              blockHash: "0x106-reorged",
+              blockHash: "0x106a",
             },
             ~resolveAt=#first,
           )
@@ -1938,8 +1941,8 @@ describe("E2E rollback tests", () => {
           ).toEqual([[100, 103]])
           sourceMock1337.resolveGetBlockHashes([
             // The block 103 is untouched so we can rollback to it
-            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-            {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+            {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
           ])
 
           // Clean up pending calls from before rollback
@@ -2018,31 +2021,31 @@ describe("E2E rollback tests", () => {
                 eventsProcessed: 1,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 103,
-                blockHash: Js.Null.Value("0x103"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
               },
               {
                 id: 4n,
                 eventsProcessed: 2,
                 chainId: 1337->ChainId.fromInt,
                 blockNumber: 103,
-                blockHash: Js.Null.Value("0x103"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0103")),
               },
               // Reorg checkpoint id was checkpoint id 5
               // for chain 1337. After rollback it was removed
-              // and replaced with chain id 100
+              // and replaced with chain id 100.
               {
                 id: 10n,
                 eventsProcessed: 2,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 106,
-                blockHash: Js.Null.Value("0x106"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0106")),
               },
               {
                 id: 11n,
                 eventsProcessed: 0,
                 chainId: 100->ChainId.fromInt,
                 blockNumber: 111,
-                blockHash: Js.Null.Value("0x111"),
+                blockHash: Js.Null.Value(MockIndexer.evmBlockHash("0x0111")),
               },
             ],
             [
@@ -2161,7 +2164,7 @@ describe("E2E rollback tests", () => {
           [],
           ~prevRangeLastBlock={
             blockNumber: 102,
-            blockHash: "0x102-reorged",
+            blockHash: "0x102a",
           },
         )
         await Utils.delay(0)
@@ -2174,8 +2177,8 @@ describe("E2E rollback tests", () => {
 
         // Rollback to block 100 - blocks 101-103 are reorged
         sourceMock.resolveGetBlockHashes([
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
         ])
 
         await indexerMock.getRollbackReadyPromise()
@@ -2191,7 +2194,7 @@ describe("E2E rollback tests", () => {
           [],
           ~prevRangeLastBlock={
             blockNumber: 101,
-            blockHash: "0x101-reorged",
+            blockHash: "0x101a",
           },
         )
 
@@ -2204,7 +2207,7 @@ describe("E2E rollback tests", () => {
         ).toEqual([[100, 101], [100]])
         // Rollback to block 100 - blocks 101-103 are reorged
         sourceMock.resolveGetBlockHashes([
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         ])
         await indexerMock.getRollbackReadyPromise()
 
@@ -2369,17 +2372,19 @@ describe("E2E rollback tests", () => {
             [],
             ~prevRangeLastBlock={
               blockNumber: 103,
-              blockHash: "0x103-reorged",
+              blockHash: "0x103a",
             },
             ~resolveAt=#first,
           )
           await Utils.delay(0)
           await Utils.delay(0)
 
-          // getBlockHashes called with [100] (only stored block in threshold below 103)
-          // Block 100 hash matches → rollback target = 100
+          // getBlockHashes called with [100, 102]: both are stored in the
+          // threshold below 103. Block 100 still matches and 102 came back on
+          // the new fork → rollback target = 100.
           sourceMock1337.resolveGetBlockHashes([
-            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+            {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
           ])
 
           // Clean up pending calls from before rollback
@@ -2421,7 +2426,7 @@ describe("E2E rollback tests", () => {
             [],
             ~prevRangeLastBlock={
               blockNumber: 100,
-              blockHash: "0x100-reorged",
+              blockHash: "0x100a",
             },
             ~resolveAt=#first,
           )
@@ -2614,7 +2619,7 @@ describe("E2E rollback tests", () => {
           [],
           ~prevRangeLastBlock={
             blockNumber: 103,
-            blockHash: "0x103-reorged",
+            blockHash: "0x103a",
           },
           ~resolveAt=#first,
         )
@@ -2622,7 +2627,8 @@ describe("E2E rollback tests", () => {
         await Utils.delay(0)
 
         sourceMock1337.resolveGetBlockHashes([
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
         ])
 
         await indexerMock.getRollbackReadyPromise()
@@ -2656,7 +2662,7 @@ describe("E2E rollback tests", () => {
           [],
           ~prevRangeLastBlock={
             blockNumber: 100,
-            blockHash: "0x100-reorged",
+            blockHash: "0x100a",
           },
           ~resolveAt=#first,
         )
@@ -2762,7 +2768,7 @@ describe("E2E rollback tests", () => {
           [],
           ~prevRangeLastBlock={
             blockNumber: 115,
-            blockHash: "0x115-reorged",
+            blockHash: "0x115a",
           },
           ~resolveAt=#first,
         )
@@ -2772,14 +2778,16 @@ describe("E2E rollback tests", () => {
         t.expect(
           sourceMock.getBlockHashesCalls,
           ~message="Should have called getBlockHashes to find rollback depth",
-        ).toEqual([[100, 103, 106, 112]])
+        ).toEqual([[100, 101, 103, 104, 106, 112]])
 
         // Rollback to block 112
         sourceMock.resolveGetBlockHashes([
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-          {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
-          {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
-          {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+          {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
+          {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+          {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
         ])
 
         // Clean up pending calls from before rollback
@@ -2890,7 +2898,7 @@ describe("E2E rollback tests", () => {
             [],
             ~prevRangeLastBlock={
               blockNumber: 118,
-              blockHash: "0x118-reorged",
+              blockHash: "0x118a",
             },
           )
           await Utils.delay(0)
@@ -2900,15 +2908,17 @@ describe("E2E rollback tests", () => {
           t.expect(
             sourceMock.getBlockHashesCalls,
             ~message="Should have called getBlockHashes to find rollback depth",
-          ).toEqual([[100, 103, 106, 112, 115]])
+          ).toEqual([[100, 101, 103, 104, 106, 112, 115]])
 
           // All searched blocks are valid, so the reorg is shallow (only block 118).
           sourceMock.resolveGetBlockHashes([
-            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-            {blockNumber: 103, blockHash: "0x103", blockTimestamp: 100},
-            {blockNumber: 106, blockHash: "0x106", blockTimestamp: 100},
-            {blockNumber: 112, blockHash: "0x112", blockTimestamp: 100},
-            {blockNumber: 115, blockHash: "0x115", blockTimestamp: 100},
+            {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
+            {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+            {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
+            {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+            {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
+            {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
           ])
 
           // Clean up pending calls from before rollback
@@ -3028,7 +3038,7 @@ describe("E2E rollback tests", () => {
           // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
           // once chain 100's budget released). Resolve it with prevRangeLastBlock
           // having a DIFFERENT hash for block 101.
-          // registerReorgGuard compares stored "0x101" vs received "0x101-reorged" → MISMATCH.
+          // registerReorgGuard compares stored "0x101" vs received "0x101a" → MISMATCH.
           // Reorg is detected while the batch write is still in-flight,
           // so chain 1337 never gets a checkpoint at block 101.
           // getRollbackProgressDiff won't return an entry for chain 1337 (None branch).
@@ -3037,7 +3047,7 @@ describe("E2E rollback tests", () => {
             ~latestFetchedBlockNumber=102,
             ~prevRangeLastBlock={
               blockNumber: 101,
-              blockHash: "0x101-reorged",
+              blockHash: "0x101a",
             },
             ~resolveAt=#first,
           )
@@ -3049,7 +3059,7 @@ describe("E2E rollback tests", () => {
             ~message="Should have called getBlockHashes to find rollback depth",
           ).toEqual([[100]])
           sourceMock1.resolveGetBlockHashes([
-            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+            {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           ])
 
           await indexerMock.getRollbackReadyPromise()
@@ -3082,12 +3092,12 @@ describe("E2E rollback tests", () => {
 
           // Resolve the re-fetch with the new (reorged) block hash.
           // With the fix: stale "0x101" was removed by rollbackToValidBlockNumber(100),
-          // so "0x101-reorged" is stored fresh — no mismatch.
-          // Without the fix: stored "0x101" vs received "0x101-reorged" → another reorg!
+          // so "0x101a" is stored fresh — no mismatch.
+          // Without the fix: stored "0x101" vs received "0x101a" → another reorg!
           sourceMock1.resolveGetItemsOrThrow(
             [],
             ~latestFetchedBlockNumber=101,
-            ~latestFetchedBlockHash="0x101-reorged",
+            ~latestFetchedBlockHash="0x101a",
             ~resolveAt=#first,
           )
           await indexerMock.getBatchWritePromise()
@@ -3283,7 +3293,7 @@ describe("E2E rollback tests", () => {
             [],
             ~prevRangeLastBlock={
               blockNumber: 106,
-              blockHash: "0x106-reorged",
+              blockHash: "0x106a",
             },
             ~resolveAt=#first,
           )
@@ -3295,8 +3305,8 @@ describe("E2E rollback tests", () => {
             ~message="Should have called getBlockHashes to find rollback depth",
           ).toEqual([[100, 103]])
           sourceMock1337.resolveGetBlockHashes([
-            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-            {blockNumber: 103, blockHash: "0x103", blockTimestamp: 103},
+            {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
           ])
 
           // Let the rollback proceed to the flush of the stalled write, then

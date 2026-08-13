@@ -104,6 +104,8 @@ let addressStore = AddressStore.make(
 
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
+  getBlockHashes: (~blockNumbers as _) =>
+    JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
   get: (~query as _) =>
     JsError.throwWithMessage("get should only be used for block-data queries in tests"),
   getEventItems: (~query, ~addressSet as _) => {
@@ -213,8 +215,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       t.expect({
         "item": item,
         "query": capturedQueries->Array.getUnsafe(0),
-        "latestFetchedBlockTimestamp": response.latestFetchedBlockTimestamp,
-        "blockHashes": response.blockHashes,
       }).toEqual({
         "item": Some({
           "blockNumber": slot,
@@ -244,8 +244,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
             clientFilteredContracts: None,
           }: SvmHyperSyncClient.EventItems.query
         ),
-        "latestFetchedBlockTimestamp": blockTime,
-        "blockHashes": [{ReorgDetection.blockNumber: slot, blockHash}],
       })
     },
   )
