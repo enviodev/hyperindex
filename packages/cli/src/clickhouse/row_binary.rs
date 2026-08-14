@@ -568,7 +568,7 @@ mod tests {
         let spans = spans_from_utf16_lengths(&data, &[1, 1, 2, 1]).unwrap();
         let values: Vec<&str> = spans
             .iter()
-            .map(|(s, e)| &data[*s as usize..*e as usize])
+            .map(|(s, e)| &data[*s..*e])
             .collect();
         assert_eq!(values, vec!["a", "é", "😀", "b"]);
     }

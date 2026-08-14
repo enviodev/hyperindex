@@ -11,29 +11,33 @@
 //! a JS value can only be read while holding the isolate, so `stage` copies the
 //! batch into owned Rust memory on the JS thread and `flush` does the encoding
 //! and the HTTP round trip on the tokio pool.
+//!
+//! Column types come with the values. The caller creates these tables, so it
+//! knows their shape, and asking the server to describe them back would only add
+//! a round trip and a second answer to keep in step. The insert names every
+//! column it sends, which is what keeps that safe: the table's own column order
+//! stops mattering, and anything envio does not write — a column a user added, a
+//! DEFAULT or MATERIALIZED expression, a type this encoder has never heard of —
+//! is left for the server to fill.
 
 pub mod ch_type;
 #[cfg(test)]
 mod mock_server;
 pub mod row_binary;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use napi::bindgen_prelude::{BigInt64Array, BigUint64Array, Float64Array, Uint32Array, Uint8Array};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
-use ch_type::ChType;
-
-/// A table's columns in position order, as ClickHouse reports them.
-type TableSchema = Arc<Vec<(String, ChType)>>;
-use row_binary::{Column, ColumnValues, EncodedRows, StagedValues};
+use row_binary::{Column, EncodedRows, StagedValues};
 
 /// Retries an insert this many times before giving up, matching the JS client's
 /// policy: halve the batch while more than one row remains, otherwise wait.
@@ -101,6 +105,11 @@ impl RetryPolicy {
 #[napi(object)]
 pub struct ColumnInput {
     pub name: String,
+    /// The column's ClickHouse type, the same string the DDL declared it with.
+    /// The caller creates these tables, so it already knows the shape; reading
+    /// it back from `system.columns` would only add a round trip and a second
+    /// place for the answer to come from.
+    pub ch_type: String,
     /// Int8/16/32, UInt8/16/32, Float32/64, Bool (0/1), Date, DateTime,
     /// DateTime64 (ticks).
     pub numbers: Option<Float64Array>,
@@ -121,8 +130,37 @@ pub struct ColumnInput {
 /// A staged column, owned by Rust so it can leave the JS thread.
 struct StagedColumn {
     name: String,
+    /// The column's ClickHouse type, exactly as the DDL declared it.
+    ch_type: String,
     values: StagedValues,
     nulls: Vec<u8>,
+}
+
+impl StagedColumn {
+    /// Parses the declared type and resolves the text spans — the work that
+    /// needs neither the isolate nor the network, so it runs off the JS thread.
+    fn resolve(self) -> Result<Column> {
+        let ch_type = ch_type::parse(&self.ch_type)
+            .with_context(|| format!("Column `{}` has type `{}`", self.name, self.ch_type))?;
+        let values = self
+            .values
+            .resolve()
+            .with_context(|| format!("Column `{}`", self.name))?;
+        let kind = ch_type.column_kind();
+        if values.kind() != kind {
+            bail!(
+                "Column `{}` is {ch_type:?} and must be sent as {kind:?}, got {:?}",
+                self.name,
+                values.kind()
+            );
+        }
+        Ok(Column {
+            name: self.name,
+            ch_type,
+            values,
+            nulls: self.nulls,
+        })
+    }
 }
 
 struct Staged {
@@ -138,12 +176,6 @@ pub struct ClickHouseSink {
     username: String,
     password: String,
     database: String,
-    /// Column name and type per table, read from `system.columns` on first use.
-    schemas: Mutex<HashMap<String, TableSchema>>,
-    /// Tables whose column mismatch has already been reported. A mismatch is a
-    /// property of the table, so repeating it once per batch would be noise for
-    /// the rest of the run.
-    reported: Mutex<HashSet<String>>,
     staged: Mutex<HashMap<u32, Staged>>,
     next_handle: AtomicU32,
     tuning: Tuning,
@@ -218,8 +250,6 @@ impl ClickHouseSink {
             username: options.username,
             password: options.password,
             database: options.database,
-            schemas: Mutex::new(HashMap::new()),
-            reported: Mutex::new(HashSet::new()),
             staged: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(1),
             tuning,
@@ -236,6 +266,7 @@ impl ClickHouseSink {
         for column in columns {
             let ColumnInput {
                 name,
+                ch_type,
                 numbers,
                 unsigned64,
                 signed64,
@@ -266,6 +297,7 @@ impl ClickHouseSink {
             };
             staged_columns.push(StagedColumn {
                 name,
+                ch_type,
                 values,
                 nulls: nulls.map(|n| n.to_vec()).unwrap_or_default(),
             });
@@ -294,134 +326,43 @@ impl ClickHouseSink {
             })?;
         self.insert_staged(staged).await.map_err(to_napi)
     }
-
-    /// Forgets the cached column types for `table`, so the next insert re-reads
-    /// them. Called after DDL recreates a table.
-    #[napi]
-    pub fn invalidate_schema(&self, table: String) {
-        self.schemas.lock().unwrap().remove(&table);
-        self.reported.lock().unwrap().remove(&table);
-    }
 }
 
 impl ClickHouseSink {
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
-        let schema = self.table_schema(&staged.table).await?;
-        let (encoded, warnings) = tokio::task::block_in_place(|| {
-            let (columns, warnings) = align_to_schema(&schema, staged.columns, staged.rows)?;
-            row_binary::encode(&columns, staged.rows).map(|encoded| (encoded, warnings))
+        let table = staged.table;
+        let encoded = tokio::task::block_in_place(|| {
+            let columns = staged
+                .columns
+                .into_iter()
+                .map(StagedColumn::resolve)
+                .collect::<Result<Vec<_>>>()?;
+            row_binary::encode(&columns, staged.rows).map(|encoded| (encoded, columns))
         })
-        .with_context(|| {
-            format!(
-                "Failed encoding rows for ClickHouse table `{}`",
-                staged.table
-            )
-        })?;
-        // A column mismatch is a property of the table, so repeating it once per
-        // batch would be noise for the rest of the run.
-        if !warnings.is_empty() && self.reported.lock().unwrap().insert(staged.table.clone()) {
-            for warning in &warnings {
-                (self.warn)(warning);
-            }
-        }
+        .with_context(|| format!("Failed encoding rows for ClickHouse table `{table}`"))?;
+        let (encoded, columns) = encoded;
         if encoded.rows() == 0 {
             return Ok(());
         }
-        self.insert_with_retry(&staged.table, &encoded).await
-    }
-
-    /// Reads a table's column types from the server. Doing this instead of
-    /// deriving them from envio's schema keeps the encoder honest about a table
-    /// that already existed — an `Enum8` reports the numeric value RowBinary
-    /// needs, which nothing on the JS side knows.
-    async fn table_schema(&self, table: &str) -> Result<TableSchema> {
-        if let Some(cached) = self.schemas.lock().unwrap().get(table) {
-            return Ok(cached.clone());
-        }
-        let query = format!(
-            // MATERIALIZED and ALIAS columns are computed, not stored, so a
-            // `FORMAT RowBinary` row must not carry a value for them.
-            "SELECT name, type FROM system.columns \
-             WHERE database = {} AND table = {} \
-               AND default_kind NOT IN ('MATERIALIZED', 'ALIAS') \
-             ORDER BY position FORMAT TSVRaw",
-            quote_literal(&self.database),
-            quote_literal(table)
-        );
-        let text = self.run_query_with_retry(&query).await?;
-        let mut columns = Vec::new();
-        for line in text.lines().filter(|l| !l.is_empty()) {
-            let (name, ty) = line
-                .split_once('\t')
-                .ok_or_else(|| anyhow!("Malformed system.columns row `{line}`"))?;
-            let parsed = ch_type::parse(ty)
-                .with_context(|| format!("Column `{table}`.`{name}` has type `{ty}`"))?;
-            columns.push((name.to_string(), parsed));
-        }
-        if columns.is_empty() {
-            bail!(
-                "ClickHouse table `{}`.`{table}` has no columns — was it created?",
-                self.database
-            );
-        }
-        let schema = Arc::new(columns);
-        self.schemas
-            .lock()
-            .unwrap()
-            .insert(table.to_string(), schema.clone());
-        Ok(schema)
-    }
-
-    /// The schema lookup is a read, so a failure is retried whole rather than
-    /// halved. It sits in front of every insert to a table the sink has not seen
-    /// yet, so leaving it uncovered would let one blip fail a batch that the
-    /// insert path itself would have ridden out.
-    async fn run_query_with_retry(&self, query: &str) -> Result<String> {
-        let mut retries = self.tuning.retry.attempts;
-        loop {
-            let err = match self.run_query(query).await {
-                Ok(text) => return Ok(text),
-                Err(err) if retries == 0 => return Err(err),
-                Err(err) => err,
-            };
-            (self.warn)(&format!(
-                "ClickHouse query failed, {} retries left: {err:#}",
-                retries - 1
-            ));
-            tokio::time::sleep(self.tuning.retry.delay(retries)).await;
-            retries -= 1;
-        }
-    }
-
-    async fn run_query(&self, query: &str) -> Result<String> {
-        let response = self
-            .client
-            .post(&self.url)
-            .header("X-ClickHouse-User", &self.username)
-            .header("X-ClickHouse-Key", &self.password)
-            .header("X-ClickHouse-Database", &self.database)
-            .body(query.to_string())
-            .send()
-            .await
-            .context("ClickHouse request failed")?;
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            bail!("ClickHouse returned {status}: {text}");
-        }
-        Ok(text)
+        self.insert_with_retry(&table, &columns, &encoded).await
     }
 
     /// Mirrors the JS client's policy: on a transient failure halve the range and
     /// retry each half; with a single row left, wait and retry it. The delay
     /// grows from 100ms to 1s as retries run down.
-    async fn insert_with_retry(&self, table: &str, encoded: &EncodedRows) -> Result<()> {
+    async fn insert_with_retry(
+        &self,
+        table: &str,
+        columns: &[Column],
+        encoded: &EncodedRows,
+    ) -> Result<()> {
+        let query = insert_query(&self.database, table, columns);
         let mut attempted: Vec<String> = Vec::new();
         // Ranges still to send, most recent first; a failed range is replaced by
         // its two halves so the retry never re-sends rows that already landed.
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.retry.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
-            match self.post_rows(table, encoded.slice(start, end)).await {
+            match self.post_rows(&query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
                 Err(err) if retries == 0 => {
                     // The attempts leading here are the diagnosis; returning the
@@ -454,16 +395,11 @@ impl ClickHouseSink {
         Ok(())
     }
 
-    async fn post_rows(&self, table: &str, body: Bytes) -> Result<()> {
-        let query = format!(
-            "INSERT INTO {}.{} FORMAT RowBinary",
-            quote_identifier(&self.database),
-            quote_identifier(table)
-        );
+    async fn post_rows(&self, query: &str, body: Bytes) -> Result<()> {
         let response = self
             .client
             .post(&self.url)
-            .query(&[("query", query.as_str())])
+            .query(&[("query", query)])
             .header("X-ClickHouse-User", &self.username)
             .header("X-ClickHouse-Key", &self.password)
             .header("X-ClickHouse-Database", &self.database)
@@ -492,98 +428,24 @@ pub fn clickhouse_column_kind(ch_type: String) -> napi::Result<u8> {
         .map_err(to_napi)
 }
 
+/// Names every column the body carries, so the table's own column order stops
+/// mattering and anything envio does not write — an extra column a user added, a
+/// MATERIALIZED or DEFAULT expression — is left for the server to fill.
+fn insert_query(database: &str, table: &str, columns: &[Column]) -> String {
+    let names = columns
+        .iter()
+        .map(|column| quote_identifier(&column.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "INSERT INTO {}.{} ({names}) FORMAT RowBinary",
+        quote_identifier(database),
+        quote_identifier(table)
+    )
+}
+
 fn quote_identifier(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
-}
-
-fn quote_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
-}
-
-/// Puts the staged columns in the target table's column order and pairs each
-/// with its type.
-///
-/// A table column the caller has no values for takes the type's default for
-/// every row, which is what omitting it from a JSONEachRow row used to do — a
-/// table carrying a column envio no longer writes must keep working. It is still
-/// reported, since for an envio-created table the columns cannot legitimately
-/// diverge from the DDL. The reverse is an error: a value with no column to go in
-/// would shift every following column on the wire.
-fn align_to_schema(
-    schema: &[(String, ChType)],
-    columns: Vec<StagedColumn>,
-    rows: usize,
-) -> Result<(Vec<Column>, Vec<String>)> {
-    let mut by_name: HashMap<String, StagedColumn> = columns
-        .into_iter()
-        .map(|column| (column.name.clone(), column))
-        .collect();
-    let mut aligned = Vec::with_capacity(schema.len());
-    let mut defaulted = Vec::new();
-    for (name, ch_type) in schema {
-        let staged = match by_name.remove(name) {
-            Some(staged) => staged,
-            None => {
-                defaulted.push(name.clone());
-                aligned.push(Column {
-                    name: name.clone(),
-                    ch_type: ch_type.clone(),
-                    values: default_values(ch_type, rows),
-                    nulls: vec![1; rows],
-                });
-                continue;
-            }
-        };
-        if staged.values.len() != rows {
-            bail!(
-                "Column `{name}` has {} values but the batch has {rows} rows",
-                staged.values.len()
-            );
-        }
-        let values = staged
-            .values
-            .resolve()
-            .with_context(|| format!("Column `{name}`"))?;
-        let expected = ch_type.column_kind();
-        if values.kind() != expected {
-            bail!(
-                "Column `{name}` is {ch_type:?} and must be sent as {expected:?}, got {:?}",
-                values.kind()
-            );
-        }
-        aligned.push(Column {
-            name: name.clone(),
-            ch_type: ch_type.clone(),
-            values,
-            nulls: staged.nulls,
-        });
-    }
-    if let Some(extra) = by_name.keys().next() {
-        bail!("Column `{extra}` is not part of the target table");
-    }
-    let warnings = if defaulted.is_empty() {
-        Vec::new()
-    } else {
-        vec![format!(
-            "No values supplied for ClickHouse column(s) {}; every row took the column's default",
-            defaulted.join(", ")
-        )]
-    };
-    Ok((aligned, warnings))
-}
-
-/// Placeholder values for a column with nothing to write. Every row is masked as
-/// null, so the encoder never reads them — only the kind has to match the type.
-fn default_values(ch_type: &ChType, rows: usize) -> ColumnValues {
-    match ch_type.column_kind() {
-        ch_type::ColumnKind::F64 => ColumnValues::F64(vec![0.0; rows]),
-        ch_type::ColumnKind::U64 => ColumnValues::U64(vec![0; rows]),
-        ch_type::ColumnKind::I64 => ColumnValues::I64(vec![0; rows]),
-        ch_type::ColumnKind::Text => ColumnValues::Text {
-            data: String::new(),
-            bounds: vec![(0, 0); rows],
-        },
-    }
 }
 
 #[cfg(test)]
@@ -591,80 +453,55 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn schema() -> Vec<(String, ChType)> {
-        vec![
-            ("id".to_string(), ch_type::parse("String").unwrap()),
-            ("n".to_string(), ch_type::parse("Int32").unwrap()),
-        ]
-    }
-
-    fn text(name: &str, values: &[&str]) -> StagedColumn {
+    /// A staged column of text values, declared as `ty`.
+    fn column(name: &str, ty: &str, values: &[&str]) -> Column {
         StagedColumn {
             name: name.to_string(),
+            ch_type: ty.to_string(),
             values: StagedValues::Text {
                 data: values.concat(),
                 bounds: values.iter().map(|v| v.len() as u32).collect(),
             },
             nulls: Vec::new(),
         }
+        .resolve()
+        .unwrap()
     }
 
+    // The caller declares each column's type, so a value that cannot travel as
+    // that type is caught before anything is encoded.
     #[test]
-    fn aligns_columns_into_table_order() {
-        let columns = vec![
-            StagedColumn {
-                name: "n".to_string(),
-                values: StagedValues::F64(vec![1.0]),
-                nulls: Vec::new(),
-            },
-            text("id", &["a"]),
-        ];
-        let (aligned, warnings) = align_to_schema(&schema(), columns, 1).unwrap();
-        assert_eq!(
-            (
-                aligned.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-                warnings
-            ),
-            (vec!["id", "n"], Vec::<String>::new())
-        );
-    }
-
-    // A table carrying a column envio does not write — an older version's field,
-    // or one a user added — kept working under JSONEachRow because an omitted
-    // column takes its default. RowBinary has no way to omit one, so the encoder
-    // has to fill it, and say so.
-    #[test]
-    fn defaults_a_table_column_with_no_values_and_reports_it() {
-        let (aligned, warnings) = align_to_schema(&schema(), vec![text("id", &["a"])], 1).unwrap();
-        let encoded = row_binary::encode(&aligned, 1).unwrap();
-        assert_eq!(
-            (encoded.body.to_vec(), warnings),
-            (
-                vec![1, b'a', 0, 0, 0, 0],
-                vec![
-                    "No values supplied for ClickHouse column(s) n; every row took the column's \
-                     default"
-                        .to_string()
-                ]
-            )
-        );
-    }
-
-    #[test]
-    fn rejects_a_column_the_table_does_not_have() {
-        let columns = vec![
-            text("id", &["a"]),
-            StagedColumn {
-                name: "n".to_string(),
-                values: StagedValues::F64(vec![1.0]),
-                nulls: Vec::new(),
-            },
-            text("surprise", &["x"]),
-        ];
-        let err = align_to_schema(&schema(), columns, 1).unwrap_err();
+    fn rejects_values_that_do_not_match_the_declared_type() {
+        let err = StagedColumn {
+            name: "n".to_string(),
+            ch_type: "String".to_string(),
+            values: StagedValues::F64(vec![1.0]),
+            nulls: Vec::new(),
+        }
+        .resolve()
+        .unwrap_err();
         assert_eq!(
             format!("{err:#}"),
-            "Column `surprise` is not part of the target table"
+            "Column `n` is String and must be sent as Text, got F64"
+        );
+    }
+
+    #[test]
+    fn rejects_a_type_it_cannot_encode() {
+        let err = StagedColumn {
+            name: "t".to_string(),
+            ch_type: "Tuple(String, UInt8)".to_string(),
+            values: StagedValues::Text {
+                data: String::new(),
+                bounds: vec![0],
+            },
+            nulls: Vec::new(),
+        }
+        .resolve()
+        .unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "Column `t` has type `Tuple(String, UInt8)`: unsupported ClickHouse type `Tuple`"
         );
     }
 
@@ -727,6 +564,7 @@ mod tests {
             values.len() as u32,
             vec![ColumnInput {
                 name: "id".to_string(),
+                ch_type: "String".to_string(),
                 numbers: None,
                 unsigned64: None,
                 signed64: None,
@@ -748,7 +586,7 @@ mod tests {
     // that already landed must not be sent again.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_rejected_insert_is_retried_as_halves_and_every_row_lands_once() {
-        let server = mock_server::MockClickHouse::start(&[("id", "String")], 1).await;
+        let server = mock_server::MockClickHouse::start(1).await;
         let sink = sink_for(&server, 4);
         let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
 
@@ -777,7 +615,7 @@ mod tests {
     // Halving bottoms out at a single row, which is then retried whole.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_single_row_is_retried_in_place_until_it_lands() {
-        let server = mock_server::MockClickHouse::start(&[("id", "String")], 2).await;
+        let server = mock_server::MockClickHouse::start(2).await;
         let sink = sink_for(&server, 4);
         let handle = stage_ids(&sink, &["only"]);
 
@@ -791,7 +629,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn an_insert_that_never_succeeds_surfaces_the_error() {
-        let server = mock_server::MockClickHouse::start(&[("id", "String")], usize::MAX).await;
+        let server = mock_server::MockClickHouse::start(usize::MAX).await;
         let sink = sink_for(&server, 2);
         let handle = stage_ids(&sink, &["a", "b"]);
 
@@ -836,51 +674,22 @@ mod tests {
         );
     }
 
-    // The schema lookup runs in front of every insert to a table the sink has not
-    // seen. The old JS path had no separate lookup, so nothing about a batch was
-    // outside the retry; leaving this uncovered would make one blip fatal.
+    // Types come from the caller, so an insert is the only request the sink ever
+    // makes — no `system.columns` round trip in front of a table it has not seen.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_failed_schema_lookup_is_retried() {
-        let server = mock_server::MockClickHouse::start(&[("id", "String")], 0).await;
-        server.reject_next_queries(2);
-        let sink = sink_for(&server, 4);
-        let handle = stage_ids(&sink, &["a"]);
-
-        sink.flush(handle).await.unwrap();
-
-        assert_eq!(
-            (server.accepted_strings(), sink.warnings().len()),
-            (vec!["a".to_string()], 2)
-        );
-    }
-
-    // The column types come from the server, so a table the sink has never seen
-    // costs one lookup and no more.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn the_column_types_are_read_once_per_table() {
-        let server = mock_server::MockClickHouse::start(&[("id", "String")], 0).await;
+    async fn the_sink_asks_the_server_for_nothing_but_the_insert() {
+        let server = mock_server::MockClickHouse::start(0).await;
         let sink = sink_for(&server, 4);
         for _ in 0..3 {
             let handle = stage_ids(&sink, &["x"]);
             sink.flush(handle).await.unwrap();
         }
-        let cached = sink.schemas.lock().unwrap();
-        assert_eq!(
-            (
-                cached.len(),
-                cached["t"]
-                    .iter()
-                    .map(|(name, _)| name.as_str())
-                    .collect::<Vec<_>>(),
-                server.column_types().len()
-            ),
-            (1, vec!["id"], 1)
-        );
+        assert_eq!((server.inserts_seen(), server.queries_seen()), (3, 0));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_value_the_column_cannot_hold_fails_before_anything_is_sent() {
-        let server = mock_server::MockClickHouse::start(&[("e", "Enum8('SET' = 1)")], 0).await;
+        let server = mock_server::MockClickHouse::start(0).await;
         let sink = sink_for(&server, 4);
         let handle = sink
             .stage(
@@ -888,6 +697,7 @@ mod tests {
                 1,
                 vec![ColumnInput {
                     name: "e".to_string(),
+                    ch_type: "Enum8('SET' = 1)".to_string(),
                     numbers: None,
                     unsigned64: None,
                     signed64: None,
@@ -909,11 +719,14 @@ mod tests {
     }
 
     #[test]
-    fn quotes_identifiers_and_literals() {
+    fn the_insert_names_every_column_it_sends() {
+        let columns = vec![
+            column("id", "String", &["a"]),
+            column("n`quoted", "String", &["1"]),
+        ];
         assert_eq!(
-            quote_identifier("envio_history_A`B"),
-            "`envio_history_A``B`"
+            insert_query("db", "envio_history_A`B", &columns),
+            "INSERT INTO `db`.`envio_history_A``B` (`id`, `n``quoted`) FORMAT RowBinary"
         );
-        assert_eq!(quote_literal("it's"), "'it\\'s'");
     }
 }

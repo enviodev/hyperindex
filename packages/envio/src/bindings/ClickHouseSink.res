@@ -25,6 +25,8 @@ type options = {
 // value fields is set.
 type columnInput = {
   name: string,
+  @as("chType")
+  chType: string,
   numbers?: Float64Array.t,
   unsigned64?: BigUint64Array.t,
   signed64?: BigInt64Array.t,
@@ -36,7 +38,6 @@ type columnInput = {
 @send
 external stage: (t, ~table: string, ~rows: int, ~columns: array<columnInput>) => int = "stage"
 @send external flush: (t, int) => promise<unit> = "flush"
-@send external invalidateSchema: (t, string) => unit = "invalidateSchema"
 
 let make = (~url, ~username, ~password, ~database, ~onWarning) =>
   Core.getAddon().clickHouseSink->classNew({url, username, password, database}, onWarning)
@@ -77,6 +78,10 @@ let toText = (value: unknown) =>
 // `stage` copies it into Rust memory, and nothing reads it afterwards.
 type builder = {
   name: string,
+  // The column's ClickHouse type, as the DDL declared it. Sent with the values
+  // so Rust encodes against the shape envio created rather than one it has to
+  // go and ask the server for.
+  chType: string,
   kind: kind,
   floats: Float64Array.t,
   unsigned: BigUint64Array.t,
@@ -89,10 +94,12 @@ type builder = {
 }
 
 // Only the storage the column's kind uses is allocated; the rest stay empty.
-let makeBuilder = (~name, ~kind, ~rows) => {
+let makeBuilder = (~name, ~chType, ~rows) => {
   let empty = 0
+  let kind = chType->kindOfClickHouseType
   {
     name,
+    chType,
     kind,
     floats: Float64Array.fromLength(kind === F64 ? rows : empty),
     unsigned: BigUint64Array.fromLength(kind === U64 ? rows : empty),
@@ -134,7 +141,7 @@ let writeValue = (builder, ~row, value: unknown) =>
   }
 
 let builderPayload = (builder): columnInput => {
-  let base = {name: builder.name, nulls: ?builder.nulls}
+  let base = {name: builder.name, chType: builder.chType, nulls: ?builder.nulls}
   switch builder.kind {
   | F64 => {...base, numbers: builder.floats}
   | U64 => {...base, unsigned64: builder.unsigned}

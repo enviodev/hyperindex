@@ -40,7 +40,7 @@ let makeClickHouse = (
   {
     name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(client, ~sink, ~database, ~entities, ~enums, ~chainIdMode)
+      ClickHouse.initialize(client, ~database, ~entities, ~enums, ~chainIdMode)
     },
     resume: (~checkpointId) => {
       ClickHouse.resume(client, ~database, ~checkpointId)

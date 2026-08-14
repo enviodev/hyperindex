@@ -1,9 +1,11 @@
-//! ClickHouse column types, parsed from what the server reports in
-//! `system.columns`. Reading the type back from the server rather than deriving
-//! it from the schema is what makes the binary encoder safe against a table that
-//! already existed: `Enum8('SET','DELETE')` is stored as
-//! `Enum8('SET' = 1, 'DELETE' = 2)`, and RowBinary carries the numeric value, so
-//! guessing the mapping would silently write the wrong variant.
+//! ClickHouse column types, parsed from the type text the caller declared the
+//! column with — the same string its `CREATE TABLE` used.
+//!
+//! Only what the encoder has to know to lay out bytes is modelled. An `Enum` is
+//! the clearest case: RowBinary carries the variant's number rather than its
+//! name, so the numbering has to be in the type text. Envio writes it there
+//! explicitly for exactly that reason, rather than leaving it to the numbering
+//! ClickHouse would apply to an unnumbered list.
 
 use anyhow::{anyhow, bail, Result};
 

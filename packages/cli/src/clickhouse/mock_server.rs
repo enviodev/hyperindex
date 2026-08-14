@@ -1,7 +1,8 @@
 //! A stand-in ClickHouse over HTTP, for testing the parts of the sink that only
-//! show up when the server misbehaves. It answers the `system.columns` lookup
-//! from a fixed schema, records every insert body it accepts, and can be told to
-//! reject the first N inserts so the retry path runs for real.
+//! show up when the server misbehaves. It records every insert body it accepts,
+//! and can be told to reject the first N inserts so the retry path runs for
+//! real. Anything that is not an insert is counted and refused, because a sink
+//! that takes its column types from the caller has no reason to ask.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -15,56 +16,44 @@ struct State {
     accepted: Vec<Vec<u8>>,
     /// Inserts still to be rejected before the server starts accepting.
     reject_next: usize,
-    /// Read queries still to be rejected — the `system.columns` lookup.
-    reject_next_queries: usize,
     /// Total inserts seen, accepted or not.
     seen: usize,
+    /// Total read queries seen.
+    queries: usize,
 }
 
 pub struct MockClickHouse {
     pub url: String,
     state: Arc<Mutex<State>>,
-    /// Column name and type text, as `system.columns` would report them.
-    columns: Vec<(String, String)>,
 }
 
 impl MockClickHouse {
     /// Serves until dropped. `reject_next` inserts fail with a 500 before the
     /// server starts accepting.
-    pub async fn start(columns: &[(&str, &str)], reject_next: usize) -> Self {
+    pub async fn start(reject_next: usize) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(State {
             reject_next,
             ..Default::default()
         }));
-        let columns: Vec<(String, String)> = columns
-            .iter()
-            .map(|(name, ty)| (name.to_string(), ty.to_string()))
-            .collect();
 
         let accept_state = state.clone();
-        let accept_columns = columns.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
                 let state = accept_state.clone();
-                let columns = accept_columns.clone();
                 tokio::spawn(async move {
                     // The sink pools connections, so one socket carries many
                     // requests; serve until the peer closes it.
-                    let _ = serve(stream, state, columns).await;
+                    let _ = serve(stream, state).await;
                 });
             }
         });
 
-        Self {
-            url,
-            state,
-            columns,
-        }
+        Self { url, state }
     }
 
     /// Accepts connections and reads whatever is sent, but never answers —
@@ -87,7 +76,6 @@ impl MockClickHouse {
         Self {
             url,
             state: Arc::new(Mutex::new(State::default())),
-            columns: Vec::new(),
         }
     }
 
@@ -95,13 +83,14 @@ impl MockClickHouse {
         self.state.lock().unwrap().accepted.clone()
     }
 
-    /// Fails the next `count` read queries before answering the schema lookup.
-    pub fn reject_next_queries(&self, count: usize) {
-        self.state.lock().unwrap().reject_next_queries = count;
-    }
-
     pub fn inserts_seen(&self) -> usize {
         self.state.lock().unwrap().seen
+    }
+
+    /// Read queries the server was asked, which for a sink that takes its types
+    /// from the caller should stay at zero.
+    pub fn queries_seen(&self) -> usize {
+        self.state.lock().unwrap().queries
     }
 
     /// Decodes every accepted body as rows of one `String` column, flattened in
@@ -118,10 +107,6 @@ impl MockClickHouse {
             }
         }
         out
-    }
-
-    pub fn column_types(&self) -> &[(String, String)] {
-        &self.columns
     }
 }
 
@@ -140,11 +125,7 @@ fn read_varint(bytes: &[u8]) -> (usize, usize) {
     }
 }
 
-async fn serve(
-    mut stream: TcpStream,
-    state: Arc<Mutex<State>>,
-    columns: Vec<(String, String)>,
-) -> std::io::Result<()> {
+async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Result<()> {
     let mut buffered: VecDeque<u8> = VecDeque::new();
     loop {
         let head = match read_until_headers(&mut stream, &mut buffered).await? {
@@ -200,22 +181,8 @@ async fn serve(
                 http_response(200, "")
             }
         } else {
-            let reject = {
-                let mut state = state.lock().unwrap();
-                let reject = state.reject_next_queries > 0;
-                state.reject_next_queries = state.reject_next_queries.saturating_sub(1);
-                reject
-            };
-            if reject {
-                http_response(500, "Code: 999. DB::Exception: mock query rejection")
-            } else {
-                let tsv = columns
-                    .iter()
-                    .map(|(name, ty)| format!("{name}\t{ty}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                http_response(200, &format!("{tsv}\n"))
-            }
+            state.lock().unwrap().queries += 1;
+            http_response(400, "the sink should not be querying the server")
         };
         stream.write_all(&response).await?;
         stream.flush().await?;

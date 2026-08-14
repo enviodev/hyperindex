@@ -188,10 +188,10 @@ ORDER BY (id)`
   \`timestamp\` DateTime64(3, 'UTC'),
   \`optTimestamp\` Nullable(DateTime64(3, 'UTC')),
   \`json\` String,
-  \`enumField\` Enum8('ADMIN', 'USER'),
-  \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
+  \`enumField\` Enum8('ADMIN' = 1, 'USER' = 2),
+  \`optEnumField\` Nullable(Enum8('ADMIN' = 1, 'USER' = 2)),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
@@ -236,10 +236,10 @@ ORDER BY (id, envio_checkpoint_id)`
   \`timestamp\` DateTime64(3, 'UTC'),
   \`optTimestamp\` Nullable(DateTime64(3, 'UTC')),
   \`json\` String,
-  \`enumField\` Enum8('ADMIN', 'USER'),
-  \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
+  \`enumField\` Enum8('ADMIN' = 1, 'USER' = 2),
+  \`optEnumField\` Nullable(Enum8('ADMIN' = 1, 'USER' = 2)),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = ReplicatedMergeTree
 ORDER BY (id, envio_checkpoint_id)`
@@ -306,7 +306,7 @@ chains:
   \`timestamp\` DateTime64(3, 'UTC'),
   \`amount\` String,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(\`timestamp\`)
@@ -355,7 +355,7 @@ chains:
   \`base_token_id\` String,
   \`trade_time\` DateTime64(3, 'UTC'),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 ORDER BY (\`base_token_id\`, \`trade_time\`, envio_checkpoint_id)`)
@@ -404,7 +404,7 @@ chains:
   \`base_token_id\` String,
   \`trade_time\` DateTime64(3, 'UTC'),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(\`trade_time\`)

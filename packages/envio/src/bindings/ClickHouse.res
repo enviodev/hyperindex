@@ -79,13 +79,16 @@ let getClickHouseFieldType = (
       // Theoretically we can store 256 variants in Enum8,
       // but it'd require to explicitly start with a negative index (probably)
       let enumType = variantsLength <= 127 ? "Enum8" : "Enum16"
+      // Numbered explicitly, because RowBinary carries the number rather than
+      // the name: leaving it to ClickHouse's own numbering would make the
+      // encoder depend on a server rule instead of on this string.
       let enumValues =
         config.variants
-        ->Array.map(variant => {
+        ->Array.mapWithIndex((variant, index) => {
           let variantStr = variant->(Utils.magic: 'a => string)
-          `'${variantStr}'`
+          `'${variantStr}' = ${(index + 1)->Int.toString}`
         })
-        ->Array.joinUnsafe(", ")
+        ->Array.join(", ")
       `${enumType}(${enumValues})`
     }
   }
@@ -152,6 +155,20 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
 
 let logger = Logging.createChild(~params={"context": "ClickHouse"})
 
+// The two columns every history table carries beyond the entity's own. Shared
+// with the DDL so the type the encoder is handed is the one the column was
+// created with.
+let checkpointIdClickHouseType = getClickHouseFieldType(
+  ~fieldType=UInt64,
+  ~isNullable=false,
+  ~isArray=false,
+)
+let changeClickHouseType = getClickHouseFieldType(
+  ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
+  ~isNullable=false,
+  ~isArray=false,
+)
+
 // The checkpoints table as ClickHouse holds it, in column order: the DDL and the
 // insert both read it, so neither can describe a column the other doesn't.
 // `events_processed` is widened here rather than taken from
@@ -169,7 +186,7 @@ let checkpointColumns: array<(string, Table.fieldType, bool)> = [
 // allocates its own builders, so two writes can never share storage.
 type entityColumns = {
   tableName: string,
-  columns: array<(string, ClickHouseSink.kind)>,
+  columns: array<(string, string)>,
   convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
   convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
 }
@@ -198,13 +215,13 @@ let makeEntityColumns = (
           ~isNullable=f.isNullable,
           ~isArray=f.isArray,
           ~chainIdMode,
-        )->ClickHouseSink.kindOfClickHouseType,
+        ),
       ))
     | DerivedFrom(_) => None
     }
   )
-  columns->Array.push((EntityHistory.checkpointIdFieldName, ClickHouseSink.U64))
-  columns->Array.push((EntityHistory.changeFieldName, Text))
+  columns->Array.push((EntityHistory.checkpointIdFieldName, checkpointIdClickHouseType))
+  columns->Array.push((EntityHistory.changeFieldName, changeClickHouseType))
 
   {
     tableName: EntityHistory.historyTableName(
@@ -261,12 +278,7 @@ let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.
       checkpointColumns->Array.map(((name, fieldType, isNullable)) =>
         ClickHouseSink.makeBuilder(
           ~name,
-          ~kind=getClickHouseFieldType(
-            ~fieldType,
-            ~isNullable,
-            ~isArray=false,
-            ~chainIdMode,
-          )->ClickHouseSink.kindOfClickHouseType,
+          ~chType=getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
           ~rows,
         )
       )
@@ -337,7 +349,7 @@ let setUpdatesOrThrow = async (
 
     let handle = try {
       let builders =
-        columns->Array.map(((name, kind)) => ClickHouseSink.makeBuilder(~name, ~kind, ~rows))
+        columns->Array.map(((name, chType)) => ClickHouseSink.makeBuilder(~name, ~chType, ~rows))
       for row in 0 to rows - 1 {
         let change = changes->Array.getUnsafe(row)
         // The entity history table is the source of truth for ClickHouse, so
@@ -503,16 +515,8 @@ let makeCreateHistoryTableQuery = (
       ~entityIndex=entityConfig.index,
     )}\`${onClusterClause(~onCluster)} (
   ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
-  \`${EntityHistory.checkpointIdFieldName}\` ${getClickHouseFieldType(
-      ~fieldType=UInt64,
-      ~isNullable=false,
-      ~isArray=false,
-    )},
-  \`${EntityHistory.changeFieldName}\` ${getClickHouseFieldType(
-      ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
-      ~isNullable=false,
-      ~isArray=false,
-    )}
+  \`${EntityHistory.checkpointIdFieldName}\` ${checkpointIdClickHouseType},
+  \`${EntityHistory.changeFieldName}\` ${changeClickHouseType}
 )
 ENGINE = ${tableEngine}${partitionByClause}
 ORDER BY (${orderByColumns})${ttlClause}`
@@ -600,24 +604,11 @@ WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> 
 // Initialize ClickHouse tables for entities
 let initialize = async (
   client,
-  ~sink: ClickHouseSink.t,
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
-  // A reset drops and recreates the tables, so any column types the sink read
-  // earlier in this process no longer describe them.
-  entities->Array.forEach(entityConfig =>
-    sink->ClickHouseSink.invalidateSchema(
-      EntityHistory.historyTableName(
-        ~entityName=entityConfig.name,
-        ~entityIndex=entityConfig.index,
-      ),
-    )
-  )
-  sink->ClickHouseSink.invalidateSchema(InternalTable.Checkpoints.table.tableName)
-
   try {
     let databaseEngine = Env.ClickHouse.databaseEngine()
     let databaseEngineClause = switch databaseEngine {
