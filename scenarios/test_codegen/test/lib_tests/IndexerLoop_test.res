@@ -8,7 +8,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
     let onEventRegistrations = [
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,

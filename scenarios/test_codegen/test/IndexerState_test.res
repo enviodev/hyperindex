@@ -33,7 +33,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     }
 
     let onEventRegistrations = [
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
@@ -243,7 +243,7 @@ describe("IndexerState", () => {
       t => {
         let config = Config.load()
         let onEventRegistrations = [
-          (MockIndexer.evmOnEventRegistration(
+          (EventRegistration.evmOnEventRegistration(
             ~id="0",
             ~contractName="Gravatar",
             ~isWildcard=true,

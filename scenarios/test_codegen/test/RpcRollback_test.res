@@ -37,7 +37,7 @@ let topicSelection: Internal.resolvedTopicSelection = {
 }
 
 let registration: Internal.evmOnEventRegistration = {
-  ...MockIndexer.evmOnEventRegistration(
+  ...EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash],
     ~transactionFieldNames=[],

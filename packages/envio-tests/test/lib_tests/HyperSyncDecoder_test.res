@@ -141,9 +141,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         encodeAbiParameters(%raw(`[{"type":"uint256"}]`), %raw(`[100n]`)),
       ),
     )
-    t
-    .expect(result)
-    .toEqual(
+    t.expect(result).toEqual(
       {
         "from": "0x0000000000000000000000000000000000000abc",
         "to": "0x0000000000000000000000000000000000000def",
@@ -201,30 +199,30 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     let blockNumber = 5
     let logIndex = 3
 
-    let payload =
-      {
-        "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
-        "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
-        "params": params,
-        "logIndex": logIndex,
-        "srcAddress": srcAddress,
-        "chainId": 137,
-        "contractName": "ERC20",
-        "eventName": "EventWithoutFields",
-      }->(Utils.magic: {..} => Internal.eventPayload)
+    let payload = {
+      "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+      "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+      "params": params,
+      "logIndex": logIndex,
+      "srcAddress": srcAddress,
+      "chainId": 137,
+      "contractName": "ERC20",
+      "eventName": "EventWithoutFields",
+    }->(Utils.magic: {..} => Internal.eventPayload)
 
-    let eventItem =
-      Internal.Event({
-        onEventRegistration:
-          (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-        chainId: 137->ChainId.fromInt,
-        blockNumber,
-        logIndex,
-        transactionIndex: 0,
-        payload,
-      })->Internal.castUnsafeEventItem
+    let eventItem = Internal.Event({
+      onEventRegistration: (EventRegistration.evmOnEventRegistration(
+        ~contractName="ERC20",
+      ) :> Internal.onEventRegistration),
+      chainId: 137->ChainId.fromInt,
+      blockNumber,
+      logIndex,
+      transactionIndex: 0,
+      payload,
+    })->Internal.castUnsafeEventItem
 
-    t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
+    let ecosystem = Evm.make(~logger=Logging.getLogger())
+    t.expect(ecosystem.toRawEvent(eventItem)).toEqual({
       chain_id: 137->ChainId.fromInt,
       event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
       event_name: "EventWithoutFields",
@@ -279,9 +277,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         ),
       )
 
-      t
-      .expect(result)
-      .toEqual(
+      t.expect(result).toEqual(
         {
           "deployer": "0x00000000000000000000000000000000000000aa",
           "vehicle": "0x0000000000000000000000000000000000000001",
@@ -299,9 +295,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       )
 
       let json = result->S.reverseConvertToJsonOrThrow(schema)
-      t
-      .expect(json)
-      .toEqual(
+      t.expect(json).toEqual(
         %raw(`{
         "deployer": "0x00000000000000000000000000000000000000aa",
         "vehicle": "0x0000000000000000000000000000000000000001",
@@ -344,9 +338,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       ),
     )
 
-    t
-    .expect(result)
-    .toEqual(
+    t.expect(result).toEqual(
       {
         "mixed": {
           "label": "hi",
@@ -378,8 +370,6 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       ~log=([toEventSelector("event StructEvent((address,uint256) indexed)"), topicHash], "0x"),
     )
 
-    t
-    .expect(result)
-    .toEqual({"indexedStruct": topicHash}->Utils.magic)
+    t.expect(result).toEqual({"indexedStruct": topicHash}->Utils.magic)
   })
 })

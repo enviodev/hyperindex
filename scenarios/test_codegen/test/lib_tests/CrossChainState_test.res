@@ -171,7 +171,7 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
 
 let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
   ({
-    ...MockIndexer.evmOnEventRegistration(~contractName),
+    ...EventRegistration.evmOnEventRegistration(~contractName),
     index,
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 

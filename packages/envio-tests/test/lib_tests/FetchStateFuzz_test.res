@@ -200,8 +200,8 @@ let checkInvariants = (run: run, ~seed, ~rng) => {
 let runSeed = (~seed, ~ops) => {
   let rng = mulberry32(seed)
   let onEventRegistrations = [
-    (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
-    (MockIndexer.evmOnEventRegistration(~id="1", ~contractName="NftFactory") :> Internal.onEventRegistration),
+    (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
+    (EventRegistration.evmOnEventRegistration(~id="1", ~contractName="NftFactory") :> Internal.onEventRegistration),
   ]
   let addresses = [
     {

@@ -927,7 +927,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   Async.it(
     "Shrinks the partition block interval immediately (no backoff) on each too-large retry",
     async t => {
-      let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), index: 0}
+      let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
       let blockJson = JSON.Object(
         Dict.fromArray([
@@ -1054,7 +1054,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
   Async.it(
     "Re-grows the partition interval on the next successful query after a density shrink",
     async t => {
-      let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), index: 0}
+      let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
       let blockJson = JSON.Object(
         Dict.fromArray([
@@ -1175,7 +1175,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
 describe("RpcSource - getItemsOrThrow classifies real provider block-range errors", () => {
   let sighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-  let eventConfig = {...MockIndexer.evmOnEventRegistration(~id=sighash), index: 0}
+  let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
   let blockJson = JSON.Object(
     Dict.fromArray([
@@ -1317,7 +1317,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
     "Throws a retryable error instead of a source-disabling one when the receipt is null",
     async t => {
       let eventConfig = {
-        ...MockIndexer.evmOnEventRegistration(~id=sighash, ~transactionFieldNames=[GasUsed]),
+        ...EventRegistration.evmOnEventRegistration(~id=sighash, ~transactionFieldNames=[GasUsed]),
         index: 0,
       }
 
@@ -1436,7 +1436,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       // two topic selections → two eth_getLogs. The mock returns the same log
       // for both, so the result must be deduped to one item.
       let eventConfig = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
         ~id=sighash,
         // Two indexed params so the log carries the topic1/topic2 values the
         // OR branches filter on and decodes cleanly (derived topicCount 3).
@@ -1585,11 +1585,11 @@ describe("RpcSource - builds partition log selections end to end", () => {
     "builds the partition's real RPC filters without a test-only query API",
     async t => {
       let addressBound = {
-        ...MockIndexer.evmOnEventRegistration(~id=sighash1),
+        ...EventRegistration.evmOnEventRegistration(~id=sighash1),
         index: 0,
       }
       let wildcardA = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
           ~id=sighash2,
           ~contractName="WildcardA",
           ~isWildcard=true,
@@ -1597,7 +1597,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         index: 1,
       }
       let wildcardB = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
           ~id=sighash3,
           ~contractName="WildcardB",
           ~isWildcard=true,
@@ -1605,7 +1605,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         index: 2,
       }
       let wildcardByAddress = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
           ~id=sighash4,
           ~isWildcard=true,
           ~dependsOnAddresses=true,
@@ -1613,7 +1613,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         index: 3,
       }
       let excluded = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
           ~id=excludedSighash,
           ~contractName="Excluded",
           ~isWildcard=true,
@@ -1715,7 +1715,7 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       // nothing to query — the batch must advance the cursor without issuing an
       // eth_getLogs (and without throwing, which the pre-fan-out code did).
       let eventConfig = {
-        ...MockIndexer.evmOnEventRegistration(~id=sighash, ~isWildcard=true, ~eventFilters=[]),
+        ...EventRegistration.evmOnEventRegistration(~id=sighash, ~isWildcard=true, ~eventFilters=[]),
         index: 0,
       }
 
@@ -1804,7 +1804,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
     "a filtered contract must not receive a log fetched by another contract's query",
     async t => {
       let eventA = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
           ~contractName="ContractA",
           ~id=sighash,
           ~eventFilters=[
@@ -1819,7 +1819,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         index: 0,
       }
       let eventB = {
-        ...MockIndexer.evmOnEventRegistration(
+        ...EventRegistration.evmOnEventRegistration(
           ~contractName="ContractB",
           ~id=sighash,
           ~eventFilters=[

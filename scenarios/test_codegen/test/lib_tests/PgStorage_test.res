@@ -1031,7 +1031,7 @@ describe("ecosystem.toRawEvent", () => {
       let eventItem =
         Internal.Event({
           onEventRegistration:
-            (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
+            (EventRegistration.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
           chainId: 137->ChainId.fromInt,
           blockNumber,
           logIndex,
