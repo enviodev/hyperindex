@@ -15,6 +15,7 @@ import variablesAndRequest from "./14-variables-and-request.js";
 import scalarSerialization from "./15-scalar-serialization.js";
 import relationshipMatrix from "./16-relationship-matrix.js";
 import errorMatrix from "./17-error-matrix.js";
+import transport from "./18-transport.js";
 import type { CorpusCase } from "../corpus.js";
 
 export const allCases: CorpusCase[] = [
@@ -35,4 +36,5 @@ export const allCases: CorpusCase[] = [
   ...scalarSerialization,
   ...relationshipMatrix,
   ...errorMatrix,
+  ...transport,
 ];

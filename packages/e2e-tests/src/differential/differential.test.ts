@@ -41,7 +41,19 @@ describe.sequential("differential", () => {
       });
 
       for (const corpusCase of phaseCases) {
-        it(corpusCase.name, async () => {
+        // recordOnly cases exist to capture Hasura's answer, not to hold
+        // serve to it. knownGap cases run as expected failures: vitest fails
+        // them if they start passing, so a closed gap cannot keep its
+        // annotation.
+        const run = corpusCase.recordOnly
+          ? it.skip
+          : corpusCase.knownGap
+            ? it.fails
+            : it;
+        const title = corpusCase.knownGap
+          ? `${corpusCase.name} [known gap: ${corpusCase.knownGap}]`
+          : corpusCase.name;
+        run(title, async () => {
           const [hasura, envio] = await Promise.all([
             runCase(hasuraUrl, corpusCase),
             runCase(serveUrl, corpusCase),

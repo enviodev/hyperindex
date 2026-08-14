@@ -22,6 +22,35 @@ identical JSON responses — data, errors, and serialization alike.
   serialization edge cases.
 - `../../fixtures/differential/snapshots/` — recorded Hasura responses; the
   ground-truth oracle, regenerated with `pnpm record:differential`.
+- `rawRequest.ts` — `node:http` client used by transport probes, where
+  `fetch` cannot be used because it negotiates and decodes `content-encoding`
+  behind the caller's back.
+
+## Transport probes and known gaps
+
+Most cases are a POST of `{query, variables}` compared on the response body
+alone. A case with a `transport` block instead controls the HTTP envelope —
+method, path, request headers, raw body — and its snapshot additionally
+records the response's `contentEncoding` and whichever response headers the
+case lists in `compareHeaders`. `corpus/18-transport.ts` uses this to cover
+the layer the body corpus is blind to: gzip, batched (JSON array) requests,
+plain GET, and `x-request-id`.
+
+Two annotations control how a case is judged:
+
+- **`knownGap: "..."`** — serve is known not to match here yet. The case is
+  still recorded from Hasura (the snapshot *is* the spec for the eventual
+  implementation), a mismatch is reported as a known gap rather than a
+  failure, and a case that starts *matching* fails loudly so the annotation
+  gets removed with the fix. This is how a gap stays visible and tracked
+  without a permanently red required CI job.
+- **`recordOnly: true`** — record Hasura's answer, assert nothing about
+  serve. For endpoints where matching Hasura is not the goal (serve should
+  expose Prometheus metrics whether or not the Hasura edition under test
+  does) but where the recorded answer still settles what Hasura actually did.
+
+Closing a gap is therefore: implement it, drop the `knownGap` line, and both
+`diffServe.ts` and the live suite flip from "known gap" to a hard assertion.
 
 ## Running
 
@@ -107,9 +136,14 @@ live Hasura v2.43 (`pnpm record:differential` after the fixture edits):
   stored as re-serialized parsed JSON, which hides float-formatting
   differences (e.g. `1.0` vs `1`); record raw response bytes alongside so
   float-formatting parity is verifiable.
-- **GET /v1/graphql corpus cases** — Hasura answers plain GET (GraphiQL /
-  query-over-GET) while serve currently 400s without upgrade headers; record
-  Hasura's GET behavior so the intended parity target is pinned.
+- **`corpus/18-transport.ts` has never been recorded** — the transport probes
+  (gzip, batching, GET, `x-request-id`, and the two `recordOnly` endpoint
+  probes) were authored without a live Hasura to record against, so they
+  have no oracle snapshots yet and `diffServe.ts` reports them as "no oracle
+  snapshot". The next `pnpm record:differential` against live Hasura v2.43
+  produces them; until then the live suite
+  (`differential-test-live`) is the only place these gaps are checked. This
+  supersedes the GET item that used to be listed here.
 - **Auth-matrix corpus cases** — only public/admin/admin-wrong are covered;
   record combinations of `X-Hasura-Role` with and without a valid admin
   secret (and unknown roles) to pin the full role-resolution matrix.

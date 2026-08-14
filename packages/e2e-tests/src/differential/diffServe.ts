@@ -27,6 +27,7 @@ const snapshotsDir = new URL(
 interface Snapshot {
   status: number;
   body: unknown;
+  headers?: Record<string, string | null>;
 }
 
 function firstDiff(a: unknown, b: unknown, path = "$"): string | undefined {
@@ -67,6 +68,10 @@ async function main() {
 
   let pass = 0;
   const failures: { name: string; detail: string }[] = [];
+  // Cases annotated with a knownGap: a mismatch is the documented state of
+  // the world, a match means the gap closed and the annotation must go.
+  const knownGaps: { name: string; detail: string }[] = [];
+  const recordOnly: string[] = [];
 
   // A removed/renamed corpus case must not leave its stale snapshot behind
   // silently — only meaningful on an unfiltered run, where the full case
@@ -87,13 +92,22 @@ async function main() {
   }
 
   const diffOne = async (corpusCase: (typeof cases)[number]) => {
+    if (corpusCase.recordOnly) {
+      recordOnly.push(corpusCase.name);
+      return;
+    }
     let oracle: Snapshot;
     try {
       oracle = JSON.parse(
         await readFile(new URL(`${corpusCase.name}.json`, snapshotsDir), "utf8")
       ) as Snapshot;
     } catch {
-      failures.push({ name: corpusCase.name, detail: "no oracle snapshot" });
+      failures.push({
+        name: corpusCase.name,
+        detail:
+          "no oracle snapshot — a new corpus case needs one live-Hasura " +
+          "`pnpm record:differential` run before it can be diffed",
+      });
       return;
     }
     let serve: GraphQLResponse;
@@ -107,17 +121,35 @@ async function main() {
       return;
     }
     const nOracle = normalize(
-      { status: oracle.status, body: oracle.body },
+      {
+        status: oracle.status,
+        body: oracle.body,
+        ...(oracle.headers !== undefined && { headers: oracle.headers }),
+      },
       corpusCase.compare
     );
     const nServe = normalize(serve, corpusCase.compare);
     if (JSON.stringify(nOracle) === JSON.stringify(nServe)) {
-      pass++;
+      if (corpusCase.knownGap) {
+        failures.push({
+          name: corpusCase.name,
+          detail: `known gap now matches Hasura — remove knownGap from the corpus case ("${corpusCase.knownGap}")`,
+        });
+      } else {
+        pass++;
+      }
+      return;
+    }
+    const detail =
+      nOracle.status !== nServe.status
+        ? `status: oracle=${nOracle.status} serve=${nServe.status} body=${JSON.stringify(nServe.body).slice(0, 200)}`
+        : (firstDiff(
+            { headers: nOracle.headers, body: nOracle.body },
+            { headers: nServe.headers, body: nServe.body }
+          ) ?? "unknown diff");
+    if (corpusCase.knownGap) {
+      knownGaps.push({ name: corpusCase.name, detail: corpusCase.knownGap });
     } else {
-      const detail =
-        nOracle.status !== nServe.status
-          ? `status: oracle=${nOracle.status} serve=${nServe.status} body=${JSON.stringify(nServe.body).slice(0, 200)}`
-          : (firstDiff(nOracle.body, nServe.body) ?? "unknown diff");
       failures.push({ name: corpusCase.name, detail });
     }
   };
@@ -132,7 +164,17 @@ async function main() {
   );
   failures.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-  console.log(`\n${pass}/${cases.length} passed (phase=${phase})`);
+  const compared = cases.length - recordOnly.length;
+  console.log(
+    `\n${pass}/${compared} passed (phase=${phase})` +
+      (knownGaps.length > 0 ? `, ${knownGaps.length} known gaps` : "") +
+      (recordOnly.length > 0 ? `, ${recordOnly.length} record-only` : "")
+  );
+  if (knownGaps.length > 0) {
+    knownGaps.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    console.log(`\nKnown gaps (${knownGaps.length}) — not failures:`);
+    for (const g of knownGaps) console.log(`  ${g.name}: ${g.detail}`);
+  }
   if (failures.length > 0) {
     console.log(`\nFailures (${failures.length}):`);
     const byCategory = new Map<string, number>();

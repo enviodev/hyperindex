@@ -115,6 +115,8 @@ function selectPool(): CorpusCase[] {
   const pool = allCases.filter(
     (c) =>
       (c.phases ?? ["default"]).includes("default") &&
+      // Transport probes vary the HTTP envelope, not the query load.
+      c.transport === undefined &&
       (casePool === "all" ? c.compare !== "rootSet" : c.bench === true) &&
       (!caseFilter || c.name.includes(caseFilter))
   );
