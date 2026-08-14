@@ -1,28 +1,7 @@
 // An indexer state for tests that exercise state accounting without running the
 // loop: stall metrics, chain-metadata writes, backfill finalization.
 
-let config = Scenario.make(
-  ~configYaml=`
-name: indexer-state
-chains:
-  - id: 1
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 1
-    contracts:
-      - name: Gravatar
-        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
-        events:
-          - event: "TestEvent()"
-`,
-  ~schema=`
-type SimpleEntity {
-  id: ID!
-  value: String!
-}
-`,
-).config
+let config = TestConfig.default
 
 // The store requires a persistence even when the cycle never runs; reuse one.
 // Lazy so importing the helper doesn't open a pg client for tests that never use
