@@ -276,7 +276,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   it("stringifies schema pieces and field selections onto registration inputs", t => {
     let eventConfig = makeEventConfig(
       ~selectedBlockFields=[Height, ParentHash],
-      ~selectedTransactionFields=[Signatures, TransactionIndex],
+      ~selectedTransactionFields=[Signature, TransactionIndex],
     )
     let eventConfig = {
       ...eventConfig,
@@ -307,7 +307,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     }).toEqual({
       "accountFilters": [[{SvmHyperSyncClient.Registration.position: 1, values: [metaplexProgramId]}]],
       "isInner": Some(false),
-      "transactionFields": ["signatures", "transactionIndex"],
+      "transactionFields": ["signature", "transactionIndex"],
       "blockFields": ["height", "parentHash"],
       "accounts": ["metadata", "mint"],
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),

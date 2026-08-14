@@ -75,7 +75,7 @@ expression: json
               "discriminator": "0x0f",
               "discriminatorByteLen": 1,
               "transactionFields": [
-                "signatures"
+                "signature"
               ],
               "includeLogs": false,
               "accountFilters": [

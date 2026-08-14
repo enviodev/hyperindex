@@ -140,7 +140,7 @@ let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 // position in the selection mask) and `Svm.res` `transactionFields`.
 type svmTransactionField =
   | @as("transactionIndex") TransactionIndex
-  | @as("signatures") Signatures
+  | @as("signature") Signature
   | @as("feePayer") FeePayer
   | @as("success") Success
   | @as("err") Err
@@ -150,10 +150,11 @@ type svmTransactionField =
   | @as("recentBlockhash") RecentBlockhash
   | @as("version") Version
   | @as("tokenBalances") TokenBalances
+  | @as("allSignatures") AllSignatures
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
-  Signatures,
+  Signature,
   FeePayer,
   Success,
   Err,
@@ -163,6 +164,7 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   RecentBlockhash,
   Version,
   TokenBalances,
+  AllSignatures,
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 

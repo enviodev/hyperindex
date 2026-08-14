@@ -3803,7 +3803,7 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        to_strings(&["signatures"]),
+                        to_strings(&["signature"]),
                         false,
                         1
                     ),
