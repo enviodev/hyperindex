@@ -33,8 +33,7 @@ impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
             // happen while a retry loop sleeps inside a single napi call.
             max_num_retries: c
                 .max_num_retries
-                .filter(|v| *v >= 0)
-                .map(|v| v as u32)
+                .and_then(|v| u32::try_from(v).ok())
                 .unwrap_or(0),
             retry_base_ms: c
                 .retry_base_ms

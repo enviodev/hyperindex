@@ -68,8 +68,8 @@ type svmTransaction = {
   accountKeys: array<SvmTypes.Pubkey.t>,
   recentBlockhash?: string,
   version?: string,
-  /** Every signature on the transaction, for multi-signer analysis. Handlers
-   identifying a transaction want `signature`. */
+  /** Every signature on the transaction, in message order; the first is
+   `signature`. Longer than one element only for a multi-signer transaction. */
   allSignatures: array<string>,
   tokenBalances?: array<svmTokenBalance>,
 }

@@ -123,11 +123,19 @@ expectType<TypeEqual<SvmInstructionBlock["hash"], string>>(true);
 expectType<TypeEqual<SvmInstructionBlock["time"], number | undefined>>(true);
 
 expectType<TypeEqual<SvmLog, { readonly kind: string; readonly message: string }>>(true);
-expectType<TypeEqual<SvmTokenBalance["mint"], string | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["owner"], string | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["decimals"], number | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["preAmount"], bigint | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["postAmount"], bigint | undefined>>(true);
+expectType<
+  TypeEqual<
+    SvmTokenBalance,
+    {
+      readonly account?: string;
+      readonly mint?: string;
+      readonly owner?: string;
+      readonly decimals?: number;
+      readonly preAmount?: bigint;
+      readonly postAmount?: bigint;
+    }
+  >
+>(true);
 `)
   )
 
