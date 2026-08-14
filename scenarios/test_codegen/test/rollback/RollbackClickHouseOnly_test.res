@@ -127,7 +127,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
           t.expect(
             (
               missingHistoryRelationError->String.includes(
-                `relation "${indexerMock.pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
+                `relation "${(indexerMock->IndexerRunner.pgOrThrow).pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
               ),
               await (
                 indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
