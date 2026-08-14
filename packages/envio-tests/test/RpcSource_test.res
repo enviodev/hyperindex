@@ -38,7 +38,7 @@ describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
-      chainId: MockConfig.chain1337,
+      chainId: 1337->ChainId.fromInt,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
@@ -53,7 +53,7 @@ describe("RpcSource - getHeightOrThrow", () => {
   Async.itWithOptions("Returns the current height of the chain", {retry: 3}, async t => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-      chainId: MockConfig.chain1337,
+      chainId: 1337->ChainId.fromInt,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),

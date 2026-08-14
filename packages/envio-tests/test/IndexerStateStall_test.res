@@ -5,7 +5,7 @@ describe("IndexerState fetch stall accounting", () => {
     (state->IndexerState.toMetrics).processingStalledOnFetchSeconds
 
   Async.it("Accrues an open stall interval from the first mark, not the last", async t => {
-    let state = MockIndexer.InMemoryStore.make()
+    let state = TestIndexerState.make()
 
     state->IndexerState.markProcessingStalledOnFetch
     await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)
@@ -20,7 +20,7 @@ describe("IndexerState fetch stall accounting", () => {
   Async.it(
     "Settles the stall on reorg so the rollback isn't counted as fetch starvation",
     async t => {
-      let state = MockIndexer.InMemoryStore.make()
+      let state = TestIndexerState.make()
 
       state->IndexerState.markProcessingStalledOnFetch
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=50)

@@ -14,72 +14,14 @@ let entityConfig = (name: string): Internal.entityConfig => config->entityConfig
 
 let evmBlockHash = MockSource.evmBlockHash
 
-// The store requires a persistence/config even when the cycle never runs; reuse one.
-// Lazy so importing the helper doesn't open a pg client for tests that never use it.
-// Its schema is never created — a query through this persistence means a test is
-// wired wrong, and pointing it at a real schema would hide that.
-let defaultPersistenceRef = ref(None)
-let defaultPersistence = () =>
-  switch defaultPersistenceRef.contents {
-  | Some(persistence) => persistence
-  | None =>
-    let config = Config.load()
-    let persistence = PgStorage.makePersistenceFromConfig(
-      ~config,
-      ~storage=PgStorage.makeStorageFromEnv(
-        ~config,
-        ~sql=PgStorage.makeClient(),
-        ~pgSchema=TestPgSchema.make(),
-        ~isHasuraEnabled=false,
-      ),
-    )
-    defaultPersistenceRef := Some(persistence)
-    persistence
-  }
+let defaultPersistence = () => TestIndexerState.defaultPersistence(~config)
 
 module Gate = MockSource.Gate
 
 module InMemoryStore = {
-  let setEntity = (
-    indexerState,
-    ~entityConfig: Internal.entityConfig,
-    ~scope=Internal.CrossChain,
-    entity,
-  ) => {
-    let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
-    let entity = entity->(Utils.magic: 'a => Internal.entity)
-    inMemTable->InMemoryTable.Entity.set(
-      ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
-      Set({
-        entityId: (entity: Internal.entity).id->EntityId.unsafeOfString,
-        checkpointId: 0n,
-        entity,
-      }),
-    )
-  }
+  let setEntity = TestIndexerState.setEntity
 
-  let make = (~config=?, ~entities=[]) => {
-    let config = switch config {
-    | Some(config) => config
-    | None => Config.load()
-    }
-    let indexerState = IndexerState.make(
-      ~config,
-      ~persistence=defaultPersistence(),
-      // A trivial chain state map for store-only tests that never run the loop.
-      ~chainStates=Dict.make(),
-      ~isInReorgThreshold=false,
-      ~isRealtime=false,
-      // The cycle never runs here, so a write only means a test is wired wrong.
-      ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
-    )
-    entities->Array.forEach(((entityConfig, items)) => {
-      items->Array.forEach(entity => {
-        indexerState->setEntity(~entityConfig, entity)
-      })
-    })
-    indexerState
-  }
+  let make = (~config=config, ~entities=[]) => TestIndexerState.make(~config, ~entities)
 }
 
 module Storage = {
