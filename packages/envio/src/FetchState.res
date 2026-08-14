@@ -1,7 +1,5 @@
 type indexingAddress = Internal.indexingContract
 
-type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
-
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   // Whether the partition's queries are built from its own address list
@@ -902,31 +900,87 @@ let getRegistrationIndex = (item: Internal.item): int =>
   | Block({onBlockRegistration}) => onBlockRegistration.index
   }
 
-// Total order on buffer items: block, then logIndex, then registration index.
-// Returns a plain int (-1/0/1) with explicit field comparisons so it can be
-// called directly from the merge/insertion loops below — no Array.sort callback,
-// no allocated key. `0` means a true duplicate: same log routed to the same
-// registration (two registrations for one log differ by index and are kept).
+// Lexicographic order on two call paths, parent before child: `[1]` precedes
+// `[1, 0]`, which is the order the runtime executed them in.
+let comparePath = (a: array<int>, b: array<int>): int => {
+  let la = a->Array.length
+  let lb = b->Array.length
+  let shared = la < lb ? la : lb
+  let i = ref(0)
+  let result = ref(0)
+  while result.contents === 0 && i.contents < shared {
+    let x = a->Array.getUnsafe(i.contents)
+    let y = b->Array.getUnsafe(i.contents)
+    if x !== y {
+      result := (x < y ? -1 : 1)
+    }
+    i := i.contents + 1
+  }
+  if result.contents !== 0 {
+    result.contents
+  } else if la === lb {
+    0
+  } else if la < lb {
+    -1
+  } else {
+    1
+  }
+}
+
+// Cold tail of `compareBufferItem`, out of line so the block/kind/log-index
+// comparison that every merge step runs stays small enough for V8 to inline.
+let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
+  // Two items an ecosystem's scalar key can't separate: instructions of one
+  // Solana transaction, ordered by their position in its CPI tree.
+  let byPath = switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+  | (Value(pa), Value(pb)) => comparePath(pa, pb)
+  | _ => 0
+  }
+  if byPath !== 0 {
+    byPath
+  } else {
+    let ia = a->getRegistrationIndex
+    let ib = b->getRegistrationIndex
+    ia < ib ? -1 : ia > ib ? 1 : 0
+  }
+}
+
+// Total order on buffer items: block, then item kind, then the ecosystem's
+// within-block order, then registration index. Returns a plain int (-1/0/1)
+// with explicit field comparisons so it can be called directly from the
+// merge/insertion loops below — no Array.sort callback, no allocated key. `0`
+// means a true duplicate: the same log routed to the same registration (two
+// registrations for one log differ by index and are kept).
+//
+// Kind outranks the log index so that every event of a block precedes that
+// block's handlers by construction. A sentinel log index for block items
+// would put the same guarantee at the mercy of how large an ecosystem's key
+// grows — which is how SVM, keyed by transaction index, came to run slot
+// handlers ahead of most of a slot's instructions.
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let ba = a->Internal.getItemBlockNumber
   let bb = b->Internal.getItemBlockNumber
   if ba != bb {
     ba < bb ? -1 : 1
   } else {
-    let la = a->Internal.getItemLogIndex
-    let lb = b->Internal.getItemLogIndex
-    if la != lb {
-      la < lb ? -1 : 1
+    let ka = a->Internal.getItemKind
+    let kb = b->Internal.getItemKind
+    if ka !== kb {
+      ka < kb ? -1 : 1
     } else {
-      let ia = a->getRegistrationIndex
-      let ib = b->getRegistrationIndex
-      ia < ib ? -1 : ia > ib ? 1 : 0
+      let la = a->Internal.getItemLogIndex
+      let lb = b->Internal.getItemLogIndex
+      if la != lb {
+        la < lb ? -1 : 1
+      } else {
+        compareTiebreak(a, b)
+      }
     }
   }
 }
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
-// `buffer`, dropping items equal on (blockNumber, logIndex, registration index).
+// `buffer`, dropping items equal on every component of `compareBufferItem`.
 // Single linear pass over both runs after ordering `newItems` in place; every
 // comparison is a direct `compareBufferItem` call (V8 inlines it) rather than a
 // callback through `Array.sort`.
@@ -982,9 +1036,6 @@ let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.it
   merged
 }
 
-// Some big number which should be bigger than any log index
-let blockItemLogIndex = 16777216
-
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
 // latestOnBlockBlockNumber pointer. maxOnBlockBufferSize bounds how many items
@@ -1031,7 +1082,6 @@ let appendOnBlockItems = (
           Block({
             onBlockRegistration,
             blockNumber,
-            logIndex: blockItemLogIndex + onBlockRegistration.index,
           }),
         )
         newItemsCounter := newItemsCounter.contents + 1
@@ -1064,7 +1114,7 @@ let updateInternal = (
   | None => fetchState.buffer
   }
 
-  // onBlock items are generated as their own ascending (block, logIndex) run and
+  // onBlock items are generated as their own ascending run and
   // folded into `base` by the single merge below.
   let blockItems = []
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {

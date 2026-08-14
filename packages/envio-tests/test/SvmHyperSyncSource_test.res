@@ -196,12 +196,23 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       )
 
       let item = switch response.parsedQueueItems {
-      | [Internal.Event({blockNumber, logIndex, transactionIndex, payload, onEventRegistration})] =>
+      | [
+          Internal.Event({
+            blockNumber,
+            logIndex,
+            orderPath,
+            transactionIndex,
+            payload,
+            onEventRegistration,
+          }),
+        ] =>
         let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
         Some({
           "blockNumber": blockNumber,
-          // tx * 65536 + depth-weighted instruction address offset.
+          // A slot orders by (transactionIndex, instructionAddress); the pair
+          // rides the item as (logIndex, orderPath).
           "logIndex": logIndex,
+          "orderPath": orderPath,
           "transactionIndex": transactionIndex,
           // `block` is omitted here; it's materialised from the store at batch
           // prep, which this test doesn't run.
@@ -218,7 +229,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       }).toEqual({
         "item": Some({
           "blockNumber": slot,
-          "logIndex": 965 * 65536 + 2,
+          "logIndex": 965,
+          "orderPath": [1],
           "transactionIndex": 965,
           "block": None,
           "params": Some(

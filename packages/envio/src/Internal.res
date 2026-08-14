@@ -627,6 +627,7 @@ type eventItem = private {
   chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
+  orderPath?: array<int>,
   // Within-block transaction index — the key into the per-chain transaction
   // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
   transactionIndex: int,
@@ -680,17 +681,31 @@ type item =
       chainId: ChainId.t,
       blockNumber: int,
       logIndex: int,
+      // Ordering tiebreak for ecosystems whose within-block order isn't a
+      // scalar. SVM keys an instruction by `(transactionIndex, path)`: the
+      // logIndex above is the transaction, this is its position in that
+      // transaction's CPI tree. Absent on EVM and Fuel, whose log/receipt
+      // index already totally orders a block.
+      orderPath?: array<int>,
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int, logIndex: int})
+  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
+// Only meaningful on an `Event`: a block item has no log index, and the buffer
+// comparator reads this only after the kinds match.
 @get
 external getItemLogIndex: item => int = "logIndex"
+@get
+external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
+// The variant tag. Read directly so the comparator can order every event of a
+// block ahead of that block's handlers without a `switch`.
+@get
+external getItemKind: item => int = "kind"
 
 let getItemChainId = item =>
   switch item {
