@@ -21,10 +21,6 @@ let makeEventConfig = (
   ~selectedBlockFields: array<Internal.svmBlockField>=[],
   ~selectedTransactionFields: array<Internal.svmTransactionField>=[],
 ): Internal.svmInstructionEventConfig => {
-  let selectedTransactionFields =
-    Utils.Set.fromArray(selectedTransactionFields)->(
-      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
-    )
   {
     id: "0x21",
     name: "CreateMetadataAccountV3",
@@ -35,13 +31,17 @@ let makeEventConfig = (
     discriminator: Some("0x21"),
     discriminatorByteLen: 1,
     includeLogs: false,
-    selectedTransactionFields,
-    transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
-    selectedBlockFields: Utils.Set.fromArray(selectedBlockFields),
-    blockFieldMask: Svm.eventBlockFieldMask(
-      Utils.Set.fromArray(
+    fieldSelection: Internal.makeFieldSelection(
+      ~blockFields=Utils.Set.fromArray(
         selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
       ),
+      ~transactionFields=Utils.Set.fromArray(
+        selectedTransactionFields->(
+          Utils.magic: array<Internal.svmTransactionField> => array<string>
+        ),
+      ),
+      ~blockMaskFn=Svm.eventBlockFieldMask,
+      ~transactionMaskFn=Svm.eventTransactionFieldMask,
     ),
     accountFilters: [],
     isInner: None,
@@ -276,7 +276,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   it("stringifies schema pieces and field selections onto registration inputs", t => {
     let eventConfig = makeEventConfig(
       ~selectedBlockFields=[Height, ParentHash],
-      ~selectedTransactionFields=[Signatures, TransactionIndex],
+      ~selectedTransactionFields=[Signature, TransactionIndex],
     )
     let eventConfig = {
       ...eventConfig,
@@ -307,7 +307,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     }).toEqual({
       "accountFilters": [[{SvmHyperSyncClient.Registration.position: 1, values: [metaplexProgramId]}]],
       "isInner": Some(false),
-      "transactionFields": ["signatures", "transactionIndex"],
+      "transactionFields": ["signature", "transactionIndex"],
       "blockFields": ["height", "parentHash"],
       "accounts": ["metadata", "mint"],
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),

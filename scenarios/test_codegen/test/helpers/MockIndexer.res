@@ -333,23 +333,21 @@ let evmOnEventRegistration = (
   ~paramsMetadata: array<Internal.paramMeta>=[],
   ~topicCount=paramsMetadata->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc),
 ): Internal.evmOnEventRegistration => {
-  let selectedTransactionFields =
-    Utils.Set.fromArray(transactionFieldNames)->(
-      Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
-    )
   let eventConfig: Internal.evmEventConfig = {
     id,
     contractName,
     name: "EventWithoutFields",
     paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
     simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema(paramsMetadata),
-    selectedBlockFields: Utils.Set.fromArray(blockFieldNames),
-    selectedTransactionFields,
-    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
-    blockFieldMask: Evm.eventBlockFieldMask(
-      Utils.Set.fromArray(blockFieldNames)->(
+    fieldSelection: Internal.makeFieldSelection(
+      ~blockFields=Utils.Set.fromArray(blockFieldNames)->(
         Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
       ),
+      ~transactionFields=Utils.Set.fromArray(transactionFieldNames)->(
+        Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
+      ),
+      ~blockMaskFn=Evm.eventBlockFieldMask,
+      ~transactionMaskFn=Evm.eventTransactionFieldMask,
     ),
     sighash: id,
     topicCount,
@@ -365,6 +363,7 @@ let evmOnEventRegistration = (
     startBlock,
     handler: None,
     contractRegister: None,
+    fieldSelection: eventConfig.fieldSelection,
     resolvedWhere: {
       topicSelections: switch eventFilters {
       | Some(topicSelections) => topicSelections

@@ -2714,8 +2714,9 @@ fn field_type_to_ts_type(
 }
 
 const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: \
-                                     string; readonly owner?: string; readonly preAmount?: \
-                                     string; readonly postAmount?: string }[]";
+                                     string; readonly owner?: string; readonly decimals?: \
+                                     number; readonly preAmount?: bigint; readonly postAmount?: \
+                                     bigint }[]";
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
 /// `readonly` property with its real type.
@@ -2783,7 +2784,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
         .map(|field| {
             let (ts_type, optional) = match field {
                 SvmTransactionField::TransactionIndex => ("number", false),
-                SvmTransactionField::Signatures => ("readonly string[]", false),
+                SvmTransactionField::Signature => ("string", false),
                 SvmTransactionField::FeePayer => ("string", false),
                 SvmTransactionField::Success => ("boolean", false),
                 SvmTransactionField::Err => ("string", true),
@@ -2795,6 +2796,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
                 SvmTransactionField::AccountKeys => ("readonly string[]", false),
                 SvmTransactionField::RecentBlockhash => ("string", false),
                 SvmTransactionField::Version => ("string", true),
+                SvmTransactionField::AllSignatures => ("readonly string[]", false),
             };
             SvmTransactionFieldSpec {
                 name: field.to_string(),
@@ -3744,7 +3746,7 @@ type GlobalCounter @crossChain {
 
     #[test]
     fn svm_transaction_ts_type_renders_optionality_and_unselected() {
-        // Selected required fields (`signatures`, `feePayer`) and always-present
+        // Selected required fields (`signature`, `feePayer`) and always-present
         // `tokenBalances` have no `| undefined`; nullable selected field (`err`,
         // null on a successful tx) is `string | undefined`; unselected fields
         // get the `@deprecated` hint + `FieldNotSelected`, matching the EVM
@@ -3752,7 +3754,7 @@ type GlobalCounter @crossChain {
         let generated = svm_transaction_ts_type(
             &svm_transaction_field_specs(),
             &[
-                "signatures".to_string(),
+                "signature".to_string(),
                 "feePayer".to_string(),
                 "err".to_string(),
                 "tokenBalances".to_string(),
@@ -3914,6 +3916,50 @@ type GlobalCounter @crossChain {
             ),
             (true, false),
             "Got:\n{out}",
+        );
+    }
+
+    /// Renders the `EvmAllBlockFields` / `EvmAllTransactionFields` records that
+    /// `packages/envio/index.d.ts` declares by hand, from the config-parsing
+    /// enums. Hand-written there so the inline `fields` option types work in a
+    /// project that never ran codegen; rendered here so they can't drift.
+    fn evm_all_fields_dts() -> String {
+        let all = system_config::FieldSelection::all_evm();
+        let selection = super::FieldSelection::new(FieldSelectionOptions {
+            block_fields: all.block_fields,
+            transaction_fields: all.transaction_fields,
+        });
+        let render = |name: &str, fields: &[SelectedFieldTemplate]| {
+            let lines: Vec<String> = fields
+                .iter()
+                .map(|f| {
+                    format!(
+                        "  readonly {}: {};",
+                        f.name.camel,
+                        ProjectTemplate::to_envio_dts_type(&f.ts_type)
+                    )
+                })
+                .collect();
+            format!("export type {name} = {{\n{}\n}};", lines.join("\n"))
+        };
+        format!(
+            "{}\n\n{}",
+            render("EvmAllBlockFields", &selection.block_fields),
+            render("EvmAllTransactionFields", &selection.transaction_fields),
+        )
+    }
+
+    #[test]
+    fn evm_all_fields_dts_matches_hand_written_index_dts() {
+        let rendered = evm_all_fields_dts();
+
+        let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
+        let index_dts = std::fs::read_to_string(&index_dts_path)
+            .unwrap_or_else(|e| panic!("Failed to read {index_dts_path}: {e}"));
+        assert!(
+            index_dts.contains(&rendered),
+            "packages/envio/index.d.ts is out of sync with the EVM field enums. Replace its \
+             EvmAllBlockFields/EvmAllTransactionFields declarations with:\n\n{rendered}",
         );
     }
 }

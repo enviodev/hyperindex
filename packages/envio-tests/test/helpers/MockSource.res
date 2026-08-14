@@ -79,10 +79,12 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
       name: "MockEvent",
       paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
       simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
-      selectedBlockFields: Utils.Set.make(),
-      selectedTransactionFields: Utils.Set.make(),
-      transactionFieldMask: 0.,
-      blockFieldMask: 0.,
+      fieldSelection: Internal.makeFieldSelection(
+        ~blockFields=Utils.Set.make(),
+        ~transactionFields=Utils.Set.make(),
+        ~blockMaskFn=Evm.eventBlockFieldMask,
+        ~transactionMaskFn=Evm.eventTransactionFieldMask,
+      ),
       sighash: "",
       topicCount: 1,
       paramsMetadata: [],
@@ -94,6 +96,12 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
     startBlock: None,
     handler: Some(handler),
     contractRegister: Some(contractRegister),
+    fieldSelection: Internal.makeFieldSelection(
+      ~blockFields=Utils.Set.make(),
+      ~transactionFields=Utils.Set.make(),
+      ~blockMaskFn=Evm.eventBlockFieldMask,
+      ~transactionMaskFn=Evm.eventTransactionFieldMask,
+    ),
     resolvedWhere: {topicSelections: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
